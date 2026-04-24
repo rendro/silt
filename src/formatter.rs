@@ -5574,21 +5574,21 @@ fn format_pattern(pattern: &Pattern) -> String {
 }
 
 fn format_type_expr(ty: &TypeExpr) -> String {
-    match ty {
-        TypeExpr::Named(name) => resolve(*name),
-        TypeExpr::Generic(name, args) => {
+    match &ty.kind {
+        TypeExprKind::Named(name) => resolve(*name),
+        TypeExprKind::Generic(name, args) => {
             let arg_strs: Vec<String> = args.iter().map(format_type_expr).collect();
             format!("{name}({})", arg_strs.join(", "))
         }
-        TypeExpr::Tuple(elems) => {
+        TypeExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(format_type_expr).collect();
             format!("({})", items.join(", "))
         }
-        TypeExpr::Function(params, ret) => {
+        TypeExprKind::Function(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(format_type_expr).collect();
             format!("Fn({}) -> {}", param_strs.join(", "), format_type_expr(ret))
         }
-        TypeExpr::SelfType => "Self".to_string(),
+        TypeExprKind::SelfType => "Self".to_string(),
     }
 }
 

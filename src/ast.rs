@@ -224,8 +224,26 @@ pub struct Param {
     pub ty: Option<TypeExpr>,
 }
 
+/// Wrapper over `TypeExprKind` that carries a `Span` for diagnostics.
+/// The span points at the start of the type-expr token (e.g. the `Int`
+/// in `trait Foo(Int)` or the opening `(` of a tuple type). Mirrors the
+/// `Expr`/`ExprKind` and `Pattern`/`PatternKind` splits so diagnostics
+/// can attach the caret to the offending argument rather than the
+/// enclosing decl's opener.
 #[derive(Debug, Clone)]
-pub enum TypeExpr {
+pub struct TypeExpr {
+    pub kind: TypeExprKind,
+    pub span: Span,
+}
+
+impl TypeExpr {
+    pub fn new(kind: TypeExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeExprKind {
     Named(Symbol),
     Generic(Symbol, Vec<TypeExpr>),
     Tuple(Vec<TypeExpr>),

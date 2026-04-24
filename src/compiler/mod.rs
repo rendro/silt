@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, PatternKind, Program, Stmt,
-    StringPart, TypeExpr, UnaryOp,
+    StringPart, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::intern::{Symbol, intern, resolve};
@@ -30,8 +30,8 @@ mod patterns;
 /// Encode a TypeExpr as a compact string for runtime JSON parsing.
 /// Examples: "String", "Int", "List:String", "Option:Int", "Record:Address"
 fn encode_type_expr(te: &TypeExpr) -> String {
-    match te {
-        TypeExpr::Named(n) => {
+    match &te.kind {
+        TypeExprKind::Named(n) => {
             let s = resolve(*n);
             match s.as_str() {
                 "Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime" => s,
@@ -41,7 +41,7 @@ fn encode_type_expr(te: &TypeExpr) -> String {
                 _ => "String".to_string(),
             }
         }
-        TypeExpr::Generic(name, args) => match resolve(*name).as_str() {
+        TypeExprKind::Generic(name, args) => match resolve(*name).as_str() {
             "List" => {
                 let inner = args
                     .first()
@@ -58,7 +58,7 @@ fn encode_type_expr(te: &TypeExpr) -> String {
             }
             _ => "String".to_string(),
         },
-        TypeExpr::SelfType => "Self".to_string(),
+        TypeExprKind::SelfType => "Self".to_string(),
         _ => "String".to_string(),
     }
 }

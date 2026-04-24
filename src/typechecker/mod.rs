@@ -1798,8 +1798,8 @@ impl TypeChecker {
         te: &TypeExpr,
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
-        match te {
-            TypeExpr::Named(name) => {
+        match &te.kind {
+            TypeExprKind::Named(name) => {
                 // Check if it's a type param variable
                 if let Some(tv) = param_vars.get(name) {
                     return tv.clone();
@@ -1863,7 +1863,7 @@ impl TypeChecker {
                     }
                 }
             }
-            TypeExpr::Generic(name, args) => {
+            TypeExprKind::Generic(name, args) => {
                 let resolved_args: Vec<Type> = args
                     .iter()
                     .map(|a| self.resolve_type_expr(a, param_vars))
@@ -1935,7 +1935,7 @@ impl TypeChecker {
                     }
                 }
             }
-            TypeExpr::Tuple(elems) => {
+            TypeExprKind::Tuple(elems) => {
                 // `()` is the canonical unit type — not a zero-arity tuple.
                 if elems.is_empty() {
                     return Type::Unit;
@@ -1946,7 +1946,7 @@ impl TypeChecker {
                     .collect();
                 Type::Tuple(types)
             }
-            TypeExpr::Function(params, ret) => {
+            TypeExprKind::Function(params, ret) => {
                 let param_types: Vec<Type> = params
                     .iter()
                     .map(|p| self.resolve_type_expr(p, param_vars))
@@ -1954,7 +1954,7 @@ impl TypeChecker {
                 let ret_type = self.resolve_type_expr(ret, param_vars);
                 Type::Fun(param_types, Box::new(ret_type))
             }
-            TypeExpr::SelfType => {
+            TypeExprKind::SelfType => {
                 if let Some(ty) = param_vars.get(&intern("Self")) {
                     ty.clone()
                 } else {
@@ -3030,7 +3030,10 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         let default_fn = FnDecl {
             name: intern("message"),
             params: vec![self_param],
-            return_type: Some(TypeExpr::Named(intern("String"))),
+            return_type: Some(TypeExpr::new(
+                TypeExprKind::Named(intern("String")),
+                dummy_span,
+            )),
             where_clauses: Vec::new(),
             body: default_body,
             is_pub: true,

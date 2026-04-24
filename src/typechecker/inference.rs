@@ -3810,8 +3810,8 @@ impl TypeChecker {
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
 fn resolve_supertrait_arg(te: &TypeExpr, trait_info: &TraitInfo, base_args: &[Type]) -> Type {
-    match te {
-        TypeExpr::Named(sym) => {
+    match &te.kind {
+        TypeExprKind::Named(sym) => {
             if let Some(idx) = trait_info.params.iter().position(|p| p == sym)
                 && let Some(ty) = base_args.get(idx)
             {
@@ -3827,27 +3827,27 @@ fn resolve_supertrait_arg(te: &TypeExpr, trait_info: &TraitInfo, base_args: &[Ty
                 _ => Type::Generic(*sym, Vec::new()),
             }
         }
-        TypeExpr::Generic(sym, args) => {
+        TypeExprKind::Generic(sym, args) => {
             let resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
             Type::Generic(*sym, resolved)
         }
-        TypeExpr::Tuple(elems) => Type::Tuple(
+        TypeExprKind::Tuple(elems) => Type::Tuple(
             elems
                 .iter()
                 .map(|e| resolve_supertrait_arg(e, trait_info, base_args))
                 .collect(),
         ),
-        TypeExpr::Function(params, ret) => Type::Fun(
+        TypeExprKind::Function(params, ret) => Type::Fun(
             params
                 .iter()
                 .map(|p| resolve_supertrait_arg(p, trait_info, base_args))
                 .collect(),
             Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
         ),
-        TypeExpr::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
+        TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
     }
 }
 

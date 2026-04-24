@@ -269,8 +269,8 @@ pub(super) fn lookup_record_fields(
 
 /// Simple conversion from AST TypeExpr to the type system's Type for display.
 pub(super) fn type_expr_to_type(te: &TypeExpr) -> Type {
-    match te {
-        TypeExpr::Named(n) => {
+    match &te.kind {
+        TypeExprKind::Named(n) => {
             let s = resolve(*n);
             match s.as_str() {
                 "Int" => Type::Int,
@@ -280,7 +280,7 @@ pub(super) fn type_expr_to_type(te: &TypeExpr) -> Type {
                 _ => Type::Generic(*n, vec![]),
             }
         }
-        TypeExpr::Generic(name, args) => {
+        TypeExprKind::Generic(name, args) => {
             let targs: Vec<Type> = args.iter().map(type_expr_to_type).collect();
             let s = resolve(*name);
             match s.as_str() {
@@ -295,7 +295,7 @@ pub(super) fn type_expr_to_type(te: &TypeExpr) -> Type {
                 _ => Type::Generic(*name, targs),
             }
         }
-        TypeExpr::SelfType => Type::Generic(intern("Self"), vec![]),
+        TypeExprKind::SelfType => Type::Generic(intern("Self"), vec![]),
         _ => Type::String, // fallback
     }
 }

@@ -954,12 +954,16 @@ impl Parser {
             // trait's type parameters; they must be lowercase idents.
             let mut params: Vec<Symbol> = Vec::new();
             for arg in &trait_args {
-                let TypeExpr::Named(arg_sym) = arg else {
+                // Round-52 deferred item 2: point the caret at the
+                // offending argument's own span, not the enclosing
+                // `trait` keyword. Each arg carries its own span now.
+                let arg_span = arg.span;
+                let TypeExprKind::Named(arg_sym) = &arg.kind else {
                     return Err(ParseError {
                         message: "trait declaration parameters must be lowercase type variables \
                              (e.g. `trait TryInto(b) { ... }`)"
                             .to_string(),
-                        span,
+                        span: arg_span,
                     });
                 };
                 let arg_str = intern::resolve(*arg_sym);
@@ -969,7 +973,7 @@ impl Parser {
                         message: format!(
                             "trait parameter '{arg_str}' must be a lowercase type variable"
                         ),
-                        span,
+                        span: arg_span,
                     });
                 }
                 if params.contains(arg_sym) {
@@ -977,7 +981,7 @@ impl Parser {
                         message: format!(
                             "duplicate type variable '{arg_str}' in trait declaration"
                         ),
-                        span,
+                        span: arg_span,
                     });
                 }
                 params.push(*arg_sym);
@@ -1025,9 +1029,9 @@ impl Parser {
             // impl target. Reject tuple/fn/Unit targets — those have no
             // stable "head symbol" for method_table keying or for the
             // compiler's `TypeName.method_name` qualified-name form.
-            let (target, target_type_args) = match target_te {
-                TypeExpr::Named(sym) => (sym, Vec::new()),
-                TypeExpr::Generic(sym, args) => (sym, args),
+            let (target, target_type_args) = match target_te.kind {
+                TypeExprKind::Named(sym) => (sym, Vec::new()),
+                TypeExprKind::Generic(sym, args) => (sym, args),
                 _ => {
                     return Err(ParseError {
                         message: "trait impl target must be a named type (e.g. `Box` or `Box(a)`)"
@@ -1045,7 +1049,7 @@ impl Parser {
             //   2. Binders must be distinct (no `Pair(a, a)` shadowing).
             let mut target_param_names: Vec<Symbol> = Vec::new();
             for arg in &target_type_args {
-                let TypeExpr::Named(arg_sym) = arg else {
+                let TypeExprKind::Named(arg_sym) = &arg.kind else {
                     return Err(ParseError {
                         message: "impl target arguments must be lowercase type variables; \
                                   silt has no trait specialization"
@@ -1135,6 +1139,11 @@ impl Parser {
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
+        // Round-52 deferred item 2: capture the start-of-type-expr span
+        // so every TypeExpr node anchors its own span. Used by trait-
+        // header diagnostics (parse_trait_or_impl) to point at the
+        // offending argument rather than the outer `trait` keyword.
+        let start = self.span();
         // Function type: Fn(A, B) -> C
         if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn")) {
             self.advance();
@@ -1148,7 +1157,10 @@ impl Parser {
             self.expect(&Token::RParen)?;
             self.expect(&Token::Arrow)?;
             let ret = self.parse_type_expr()?;
-            return Ok(TypeExpr::Function(params, Box::new(ret)));
+            return Ok(TypeExpr::new(
+                TypeExprKind::Function(params, Box::new(ret)),
+                start,
+            ));
         }
         // Tuple type: (A, B, ...)
         if self.at(&Token::LParen) {
@@ -1160,11 +1172,11 @@ impl Parser {
                 self.expect_list_sep("tuple type", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
-            return Ok(TypeExpr::Tuple(elems));
+            return Ok(TypeExpr::new(TypeExprKind::Tuple(elems), start));
         }
         let (name, _) = self.expect_ident()?;
         if name == intern::intern("Self") {
-            return Ok(TypeExpr::SelfType);
+            return Ok(TypeExpr::new(TypeExprKind::SelfType, start));
         }
         if self.peek() == &Token::LParen {
             self.advance();
@@ -1175,9 +1187,9 @@ impl Parser {
                 self.expect_list_sep("generic type argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
-            Ok(TypeExpr::Generic(name, args))
+            Ok(TypeExpr::new(TypeExprKind::Generic(name, args), start))
         } else {
-            Ok(TypeExpr::Named(name))
+            Ok(TypeExpr::new(TypeExprKind::Named(name), start))
         }
     }
 
