@@ -44,7 +44,8 @@ Use `else` to narrow:
 import math
 fn main() {
     let angle = math.acos(1.0) else 0.0
-    println(angle)  -- 0.0
+    println(angle)  -- 0  (silt's Float display drops the trailing `.0`
+                    --    for integer-valued floats)
 }
 ```
 

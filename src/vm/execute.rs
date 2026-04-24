@@ -1163,7 +1163,7 @@ impl Vm {
                     Value::Int(n) => match n.checked_neg() {
                         Some(v) => self.push(Value::Int(v)),
                         None => {
-                            return Err(VmError::new(format!("integer overflow: -{n}")));
+                            return Err(VmError::new(format!("integer overflow: negate {n}")));
                         }
                     },
                     Value::Float(n) => {

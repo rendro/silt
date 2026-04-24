@@ -27,7 +27,7 @@ use crate::intern::resolve as resolve_sym;
 use crate::module;
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset;
+use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::position_to_offset;
 
 impl Server {
@@ -44,7 +44,7 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset(program, cursor)?;
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
         let name_str = resolve_sym(name);
 
         if !is_user_renameable(&name_str) {
@@ -93,7 +93,8 @@ impl Server {
             return Ok(None);
         };
         let cursor = position_to_offset(&doc.source, &pos);
-        let Some(name) = find_ident_at_offset(program, cursor) else {
+        let Some(name) = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))
+        else {
             return Ok(None);
         };
         let name_str = resolve_sym(name);

@@ -435,6 +435,22 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(pad) = &args[2] else {
                 return Err(VmError::new("third arg must be string".into()));
             };
+            let pad_char = {
+                let mut chars = pad.chars();
+                let Some(first) = chars.next() else {
+                    return Err(VmError::new(
+                        "string.pad_left: pad must be a non-empty 1-character string, got \"\""
+                            .into(),
+                    ));
+                };
+                if chars.next().is_some() {
+                    let count = pad.chars().count();
+                    return Err(VmError::new(format!(
+                        "string.pad_left: pad must be a 1-character string, got {pad:?} ({count} characters)"
+                    )));
+                }
+                first
+            };
             let width_val = *width;
             if width_val < 0 {
                 return Err(VmError::new(format!(
@@ -447,7 +463,6 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             }
             let width = width_val as usize;
-            let pad_char = pad.chars().next().unwrap_or(' ');
             if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
             } else {
@@ -468,6 +483,22 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(pad) = &args[2] else {
                 return Err(VmError::new("third arg must be string".into()));
             };
+            let pad_char = {
+                let mut chars = pad.chars();
+                let Some(first) = chars.next() else {
+                    return Err(VmError::new(
+                        "string.pad_right: pad must be a non-empty 1-character string, got \"\""
+                            .into(),
+                    ));
+                };
+                if chars.next().is_some() {
+                    let count = pad.chars().count();
+                    return Err(VmError::new(format!(
+                        "string.pad_right: pad must be a 1-character string, got {pad:?} ({count} characters)"
+                    )));
+                }
+                first
+            };
             let width_val = *width;
             if width_val < 0 {
                 return Err(VmError::new(format!(
@@ -480,7 +511,6 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             }
             let width = width_val as usize;
-            let pad_char = pad.chars().next().unwrap_or(' ');
             if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
             } else {

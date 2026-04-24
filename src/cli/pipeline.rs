@@ -204,6 +204,17 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
         // here and let the compile-or-runtime stage be the source of
         // truth for name resolution.
         .filter(|e| !(has_user_import_warning && is_user_import_resolvable_error(e)))
+        // B9 (round 60): the typechecker and the compiler both emit
+        // "module 'X' is not imported" for the same call site. Without
+        // this filter, `silt check main.silt` prints the identical
+        // sentence twice — once as `error[type]`, once as
+        // `error[compile]`. The compiler's version is the authoritative
+        // one (it's what actually blocks bytecode emission), so drop
+        // the typechecker's copy in the CLI pipeline when compilation
+        // will re-surface it. The typechecker-only callers (LSP,
+        // `missing_import_recommends_tests`) still see the diagnostic
+        // via `typechecker::check` directly.
+        .filter(|e| !is_module_not_imported_typecheck_error(e))
         .collect()
 }
 
@@ -215,6 +226,19 @@ pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
     err.is_warning
         && err.kind == silt::errors::ErrorKind::Type
         && err.message.contains("unknown module")
+}
+
+/// Returns true iff `err` is the typechecker's "module 'X' is not
+/// imported" error. The compiler emits the same diagnostic (with
+/// identical wording, see `src/compiler/mod.rs:1923`, `:2029`, `:2782`)
+/// as a hard compile error that actually blocks bytecode emission, so
+/// the CLI pipeline drops the typechecker's copy to avoid rendering the
+/// same sentence twice. See `reportable_type_errors` for the call site.
+pub(crate) fn is_module_not_imported_typecheck_error(err: &SourceError) -> bool {
+    err.kind == silt::errors::ErrorKind::Type
+        && !err.is_warning
+        && err.message.contains("is not imported")
+        && err.message.contains("add `import ")
 }
 
 /// Returns true iff `err` is a typechecker diagnostic that the

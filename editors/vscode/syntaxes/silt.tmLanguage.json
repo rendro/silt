@@ -9,6 +9,7 @@
     { "include": "#numbers" },
     { "include": "#keywords" },
     { "include": "#booleans" },
+    { "include": "#primitives" },
     { "include": "#constructors" },
     { "include": "#builtins" },
     { "include": "#modules" },
@@ -113,6 +114,10 @@
     "booleans": {
       "name": "constant.language.boolean.silt",
       "match": "\\b(true|false)\\b"
+    },
+    "primitives": {
+      "name": "support.type.primitive.silt",
+      "match": "\\b(Int|Float|ExtFloat|Bool|String|Unit|List|Map|Set)\\b"
     },
     "constructors": {
       "name": "constant.language.constructor.silt",

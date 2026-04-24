@@ -58,16 +58,20 @@ fn test_with_helper() {
 }
 ```
 
-Running this file produces:
+Running `silt test` in a directory containing this file produces:
 
 ```
-  PASS math_test.silt::test_addition
-  PASS math_test.silt::test_string_length
-  SKIP math_test.silt::skip_test_not_ready_yet
-  PASS math_test.silt::test_with_helper
+  PASS ./math_test.silt::test_addition
+  PASS ./math_test.silt::test_string_length
+  SKIP ./math_test.silt::skip_test_not_ready_yet
+  PASS ./math_test.silt::test_with_helper
 
 4 tests: 3 passed, 0 failed, 1 skipped
 ```
+
+(When a single file is passed directly — `silt test math_test.silt` — the
+`./` prefix is omitted and you see `PASS math_test.silt::test_addition`
+instead.)
 
 ## Filtering Tests
 

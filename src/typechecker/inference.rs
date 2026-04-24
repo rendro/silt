@@ -472,12 +472,36 @@ impl TypeChecker {
         let mut local_env = env.child();
 
         // Validate where clauses
-        for (type_param, trait_name, _trait_args) in &f.where_clauses {
+        for (type_param, trait_name, trait_args) in &f.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
                         "unknown trait '{}' in where clause for '{}'",
                         trait_name, type_param
+                    ),
+                    f.span,
+                );
+                continue;
+            }
+            // G1 (round 60): a parameterized trait must receive its
+            // args in every where-clause mention. Without this check,
+            // `trait Cast(to)` + `where a: Cast` silently typechecks
+            // and the implied `to` stays unresolved, masking real bugs
+            // at call sites. `verify_trait_obligation` fast-paths the
+            // empty-args case (line 1043) because bare-bound supertrait
+            // sub-obligations legitimately pass `&[]`, so the arity
+            // check has to live here at the user-written syntax site.
+            let trait_info = self.traits.get(trait_name);
+            if let Some(info) = trait_info
+                && trait_args.is_empty()
+                && !info.params.is_empty()
+            {
+                let n = info.params.len();
+                self.error(
+                    format!(
+                        "trait '{}' expects {} type argument(s) in bound, got 0",
+                        resolve(*trait_name),
+                        n
                     ),
                     f.span,
                 );
@@ -2340,7 +2364,17 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
+                                // G2 (round 60): snapshot error count so we
+                                // can detect when `unify` emitted a mismatch
+                                // here. If it did, return `Type::Error`
+                                // instead of `lt` so the outer
+                                // ascribed-let (`let n: Int = s + 1`)
+                                // hits the cascade-suppression branch in
+                                // `unify` (`mod.rs:741`) and doesn't
+                                // re-emit the same diagnostic.
+                                let err_count_before = self.errors.len();
                                 self.unify(&lt, &rt, span);
+                                let unify_errored = self.errors.len() > err_count_before;
                                 // B2: enforce operand domain — Add accepts
                                 // Int/Float/ExtFloat or String (concatenation).
                                 let resolved = self.apply(&lt);
@@ -2363,7 +2397,11 @@ impl TypeChecker {
                                     }
                                     _ => {}
                                 }
-                                lt
+                                if unify_errored {
+                                    Type::Error
+                                } else {
+                                    lt
+                                }
                             }
                         }
                     }
@@ -3903,7 +3941,11 @@ impl TypeChecker {
 /// (the enclosing trait's supplied args at the call site). Nested forms
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
-fn resolve_supertrait_arg(te: &TypeExpr, trait_info: &TraitInfo, base_args: &[Type]) -> Type {
+pub(super) fn resolve_supertrait_arg(
+    te: &TypeExpr,
+    trait_info: &TraitInfo,
+    base_args: &[Type],
+) -> Type {
     match &te.kind {
         TypeExprKind::Named(sym) => {
             if let Some(idx) = trait_info.params.iter().position(|p| p == sym)

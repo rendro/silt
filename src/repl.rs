@@ -408,13 +408,28 @@ fn has_unclosed_delimiters(input: &str) -> bool {
         || in_triple_string
 }
 
-fn is_declaration(input: &str) -> bool {
+/// Does `input` begin with a token that introduces a top-level
+/// declaration (as opposed to an expression)? The REPL uses the answer
+/// to pick its eval path: declarations are compiled-and-loaded, while
+/// expressions are wrapped in a throwaway `fn main` for execution.
+///
+/// Keep the prefix list in sync with the keyword set the parser accepts
+/// at declaration position (see `src/parser/*` — `fn`, `let`, `type`,
+/// `trait`, `import`, `mod`, plus the `pub ` visibility modifier that
+/// may precede any of them). Missing `mod ` here would route a
+/// `mod foo { ... }` declaration through `eval_expression`, which wraps
+/// it in `fn main()` and emits a confusing parse error.
+///
+/// Exposed at crate-root visibility for the integration test at
+/// `tests/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
+pub fn is_declaration(input: &str) -> bool {
     let trimmed = input.trim();
     trimmed.starts_with("fn ")
         || trimmed.starts_with("let ")
         || trimmed.starts_with("type ")
         || trimmed.starts_with("trait ")
         || trimmed.starts_with("import ")
+        || trimmed.starts_with("mod ")
         || trimmed.starts_with("pub ")
 }
 

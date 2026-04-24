@@ -426,6 +426,19 @@ impl Vm {
                     },
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                    // List vs List: the typechecker auto-derives Compare for
+                    // List (see src/typechecker/mod.rs:3386), so a value of
+                    // `List(T)` flowing through a `Compare` bound must
+                    // resolve here. Defer to the existing element-wise
+                    // ordering on `Value::cmp`, which already handles
+                    // List/Range pairings (see src/vm/arithmetic.rs:138).
+                    (Value::List(_), Value::List(_))
+                    | (Value::List(_), Value::Range(..))
+                    | (Value::Range(..), Value::List(_))
+                    | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
+                    // Unit vs Unit: typechecker auto-derives Compare for `()`
+                    // (src/typechecker/mod.rs:3383). All units are equal.
+                    (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     _ => {
                         return Some(Err(VmError::new(format!(
                             "compare() not supported between {} and {}",
@@ -465,9 +478,19 @@ impl Vm {
                     | Value::Bool(_)
                     | Value::String(_)
                     | Value::List(_)
+                    // Range hashes via the same `impl Hash for Value`
+                    // (src/value.rs:1791); typechecker registers Hash for
+                    // every `List(T)` that flows through a `Hash` bound,
+                    // and `1..5` reaches dispatch as `Value::Range`.
+                    | Value::Range(..)
                     | Value::Tuple(_)
                     | Value::Map(_)
                     | Value::Set(_)
+                    // Variant covers the auto-derived Hash for Option/Result
+                    // (src/typechecker/mod.rs:3391). The existing
+                    // `impl Hash for Value` (src/value.rs:1821) already
+                    // hashes Variant by name + payload.
+                    | Value::Variant(..)
                     | Value::Unit => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};

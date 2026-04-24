@@ -10,6 +10,13 @@ endif
 syntax keyword siltKeyword as else fn import let loop match mod pub return trait type when where
 syntax keyword siltBoolean true false
 
+" ── Primitive type names ────────────────────────────────────────────
+" Sourced from src/types.rs `impl Display for Type` — these are the
+" names the compiler prints in diagnostics and the names accepted in
+" type-annotation position. Keep in sync with the lock test at
+" tests/editor_grammar_primitives_tests.rs.
+syntax keyword siltType Int Float ExtFloat Bool String Unit List Map Set
+
 " ── Builtins ────────────────────────────────────────────────────────
 syntax keyword siltBuiltin print println panic
 syntax keyword siltConstructor Ok Err Some None Stop Continue Message Closed Empty Sent Recv Send
@@ -77,6 +84,7 @@ syntax match siltCollectionPrefix "#{"  " map
 " ── Highlight links ─────────────────────────────────────────────────
 highlight default link siltKeyword      Keyword
 highlight default link siltBoolean      Boolean
+highlight default link siltType         Type
 highlight default link siltBuiltin      Function
 highlight default link siltConstructor  Constant
 highlight default link siltModule       Include

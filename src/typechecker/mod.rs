@@ -643,6 +643,23 @@ impl TypeChecker {
 
             // Record(name, fields) is compatible with Generic(name, args)
             (Type::Record(n1, f1), Type::Generic(n2, a2)) if n1 == n2 && !a2.is_empty() => {
+                // B2 (round 60): a parameterless record carries Generic args
+                // here only when the user wrote `Point(Bool)` against a
+                // `type Point { ... }` with no params — `record_param_var_ids`
+                // is absent for parameterless records, so the silent no-op
+                // path swallowed the arity violation. Reject explicitly.
+                if !self.record_param_var_ids.contains_key(n1)
+                    && self.records.contains_key(n1)
+                {
+                    self.error(
+                        format!(
+                            "type argument count mismatch for {n1}: expected 0, got {}",
+                            a2.len()
+                        ),
+                        span,
+                    );
+                    return;
+                }
                 if let (Some(rec_info), Some(param_var_ids)) = (
                     self.records.get(n1).cloned(),
                     self.record_param_var_ids.get(n1).cloned(),
@@ -678,6 +695,19 @@ impl TypeChecker {
                 }
             }
             (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
+                // B2 (round 60) mirror: parameterless record with Generic args.
+                if !self.record_param_var_ids.contains_key(n2)
+                    && self.records.contains_key(n2)
+                {
+                    self.error(
+                        format!(
+                            "type argument count mismatch for {n2}: expected 0, got {}",
+                            a1.len()
+                        ),
+                        span,
+                    );
+                    return;
+                }
                 if let (Some(rec_info), Some(param_var_ids)) = (
                     self.records.get(n2).cloned(),
                     self.record_param_var_ids.get(n2).cloned(),
@@ -1288,6 +1318,36 @@ impl TypeChecker {
             }
         }
 
+        // First pass: pre-register every type name with a placeholder
+        // body. This makes recursive type references (e.g.
+        // `type Expr { Add(Expr, Expr), ... }`) resolve during variant /
+        // field type resolution — without this, the B3 unknown-type
+        // check introduced in round 60 would reject the self-reference
+        // because `self.enums` / `self.records` don't contain the name
+        // until after the body is processed. The real registration loop
+        // below overwrites the placeholders.
+        for decl in &program.decls {
+            if let Decl::Type(td) = decl {
+                let td_name_str = resolve(td.name);
+                if td_name_str == "TypeOf" {
+                    continue;
+                }
+                match &td.body {
+                    TypeBody::Enum(_) => {
+                        self.enums.entry(td.name).or_insert_with(|| EnumInfo {
+                            variants: Vec::new(),
+                            params: td.params.clone(),
+                            param_var_ids: Vec::new(),
+                        });
+                    }
+                    TypeBody::Record(_) => {
+                        self.records.entry(td.name).or_insert_with(|| RecordInfo {
+                            fields: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
         // First pass: register all type declarations
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
@@ -1633,11 +1693,81 @@ impl TypeChecker {
             // common case `trait Ordered: Equal { ... }` followed by
             // `trait Ordered for MyType { ... }` where MyType has not
             // overridden Equal — auto-derived counts as implementing.
-            for supertrait in &trait_info.supertraits {
+            //
+            // B1 (round 60): when the supertrait reference carries args
+            // (`trait Holds(b): Carry(b)` + `impl Holds(Int) for Bag`),
+            // resolve those args through the enclosing trait's
+            // params→impl-args mapping and require the matching impl to
+            // exist with positionally-compatible args. Otherwise
+            // `impl Carry(String) for Bag` would silently satisfy the
+            // obligation for `impl Holds(Int) for Bag`, causing a
+            // runtime method-resolution failure.
+            let enclosing_args: Vec<Type> = self
+                .impl_trait_args
+                .get(&(*trait_name, *type_name))
+                .cloned()
+                .unwrap_or_default();
+            for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
                 if !self.trait_impl_set.contains(&(*supertrait, *type_name)) {
                     self.error(
                         format!(
                             "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
+                        ),
+                        diag_span,
+                    );
+                    continue;
+                }
+                // Resolve the supertrait's expected args against the
+                // enclosing trait's impl args. Skip when there are no
+                // supertrait args declared (bare `: Super` form).
+                let arg_exprs = trait_info.supertrait_args.get(i);
+                let expected_super_args: Vec<Type> = match arg_exprs {
+                    Some(exprs) if !exprs.is_empty() => exprs
+                        .iter()
+                        .map(|te| {
+                            crate::typechecker::inference::resolve_supertrait_arg(
+                                te,
+                                &trait_info,
+                                &enclosing_args,
+                            )
+                        })
+                        .collect(),
+                    _ => continue,
+                };
+                let actual_super_args = self
+                    .impl_trait_args
+                    .get(&(*supertrait, *type_name))
+                    .cloned()
+                    .unwrap_or_default();
+                let len_ok = actual_super_args.len() == expected_super_args.len();
+                let pos_ok = len_ok
+                    && expected_super_args
+                        .iter()
+                        .zip(actual_super_args.iter())
+                        .all(|(e, a)| {
+                            let e = self.apply(e);
+                            let a = self.apply(a);
+                            Self::trait_arg_compatible(&e, &a)
+                        });
+                if !pos_ok {
+                    let fmt_args = |args: &[Type]| -> String {
+                        args.iter()
+                            .map(|t| format!("{t}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    self.error(
+                        format!(
+                            "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
+                            resolve(*trait_name),
+                            fmt_args(&enclosing_args),
+                            type_name,
+                            resolve(*supertrait),
+                            fmt_args(&expected_super_args),
+                            type_name,
+                            resolve(*supertrait),
+                            fmt_args(&actual_super_args),
+                            type_name,
                         ),
                         diag_span,
                     );
@@ -2108,6 +2238,25 @@ impl TypeChecker {
                             // the List/Map/Set/Channel special-case paths
                             // above and the fresh-var pattern in
                             // check_pattern for Pattern::Record.
+                            //
+                            // B3 (round 60): reject uppercase names that
+                            // refer to nothing (no record / no enum). The
+                            // pre-fix path silently returned
+                            // `Type::Generic(name, vec![])` which then
+                            // cascaded into "does not implement Display"
+                            // and "type mismatch" diagnostics far from the
+                            // annotation site. The whitelist mirrors the
+                            // one used by the trait-impl-target check at
+                            // `register_trait_impl` (round 23 GAP #1).
+                            let is_user_record = self.records.contains_key(name);
+                            let is_user_enum = self.enums.contains_key(name);
+                            if !is_user_record && !is_user_enum {
+                                self.error(
+                                    format!("unknown type '{name_str}'"),
+                                    te.span,
+                                );
+                                return Type::Error;
+                            }
                             let arity = self
                                 .record_param_var_ids
                                 .get(name)
@@ -2173,11 +2322,34 @@ impl TypeChecker {
                         // agree, so mismatched ones no-op'd), leaving the
                         // user with no diagnostic and a runtime type
                         // error at first use of the field.
+                        // B2 (round 60): parameterless records (`type Point { x: Int }`)
+                        // are NOT entered into `record_param_var_ids` (only
+                        // parameterized ones are; see :1935 insert-gate).
+                        // Without this `.or_else` chain, `Point(Bool)` got
+                        // `expected_arity = None` and silently became
+                        // `Type::Generic("Point", [Bool])`, which the
+                        // Record/Generic unify arms also no-op'd. Chain to
+                        // `records.contains_key` so arity-0 records emit the
+                        // standard "expected 0, got N" diagnostic.
                         let expected_arity = self
                             .record_param_var_ids
                             .get(name)
                             .map(|v| v.len())
-                            .or_else(|| self.enums.get(name).map(|e| e.params.len()));
+                            .or_else(|| self.enums.get(name).map(|e| e.params.len()))
+                            .or_else(|| self.records.contains_key(name).then_some(0));
+                        // B3 (round 60): the generic form `Frobnitz(Int)`
+                        // for an undeclared `Frobnitz` should also report
+                        // "unknown type 'Frobnitz'" at the annotation span,
+                        // matching the bare-name path. Without this, the
+                        // ghost `Type::Generic("Frobnitz", [Int])` cascaded
+                        // into Display / type-mismatch noise.
+                        if expected_arity.is_none() {
+                            self.error(
+                                format!("unknown type '{name_str}'"),
+                                te.span,
+                            );
+                            return Type::Error;
+                        }
                         if let Some(expected) = expected_arity
                             && expected != resolved_args.len()
                         {

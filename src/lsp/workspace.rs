@@ -186,15 +186,26 @@ fn collect_references(program: &Program, name: Symbol, out: &mut Vec<Span>) {
 fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
     match decl {
         Decl::Fn(f) => {
+            // Include the param-pattern binders so renaming a parameter
+            // updates the param list AND every body use (round-60 B8).
+            for param in &f.params {
+                collect_references_in_pattern(&param.pattern, name, out);
+            }
             collect_references_in_expr(&f.body, name, out);
         }
         Decl::TraitImpl(ti) => {
             for method in &ti.methods {
+                for param in &method.params {
+                    collect_references_in_pattern(&param.pattern, name, out);
+                }
                 collect_references_in_expr(&method.body, name, out);
             }
         }
         Decl::Trait(t) => {
             for method in &t.methods {
+                for param in &method.params {
+                    collect_references_in_pattern(&param.pattern, name, out);
+                }
                 // Default method bodies, if any.
                 collect_references_in_expr(&method.body, name, out);
             }

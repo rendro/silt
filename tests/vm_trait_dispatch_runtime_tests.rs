@@ -182,6 +182,119 @@ fn main() {
 
 // ── Regression guard: user-defined Hash still routes correctly ──────
 
+// ── Round 60 B5: List.compare via trait bound ───────────────────────
+//
+// `src/typechecker/mod.rs:3386` auto-registers Compare for List, but
+// pre-fix the `"compare"` arm in `src/vm/dispatch.rs` lacked a
+// `(Value::List, Value::List)` case, so a `List(Int)` flowing through
+// a `Compare` bound errored at runtime with
+//   `compare() not supported between List and List`.
+// Fix: defer to `Value::cmp`, which already orders Lists element-wise
+// (mirrors `<`/`>` operator path at `src/vm/arithmetic.rs:138`).
+#[test]
+fn compare_runs_on_list() {
+    let out = run_silt_ok(
+        "cmp_list",
+        r#"
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    let x: List(Int) = [1, 2, 3]
+    let y: List(Int) = [1, 2, 4]
+    println(cmp_gen(x, y))
+    println(cmp_gen(y, x))
+    println(cmp_gen(x, x))
+}
+"#,
+    );
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 3, "expected 3 lines, got {out:?}");
+    assert_eq!(lines[0], "-1", "x < y should compare to -1; got {out:?}");
+    assert_eq!(lines[1], "1", "y > x should compare to 1; got {out:?}");
+    assert_eq!(lines[2], "0", "x == x should compare to 0; got {out:?}");
+}
+
+// ── Round 60 B6: ().compare via trait bound ─────────────────────────
+//
+// `src/typechecker/mod.rs:3383` auto-registers Compare for `()`, but
+// pre-fix the `"compare"` arm lacked a `(Value::Unit, Value::Unit)`
+// case, so a Unit flowing through a `Compare` bound errored at
+// runtime with
+//   `compare() not supported between Unit and Unit`.
+// Fix: all units are equal — return `Ordering::Equal`.
+#[test]
+fn compare_runs_on_unit() {
+    let out = run_silt_ok(
+        "cmp_unit",
+        r#"
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() { println(cmp_gen((), ())) }
+"#,
+    );
+    assert_eq!(out.trim(), "0", "unit-vs-unit must compare to 0; got {out:?}");
+}
+
+// ── Round 60 B7: Variant.hash via trait bound ───────────────────────
+//
+// `src/typechecker/mod.rs:3391` auto-registers Hash for Option and
+// Result (both `Value::Variant`), but pre-fix the `"hash"` arm in
+// `src/vm/dispatch.rs` had an explicit allowlist that omitted
+// `Value::Variant(..)`, so `h(Some(1))` errored at runtime with
+//   `no method 'hash' for type 'Option(Int)'`.
+// Fix: extend the allowlist to `Value::Variant(..)`. The existing
+// `impl Hash for Value` (src/value.rs:1821) already hashes Variant by
+// name + payload.
+#[test]
+fn hash_runs_on_some_int() {
+    let out = run_silt_ok(
+        "hash_some_int",
+        r#"
+fn h(v: a) -> Int where a: Hash { v.hash() }
+fn main() { println(h(Some(1))) }
+"#,
+    );
+    out.trim().parse::<i64>().unwrap_or_else(|e| {
+        panic!("expected Int hash for Some(1), got {out:?}: {e}")
+    });
+}
+
+#[test]
+fn hash_runs_on_err_string() {
+    let out = run_silt_ok(
+        "hash_err_string",
+        r#"
+fn h(v: a) -> Int where a: Hash { v.hash() }
+fn main() { println(h(Err("boom"))) }
+"#,
+    );
+    out.trim().parse::<i64>().unwrap_or_else(|e| {
+        panic!("expected Int hash for Err(\"boom\"), got {out:?}: {e}")
+    });
+}
+
+// ── Round 60 L1: Range.hash via trait bound ─────────────────────────
+//
+// Range values share the same Silt type as `List(T)`, for which the
+// typechecker auto-derives Hash, but pre-fix the dispatch allowlist
+// omitted `Value::Range(..)` so `h(1..5)` errored at runtime. The
+// fix mirrors the List arm: defer to the existing `impl Hash for
+// Value` (src/value.rs:1791).
+#[test]
+fn hash_runs_on_range() {
+    let out = run_silt_ok(
+        "hash_range",
+        r#"
+fn h(v: a) -> Int where a: Hash { v.hash() }
+fn main() {
+    let r = 1..5
+    println(h(r))
+}
+"#,
+    );
+    out.trim().parse::<i64>().unwrap_or_else(|e| {
+        panic!("expected Int hash for 1..5, got {out:?}: {e}")
+    });
+}
+
 /// User-defined `trait Hash for Foo` impls register as qualified
 /// globals (`"Foo.hash"`), so they must take precedence over the
 /// primitive-fallback arm we added. Here the user impl returns 999

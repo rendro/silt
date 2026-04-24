@@ -281,18 +281,25 @@ let result = task.join(h)  -- result = 42
 returns its result -- the value of the last expression in the spawned function's
 body. While waiting, the OS thread runs other tasks.
 
-If the spawned task failed with a runtime error, `task.join` propagates the
-error.
+If the spawned task panicked, errored, or was cancelled, `task.join` does
+**not** return an `Err` value. It raises the failure as a runtime error of
+the form `joined task failed: <msg>` at the call site. Silt has no
+`try`/`catch`, so a joined failure is terminal for the joining task — design
+cancellation-aware code to signal completion through a channel handshake or
+sentinel value when cancellation is an expected outcome rather than an error.
 
 ### Cancelling: `task.cancel(handle)`
 
 ```silt
+let done = channel.new(1)
 let h = task.spawn(fn() {
   -- long-running work
-  42
+  channel.send(done, 42)
 })
 task.cancel(h)
-let r = task.join(h)  -- Err("cancelled")
+-- task.join(h) would raise `joined task failed: cancelled` at this point;
+-- instead, wait on the sentinel channel if you want a non-raising
+-- "task is settled" signal.
 ```
 
 `task.cancel(h)` sets the handle's result to `Err("cancelled")` using
@@ -313,17 +320,30 @@ depends on where that task is at the moment of cancellation:
   of new tasks, channel sends, I/O — run to completion. When the task
   eventually parks or finishes, its own completion result is discarded
   (first-writer-wins: the cancel already won), and a subsequent
-  `task.join(h)` still observes `Err("cancelled")`.
+  `task.join(h)` on the cancelled handle raises `joined task failed:
+  cancelled` as a runtime error.
 
 `task.cancel` is therefore **not** a synchronous stop signal. Treat it as a
-request that the handle be marked cancelled; to know the task is actually done,
-pair it with `task.join` and treat the `Err("cancelled")` return as the
-authoritative "task is done" signal:
+request that the handle be marked cancelled. Because `task.join` raises on
+a cancelled handle (it does not return `Err("cancelled")` as a value), you
+typically want one of two patterns when cancellation is an expected outcome:
 
-```silt
-task.cancel(h)
-let _ = task.join(h)  -- returns Err("cancelled") once the task is settled
-```
+1. **Sentinel channel handshake** — have the task signal completion
+   through a channel before it exits, and wait on that channel instead of
+   `task.join`:
+
+   ```silt
+   task.cancel(h)
+   -- `task.join(h)` here would raise `joined task failed: cancelled`.
+   -- If you only need to know the cancel was acknowledged and you do not
+   -- need the task's value, omit the join and rely on the sentinel
+   -- channel from the task body for your "settled" signal.
+   ```
+
+2. **Join at the boundary** — if you do call `task.join` on a cancelled
+   handle, accept that it will raise `joined task failed: cancelled` at
+   the call site and scope the surrounding code so that failure is the
+   expected exit path.
 
 Returns `Unit`.
 
@@ -991,7 +1011,7 @@ operations block synchronously, just like channel operations.
 | Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
-| Join task | `task.join(handle)` | Task's return value |
+| Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` |
 
 The mental model: tasks are independent workers, channels are the pipes between

@@ -345,20 +345,30 @@ signal — treat it as a cooperative request, not a hard stop:
   performs before it next parks — writes, spawns, channel sends, I/O — run to
   completion. Its own final result is then discarded (first-writer-wins).
 
-Pair `task.cancel` with `task.join` when you need to know the task is
-actually done: the `Err("cancelled")` return from `task.join` is the
-authoritative "task is settled" signal. See
+`task.join` on a cancelled handle does **not** return `Err("cancelled")`
+as a value — it raises the failure as a runtime error of the form
+`joined task failed: cancelled`. Silt has no `try`/`catch`, so when
+cancellation is an expected outcome you typically either (a) signal
+completion through a sentinel channel and wait on that instead of joining,
+or (b) scope the join to a boundary where the raised error is the expected
+exit path. See
 [Concurrency: Cancelling](../concurrency.md#cancelling-taskcancelhandle) for
 the canonical treatment.
 
 ```silt
+-- noexec
+import channel
 import task
 fn main() {
+    let done = channel.new(1)
     let h = task.spawn(fn() {
         -- long-running work
+        channel.send(done, 42)
     })
     task.cancel(h)
-    let _ = task.join(h)  -- returns Err("cancelled") once the task is settled
+    -- `task.join(h)` here would raise `joined task failed: cancelled`.
+    -- Use the sentinel channel for a non-raising "settled" signal, or
+    -- only call `task.join` at a boundary that tolerates the raise.
 }
 ```
 
@@ -366,11 +376,20 @@ fn main() {
 ## `task.join`
 
 ```
-task.join(handle: Handle) -> a
+task.join(handle: Handle) -> a  -- raises on failure
 ```
 
 Blocks until the task completes and returns its result. Parks the calling task
 while waiting, allowing other tasks to run.
+
+If the joined task panicked, errored, or was cancelled, `task.join` does
+**not** surface the failure as an `Err` value. It raises a runtime error of
+the form `joined task failed: <msg>` at the call site (e.g. `joined task
+failed: cancelled` for a cancelled handle, `joined task failed: division by
+zero` for a panicking task body). Silt has no `try`/`catch`, so a joined
+failure is terminal for the joining task — when cancellation or task
+failure is an expected outcome, use a channel handshake or sentinel value
+instead of relying on `task.join` for the signal.
 
 ```silt
 import task
@@ -413,15 +432,24 @@ task.deadline(dur: Duration, f: () -> a) -> a
 
 Runs `f` with a scoped I/O deadline. If any blocking I/O builtin inside `f`
 (see [Concurrency: Blocking operations](../concurrency.md#blocking-operations))
-runs longer than `dur`, the builtin returns `Err("I/O timeout (task.deadline
-exceeded)")` instead of its normal result -- the surrounding silt code
-handles it through the usual `Result` match. No exception is raised, and the
-deadline does not preempt pure CPU work; it only applies to I/O.
+runs longer than `dur`, the builtin returns **the module's own typed
+timeout variant** instead of its normal result — the surrounding silt code
+handles it through the usual `Result` match on the typed `IoError`,
+`TcpError`, or `HttpError` enum that builtin already declares. No exception
+is raised, and the deadline does not preempt pure CPU work; it only applies
+to I/O.
+
+Specifically (matching the [`SILT_IO_TIMEOUT`](../concurrency.md#io-timeouts-silt_io_timeout)
+table):
+
+- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(TcpTimeout)`.
+- `http.*` surfaces `Err(HttpTimeout)`.
 
 The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
-or a surrounding `task.deadline`, whichever elapses first fires. The error
-message distinguishes the source so silt code can tell scoped timeouts from
-the global one.
+or a surrounding `task.deadline`, whichever elapses first fires. The
+embedded message on the `IoUnknown` variant distinguishes the source so
+silt code can tell scoped timeouts from the global one.
 
 ```silt
 -- noexec
@@ -435,7 +463,8 @@ fn main() {
     })
     match outcome {
         Ok(contents) -> println(contents)
-        Err(msg) -> println(msg)  -- "I/O timeout (task.deadline exceeded)"
+        Err(IoUnknown(msg)) -> println(msg)  -- "I/O timeout (task.deadline exceeded)"
+        Err(_) -> println("other io error")
     }
 }
 ```

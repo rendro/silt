@@ -171,25 +171,149 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
 }
 
 /// Find the identifier name at the cursor byte offset.
+///
+/// Visits `ExprKind::Ident` use-sites AND binding sites:
+///   * `let xvar = ...` / `match` arm pattern binders / `fn foo(x)` params,
+///   * `fn foo(...)` declaration name (recovered from the source between the
+///     `fn` keyword and the opening `(`).
+///
+/// Without the binding-site visits, `prepareRename`/`rename`/`hover` on the
+/// LHS of a let, on a `fn` parameter, or on a `fn` declaration name would
+/// silently no-op (round-60 B8 + G4).
 pub(super) fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<Symbol> {
+    find_ident_at_offset_with_source(program, cursor, None)
+}
+
+/// Source-aware variant. Pass `Some(source)` so binding-site lookups on
+/// `fn foo(...)` declaration names can recover the name's offset (the
+/// `FnDecl::span` sits at the `fn` keyword, not at the name). Without
+/// `source`, the fn-name binding site is not matchable but everything
+/// else works.
+pub(super) fn find_ident_at_offset_with_source(
+    program: &Program,
+    cursor: usize,
+    source: Option<&str>,
+) -> Option<Symbol> {
     let mut best: Option<Symbol> = None;
     for decl in &program.decls {
-        match decl {
-            Decl::Fn(f) => {
-                find_ident_in_expr(&f.body, cursor, &mut best);
-            }
-            Decl::Let { value, .. } => {
-                find_ident_in_expr(value, cursor, &mut best);
-            }
-            Decl::TraitImpl(ti) => {
-                for method in &ti.methods {
-                    find_ident_in_expr(&method.body, cursor, &mut best);
-                }
-            }
-            _ => {}
-        }
+        find_ident_in_decl(decl, cursor, source, &mut best);
     }
     best
+}
+
+fn find_ident_in_decl(
+    decl: &Decl,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
+    match decl {
+        Decl::Fn(f) => {
+            check_fn_decl_name(f, cursor, source, best);
+            for param in &f.params {
+                find_ident_in_pattern(&param.pattern, cursor, best);
+            }
+            find_ident_in_expr(&f.body, cursor, best);
+        }
+        Decl::Let { pattern, value, .. } => {
+            find_ident_in_pattern(pattern, cursor, best);
+            find_ident_in_expr(value, cursor, best);
+        }
+        Decl::TraitImpl(ti) => {
+            for method in &ti.methods {
+                check_fn_decl_name(method, cursor, source, best);
+                for param in &method.params {
+                    find_ident_in_pattern(&param.pattern, cursor, best);
+                }
+                find_ident_in_expr(&method.body, cursor, best);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Check whether the cursor sits on a `fn` declaration's name.
+///
+/// `FnDecl::span` points at the `fn` keyword, so we recover the name's
+/// offset by scanning the source between `fn` and the next `(`. When
+/// source is unavailable we skip — the use-site path still covers most
+/// cases, this only affects rename/hover at the binder itself.
+fn check_fn_decl_name(
+    f: &crate::ast::FnDecl,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
+    let Some(source) = source else {
+        return;
+    };
+    let name_str = crate::intern::resolve(f.name);
+    let fn_start = f.span.offset;
+    if fn_start >= source.len() {
+        return;
+    }
+    // Find the param-list `(` after `fn`. Bare `fn name = ...` (no params)
+    // would lack the `(`; in that case scan to the next `=` or end of
+    // line as a fallback.
+    let after = &source[fn_start.min(source.len())..];
+    let scan_end = after
+        .find('(')
+        .or_else(|| after.find('='))
+        .or_else(|| after.find('\n'))
+        .map(|p| fn_start + p)
+        .unwrap_or(source.len());
+    if let Some(off) =
+        super::text_utils::find_ident_in_range(source, fn_start, scan_end, &name_str)
+        && cursor >= off
+        && cursor < off + name_str.len()
+    {
+        *best = Some(f.name);
+    }
+}
+
+/// Recurse into a pattern, matching the cursor against any leaf
+/// `PatternKind::Ident` binder. Constructor heads (`Some`, `Ok`, `Err`,
+/// `IoNotFound`, ...) are intentionally NOT matched — those are
+/// stdlib-defined and not user-renameable; they would be rejected by
+/// `is_user_renameable` anyway, but we avoid even reporting them so
+/// hover/prepareRename produce a clean `null` rather than a spurious
+/// rejection error.
+fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Symbol>) {
+    match &pattern.kind {
+        PatternKind::Ident(name) => {
+            let start = pattern.span.offset;
+            let name_len = crate::intern::resolve(*name).len();
+            if cursor >= start && cursor < start + name_len {
+                *best = Some(*name);
+            }
+        }
+        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
+            for p in pats {
+                find_ident_in_pattern(p, cursor, best);
+            }
+        }
+        PatternKind::Constructor(_, fields) => {
+            for p in fields {
+                find_ident_in_pattern(p, cursor, best);
+            }
+        }
+        PatternKind::Record { fields, .. } => {
+            for (_, sub) in fields {
+                if let Some(p) = sub {
+                    find_ident_in_pattern(p, cursor, best);
+                }
+            }
+        }
+        PatternKind::List(pats, rest) => {
+            for p in pats {
+                find_ident_in_pattern(p, cursor, best);
+            }
+            if let Some(r) = rest {
+                find_ident_in_pattern(r, cursor, best);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
@@ -198,6 +322,28 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
         let name_len = crate::intern::resolve(*name).len();
         if cursor >= start && cursor < start + name_len {
             *best = Some(*name);
+        }
+    }
+    // Match-arm patterns and lambda params bind names that are visible in
+    // the arm/body. Visit them so the cursor on the binder resolves.
+    if let ExprKind::Match { arms, .. } = &expr.kind {
+        for arm in arms {
+            find_ident_in_pattern(&arm.pattern, cursor, best);
+        }
+    }
+    if let ExprKind::Lambda { params, .. } = &expr.kind {
+        for p in params {
+            find_ident_in_pattern(&p.pattern, cursor, best);
+        }
+    }
+    if let ExprKind::Block(stmts) = &expr.kind {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let { pattern, .. } | Stmt::When { pattern, .. } => {
+                    find_ident_in_pattern(pattern, cursor, best);
+                }
+                _ => {}
+            }
         }
     }
     visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, best));

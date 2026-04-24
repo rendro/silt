@@ -3,7 +3,9 @@
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use super::Server;
-use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_vars};
+use super::ast_walk::{
+    find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars,
+};
 use super::conversions::position_to_offset;
 use super::fields::find_field_type_at_offset;
 use super::local_bindings::find_local_binding_at_offset;
@@ -51,16 +53,21 @@ impl Server {
 
         let ty = find_type_at_offset(program, cursor);
 
-        // If the expression type has unresolved vars, try the definition type instead.
-        let ty = match ty {
-            Some(ref t) if !has_unresolved_vars(t) => ty,
-            _ => {
-                // Fall back: find the ident at cursor, look up its definition type.
-                find_ident_at_offset(program, cursor)
-                    .and_then(|name| doc.definitions.get(&name))
-                    .and_then(|def| def.ty.clone())
-                    .filter(|t| !has_unresolved_vars(t))
-                    .or(ty) // last resort: show raw type even with vars
+        // If the cursor is on a binding-site (e.g. `fn foo` declaration name)
+        // and we have a definition for that symbol, prefer the definition's
+        // type so hover on `fn foo` shows `foo`'s signature. Otherwise use
+        // the expression-walk result, falling back to the definition type
+        // when the expression type still has unresolved variables.
+        let ty = {
+            let ident_at_cursor =
+                find_ident_at_offset_with_source(program, cursor, Some(&doc.source));
+            let def_ty = ident_at_cursor
+                .and_then(|name| doc.definitions.get(&name))
+                .and_then(|def| def.ty.clone())
+                .filter(|t| !has_unresolved_vars(t));
+            match ty {
+                Some(ref t) if !has_unresolved_vars(t) => ty,
+                _ => def_ty.or(ty), // last resort: show raw type even with vars
             }
         };
         let ty = ty?;
