@@ -7,17 +7,23 @@ use super::super::*;
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ── Time module type definitions ──────────────────────────────
 
-    let instant_ty = Type::Record(intern("Instant"), vec![(intern("epoch_ns"), Type::Int)]);
-    let date_ty = Type::Record(
-        intern("Date"),
+    let instant_ty = super::record_with_fields(
+        checker,
+        "Instant",
+        vec![(intern("epoch_ns"), Type::Int)],
+    );
+    let date_ty = super::record_with_fields(
+        checker,
+        "Date",
         vec![
             (intern("year"), Type::Int),
             (intern("month"), Type::Int),
             (intern("day"), Type::Int),
         ],
     );
-    let time_of_day_ty = Type::Record(
-        intern("Time"),
+    let time_of_day_ty = super::record_with_fields(
+        checker,
+        "Time",
         vec![
             (intern("hour"), Type::Int),
             (intern("minute"), Type::Int),
@@ -25,59 +31,20 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             (intern("ns"), Type::Int),
         ],
     );
-    let datetime_ty = Type::Record(
-        intern("DateTime"),
+    let datetime_ty = super::record_with_fields(
+        checker,
+        "DateTime",
         vec![
             (intern("date"), date_ty.clone()),
             (intern("time"), time_of_day_ty.clone()),
         ],
     );
-    let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+    let duration_ty = super::record_with_fields(
+        checker,
+        "Duration",
+        vec![(intern("ns"), Type::Int)],
+    );
     let weekday_ty = Type::Generic(intern("Weekday"), vec![]);
-
-    // Register record types so field access type-checks
-    checker.records.insert(
-        intern("Instant"),
-        RecordInfo {
-            fields: vec![(intern("epoch_ns"), Type::Int)],
-        },
-    );
-    checker.records.insert(
-        intern("Date"),
-        RecordInfo {
-            fields: vec![
-                (intern("year"), Type::Int),
-                (intern("month"), Type::Int),
-                (intern("day"), Type::Int),
-            ],
-        },
-    );
-    checker.records.insert(
-        intern("Time"),
-        RecordInfo {
-            fields: vec![
-                (intern("hour"), Type::Int),
-                (intern("minute"), Type::Int),
-                (intern("second"), Type::Int),
-                (intern("ns"), Type::Int),
-            ],
-        },
-    );
-    checker.records.insert(
-        intern("DateTime"),
-        RecordInfo {
-            fields: vec![
-                (intern("date"), date_ty.clone()),
-                (intern("time"), time_of_day_ty.clone()),
-            ],
-        },
-    );
-    checker.records.insert(
-        intern("Duration"),
-        RecordInfo {
-            fields: vec![(intern("ns"), Type::Int)],
-        },
-    );
 
     // Register Weekday enum
     checker.enums.insert(

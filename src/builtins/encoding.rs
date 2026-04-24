@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
+use super::common::{err, ok, require_string, value_kind};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -77,40 +78,6 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
         "form_encode" => form_encode(args),
         "form_decode" => form_decode(args),
         _ => Err(VmError::new(format!("unknown encoding function: {name}"))),
-    }
-}
-
-// ── Helpers (mirror src/builtins/crypto.rs) ────────────────────────────
-
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
-}
-
-fn err(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
-}
-
-fn require_string(arg: &Value, fn_label: &str) -> Result<String, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires String, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn value_kind(v: &Value) -> &'static str {
-    match v {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
-        Value::Bool(_) => "Bool",
-        Value::String(_) => "String",
-        Value::List(_) => "List",
-        Value::Bytes(_) => "Bytes",
-        Value::Tuple(_) => "Tuple",
-        _ => "value",
     }
 }
 

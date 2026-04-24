@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 
+use super::common::{ok, require_bytes, require_int, require_string, value_kind};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -68,10 +69,6 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
-}
-
 fn bytes_err(variant: Value) -> Value {
     Value::Variant("Err".into(), vec![variant])
 }
@@ -109,50 +106,6 @@ fn err_oob(idx: i64) -> Value {
         "BytesOutOfBounds".into(),
         vec![Value::Int(idx)],
     ))
-}
-
-fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
-    match arg {
-        Value::Bytes(b) => Ok(b.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Bytes, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn require_string(arg: &Value, fn_label: &str) -> Result<String, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires String, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    match arg {
-        Value::Int(n) => Ok(*n),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Int, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn value_kind(v: &Value) -> &'static str {
-    match v {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
-        Value::Bool(_) => "Bool",
-        Value::String(_) => "String",
-        Value::List(_) => "List",
-        Value::Bytes(_) => "Bytes",
-        Value::Tuple(_) => "Tuple",
-        _ => "value",
-    }
 }
 
 // ── Constructors ───────────────────────────────────────────────────────

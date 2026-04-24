@@ -40,6 +40,33 @@ mod time;
 mod toml;
 mod uuid;
 
+/// Construct the `Duration` record type. Shared between `channel`
+/// (`channel.recv_timeout`, `channel.timeout`) and `time` (module-wide
+/// record binding) and `task.deadline` / `task.spawn_until` in this file.
+pub(super) fn duration_ty() -> Type {
+    Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)])
+}
+
+/// Register a record type with `checker.records` and return the
+/// corresponding `Type::Record` binding. Collapses the two-vec-literal
+/// pattern used across the `time` module (each record had to spell out
+/// its field vec both in the `Type::Record` binding and the
+/// `RecordInfo` registration).
+pub(super) fn record_with_fields(
+    checker: &mut TypeChecker,
+    name: &str,
+    fields: Vec<(Symbol, Type)>,
+) -> Type {
+    let sym = intern(name);
+    checker.records.insert(
+        sym,
+        RecordInfo {
+            fields: fields.clone(),
+        },
+    );
+    Type::Record(sym, fields)
+}
+
 impl TypeChecker {
     pub(super) fn register_builtins(&mut self, env: &mut TypeEnv) {
         // ── print / println: (a) -> () where a: Display ────────────────
@@ -455,7 +482,7 @@ impl TypeChecker {
         // already handles that via the normal Result matching.
         {
             let (a, av) = self.fresh_tv();
-            let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+            let duration_ty = duration_ty();
             env.define(
                 intern("task.deadline"),
                 Scheme {
@@ -475,7 +502,7 @@ impl TypeChecker {
         // but with one less closure wrapper.
         {
             let (a, av) = self.fresh_tv();
-            let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+            let duration_ty = duration_ty();
             env.define(
                 intern("task.spawn_until"),
                 Scheme {

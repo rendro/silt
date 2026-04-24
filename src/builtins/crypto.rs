@@ -23,6 +23,7 @@ use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 
+use super::common::{err, ok, require_bytes, require_int};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -45,50 +46,6 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
         "random_bytes" => random_bytes(args),
         "constant_time_eq" => constant_time_eq(args),
         _ => Err(VmError::new(format!("unknown crypto function: {name}"))),
-    }
-}
-
-// ── Helpers (mirror src/builtins/bytes.rs) ─────────────────────────────
-
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
-}
-
-fn err(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
-}
-
-fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
-    match arg {
-        Value::Bytes(b) => Ok(b.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Bytes, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    match arg {
-        Value::Int(n) => Ok(*n),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Int, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-fn value_kind(v: &Value) -> &'static str {
-    match v {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
-        Value::Bool(_) => "Bool",
-        Value::String(_) => "String",
-        Value::List(_) => "List",
-        Value::Bytes(_) => "Bytes",
-        Value::Tuple(_) => "Tuple",
-        _ => "value",
     }
 }
 

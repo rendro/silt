@@ -152,7 +152,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // over an expired timer.
     {
         let (a, av) = checker.fresh_tv();
-        let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+        let duration_ty = super::duration_ty();
         let channel_error_ty = Type::Generic(intern("ChannelError"), vec![]);
         env.define(
             intern("channel.recv_timeout"),
