@@ -4246,6 +4246,16 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
                 lines.join("\n")
             )
         }
+        TypeBody::Alias(target) => {
+            // Phase D: `type Foo = <type-expr>` round-trips as a single
+            // line. No braces, no per-field comment plumbing — the
+            // right-hand side is one TypeExpr.
+            format!(
+                "{prefix}{pub_prefix}type {}{params} = {}",
+                t.name,
+                format_type_expr(target)
+            )
+        }
     }
 }
 

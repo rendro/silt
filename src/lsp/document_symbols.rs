@@ -43,6 +43,11 @@ impl Server {
                     let kind = match &t.body {
                         TypeBody::Enum(_) => SymbolKind::ENUM,
                         TypeBody::Record(_) => SymbolKind::STRUCT,
+                        // Phase D: type aliases (`type Bytes = List(Int)`)
+                        // surface as a generic TYPE_PARAMETER symbol — they
+                        // don't form a new nominal class but the editor
+                        // should still see them in the document outline.
+                        TypeBody::Alias(_) => SymbolKind::TYPE_PARAMETER,
                     };
                     symbols.push(DocumentSymbol {
                         name: t.name.to_string(),

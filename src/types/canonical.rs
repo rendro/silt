@@ -27,16 +27,121 @@
 //! `"List"`. A future `display_name(ty)` helper will preserve the
 //! source-level spelling for diagnostics; this module deliberately does
 //! not.
+//!
+//! ## Phase D: user type aliases (and the alias registry)
+//!
+//! Phase D introduces user-declared type aliases (`type Bytes = List(Int)`
+//! and `type Pair(a) = (a, a)`). Aliases are transparent: every mention
+//! reduces to the target's canonical form for typechecking, dispatch, and
+//! runtime. The alias name is preserved in user-facing diagnostics where
+//! the user wrote it (the value-side `Display` of `Type` is unchanged);
+//! internally-inferred types continue to spell themselves out (e.g. `let x:
+//! Bytes = ...; let y = x` infers `y : List(Int)` for diagnostics on `y`).
+//!
+//! Phase A's [`canonicalize`] was a pure function with no shared state.
+//! Phase D adds a process-global alias registry — see
+//! [`register_alias`] / [`lookup_alias`] / [`clear_aliases`] — that the
+//! typechecker populates at decl-processing time and the canonicaliser
+//! reads when expanding alias references. Implementation notes:
+//!
+//! - The registry is `RwLock<HashMap<Symbol, AliasInfo>>`, mirroring the
+//!   variant-decl-order registry pattern in `src/value.rs`. Pros: no
+//!   signature churn across the rest of the codebase; same architecture
+//!   already in use for variant ordinals. Cons: stateful global; tests
+//!   that need isolation across test threads must either name aliases
+//!   uniquely (recommended; aliases are interned `Symbol`s, so distinct
+//!   names never collide) or call [`clear_aliases`].
+//! - Phase A unit tests in this module continue to pass because they
+//!   exercise built-in types only — no aliases registered.
+//! - The substitution helper for parametric aliases is the existing
+//!   [`crate::types::substitute_vars`] keyed on a `TyVar -> Type` map.
+//!   The typechecker assigns one fresh `TyVar` per alias parameter at
+//!   registration time so the substitution is straightforward.
 
 use crate::intern::{Symbol, intern, resolve};
-use crate::types::Type;
+use crate::types::{Type, TyVar};
 use crate::value::Value;
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+/// Resolved type-alias entry stored in the global alias registry.
+///
+/// Populated by the typechecker when it processes a `TypeBody::Alias`
+/// declaration: the target [`TypeExpr`] is resolved to a [`Type`], a
+/// fresh `TyVar` is allocated for each alias parameter, and the result
+/// is registered here. The canonicaliser then expands an alias
+/// reference by substituting the call-site type arguments into the
+/// stored `target_param_var_ids` and recursively canonicalising.
+///
+/// The `TyVar`s used for params here come from the same global TyVar
+/// space as the rest of inference; this is fine because they are only
+/// ever observed inside the substitution mapping local to one
+/// canonicalisation call.
+#[derive(Debug, Clone)]
+pub struct AliasInfo {
+    /// Type-parameter names in source order (e.g. `[a]` for
+    /// `type Pair(a) = (a, a)`). Empty for non-parametric aliases.
+    pub params: Vec<Symbol>,
+    /// `TyVar` ids allocated for each parameter at registration time,
+    /// parallel to `params`. The target carries `Type::Var(id)` at
+    /// every position where the user wrote the param name; expansion
+    /// substitutes through these ids.
+    pub param_var_ids: Vec<TyVar>,
+    /// The resolved target type: the right-hand side of the alias decl
+    /// after `resolve_type_expr`. This is *not* canonicalised here —
+    /// the canonicaliser canonicalises after substituting the call-
+    /// site args, which lets nested aliases expand correctly.
+    pub target: Type,
+}
+
+// Note: the registry is keyed on the resolved `String` rather than
+// the `Symbol`. The interner (`crate::intern`) is `thread_local!`,
+// so two threads (e.g. parallel test runners) can produce different
+// `Symbol` values for the same string. Keying by string sidesteps
+// that hazard and matches the cross-process variant-ordinal registry
+// pattern in `src/value.rs`, which also uses `String` keys for the
+// same reason.
+fn alias_registry() -> &'static RwLock<HashMap<String, AliasInfo>> {
+    static REG: OnceLock<RwLock<HashMap<String, AliasInfo>>> = OnceLock::new();
+    REG.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Register a user-declared type alias into the canonicalisation
+/// registry. Called by the typechecker at decl-processing time.
+/// Re-registering the same name overwrites the previous entry, which
+/// matches the duplicate-decl semantics enforced elsewhere
+/// (`register_type_decl` already errors on a duplicate name; the
+/// overwrite here is a defensive convenience for tests).
+pub fn register_alias(name: Symbol, info: AliasInfo) {
+    let mut guard = alias_registry().write().unwrap();
+    guard.insert(resolve(name), info);
+}
+
+/// Look up a registered alias by name. Returns `None` for built-in
+/// names and for any user name that has not been registered (which
+/// is the common case during a non-alias-bearing typecheck run).
+pub fn lookup_alias(name: Symbol) -> Option<AliasInfo> {
+    let guard = alias_registry().read().unwrap();
+    guard.get(&resolve(name)).cloned()
+}
+
+/// Clear every registered alias. Provided for test isolation: tests
+/// that instantiate independent typecheckers can call this between
+/// runs to avoid cross-test contamination. Production code never
+/// needs to call this.
+pub fn clear_aliases() {
+    let mut guard = alias_registry().write().unwrap();
+    guard.clear();
+}
 
 /// Reduce a type to its canonical form.
 ///
 /// Recursive structural walk. The current reduction set is:
 ///
 /// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
+/// - `Type::Generic(name, args)` or `Type::Record(name, _)` whose
+///   `name` is a registered alias -> the alias's stored target with
+///   `args` substituted into its parameters, then canonicalised.
 ///
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
@@ -50,6 +155,24 @@ pub fn canonicalize(ty: &Type) -> Type {
         // dispatch and equality; canonicalising at the boundary is the
         // single point where that invariant is enforced.
         Type::Range(inner) => Type::List(Box::new(canonicalize(inner))),
+
+        // ── Phase D: user-declared aliases ─────────────────────────
+        // A `Type::Generic(name, args)` whose `name` is a registered
+        // alias expands by substituting `args` into the alias's
+        // params and canonicalising the substituted target. This
+        // catches both parametric aliases (`type Pair(a) = (a, a);
+        // Pair(Int) -> (Int, Int)`) and zero-arity aliases that the
+        // typechecker happens to produce as `Generic(name, [])` (e.g.
+        // when the user wrote `Bytes` bare).
+        Type::Generic(name, args) if lookup_alias(*name).is_some() => {
+            let info = lookup_alias(*name).expect("checked just above");
+            // Canonicalise args first so nested alias references in
+            // the args resolve before substitution. The targeted
+            // substitution then operates on already-canonical types.
+            let canon_args: Vec<Type> = args.iter().map(canonicalize).collect();
+            let substituted = expand_alias(&info, &canon_args);
+            canonicalize(&substituted)
+        }
 
         // ── Compound shapes: structural recursion ──────────────────
         Type::List(inner) => Type::List(Box::new(canonicalize(inner))),
@@ -83,6 +206,27 @@ pub fn canonicalize(ty: &Type) -> Type {
         | Type::Error
         | Type::Never => ty.clone(),
     }
+}
+
+/// Substitute call-site `args` into an alias's stored target.
+///
+/// `args.len()` is expected to match `info.params.len()` — the
+/// typechecker enforces alias-arity at the annotation site. If a
+/// caller passes fewer args than params (e.g. the typechecker fell
+/// back to `Type::Generic(name, vec![])` for a bare alias name),
+/// missing params are left as their original `TyVar`s, which the
+/// outer canonicalisation will return as-is (silt's inference treats
+/// them as fresh polymorphic variables — same outcome the existing
+/// "bare parameterised name" path produces for built-ins like
+/// `List`).
+fn expand_alias(info: &AliasInfo, args: &[Type]) -> Type {
+    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+    for (i, &var_id) in info.param_var_ids.iter().enumerate() {
+        if let Some(arg) = args.get(i) {
+            mapping.insert(var_id, arg.clone());
+        }
+    }
+    crate::types::substitute_vars(&info.target, &mapping)
 }
 
 /// Type identity check.
@@ -178,9 +322,45 @@ pub fn canonical_name(ty: &Type) -> String {
 /// (see also: the architectural lock test in
 /// `tests/canonical_type_arch_lock_tests.rs`).
 pub fn canonicalize_type_name(name: Symbol) -> Symbol {
-    match resolve(name).as_str() {
-        "Range" => intern("List"),
-        _ => name,
+    if resolve(name).as_str() == "Range" {
+        return intern("List");
+    }
+    // Phase D: alias names route to the canonical head of their
+    // target. `type Bytes = List(Int)` registers / dispatches under
+    // `"List"`; `type Pair(a) = (a, a)` under `"Tuple"`. Chained
+    // aliases collapse fully because `canonicalize` already follows
+    // the alias chain inside the stored target — `head_symbol_of`
+    // returns the final non-alias head. The recursive call protects
+    // against future canonicalize changes that might leave a partial
+    // chain in place.
+    if let Some(info) = lookup_alias(name) {
+        let canon_target = canonicalize(&info.target);
+        if let Some(head) = head_symbol_of_canon(&canon_target) {
+            return canonicalize_type_name(head);
+        }
+    }
+    name
+}
+
+/// Local helper: head symbol for canonical-name resolution. Mirror of
+/// the typechecker's `head_symbol_of` (kept here so this module owns
+/// the alias-routing logic without crossing crate-internal boundaries).
+fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
+    match ty {
+        Type::Int => Some(intern("Int")),
+        Type::Float => Some(intern("Float")),
+        Type::ExtFloat => Some(intern("ExtFloat")),
+        Type::Bool => Some(intern("Bool")),
+        Type::String => Some(intern("String")),
+        Type::Unit => Some(intern("Unit")),
+        Type::List(_) | Type::Range(_) => Some(intern("List")),
+        Type::Map(_, _) => Some(intern("Map")),
+        Type::Set(_) => Some(intern("Set")),
+        Type::Channel(_) => Some(intern("Channel")),
+        Type::Tuple(_) => Some(intern("Tuple")),
+        Type::Fun(_, _) => Some(intern("Fn")),
+        Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
+        Type::Var(_) | Type::Error | Type::Never => None,
     }
 }
 
@@ -739,4 +919,104 @@ mod tests {
         let v = Value::Variant("Some".to_string(), vec![Value::Int(7)]);
         assert!(dispatch_name_for_value(&v).is_none());
     }
+
+    // ── Phase D: alias registry + expansion in canonicalize ──────────
+
+    /// `canonicalize` expands a registered non-parametric alias to its
+    /// stored target. Test isolation: every alias in this module uses
+    /// the `CanonTest_*` prefix so parallel test threads don't collide
+    /// with the integration tests in `tests/type_alias_tests.rs` which
+    /// use `PhD*` prefixes.
+    #[test]
+    fn alias_expansion_simple() {
+        let name = intern::intern("CanonTest_Bytes");
+        register_alias(
+            name,
+            AliasInfo {
+                params: vec![],
+                param_var_ids: vec![],
+                target: Type::List(Box::new(Type::Int)),
+            },
+        );
+        let ty = Type::Generic(name, vec![]);
+        assert_eq!(canonicalize(&ty), Type::List(Box::new(Type::Int)));
+    }
+
+    /// Parametric alias: the target's TyVar is substituted with the
+    /// call-site argument before canonicalisation.
+    #[test]
+    fn alias_expansion_parametric() {
+        let name = intern::intern("CanonTest_PairOf");
+        // `type CanonTest_PairOf(a) = (a, a)` with a hand-rolled
+        // TyVar id of 999.
+        let var_id: TyVar = 999;
+        register_alias(
+            name,
+            AliasInfo {
+                params: vec![intern::intern("a")],
+                param_var_ids: vec![var_id],
+                target: Type::Tuple(vec![Type::Var(var_id), Type::Var(var_id)]),
+            },
+        );
+        let ty = Type::Generic(name, vec![Type::Int]);
+        assert_eq!(canonicalize(&ty), Type::Tuple(vec![Type::Int, Type::Int]));
+    }
+
+    /// Chained alias: `B = A; A = List(Int)` — `B` canonicalises to
+    /// `List(Int)` because the recursive walk inside `canonicalize`
+    /// re-enters expansion on the substituted target.
+    #[test]
+    fn alias_expansion_chained() {
+        let a = intern::intern("CanonTest_ChainA");
+        let b = intern::intern("CanonTest_ChainB");
+        register_alias(
+            a,
+            AliasInfo {
+                params: vec![],
+                param_var_ids: vec![],
+                target: Type::List(Box::new(Type::Int)),
+            },
+        );
+        register_alias(
+            b,
+            AliasInfo {
+                params: vec![],
+                param_var_ids: vec![],
+                target: Type::Generic(a, vec![]),
+            },
+        );
+        let ty = Type::Generic(b, vec![]);
+        assert_eq!(canonicalize(&ty), Type::List(Box::new(Type::Int)));
+    }
+
+
+    /// `canonicalize_type_name` follows alias chains to the head
+    /// constructor — `Bytes -> List(Int) -> "List"` registers and
+    /// dispatches under the same key as a direct `List` impl.
+    #[test]
+    fn canonicalize_type_name_follows_alias_to_head() {
+        let name = intern::intern("CanonTest_Bytes2");
+        register_alias(
+            name,
+            AliasInfo {
+                params: vec![],
+                param_var_ids: vec![],
+                target: Type::List(Box::new(Type::Int)),
+            },
+        );
+        assert_eq!(
+            resolve(canonicalize_type_name(name)),
+            "List",
+            "alias name should route to its target's canonical head"
+        );
+    }
+
+    // Note: `clear_aliases()` is intentionally not unit-tested here.
+    // It's a cross-cutting hook that empties the global registry; a
+    // unit test calling it would race against any concurrently-
+    // running test that has registered aliases. The integration
+    // suite (`tests/type_alias_tests.rs`) exercises it implicitly by
+    // never calling it, relying on per-test name uniqueness for
+    // isolation; the function is kept as part of the public API for
+    // out-of-process tests that need a hard reset.
 }

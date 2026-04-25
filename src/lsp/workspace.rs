@@ -146,6 +146,9 @@ fn push_type_symbols(
     let kind = match &t.body {
         TypeBody::Enum(_) => SymbolKind::ENUM,
         TypeBody::Record(_) => SymbolKind::STRUCT,
+        // Phase D: type aliases surface in workspace symbols as a generic
+        // type-parameter category — they don't form a new nominal type.
+        TypeBody::Alias(_) => SymbolKind::TYPE_PARAMETER,
     };
     if matches_query(&name, query_lower) {
         results.push(SymbolInformation {

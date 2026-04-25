@@ -365,6 +365,20 @@ pub struct TypeChecker {
     /// "undefined variable 'f'" or "function expects 2 args, got 1"
     /// errors would just be noise.
     pub(super) recovery_stub_names: std::collections::HashSet<Symbol>,
+    /// Phase D: declared type aliases. Tracks the *names* of every
+    /// alias the typechecker has seen this run so `resolve_type_expr`
+    /// knows whether an uppercase identifier should fall through to
+    /// the builtins / record-or-enum lookup or be treated as an
+    /// alias. The actual alias body lives in
+    /// [`crate::types::canonical::lookup_alias`] (the canonicaliser
+    /// owns expansion); this set is just a fast-path so the
+    /// typechecker doesn't have to take the registry's RwLock on
+    /// every type-expr resolution.
+    pub(super) type_aliases: std::collections::HashSet<Symbol>,
+    /// Phase D: parameter arity of each declared alias, for arity-
+    /// error diagnostics at use sites. Parallel to `type_aliases`
+    /// (the alias is in `type_aliases` iff its name is a key here).
+    pub(super) type_alias_arity: HashMap<Symbol, usize>,
     /// B2: span used by `resolve_type_expr` when reporting arity errors
     /// on user type annotations. Callers set this to the surrounding
     /// declaration's span (e.g. `f.span`) before calling resolve, and
@@ -453,6 +467,8 @@ impl TypeChecker {
             top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
             recovery_stub_names: std::collections::HashSet::new(),
+            type_aliases: std::collections::HashSet::new(),
+            type_alias_arity: HashMap::new(),
             current_type_anno_span: None,
             pending_where_constraints: Vec::new(),
             current_fn_param_tyvars: Vec::new(),
@@ -1401,6 +1417,18 @@ impl TypeChecker {
                             fields: Vec::new(),
                         });
                     }
+                    TypeBody::Alias(_) => {
+                        // Phase D: alias names are pre-registered into
+                        // the local fast-path set so a forward reference
+                        // (`type A = B; type B = ...`) doesn't trip the
+                        // unknown-type guard in `resolve_type_expr_inner`
+                        // when the second pass resolves the first
+                        // alias's target. The arity is also recorded here
+                        // (final value won't change between this pass and
+                        // the real registration).
+                        self.type_aliases.insert(td.name);
+                        self.type_alias_arity.insert(td.name, td.params.len());
+                    }
                 }
             }
         }
@@ -1939,6 +1967,20 @@ impl TypeChecker {
             param_vars.insert(*p, tv);
         }
 
+        // Phase D: type aliases follow a parallel registration path
+        // — resolve the target with each param bound to a fresh
+        // TyVar, detect cycles, then register into the canonical
+        // alias registry. Aliases never appear in `enums` /
+        // `records`, never auto-derive Equal/Compare/Hash/Display
+        // (the user must write impls against the target if they
+        // want that), and emit no constructor bindings. Early-return
+        // before the auto-derive block at the end of the function.
+        if let TypeBody::Alias(target_te) = &td.body {
+            self.register_type_alias(td, target_te, &mut param_vars);
+            self.current_type_anno_span = prev_type_span;
+            return;
+        }
+
         match &td.body {
             TypeBody::Enum(variants) => {
                 let mut variant_infos = Vec::new();
@@ -2209,6 +2251,11 @@ impl TypeChecker {
                 };
                 env.define(td.name, scheme);
             }
+            TypeBody::Alias(_) => {
+                // Phase D: handled by the early-return path above.
+                // This arm is unreachable but kept for exhaustiveness.
+                unreachable!("alias decls handled before this match");
+            }
         }
 
         // Auto-derive builtin traits for user-defined types.
@@ -2260,6 +2307,178 @@ impl TypeChecker {
             );
         }
         self.current_type_anno_span = prev_type_span;
+    }
+
+    /// Phase D: register a `type Foo(...) = <target>` alias.
+    ///
+    /// Resolves `target_te` to a [`Type`] (with the alias's params bound
+    /// to fresh `TyVar`s already populated in `param_vars`), detects
+    /// cycles, then writes the entry into the canonical alias registry
+    /// at [`crate::types::canonical::register_alias`].
+    ///
+    /// Cycle detection traverses the resolved target looking for any
+    /// reference back to the alias being declared (or to another alias
+    /// that — transitively — references this one). Implementation: walk
+    /// the target's free `Type::Generic` / `Type::Record` heads and ask
+    /// the registry whether the head is an alias whose own target
+    /// reaches `td.name`. The walk uses an explicit "in-progress" set
+    /// keyed on alias name so a chain `A -> B -> A` produces the
+    /// expected diagnostic at one of the two ends.
+    fn register_type_alias(
+        &mut self,
+        td: &TypeDecl,
+        target_te: &TypeExpr,
+        param_vars: &mut HashMap<Symbol, Type>,
+    ) {
+        // The alias name itself must already be in `type_aliases` (the
+        // pre-pass placeholder loop populated it). Mark it as in-
+        // progress so any reference back to this alias inside its own
+        // target — direct or indirect — is detected as a cycle.
+        self.type_aliases.insert(td.name);
+        self.type_alias_arity.insert(td.name, td.params.len());
+
+        // Resolve the target with this alias's params bound. We use
+        // `resolve_type_expr_inner` here (not the public canonicalising
+        // wrapper): canonicalisation would eagerly expand any alias
+        // already in the registry, collapsing a multi-step chain
+        // (`A -> B -> A`) to a one-step self-reference and obscuring
+        // the diagnostic. The inner resolver leaves alias references
+        // as `Type::Generic(alias_name, args)` so `find_alias_cycle`
+        // can walk the full chain by lookup_alias-driven recursion.
+        // The outer registration step (`register_alias` below) then
+        // stores the un-expanded target — canonicalisation expands at
+        // every use site instead.
+        let target_ty = self.resolve_type_expr_inner(target_te, param_vars);
+
+        // Detect cycles before registering. Build a chain that names
+        // every alias visited; if `td.name` appears, report it.
+        let mut visiting: Vec<Symbol> = vec![td.name];
+        if let Some(cycle) = self.find_alias_cycle(&target_ty, &mut visiting) {
+            // Format the cycle as `A -> B -> A` for clarity. `cycle` is
+            // the Vec of names from the original `td.name` through
+            // each alias in the chain that closes the loop.
+            let chain: Vec<String> = cycle
+                .iter()
+                .map(|s| crate::intern::resolve(*s))
+                .collect();
+            self.error(
+                format!(
+                    "type alias '{}' forms a cycle: {}",
+                    td.name,
+                    chain.join(" -> ")
+                ),
+                target_te.span,
+            );
+            // Skip registration so the canonicaliser doesn't loop on a
+            // self-referential expansion at any later use site.
+            return;
+        }
+
+        // Collect the alias-param TyVar ids in source order.
+        let param_var_ids: Vec<TyVar> = td
+            .params
+            .iter()
+            .map(|p| match param_vars.get(p) {
+                Some(Type::Var(v)) => *v,
+                _ => {
+                    // Unreachable: register_type_decl seeded every
+                    // td.params entry into `param_vars` as a fresh
+                    // Type::Var before reaching this branch.
+                    unreachable!("alias param missing from param_vars")
+                }
+            })
+            .collect();
+
+        crate::types::canonical::register_alias(
+            td.name,
+            crate::types::canonical::AliasInfo {
+                params: td.params.clone(),
+                param_var_ids,
+                target: target_ty,
+            },
+        );
+    }
+
+    /// Walk a resolved type and return the visited-alias chain that
+    /// closes a cycle, or `None` if no cycle is reachable. The
+    /// `visiting` Vec carries the alias names seen so far on this
+    /// walk; the head is the alias being declared.
+    fn find_alias_cycle(
+        &self,
+        ty: &Type,
+        visiting: &mut Vec<Symbol>,
+    ) -> Option<Vec<Symbol>> {
+        match ty {
+            Type::Generic(name, args) => {
+                if visiting.contains(name) {
+                    // Direct or indirect self-reference. Append the
+                    // closing name so the diagnostic shows
+                    // `A -> B -> A`.
+                    let mut chain = visiting.clone();
+                    chain.push(*name);
+                    return Some(chain);
+                }
+                if let Some(info) = crate::types::canonical::lookup_alias(*name) {
+                    visiting.push(*name);
+                    let result = self.find_alias_cycle(&info.target, visiting);
+                    visiting.pop();
+                    if result.is_some() {
+                        return result;
+                    }
+                }
+                for a in args {
+                    if let Some(c) = self.find_alias_cycle(a, visiting) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::Record(name, fields) => {
+                if visiting.contains(name) {
+                    let mut chain = visiting.clone();
+                    chain.push(*name);
+                    return Some(chain);
+                }
+                for (_, t) in fields {
+                    if let Some(c) = self.find_alias_cycle(t, visiting) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::List(inner)
+            | Type::Range(inner)
+            | Type::Set(inner)
+            | Type::Channel(inner) => self.find_alias_cycle(inner, visiting),
+            Type::Map(k, v) => self
+                .find_alias_cycle(k, visiting)
+                .or_else(|| self.find_alias_cycle(v, visiting)),
+            Type::Tuple(elems) => {
+                for e in elems {
+                    if let Some(c) = self.find_alias_cycle(e, visiting) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::Fun(params, ret) => {
+                for p in params {
+                    if let Some(c) = self.find_alias_cycle(p, visiting) {
+                        return Some(c);
+                    }
+                }
+                self.find_alias_cycle(ret, visiting)
+            }
+            Type::Int
+            | Type::Float
+            | Type::ExtFloat
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Error
+            | Type::Never => None,
+        }
     }
 
     /// Resolve a TypeExpr AST node to our internal Type representation.
@@ -2362,7 +2581,14 @@ impl TypeChecker {
                             // `register_trait_impl` (round 23 GAP #1).
                             let is_user_record = self.records.contains_key(name);
                             let is_user_enum = self.enums.contains_key(name);
-                            if !is_user_record && !is_user_enum {
+                            // Phase D: alias names resolve to a
+                            // `Type::Generic(name, args)` head that the
+                            // canonicaliser will expand. Bare-name
+                            // alias references with type params get
+                            // fresh TyVars per param (mirrors the
+                            // record / enum bare-name path).
+                            let is_user_alias = self.type_aliases.contains(name);
+                            if !is_user_record && !is_user_enum && !is_user_alias {
                                 self.error(
                                     format!("unknown type '{name_str}'"),
                                     te.span,
@@ -2374,6 +2600,7 @@ impl TypeChecker {
                                 .get(name)
                                 .map(|v| v.len())
                                 .or_else(|| self.enums.get(name).map(|e| e.params.len()))
+                                .or_else(|| self.type_alias_arity.get(name).copied())
                                 .unwrap_or(0);
                             if arity == 0 {
                                 Type::Generic(*name, vec![])
@@ -2448,7 +2675,10 @@ impl TypeChecker {
                             .get(name)
                             .map(|v| v.len())
                             .or_else(|| self.enums.get(name).map(|e| e.params.len()))
-                            .or_else(|| self.records.contains_key(name).then_some(0));
+                            .or_else(|| self.records.contains_key(name).then_some(0))
+                            // Phase D: aliases participate in the same
+                            // arity-check flow as records and enums.
+                            .or_else(|| self.type_alias_arity.get(name).copied());
                         // B3 (round 60): the generic form `Frobnitz(Int)`
                         // for an undeclared `Frobnitz` should also report
                         // "unknown type 'Frobnitz'" at the annotation span,
@@ -2467,6 +2697,8 @@ impl TypeChecker {
                         {
                             let kind = if self.records.contains_key(name) {
                                 "record"
+                            } else if self.type_aliases.contains(name) {
+                                "alias"
                             } else {
                                 "enum"
                             };
@@ -2947,11 +3179,20 @@ impl TypeChecker {
             let is_builtin_container = crate::types::builtins::is_container(&name_str);
             let is_user_record = self.records.contains_key(&ti.target_type);
             let is_user_enum = self.enums.contains_key(&ti.target_type);
+            // Phase D: a `trait T for AliasName` impl is valid if
+            // `AliasName` is a registered user alias. Coherence /
+            // duplicate detection handled by the existing
+            // method_table key comparison after `canonicalize_type_name`
+            // routes the alias to its canonical head — so
+            // `trait T for List(Int)` and `trait T for Bytes` (where
+            // `Bytes = List(Int)`) collide naturally.
+            let is_user_alias = self.type_aliases.contains(&ti.target_type);
             if !is_lowercase_tyvar
                 && !is_primitive
                 && !is_builtin_container
                 && !is_user_record
                 && !is_user_enum
+                && !is_user_alias
             {
                 self.error(
                     format!("trait impl target '{name_str}' is not a declared type"),
@@ -2961,17 +3202,44 @@ impl TypeChecker {
         }
 
         let self_type = if ti.target_type_args.is_empty() {
-            let user_arity = self
-                .record_param_var_ids
-                .get(&ti.target_type)
-                .map(|v| v.len())
-                .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
-                .unwrap_or(0);
-            if user_arity == 0 {
-                Self::type_from_name(ti.target_type)
+            // Phase D: if the bare target is a user alias, synthesize
+            // the self-type from the alias's canonical target rather
+            // than treating the alias name as a nominal head. Without
+            // this, `trait T for Bytes` (where `Bytes = List(Int)`)
+            // would produce a `Generic("Bytes", [])` self-type that
+            // would never unify with any concrete `List(Int)`
+            // receiver. Callers downstream still see the canonical
+            // form (`canonicalize_type_name` collapses the impl_key
+            // to `"List"`), so the dispatch lookup arrives at the
+            // right global.
+            if let Some(info) = crate::types::canonical::lookup_alias(ti.target_type) {
+                // Build a fresh-var instantiation per alias parameter so
+                // the impl methods see polymorphic vars rather than
+                // shared template tyvars. For `Bytes = List(Int)` (no
+                // params), the substitution is identity and the result
+                // is `List(Int)` after canonicalisation. For
+                // `Pair(a) = (a, a)`, params get fresh vars and the
+                // self-type is `(a', a')`.
+                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                for &var_id in &info.param_var_ids {
+                    mapping.insert(var_id, self.fresh_var());
+                }
+                let substituted =
+                    crate::types::substitute_vars(&info.target, &mapping);
+                crate::types::canonical::canonicalize(&substituted)
             } else {
-                let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
-                Type::Generic(ti.target_type, args)
+                let user_arity = self
+                    .record_param_var_ids
+                    .get(&ti.target_type)
+                    .map(|v| v.len())
+                    .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
+                    .unwrap_or(0);
+                if user_arity == 0 {
+                    Self::type_from_name(ti.target_type)
+                } else {
+                    let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
+                    Type::Generic(ti.target_type, args)
+                }
             }
         } else {
             // Arity check. Covers user-declared record/enum targets via
@@ -3384,9 +3652,50 @@ impl TypeChecker {
 /// registers under `"List"` — the same key both List and Range
 /// receivers reach via [`Self::type_name_for_impl`] at dispatch time.
 pub(super) fn canonicalize_type_name(name: Symbol) -> Symbol {
-    match resolve(name).as_str() {
-        "Range" => intern("List"),
-        _ => name,
+    // Built-in collapse: `Range` is a nominal alias of `List`.
+    if resolve(name).as_str() == "Range" {
+        return intern("List");
+    }
+    // Phase D: user-declared aliases route to the canonical head of
+    // their target. `type Bytes = List(Int)` registers impls under
+    // `"List"`; `type Pair(a) = (a, a)` registers under `"Tuple"`.
+    // The lookup walks transitively until a non-alias head is reached
+    // — chained aliases (`type B = A; type A = List(Int)`) collapse
+    // to the same final head.
+    if let Some(info) = crate::types::canonical::lookup_alias(name) {
+        let canon_target = crate::types::canonical::canonicalize(&info.target);
+        if let Some(head) = head_symbol_of(&canon_target) {
+            // Recurse so a chain of aliases collapses fully. The
+            // canonicaliser's expansion already follows aliases, so
+            // `head_symbol_of` returns the final non-alias head — but
+            // we still recurse defensively in case a future change to
+            // `canonicalize` introduces a partial-expansion mode.
+            return canonicalize_type_name(head);
+        }
+    }
+    name
+}
+
+/// Return the head symbol of `ty` for trait-impl-key registration.
+/// Built-in shapes route through their `canonical_name`; user-declared
+/// nominals carry their own name. Returns `None` for shapes that have
+/// no nominal head (raw type-variables, error / never sentinels).
+fn head_symbol_of(ty: &Type) -> Option<Symbol> {
+    match ty {
+        Type::Int => Some(intern("Int")),
+        Type::Float => Some(intern("Float")),
+        Type::ExtFloat => Some(intern("ExtFloat")),
+        Type::Bool => Some(intern("Bool")),
+        Type::String => Some(intern("String")),
+        Type::Unit => Some(intern("Unit")),
+        Type::List(_) | Type::Range(_) => Some(intern("List")),
+        Type::Map(_, _) => Some(intern("Map")),
+        Type::Set(_) => Some(intern("Set")),
+        Type::Channel(_) => Some(intern("Channel")),
+        Type::Tuple(_) => Some(intern("Tuple")),
+        Type::Fun(_, _) => Some(intern("Fn")),
+        Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
+        Type::Var(_) | Type::Error | Type::Never => None,
     }
 }
 

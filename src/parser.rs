@@ -1240,7 +1240,7 @@ impl Parser {
         self.expect(&Token::Type)?;
         let (name, _) = self.expect_ident()?;
 
-        // Optional type parameters: type Result(a, e) { ... }
+        // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
         let params = if self.peek_skip_nl() == &Token::LParen {
             self.advance();
             let mut ps = Vec::new();
@@ -1255,6 +1255,25 @@ impl Parser {
         } else {
             Vec::new()
         };
+
+        // Phase D: distinguish `type Foo = <type>` (alias) from
+        // `type Foo { ... }` (record/enum). The lookahead is exact —
+        // there is no other top-level use of `=` after a `type Name`
+        // header in silt today.
+        self.skip_nl();
+        if self.at(&Token::Eq) {
+            self.advance();
+            self.skip_nl();
+            let target = self.parse_type_expr()?;
+            return Ok(TypeDecl {
+                name,
+                params,
+                body: TypeBody::Alias(target),
+                is_pub: false,
+                span,
+                doc,
+            });
+        }
 
         self.expect(&Token::LBrace)?;
         self.skip_nl();

@@ -317,6 +317,20 @@ pub struct FnDecl {
 pub enum TypeBody {
     Enum(Vec<EnumVariant>),
     Record(Vec<RecordField>),
+    /// Type alias: `type Bytes = List(Int)` or `type Pair(a) = (a, a)`.
+    /// The right-hand side is any TypeExpr the parser produces for fn
+    /// parameter annotations. Aliases are transparent: every mention of
+    /// the alias name reduces to the target's canonical form for
+    /// typechecking, dispatch, and runtime. Parametric aliases bind their
+    /// `params` in the target so `type Pair(a) = (a, a)` can be
+    /// instantiated as `Pair(Int)` and substitute `a -> Int` in the
+    /// target before canonicalisation.
+    ///
+    /// Phase D of the canonical type-equality refactor (see
+    /// `src/types/canonical.rs` module doc) — the canonicaliser owns
+    /// alias expansion via a global registry the typechecker populates
+    /// on decl processing.
+    Alias(TypeExpr),
 }
 
 #[derive(Debug, Clone)]

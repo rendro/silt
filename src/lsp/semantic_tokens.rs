@@ -209,6 +209,10 @@ fn emit_type_decl_tokens(t: &TypeDecl, source: &str, out: &mut Vec<RawToken>) {
     let token_type = match &t.body {
         TypeBody::Enum(_) => TT_ENUM,
         TypeBody::Record(_) => TT_TYPE,
+        // Phase D: alias decls highlight the head identifier as a
+        // regular type — semantic-tokens layer doesn't need a
+        // dedicated category.
+        TypeBody::Alias(_) => TT_TYPE,
     };
     if let Some(off) = find_ident_in_range(source, start, end, &name_str) {
         push_token_at_offset(source, off, &name_str, token_type, out);
@@ -245,6 +249,12 @@ fn emit_type_decl_tokens(t: &TypeDecl, source: &str, out: &mut Vec<RawToken>) {
                     }
                 }
             }
+        }
+        TypeBody::Alias(_) => {
+            // Phase D: the alias target's identifier highlights are
+            // emitted by the regular type-expression walk elsewhere
+            // (the head ident was already pushed above). Nothing
+            // additional to do here.
         }
     }
 }
@@ -443,6 +453,8 @@ fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) 
                         return Some(match &t.body {
                             TypeBody::Enum(_) => TT_ENUM,
                             TypeBody::Record(_) => TT_TYPE,
+                            // Phase D: alias names highlight as a regular type.
+                            TypeBody::Alias(_) => TT_TYPE,
                         });
                     }
                     Decl::Type(t) => {
@@ -478,6 +490,8 @@ fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) 
                         return Some(match &t.body {
                             TypeBody::Enum(_) => TT_ENUM,
                             TypeBody::Record(_) => TT_TYPE,
+                            // Phase D: alias names highlight as a regular type.
+                            TypeBody::Alias(_) => TT_TYPE,
                         });
                     }
                     Decl::Type(t) => {

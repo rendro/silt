@@ -868,6 +868,13 @@ impl Compiler {
                         self.current_chunk().emit_u16(meta_key, span);
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
+                    crate::ast::TypeBody::Alias(_) => {
+                        // Phase D: type aliases are transparent at the
+                        // typechecker / canonicaliser layer and emit no
+                        // runtime artefacts. The alias name has already
+                        // reduced to its target's canonical form by the
+                        // time the compiler sees any use site.
+                    }
                 }
                 Ok(())
             }
@@ -1515,6 +1522,13 @@ impl Compiler {
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(qual_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
+                        }
+                        crate::ast::TypeBody::Alias(_) => {
+                            // Phase D: type aliases emit no runtime
+                            // artefacts; nothing to re-export under a
+                            // qualified name. The alias has already
+                            // expanded to its target's canonical form
+                            // at typecheck time.
                         }
                     }
                 }
