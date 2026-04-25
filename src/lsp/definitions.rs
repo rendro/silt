@@ -27,6 +27,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         span: f.span,
                         ty: fn_ty,
                         params,
+                        doc: f.doc.clone(),
                     },
                 );
             }
@@ -37,6 +38,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         span: t.span,
                         ty: None,
                         params: vec![],
+                        doc: t.doc.clone(),
                     },
                 );
                 if let TypeBody::Enum(variants) = &t.body {
@@ -47,6 +49,13 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                                 span: t.span,
                                 ty: None,
                                 params: vec![],
+                                // Variants inherit the enum's doc
+                                // string. Phase 1 does not surface
+                                // per-variant docs (no syntax); the
+                                // enum-level doc is the nearest useful
+                                // bit of context for hover on `Some`
+                                // or `Red`.
+                                doc: t.doc.clone(),
                             },
                         );
                     }
@@ -59,6 +68,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         span: t.span,
                         ty: None,
                         params: vec![],
+                        doc: t.doc.clone(),
                     },
                 );
             }
@@ -66,6 +76,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 pattern,
                 span,
                 value,
+                doc,
                 ..
             } => {
                 // Walk the pattern recursively so top-level destructuring
@@ -74,7 +85,14 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 // of a compound pattern uses its own ident span; a bare
                 // `let x = ...` preserves the old behaviour of using the
                 // enclosing decl span so goto-def still lands on `let`.
-                collect_let_pattern_defs(pattern, *span, value.ty.as_ref(), &mut defs);
+                collect_let_pattern_defs(
+                    pattern,
+                    *span,
+                    value.ty.as_ref(),
+                    doc.as_deref(),
+                    true,
+                    &mut defs,
+                );
             }
             _ => {}
         }
@@ -96,6 +114,8 @@ fn collect_let_pattern_defs(
     pattern: &Pattern,
     decl_span: Span,
     value_ty: Option<&Type>,
+    doc: Option<&str>,
+    is_top: bool,
     defs: &mut HashMap<Symbol, DefInfo>,
 ) {
     match &pattern.kind {
@@ -105,14 +125,22 @@ fn collect_let_pattern_defs(
             // position) to preserve the pre-fix goto-def behaviour. For
             // leaves of a compound pattern (e.g. `a` inside `(a, b)`) use
             // the ident's own span so goto-def lands on the identifier.
-            let is_bare =
-                pattern.span.offset == decl_span.offset && pattern.span.line == decl_span.line;
+            // `is_top` is true at the outermost call; goes false for any
+            // recursion into sub-patterns so destructured leaves get
+            // their own span.
             defs.insert(
                 *name,
                 DefInfo {
-                    span: if is_bare { decl_span } else { pattern.span },
+                    span: if is_top { decl_span } else { pattern.span },
                     ty: value_ty.cloned(),
                     params: vec![],
+                    // Only the bare binding inherits the let's doc; a
+                    // destructured leaf has no dedicated doc comment.
+                    doc: if is_top {
+                        doc.map(|s| s.to_string())
+                    } else {
+                        None
+                    },
                 },
             );
         }
@@ -123,12 +151,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, decl_span, inner, defs);
+                collect_let_pattern_defs(p, decl_span, inner, None, false, defs);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, value_ty, defs);
+                collect_let_pattern_defs(p, decl_span, value_ty, None, false, defs);
             }
         }
         PatternKind::Constructor(ctor, fields) => {
@@ -139,7 +167,7 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, decl_span, inner_ty.as_ref(), defs);
+                collect_let_pattern_defs(p, decl_span, inner_ty.as_ref(), None, false, defs);
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -155,7 +183,7 @@ fn collect_let_pattern_defs(
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, ty.as_ref(), defs);
+                    collect_let_pattern_defs(p, decl_span, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
@@ -165,6 +193,7 @@ fn collect_let_pattern_defs(
                             span: decl_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
+                            doc: None,
                         },
                     );
                 }
@@ -176,10 +205,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, elem_ty.as_ref(), defs);
+                collect_let_pattern_defs(p, decl_span, elem_ty.as_ref(), None, false, defs);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, decl_span, list_ty.as_ref(), defs);
+                collect_let_pattern_defs(r, decl_span, list_ty.as_ref(), None, false, defs);
             }
         }
         _ => {}

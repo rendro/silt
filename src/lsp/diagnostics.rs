@@ -67,7 +67,8 @@ impl Server {
             }
         };
 
-        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+        let (mut program, parse_errors) =
+            Parser::new_with_source(tokens, &source).parse_program_recovering();
 
         for e in &parse_errors {
             diagnostics.push(make_diagnostic(

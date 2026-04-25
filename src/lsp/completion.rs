@@ -1,6 +1,9 @@
 //! `textDocument/completion` handler and its dot-completion helpers.
 
-use lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position};
+use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, MarkupContent,
+    MarkupKind, Position,
+};
 
 use crate::ast::*;
 use crate::intern::intern;
@@ -64,10 +67,17 @@ impl Server {
                     _ => CompletionItemKind::VARIABLE,
                 };
                 let detail = def.ty.as_ref().map(|t| format!("{t}"));
+                let documentation = def.doc.as_ref().map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d.clone(),
+                    })
+                });
                 items.push(CompletionItem {
                     label: name.to_string(),
                     kind: Some(kind),
                     detail,
+                    documentation,
                     ..CompletionItem::default()
                 });
             }

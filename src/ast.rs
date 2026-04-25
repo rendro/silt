@@ -304,6 +304,13 @@ pub struct FnDecl {
     /// distinguish abstract methods from methods that legitimately return
     /// unit via an explicit `= ()` or `{ }` body.
     pub is_signature_only: bool,
+    /// Doc comment immediately preceding the decl token (or the `pub`
+    /// keyword on a `pub fn`). Collected by the parser from `--` line
+    /// comments and/or `{- ... -}` block comments that end on the line
+    /// immediately above the declaration with no blank line in between.
+    /// Multiple adjacent comment segments are concatenated with `\n`.
+    /// LSP hover / completion / signature-help render this as Markdown.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +338,8 @@ pub struct TypeDecl {
     pub body: TypeBody,
     pub is_pub: bool,
     pub span: Span,
+    /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -356,6 +365,8 @@ pub struct TraitDecl {
     pub param_where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
+    /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -417,6 +428,8 @@ pub enum Decl {
         value: Expr,
         is_pub: bool,
         span: Span,
+        /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
+        doc: Option<String>,
     },
 }
 

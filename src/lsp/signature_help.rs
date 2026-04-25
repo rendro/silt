@@ -1,6 +1,9 @@
 //! `textDocument/signatureHelp` handler and its call-site scanner.
 
-use lsp_types::{ParameterInformation, ParameterLabel, SignatureHelp, SignatureInformation};
+use lsp_types::{
+    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel,
+    SignatureHelp, SignatureInformation,
+};
 
 use crate::intern::intern;
 use crate::types::Type;
@@ -45,19 +48,28 @@ impl Server {
 
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);
-        let (label, params_info) = if let Some(def) = doc.definitions.get(&fn_sym) {
-            build_signature_from_def(&fn_name, def)
-        } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
-            // Show builtin type signature (no individual param info)
-            (format!("{fn_name}: {sig}"), vec![])
-        } else {
-            return None;
-        };
+        let (label, params_info, doc_text) =
+            if let Some(def) = doc.definitions.get(&fn_sym) {
+                let (label, params_info) = build_signature_from_def(&fn_name, def);
+                (label, params_info, def.doc.clone())
+            } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
+                // Show builtin type signature (no individual param info)
+                (format!("{fn_name}: {sig}"), vec![], None)
+            } else {
+                return None;
+            };
+
+        let documentation = doc_text.map(|d| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: d,
+            })
+        });
 
         Some(SignatureHelp {
             signatures: vec![SignatureInformation {
                 label,
-                documentation: None,
+                documentation,
                 parameters: Some(params_info),
                 active_parameter: Some(active_param),
             }],
@@ -224,6 +236,7 @@ mod tests {
             },
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
+            doc: None,
         };
         let (label, params) = build_signature_from_def("add", &def);
         assert!(label.starts_with("fn add("));
@@ -241,6 +254,7 @@ mod tests {
             },
             ty: None,
             params: vec!["x".into(), "y".into()],
+            doc: None,
         };
         let (label, params) = build_signature_from_def("foo", &def);
         assert_eq!(label, "fn foo(x, y)");

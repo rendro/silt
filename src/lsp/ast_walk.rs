@@ -228,7 +228,64 @@ fn find_ident_in_decl(
                 find_ident_in_expr(&method.body, cursor, best);
             }
         }
+        Decl::Type(t) => {
+            // Match the cursor against the type name at the `type Name`
+            // binder. Phase-1 doc surfacing requires hover to identify
+            // the decl binder so `DefInfo.doc` can be looked up.
+            check_decl_name_after_keyword(t.name, t.span, "type", cursor, source, best);
+        }
+        Decl::Trait(t) => {
+            check_decl_name_after_keyword(t.name, t.span, "trait", cursor, source, best);
+            // Trait method binders (for methods inside `trait X { fn m }`)
+            // are rarely called directly but hover on the method-name
+            // binder should also resolve.
+            for method in &t.methods {
+                check_fn_decl_name(method, cursor, source, best);
+            }
+        }
         _ => {}
+    }
+}
+
+/// Match the cursor against a decl's NAME identifier located after a
+/// leading keyword (e.g. `type Name` or `trait Name`). `span` points at
+/// the keyword; scan forward through source to find the ident's byte
+/// offset and check whether the cursor sits inside it.
+fn check_decl_name_after_keyword(
+    name: Symbol,
+    span: crate::lexer::Span,
+    keyword: &str,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
+    let Some(source) = source else {
+        return;
+    };
+    let name_str = crate::intern::resolve(name);
+    let decl_start = span.offset;
+    if decl_start >= source.len() {
+        return;
+    }
+    // Stop scanning at the end of the name — usually `(` for generic
+    // types, `{` for the body, newline, or `=`.
+    let after = &source[decl_start..];
+    let scan_end = after
+        .find('{')
+        .or_else(|| after.find('('))
+        .or_else(|| after.find('\n'))
+        .map(|p| decl_start + p)
+        .unwrap_or(source.len());
+    // Skip past the keyword itself (e.g. `type ` / `trait `) so we don't
+    // accidentally match the keyword text.
+    let skip = keyword.len();
+    let start_search = (decl_start + skip).min(scan_end);
+    if let Some(off) =
+        super::text_utils::find_ident_in_range(source, start_search, scan_end, &name_str)
+        && cursor >= off
+        && cursor < off + name_str.len()
+    {
+        *best = Some(name);
     }
 }
 

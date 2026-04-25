@@ -3735,6 +3735,7 @@ fn format_decl_with_comments(decl: &Decl, depth: usize) -> String {
             value,
             is_pub,
             span,
+            doc: _,
         } => {
             let indent = "  ".repeat(depth);
             let pub_prefix = if *is_pub { "pub " } else { "" };

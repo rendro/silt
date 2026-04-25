@@ -3502,6 +3502,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             span: dummy_span,
             is_recovery_stub: false,
             is_signature_only: false,
+            doc: None,
         };
         let mut default_bodies = HashMap::new();
         default_bodies.insert(intern("message"), default_fn);

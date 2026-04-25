@@ -16,6 +16,11 @@ pub(super) struct DefInfo {
     pub(super) span: Span,
     pub(super) ty: Option<Type>,
     pub(super) params: Vec<String>,
+    /// Markdown documentation from a doc comment preceding the decl,
+    /// if any. Populated by `build_definitions` from `FnDecl.doc`,
+    /// `TypeDecl.doc`, `TraitDecl.doc`, and `Decl::Let { doc, .. }`.
+    /// Surfaced via hover / completion / signature-help as Markdown.
+    pub(super) doc: Option<String>,
 }
 
 /// A local binding (let-bound identifier, function parameter, match binding, …)
