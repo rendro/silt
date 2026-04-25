@@ -1,11 +1,86 @@
 //! Builtin registration and dispatch.
 
 use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{Vm, VmError};
 use crate::builtins;
 use crate::module;
 use crate::value::Value;
+
+// ── Auto-derive deadness instrumentation (round 62 follow-up) ──────
+//
+// After the auto-derive synthesis pass was extended to cover generic
+// user enums and records (round 62), the dispatch arms below for
+// `(Variant, Variant)` / `(Record, Record)` in compare/equal/hash
+// are unreachable from USER-emitted code paths: the typechecker
+// emits a real `<TypeName>.<method>` global for every user enum and
+// record (generic or not), and `Op::CallMethod`'s qualified-global
+// lookup at runtime finds it before falling through to
+// `dispatch_trait_method`.
+//
+// They are STILL reachable for BUILT-IN enums (Option, Result,
+// Weekday, HttpMethod, ChannelResult, ChannelOp, Step) and built-in
+// records (Response, Request, FileStat, Date, Time, DateTime, ...)
+// which are registered directly into `self.enums` / `self.records`
+// without a user `Decl::Type` and so are not processed by the
+// synth pass. The dispatch arms therefore CANNOT be deleted in this
+// round; they remain live for built-in receivers.
+//
+// These counters split the hits by user-vs-builtin (the proof test
+// exercises both): user-type counters must be zero after every
+// shape; built-in counters are non-zero (proving the arm is still
+// load-bearing for built-ins). The asymmetry is documented in
+// `synthesize_auto_derive_impls` in `src/typechecker/mod.rs`.
+//
+// A future round that synthesizes for built-ins too can delete the
+// arms outright; at that point all counters fall to zero and the
+// proof test simplifies to a behaviour-only assert.
+
+pub(crate) static COMPARE_VARIANT_VARIANT_HITS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static COMPARE_RECORD_RECORD_HITS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static HASH_VARIANT_HITS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static HASH_RECORD_HITS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static EQUAL_VARIANT_RECEIVER_HITS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static EQUAL_RECORD_RECEIVER_HITS: AtomicUsize = AtomicUsize::new(0);
+
+/// Reset all auto-derive deadness counters to zero. Called from the
+/// proof test before exercising the barrage; re-called after each
+/// shape so an early-failed assertion can identify which shape leaked.
+pub fn reset_auto_derive_dead_arm_counters() {
+    COMPARE_VARIANT_VARIANT_HITS.store(0, Ordering::Relaxed);
+    COMPARE_RECORD_RECORD_HITS.store(0, Ordering::Relaxed);
+    HASH_VARIANT_HITS.store(0, Ordering::Relaxed);
+    HASH_RECORD_HITS.store(0, Ordering::Relaxed);
+    EQUAL_VARIANT_RECEIVER_HITS.store(0, Ordering::Relaxed);
+    EQUAL_RECORD_RECEIVER_HITS.store(0, Ordering::Relaxed);
+}
+
+/// Snapshot of all auto-derive deadness counters. Returned as a
+/// fixed-size array of (name, count) pairs so the proof test can
+/// pinpoint exactly which shape leaks if the assertion trips.
+pub fn auto_derive_dead_arm_counts() -> [(&'static str, usize); 6] {
+    [
+        (
+            "compare(Variant, Variant)",
+            COMPARE_VARIANT_VARIANT_HITS.load(Ordering::Relaxed),
+        ),
+        (
+            "compare(Record, Record)",
+            COMPARE_RECORD_RECORD_HITS.load(Ordering::Relaxed),
+        ),
+        ("hash(Variant)", HASH_VARIANT_HITS.load(Ordering::Relaxed)),
+        ("hash(Record)", HASH_RECORD_HITS.load(Ordering::Relaxed)),
+        (
+            "equal(Variant receiver)",
+            EQUAL_VARIANT_RECEIVER_HITS.load(Ordering::Relaxed),
+        ),
+        (
+            "equal(Record receiver)",
+            EQUAL_RECORD_RECEIVER_HITS.load(Ordering::Relaxed),
+        ),
+    ]
+}
 
 /// Invoke a registered foreign function while catching panics that escape it.
 ///
@@ -389,6 +464,19 @@ impl Vm {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
+                // Round-62 deadness instrumentation: track Variant/Record
+                // receivers reaching this fallback. After auto-derive
+                // synthesis, every user enum/record has a real
+                // `<T>.equal` global and these counters should stay zero.
+                match receiver {
+                    Value::Variant(..) => {
+                        EQUAL_VARIANT_RECEIVER_HITS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Value::Record(..) => {
+                        EQUAL_RECORD_RECEIVER_HITS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
             "compare" => {
@@ -454,12 +542,25 @@ impl Vm {
                     // ordinal, then lexicographically by fields when
                     // ordinals tie. The same registry is used for the
                     // built-in Weekday/HttpMethod/Result/Option enums.
-                    (Value::Variant(..), Value::Variant(..)) => receiver.cmp(other),
+                    //
+                    // Round-62 deadness instrumentation: this arm should
+                    // be unreachable after auto-derive synthesis (Op::
+                    // CallMethod resolves through the user-emitted
+                    // `<EnumName>.compare` global). The counter proves it.
+                    (Value::Variant(..), Value::Variant(..)) => {
+                        COMPARE_VARIANT_VARIANT_HITS.fetch_add(1, Ordering::Relaxed);
+                        receiver.cmp(other)
+                    }
                     // Record vs Record: typechecker auto-derives Compare for
                     // user-declared records. `Value::cmp` orders records by
                     // name then lexicographically by fields (src/value.rs:1537)
                     // with canonical Date/Time/DateTime field ordering.
-                    (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
+                    //
+                    // Round-62 deadness instrumentation: see Variant arm above.
+                    (Value::Record(..), Value::Record(..)) => {
+                        COMPARE_RECORD_RECORD_HITS.fetch_add(1, Ordering::Relaxed);
+                        receiver.cmp(other)
+                    }
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
                     // (src/typechecker/mod.rs:3383). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
@@ -495,6 +596,19 @@ impl Vm {
                 // Only honour hash() for types the typechecker actually
                 // auto-derives Hash for — emitting a dispatch error for
                 // anything else keeps the user-impl path authoritative.
+                // Round-62 deadness instrumentation: increment the
+                // counter when a Variant or Record receiver reaches this
+                // arm (should be zero after auto-derive synthesis routes
+                // them to user-emitted `<T>.hash` globals).
+                match receiver {
+                    Value::Variant(..) => {
+                        HASH_VARIANT_HITS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Value::Record(..) => {
+                        HASH_RECORD_HITS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
                 match receiver {
                     Value::Int(_)
                     | Value::Float(_)

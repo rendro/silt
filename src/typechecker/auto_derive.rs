@@ -18,14 +18,21 @@
 //!
 //! ## Scope
 //!
-//! Round 1 of this synthesis covers **non-generic** user enums and
-//! records. Generic types like `type Box(a) { Foo(a) }` still rely on
-//! the typecheck-stamp + `dispatch_trait_method` path: the where-clause
-//! synthesis (`where a: Compare` etc) and the recursive
-//! same-tag-vs-different-tag dispatch logic are mechanical but require
-//! more invasive plumbing through `TraitImpl::target_param_names` /
-//! `target_type_args` / `where_clauses` than fits in this round. See
-//! the follow-up note in /docs/audit/round-62.md (TBD).
+//! Covers **both non-generic and generic** user enums and records. For
+//! a generic type `type Box(a) { Foo(a) }`, the synthesized impl is
+//! shaped as
+//!
+//! ```silt
+//! trait Compare for Box(a) where a: Compare {
+//!     fn compare(self: Box(a), other: Box(a)) -> Int = ...
+//! }
+//! ```
+//!
+//! — i.e. each generic param gets a where-clause bound to whichever
+//! trait we're synthesizing. The body is identical to the non-generic
+//! case because the recursive `.compare()` / `.equal()` / `.hash()` /
+//! `.display()` calls on field bindings flow through the trait dispatch
+//! using the where-bound, not a structural inspection of the field type.
 //!
 //! ## Body shapes
 //!
@@ -173,12 +180,24 @@ fn named_te(name: Symbol) -> TypeExpr {
     TypeExpr::new(TypeExprKind::Named(name), synth_span())
 }
 
-/// Build a `Param { kind: Data, pattern: Ident(name), ty: Some(Named(ty)) }`.
-fn param(name: Symbol, ty: Symbol) -> Param {
+/// Build a `TypeExpr` for the (possibly generic) type being derived.
+/// `Box(a)` → `Generic(Box, [Named(a)])`; non-generic `Color` →
+/// `Named(Color)`.
+fn type_te(name: Symbol, params: &[Symbol]) -> TypeExpr {
+    if params.is_empty() {
+        named_te(name)
+    } else {
+        let args: Vec<TypeExpr> = params.iter().map(|p| named_te(*p)).collect();
+        TypeExpr::new(TypeExprKind::Generic(name, args), synth_span())
+    }
+}
+
+/// Build a `Param { kind: Data, pattern: Ident(name), ty: Some(<ty>) }`.
+fn param(name: Symbol, ty: TypeExpr) -> Param {
     Param {
         kind: ParamKind::Data,
         pattern: id_pat(name),
-        ty: Some(named_te(ty)),
+        ty: Some(ty),
     }
 }
 
@@ -204,20 +223,37 @@ fn fn_decl(
     }
 }
 
-/// Wrap synthesized FnDecls in a TraitImpl. Always:
-/// - target_type = type_name
-/// - target_type_args = [] (round 1: non-generic only)
-/// - target_param_names = []
-/// - where_clauses = []
-/// - is_auto_derived = true (so user impls can override)
-fn trait_impl(trait_name: Symbol, type_name: Symbol, methods: Vec<FnDecl>) -> TraitImpl {
+/// Wrap synthesized FnDecls in a TraitImpl. For non-generic types
+/// (`params` empty), `target_type_args`, `target_param_names`, and
+/// `where_clauses` are all empty. For generic types
+/// (`params` non-empty), e.g. `type Box(a)`:
+/// - `target_type_args = [TypeExpr::Named("a"), ...]`
+/// - `target_param_names = ["a", ...]`
+/// - `where_clauses = [("a", trait_name, []), ...]` (each param bound
+///   to the trait being synthesized — `where a: Compare` for Compare's
+///   impl, etc.). Phantom params (params not used in any field) still
+///   receive the bound for consistency: this matches Rust's auto-derive
+///   behaviour and avoids a special case.
+/// - `is_auto_derived = true` (so user impls can override).
+fn trait_impl(
+    trait_name: Symbol,
+    type_name: Symbol,
+    params: &[Symbol],
+    methods: Vec<FnDecl>,
+) -> TraitImpl {
+    let target_type_args: Vec<TypeExpr> = params.iter().map(|p| named_te(*p)).collect();
+    let target_param_names: Vec<Symbol> = params.to_vec();
+    let where_clauses: Vec<WhereClause> = params
+        .iter()
+        .map(|p| (*p, trait_name, Vec::<TypeExpr>::new()))
+        .collect();
     TraitImpl {
         trait_name,
         trait_args: Vec::new(),
         target_type: type_name,
-        target_type_args: Vec::new(),
-        target_param_names: Vec::new(),
-        where_clauses: Vec::new(),
+        target_type_args,
+        target_param_names,
+        where_clauses,
         methods,
         span: synth_span(),
         is_auto_derived: true,
@@ -235,10 +271,12 @@ fn trait_impl(trait_name: Symbol, type_name: Symbol, methods: Vec<FnDecl>) -> Tr
 ///   `ord_self.compare(ord_other)`.
 pub(super) fn synth_compare_impl_for_enum(
     type_name: Symbol,
+    type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
     let self_sym = intern("self");
     let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
     // Uninhabited enum: `match self { }` is vacuously exhaustive — no
     // value of the type can reach this point, so the body never runs.
     // The exhaustiveness checker has a documented short-circuit for
@@ -253,11 +291,14 @@ pub(super) fn synth_compare_impl_for_enum(
         );
         let method = fn_decl(
             intern("compare"),
-            vec![param(self_sym, type_name), param(other_sym, type_name)],
+            vec![
+                param(self_sym, self_te.clone()),
+                param(other_sym, self_te),
+            ],
             Some(named_te(intern("Int"))),
             body,
         );
-        return trait_impl(intern("Compare"), type_name, vec![method]);
+        return trait_impl(intern("Compare"), type_name, type_params, vec![method]);
     }
     let scrut = tuple_expr(vec![ident_expr(self_sym), ident_expr(other_sym)]);
     let mut arms: Vec<MatchArm> = Vec::new();
@@ -310,11 +351,14 @@ pub(super) fn synth_compare_impl_for_enum(
     let body = match_expr(scrut, arms);
     let method = fn_decl(
         intern("compare"),
-        vec![param(self_sym, type_name), param(other_sym, type_name)],
+        vec![
+            param(self_sym, self_te.clone()),
+            param(other_sym, self_te),
+        ],
         Some(named_te(intern("Int"))),
         body,
     );
-    trait_impl(intern("Compare"), type_name, vec![method])
+    trait_impl(intern("Compare"), type_name, type_params, vec![method])
 }
 
 /// Build `let c0 = a0.compare(b0); match c0 { 0 -> let c1 = a1.compare(b1); ..., _ -> c0 }`
@@ -366,10 +410,12 @@ fn build_ordinal_match(scrut: Expr, variants: &[EnumVariant]) -> Expr {
 
 pub(super) fn synth_equal_impl_for_enum(
     type_name: Symbol,
+    type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
     let self_sym = intern("self");
     let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
     if variants.is_empty() {
         let body = Expr::new(
             ExprKind::Match {
@@ -380,11 +426,14 @@ pub(super) fn synth_equal_impl_for_enum(
         );
         let method = fn_decl(
             intern("equal"),
-            vec![param(self_sym, type_name), param(other_sym, type_name)],
+            vec![
+                param(self_sym, self_te.clone()),
+                param(other_sym, self_te),
+            ],
             Some(named_te(intern("Bool"))),
             body,
         );
-        return trait_impl(intern("Equal"), type_name, vec![method]);
+        return trait_impl(intern("Equal"), type_name, type_params, vec![method]);
     }
     let scrut = tuple_expr(vec![ident_expr(self_sym), ident_expr(other_sym)]);
     let mut arms: Vec<MatchArm> = Vec::new();
@@ -439,11 +488,14 @@ pub(super) fn synth_equal_impl_for_enum(
     let body = match_expr(scrut, arms);
     let method = fn_decl(
         intern("equal"),
-        vec![param(self_sym, type_name), param(other_sym, type_name)],
+        vec![
+            param(self_sym, self_te.clone()),
+            param(other_sym, self_te),
+        ],
         Some(named_te(intern("Bool"))),
         body,
     );
-    trait_impl(intern("Equal"), type_name, vec![method])
+    trait_impl(intern("Equal"), type_name, type_params, vec![method])
 }
 
 // ── Hash on enum ─────────────────────────────────────────────────────
@@ -468,9 +520,11 @@ pub(super) fn synth_equal_impl_for_enum(
 /// new locked values.
 pub(super) fn synth_hash_impl_for_enum(
     type_name: Symbol,
+    type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
     let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
     if variants.is_empty() {
         // `match self { }` — uninhabited scrutinee.
         let body = Expr::new(
@@ -482,11 +536,11 @@ pub(super) fn synth_hash_impl_for_enum(
         );
         let method = fn_decl(
             intern("hash"),
-            vec![param(self_sym, type_name)],
+            vec![param(self_sym, self_te)],
             Some(named_te(intern("Int"))),
             body,
         );
-        return trait_impl(intern("Hash"), type_name, vec![method]);
+        return trait_impl(intern("Hash"), type_name, type_params, vec![method]);
     }
     let arms: Vec<MatchArm> = variants
         .iter()
@@ -518,11 +572,11 @@ pub(super) fn synth_hash_impl_for_enum(
     let body = match_expr(ident_expr(self_sym), arms);
     let method = fn_decl(
         intern("hash"),
-        vec![param(self_sym, type_name)],
+        vec![param(self_sym, self_te)],
         Some(named_te(intern("Int"))),
         body,
     );
-    trait_impl(intern("Hash"), type_name, vec![method])
+    trait_impl(intern("Hash"), type_name, type_params, vec![method])
 }
 
 /// Combine two hashes into a structural hash. Silt's surface-level
@@ -561,9 +615,11 @@ fn combine_hash_expr(a: Expr, b: Expr) -> Expr {
 
 pub(super) fn synth_display_impl_for_enum(
     type_name: Symbol,
+    type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
     let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
     if variants.is_empty() {
         let body = Expr::new(
             ExprKind::Match {
@@ -574,11 +630,11 @@ pub(super) fn synth_display_impl_for_enum(
         );
         let method = fn_decl(
             intern("display"),
-            vec![param(self_sym, type_name)],
+            vec![param(self_sym, self_te)],
             Some(named_te(intern("String"))),
             body,
         );
-        return trait_impl(intern("Display"), type_name, vec![method]);
+        return trait_impl(intern("Display"), type_name, type_params, vec![method]);
     }
     let arms: Vec<MatchArm> = variants
         .iter()
@@ -612,21 +668,23 @@ pub(super) fn synth_display_impl_for_enum(
     let body = match_expr(ident_expr(self_sym), arms);
     let method = fn_decl(
         intern("display"),
-        vec![param(self_sym, type_name)],
+        vec![param(self_sym, self_te)],
         Some(named_te(intern("String"))),
         body,
     );
-    trait_impl(intern("Display"), type_name, vec![method])
+    trait_impl(intern("Display"), type_name, type_params, vec![method])
 }
 
 // ── Compare on record ────────────────────────────────────────────────
 
 pub(super) fn synth_compare_impl_for_record(
     type_name: Symbol,
+    type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
     let self_sym = intern("self");
     let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
     let body = if fields.is_empty() {
         // No fields → all instances are equal under Compare.
         int_expr(0)
@@ -635,11 +693,14 @@ pub(super) fn synth_compare_impl_for_record(
     };
     let method = fn_decl(
         intern("compare"),
-        vec![param(self_sym, type_name), param(other_sym, type_name)],
+        vec![
+            param(self_sym, self_te.clone()),
+            param(other_sym, self_te),
+        ],
         Some(named_te(intern("Int"))),
         body,
     );
-    trait_impl(intern("Compare"), type_name, vec![method])
+    trait_impl(intern("Compare"), type_name, type_params, vec![method])
 }
 
 fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField]) -> Expr {
@@ -672,10 +733,12 @@ fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[Recor
 
 pub(super) fn synth_equal_impl_for_record(
     type_name: Symbol,
+    type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
     let self_sym = intern("self");
     let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
     let body = if fields.is_empty() {
         bool_expr(true)
     } else {
@@ -697,20 +760,25 @@ pub(super) fn synth_equal_impl_for_record(
     };
     let method = fn_decl(
         intern("equal"),
-        vec![param(self_sym, type_name), param(other_sym, type_name)],
+        vec![
+            param(self_sym, self_te.clone()),
+            param(other_sym, self_te),
+        ],
         Some(named_te(intern("Bool"))),
         body,
     );
-    trait_impl(intern("Equal"), type_name, vec![method])
+    trait_impl(intern("Equal"), type_name, type_params, vec![method])
 }
 
 // ── Hash on record ───────────────────────────────────────────────────
 
 pub(super) fn synth_hash_impl_for_record(
     type_name: Symbol,
+    type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
     let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
     let body = if fields.is_empty() {
         int_expr(0)
     } else {
@@ -732,20 +800,22 @@ pub(super) fn synth_hash_impl_for_record(
     };
     let method = fn_decl(
         intern("hash"),
-        vec![param(self_sym, type_name)],
+        vec![param(self_sym, self_te)],
         Some(named_te(intern("Int"))),
         body,
     );
-    trait_impl(intern("Hash"), type_name, vec![method])
+    trait_impl(intern("Hash"), type_name, type_params, vec![method])
 }
 
 // ── Display on record ────────────────────────────────────────────────
 
 pub(super) fn synth_display_impl_for_record(
     type_name: Symbol,
+    type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
     let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
     let name_str = crate::intern::resolve(type_name);
     let body = if fields.is_empty() {
         // "Name {}"
@@ -774,9 +844,9 @@ pub(super) fn synth_display_impl_for_record(
     };
     let method = fn_decl(
         intern("display"),
-        vec![param(self_sym, type_name)],
+        vec![param(self_sym, self_te)],
         Some(named_te(intern("String"))),
         body,
     );
-    trait_impl(intern("Display"), type_name, vec![method])
+    trait_impl(intern("Display"), type_name, type_params, vec![method])
 }

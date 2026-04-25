@@ -3151,29 +3151,65 @@ impl TypeChecker {
         // `program.decls` while we mutate `self.trait_impl_set` below.
         // (We don't mutate trait_impl_set here, but we do need to call
         // `type_name_for_impl` which takes `&self`.)
-        let mut tasks: Vec<(Symbol, TypeBodyKind)> = Vec::new();
+        //
+        // Both non-generic and generic types are collected. For generic
+        // types (`td.params` non-empty) the synth helpers emit a
+        // where-clause `where p: <Trait>` for each `p` in `td.params`,
+        // so generic-param fields trivially satisfy the trait being
+        // synthesized.
+        let mut tasks: Vec<(Symbol, Vec<Symbol>, TypeBodyKind)> = Vec::new();
         for decl in decls.iter() {
-            if let Decl::Type(td) = decl
-                && td.params.is_empty()
-            {
+            if let Decl::Type(td) = decl {
                 match &td.body {
                     TypeBody::Enum(_) => {
                         if let Some(info) = self.enums.get(&td.name) {
-                            tasks.push((td.name, TypeBodyKind::Enum(info.variants.clone())));
+                            tasks.push((
+                                td.name,
+                                td.params.clone(),
+                                TypeBodyKind::Enum(info.variants.clone()),
+                            ));
                         }
                     }
                     TypeBody::Record(_) => {
                         if let Some(info) = self.records.get(&td.name) {
-                            tasks.push((td.name, TypeBodyKind::Record(info.fields.clone())));
+                            tasks.push((
+                                td.name,
+                                td.params.clone(),
+                                TypeBodyKind::Record(info.fields.clone()),
+                            ));
                         }
                     }
                     TypeBody::Alias(_) => {}
                 }
             }
         }
+        // ASYMMETRY (round 62 follow-up): Built-in enums (Option,
+        // Result, Weekday, HttpMethod, ChannelResult, ChannelOp, Step,
+        // ...) and built-in records (Response, Request, FileStat,
+        // Date, Time, DateTime, ...) are registered directly into
+        // `self.enums` / `self.records` from `register_builtins` and
+        // builtin module init paths, not via a top-level `Decl::Type`.
+        // They are NOT processed by this synth pass.
+        //
+        // Consequence: built-in enums/records continue to rely on the
+        // typecheck-stamp + `dispatch_trait_method` runtime fallback
+        // for Compare/Equal/Hash/Display. The VM dispatch arms in
+        // `src/vm/dispatch.rs` for `(Variant, Variant)`, `(Record,
+        // Record)`, and the Variant/Record entries in the hash
+        // allowlist remain LIVE for built-in receivers and MUST NOT
+        // be deleted in this round.
+        //
+        // The deadness instrumentation in `dispatch.rs` (round 62)
+        // proves user types don't hit those arms; built-in types
+        // still do, by design. A future round can lift this asymmetry
+        // by either (a) emitting synthetic `Decl::Type` nodes for
+        // each built-in and routing them through the same synth
+        // pipeline, or (b) directly synthesizing into `self.enums` /
+        // `self.records` and registering the resulting impls without
+        // an AST round-trip.
 
         let mut synthesized: Vec<Decl> = Vec::new();
-        for (type_name, body) in tasks {
+        for (type_name, type_params, body) in tasks {
             // Helper closures to scope the synthesis decisions per-trait.
             let key = canonicalize_type_name(type_name);
 
@@ -3191,7 +3227,28 @@ impl TypeChecker {
             // self_supports = true: e.g. `type Tree { Leaf, Node(Tree, Tree) }`
             // can derive Compare because the recursive `.compare()` calls
             // resolve to the same synthesized method we're emitting.
-            let supports = |trait_sym: Symbol, ty: &Type| -> bool {
+            //
+            // For generic types, every generic param is treated as
+            // supporting the trait we're synthesizing — the synthesized
+            // impl carries `where p: <Trait>` for each param, so the
+            // trait obligation on the recursive `.compare()` etc. will
+            // be satisfied at the impl-instantiation site by the user
+            // (or rejected there with a localised error). A field that
+            // mentions a generic param via `Type::Var` resolves through
+            // the param_var_ids in EnumInfo/RecordInfo.
+            let param_var_ids: std::collections::HashSet<TyVar> = match &body {
+                TypeBodyKind::Enum(_) => self
+                    .enums
+                    .get(&type_name)
+                    .map(|info| info.param_var_ids.iter().copied().collect())
+                    .unwrap_or_default(),
+                TypeBodyKind::Record(_) => self
+                    .record_param_var_ids
+                    .get(&type_name)
+                    .map(|ids| ids.iter().copied().collect())
+                    .unwrap_or_default(),
+            };
+            let supports = |_trait_sym: Symbol, ty: &Type| -> bool {
                 // Self-references — same nominal head as the type we're
                 // synthesizing for — are always allowed (the recursive
                 // body will lookup the same global we register).
@@ -3200,7 +3257,16 @@ impl TypeChecker {
                 {
                     return true;
                 }
-                self.field_type_supports_trait(trait_sym, ty)
+                // Generic-param references resolve to a TyVar whose id
+                // appears in `param_var_ids`; treat them as supporting
+                // the trait being synthesized (the where-clause covers
+                // the obligation at the impl-instantiation site).
+                if let Type::Var(v) = self.apply(ty)
+                    && param_var_ids.contains(&v)
+                {
+                    return true;
+                }
+                self.field_type_supports_trait(_trait_sym, ty)
             };
 
             let (mut compare_ok, mut equal_ok, mut hash_ok, mut display_ok) =
@@ -3257,22 +3323,38 @@ impl TypeChecker {
                         .collect();
                     if display_ok && !user_impls.contains(&(display_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_enum(type_name, &ast_variants),
+                            auto_derive::synth_display_impl_for_enum(
+                                type_name,
+                                &type_params,
+                                &ast_variants,
+                            ),
                         ));
                     }
                     if compare_ok && !user_impls.contains(&(compare_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_enum(type_name, &ast_variants),
+                            auto_derive::synth_compare_impl_for_enum(
+                                type_name,
+                                &type_params,
+                                &ast_variants,
+                            ),
                         ));
                     }
                     if equal_ok && !user_impls.contains(&(equal_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_equal_impl_for_enum(type_name, &ast_variants),
+                            auto_derive::synth_equal_impl_for_enum(
+                                type_name,
+                                &type_params,
+                                &ast_variants,
+                            ),
                         ));
                     }
                     if hash_ok && !user_impls.contains(&(hash_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_hash_impl_for_enum(type_name, &ast_variants),
+                            auto_derive::synth_hash_impl_for_enum(
+                                type_name,
+                                &type_params,
+                                &ast_variants,
+                            ),
                         ));
                     }
                 }
@@ -3293,22 +3375,38 @@ impl TypeChecker {
                         .collect();
                     if display_ok && !user_impls.contains(&(display_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_record(type_name, &ast_fields),
+                            auto_derive::synth_display_impl_for_record(
+                                type_name,
+                                &type_params,
+                                &ast_fields,
+                            ),
                         ));
                     }
                     if compare_ok && !user_impls.contains(&(compare_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_record(type_name, &ast_fields),
+                            auto_derive::synth_compare_impl_for_record(
+                                type_name,
+                                &type_params,
+                                &ast_fields,
+                            ),
                         ));
                     }
                     if equal_ok && !user_impls.contains(&(equal_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_equal_impl_for_record(type_name, &ast_fields),
+                            auto_derive::synth_equal_impl_for_record(
+                                type_name,
+                                &type_params,
+                                &ast_fields,
+                            ),
                         ));
                     }
                     if hash_ok && !user_impls.contains(&(hash_sym, key)) {
                         synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_hash_impl_for_record(type_name, &ast_fields),
+                            auto_derive::synth_hash_impl_for_record(
+                                type_name,
+                                &type_params,
+                                &ast_fields,
+                            ),
                         ));
                     }
                 }

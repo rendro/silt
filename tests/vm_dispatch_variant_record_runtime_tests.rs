@@ -23,6 +23,22 @@
 //!    `impl Hash for Value` (`src/value.rs:1814`) already hashes records
 //!    structurally. Fix: add `Value::Record(..)` to the allowlist.
 //!
+//! ROUND-62 STATUS: After the auto-derive synthesis pass extension to
+//! generic types, USER enums and records (Color, Point) now route
+//! through the synthesized `<Type>.<method>` global emitted by the
+//! typechecker — `Op::CallMethod`'s qualified-global lookup resolves
+//! the call BEFORE falling through to `dispatch_trait_method`. The
+//! deadness proof (`tests/auto_derive_dead_arm_proof_tests.rs`)
+//! confirms user-type counters stay zero through an exhaustive
+//! barrage. BUILT-IN enums (Weekday and friends), however, are
+//! registered directly into `self.enums` without a user `Decl::Type`
+//! and so are not processed by the synth pass; they continue to hit
+//! the dispatch arms below.
+//!
+//! Tests below stay as behaviour locks: the user-typed cases are now
+//! served by the synth global; the Weekday case still serves as the
+//! reachability proof for built-in dispatch.
+//!
 //! These tests exercise the runtime end-to-end via the `silt` CLI
 //! (mirroring `tests/vm_trait_dispatch_runtime_tests.rs`) so they fail
 //! before the `dispatch.rs` fix and pass after.

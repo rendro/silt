@@ -3,7 +3,7 @@
 //! Executes compiled `Function` objects produced by the compiler.
 
 mod arithmetic;
-mod dispatch;
+pub mod dispatch;
 pub mod error;
 mod execute;
 mod runtime;
