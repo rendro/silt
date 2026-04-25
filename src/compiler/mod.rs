@@ -21,6 +21,7 @@ use crate::lexer::{Lexer, Span};
 use crate::module;
 use crate::parser::Parser;
 use crate::typechecker;
+use crate::types::canonical::canonicalize_type_name;
 use crate::value::Value;
 
 mod patterns;
@@ -41,11 +42,14 @@ fn encode_type_expr(te: &TypeExpr) -> String {
                 _ => "String".to_string(),
             }
         }
-        TypeExprKind::Generic(name, args) => match resolve(*name).as_str() {
-            "List" | "Range" => {
-                // Range is a nominal alias for List (see Type::Range in
-                // src/types.rs); encode both as a list for runtime type
-                // descriptors since the runtime representation is shared.
+        TypeExprKind::Generic(name, args) => match resolve(canonicalize_type_name(*name)).as_str() {
+            // Range collapses to List via canonicalize_type_name (see
+            // src/types/canonical.rs), so this arm matches both the
+            // user-typed `List(T)` and `Range(T)` shapes; the runtime
+            // representation is shared, and emitting a `List:<inner>`
+            // descriptor for both keeps record-field metadata in lockstep
+            // with the canonical type name.
+            "List" => {
                 let inner = args
                     .first()
                     .map(encode_type_expr)
@@ -870,6 +874,21 @@ impl Compiler {
 
             Decl::TraitImpl(trait_impl) => {
                 // Compile each method and register as "TypeName.method_name" global.
+                //
+                // The target type is routed through `canonicalize_type_name`
+                // so the emitted global key matches the typechecker's
+                // registration site (`register_trait_impl` in
+                // src/typechecker/mod.rs) and the VM's runtime dispatch
+                // name (`Vm::value_type_name_for_dispatch`). Today the
+                // only collapse is `Range -> List`: a
+                // `trait Foo for Range(a) { fn bar(self) = ... }` impl
+                // emits `"List.bar"` here, matches the `"List.bar"` key
+                // the typechecker registered, and is found by the VM
+                // when dispatching on a `Value::Range` (or `Value::List`)
+                // receiver. Without this canonicalisation the compiler
+                // would emit `"Range.bar"` while the typechecker
+                // registers `"List.bar"`, leaving the impl unreachable.
+                let canonical_target = canonicalize_type_name(trait_impl.target_type);
                 for method in &trait_impl.methods {
                     let span = method.span;
                     if method.params.len() > u8::MAX as usize {
@@ -884,7 +903,7 @@ impl Compiler {
                         });
                     }
                     let arity = method.params.len() as u8;
-                    let qualified_name = format!("{}.{}", trait_impl.target_type, method.name);
+                    let qualified_name = format!("{}.{}", canonical_target, method.name);
 
                     self.contexts
                         .push(CompileContext::new(qualified_name.clone(), arity));

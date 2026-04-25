@@ -28,7 +28,9 @@
 //! source-level spelling for diagnostics; this module deliberately does
 //! not.
 
+use crate::intern::{Symbol, intern, resolve};
 use crate::types::Type;
+use crate::value::Value;
 
 /// Reduce a type to its canonical form.
 ///
@@ -151,6 +153,100 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Var(_) => "_".to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
+    }
+}
+
+/// Canonicalise a type-name [`Symbol`] for dispatch-table keys.
+///
+/// Mirror of [`canonical_name`] for the case where only the head
+/// constructor's surface name is in hand (as a `Symbol`) — typically
+/// because a parser/AST node carries the user-supplied identifier
+/// rather than a fully reconstructed [`Type`]. Today the only collapse
+/// is `Range -> List`, matching [`canonical_name`]'s reduction rule.
+/// Other names round-trip unchanged so the function is safe to apply
+/// unconditionally to any target-type symbol.
+///
+/// Phase B added a sibling helper of the same name in
+/// `src/typechecker/mod.rs` that the typechecker's
+/// `register_trait_impl` and trait-method body-check sites call;
+/// phase C adds this canonical-module copy so the compiler
+/// (`src/compiler/mod.rs`) can route `trait_impl.target_type` through
+/// the same reduction without depending on the typechecker module.
+/// Both copies share the same single-rule (`Range -> List`)
+/// implementation, so they stay in lock-step by construction; if the
+/// canonicalisation rules ever expand, both must be updated together
+/// (see also: the architectural lock test in
+/// `tests/canonical_type_arch_lock_tests.rs`).
+pub fn canonicalize_type_name(name: Symbol) -> Symbol {
+    match resolve(name).as_str() {
+        "Range" => intern("List"),
+        _ => name,
+    }
+}
+
+/// Canonical dispatch name for a runtime [`Value`], where the answer
+/// can be derived from the value's shape alone.
+///
+/// Returns `Some(name)` for every variant whose dispatch identity is a
+/// fixed function of the variant tag plus any carried name string
+/// (records and type descriptors). Returns `None` for
+/// [`Value::Variant`]: enum-variant-tag → parent-type lookup needs the
+/// VM's `__type_of__<tag>` global table, which lives outside this
+/// module. Callers (currently `Vm::value_type_name_for_dispatch` in
+/// `src/vm/mod.rs`) handle the `Variant` case themselves and delegate
+/// every other variant here.
+///
+/// The mapping mirrors [`canonical_name`] applied to each `Value`
+/// variant's corresponding [`Type`] — in particular `Value::Range(..)`
+/// returns `"List"` because the type system collapses `Range(t)` to
+/// `List(t)` and the compiler emits trait-impl globals under the
+/// canonical key. Returning `"Range"` here would route a
+/// `Value::Range` receiver to a never-registered `"Range.<m>"` global
+/// and surface `no method '<m>' for type 'Range'` to the user (round
+/// 61 REGRESSION).
+pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
+    match val {
+        // Variant requires globals lookup for `__type_of__<tag>`; the
+        // VM handles this branch directly.
+        Value::Variant(_, _) => None,
+
+        // User-declared nominal types carry their own dispatch identity.
+        Value::Record(name, _) => Some(name.clone()),
+        // Type descriptors dispatch on the carried type name, so
+        // `Int.default()` and `Todo.decode(...)` route to impls of
+        // `Int` / `Todo` even though the descriptor value itself is
+        // neither an Int nor a Todo.
+        Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => Some(name.clone()),
+
+        // Built-ins: route every shape through `canonical_name` of the
+        // corresponding `Type` so the dispatch oracle has exactly one
+        // source of truth. Range collapses to "List" via canonical_name.
+        Value::Int(_) => Some(canonical_name(&Type::Int)),
+        Value::Float(_) => Some(canonical_name(&Type::Float)),
+        Value::ExtFloat(_) => Some(canonical_name(&Type::ExtFloat)),
+        Value::Bool(_) => Some(canonical_name(&Type::Bool)),
+        Value::String(_) => Some(canonical_name(&Type::String)),
+        Value::List(_) => Some(canonical_name(&Type::List(Box::new(Type::Unit)))),
+        Value::Range(..) => Some(canonical_name(&Type::Range(Box::new(Type::Unit)))),
+        Value::Map(_) => Some(canonical_name(&Type::Map(
+            Box::new(Type::Unit),
+            Box::new(Type::Unit),
+        ))),
+        Value::Set(_) => Some(canonical_name(&Type::Set(Box::new(Type::Unit)))),
+        Value::Tuple(_) => Some(canonical_name(&Type::Tuple(vec![]))),
+        Value::Channel(_) => Some(canonical_name(&Type::Channel(Box::new(Type::Unit)))),
+        Value::VmClosure(_) => Some("Function".to_string()),
+        Value::BuiltinFn(_) => Some("BuiltinFn".to_string()),
+        Value::VariantConstructor(..) => Some("VariantConstructor".to_string()),
+        Value::Unit => Some(canonical_name(&Type::Unit)),
+
+        // Resource types with no Type variant (yet): keep their
+        // historical dispatch names so any registered impls
+        // (`trait Foo for Bytes { ... }`) still resolve.
+        Value::Bytes(_) => Some("Bytes".to_string()),
+        Value::Handle(_) => Some("Handle".to_string()),
+        Value::TcpListener(_) => Some("TcpListener".to_string()),
+        Value::TcpStream(_) => Some("TcpStream".to_string()),
     }
 }
 
@@ -554,5 +650,93 @@ mod tests {
             let expected = if b.name == "()" { "Unit" } else { b.name };
             assert_eq!(got, expected, "primitive parity failed for {}", b.name);
         }
+    }
+
+    // ── canonicalize_type_name ─────────────────────────────────────
+
+    #[test]
+    fn canonicalize_type_name_collapses_range_to_list() {
+        assert_eq!(
+            resolve(canonicalize_type_name(intern::intern("Range"))),
+            "List"
+        );
+    }
+
+    #[test]
+    fn canonicalize_type_name_round_trips_unrelated_names() {
+        for n in ["Int", "List", "Map", "Set", "Tuple", "Foo", "Bar"] {
+            let s = intern::intern(n);
+            assert_eq!(canonicalize_type_name(s), s, "expected round-trip for {n}");
+        }
+    }
+
+    // ── dispatch_name_for_value ────────────────────────────────────
+
+    #[test]
+    fn dispatch_name_for_value_range_returns_list() {
+        // The whole-stack invariant: a Range receiver dispatches under
+        // the same key the compiler emits for `for List(a)` impls.
+        let v = Value::Range(1, 5);
+        assert_eq!(dispatch_name_for_value(&v), Some("List".to_string()));
+    }
+
+    #[test]
+    fn dispatch_name_for_value_list_returns_list() {
+        let v = Value::List(std::sync::Arc::new(vec![]));
+        assert_eq!(dispatch_name_for_value(&v), Some("List".to_string()));
+    }
+
+    #[test]
+    fn dispatch_name_for_value_primitives() {
+        assert_eq!(
+            dispatch_name_for_value(&Value::Int(0)),
+            Some("Int".to_string())
+        );
+        assert_eq!(
+            dispatch_name_for_value(&Value::Float(0.0)),
+            Some("Float".to_string())
+        );
+        assert_eq!(
+            dispatch_name_for_value(&Value::Bool(false)),
+            Some("Bool".to_string())
+        );
+        assert_eq!(
+            dispatch_name_for_value(&Value::String(String::new())),
+            Some("String".to_string())
+        );
+        assert_eq!(
+            dispatch_name_for_value(&Value::Unit),
+            Some("Unit".to_string())
+        );
+    }
+
+    #[test]
+    fn dispatch_name_for_value_record_uses_carried_name() {
+        let v = Value::Record(
+            "Point".to_string(),
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+        );
+        assert_eq!(dispatch_name_for_value(&v), Some("Point".to_string()));
+    }
+
+    #[test]
+    fn dispatch_name_for_value_descriptors_use_carried_name() {
+        assert_eq!(
+            dispatch_name_for_value(&Value::TypeDescriptor("Todo".to_string())),
+            Some("Todo".to_string())
+        );
+        assert_eq!(
+            dispatch_name_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
+            Some("Int".to_string())
+        );
+    }
+
+    #[test]
+    fn dispatch_name_for_value_variant_returns_none() {
+        // Variant needs the VM's __type_of__<tag> globals lookup;
+        // dispatch_name_for_value is shape-only, so it returns None
+        // and the VM handles this branch itself.
+        let v = Value::Variant("Some".to_string(), vec![Value::Int(7)]);
+        assert!(dispatch_name_for_value(&v).is_none());
     }
 }

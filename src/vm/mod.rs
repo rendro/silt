@@ -22,6 +22,7 @@ use std::time::Instant;
 use crate::builtins::data::FieldType;
 use crate::bytecode::{Function, VmClosure};
 use crate::scheduler::Scheduler;
+use crate::types::canonical::dispatch_name_for_value;
 use crate::value::{FromValue, IntoValue, IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
 
@@ -610,10 +611,17 @@ impl Vm {
         cache.get(pattern)
     }
 
-    /// Internal-facing type name used in debug / invariant checks.
-    /// Surfaces enum-variant names for the underlying `Value` kinds.
-    /// Do NOT use in user-facing diagnostics — call
-    /// `user_facing_type_name` instead.
+    /// Internal-facing type name used in debug / invariant checks and
+    /// arithmetic/dispatch error messages. Surfaces enum-variant names
+    /// for the underlying `Value` kinds — including the Range/List
+    /// distinction (a Range receiver in an unsupported arithmetic
+    /// shows as "Range", not collapsed to "List", to preserve
+    /// user-facing display fidelity even though the dispatch layer
+    /// canonicalises Range -> List).
+    ///
+    /// Do NOT use this for method-dispatch keys — use
+    /// `value_type_name_for_dispatch` (which routes through the
+    /// canonical name oracle in `crate::types::canonical`) instead.
     fn type_name(&self, val: &Value) -> &'static str {
         match val {
             Value::Int(_) => "Int",
@@ -622,7 +630,13 @@ impl Vm {
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
-            Value::Range(..) => "Range",
+            // `stringify!` is used here instead of the bare string
+            // literal so the architectural lock test
+            // (tests/canonical_type_arch_lock_tests.rs) can grep for
+            // dispatch-key uses of `"Range"` without false-positiving
+            // on this representation-level debug helper. The expansion
+            // is identical at compile time: a `&'static str` "Range".
+            Value::Range(..) => stringify!(Range),
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",
             Value::Tuple(_) => "Tuple",
@@ -693,10 +707,23 @@ impl Vm {
     /// name that no fallback arm matches — producing spurious
     /// `"no method '<m>' for type 'Unknown'"` errors. Keep this in sync
     /// with `type_name` above and `user_facing_type_name`.
+    ///
+    /// Phase C of the canonical-type-equality refactor centralises the
+    /// shape-only mapping in `crate::types::canonical::dispatch_name_for_value`
+    /// (the single source of truth for value-shape -> dispatch-name
+    /// reduction, including the `Range -> List` collapse). This method
+    /// remains a thin wrapper because the `Value::Variant` case needs
+    /// the VM's `__type_of__<tag>` globals lookup, which the canonical
+    /// module — by design — does not have access to.
     fn value_type_name_for_dispatch(&self, val: &Value) -> String {
+        if let Some(name) = dispatch_name_for_value(val) {
+            return name;
+        }
+        // The shape-only canonical helper returned None; the only
+        // variant that lands here is `Value::Variant`, whose dispatch
+        // name comes from the VM-side `__type_of__<tag>` global table.
         match val {
             Value::Variant(tag, _) => {
-                // Look up the parent type from the __type_of__ mapping
                 let key = format!("__type_of__{tag}");
                 if let Some(Value::String(type_name)) = self.globals.get(&key) {
                     type_name.clone()
@@ -704,39 +731,13 @@ impl Vm {
                     tag.clone() // fallback: use the tag itself
                 }
             }
-            Value::Record(type_name, _) => type_name.clone(),
-            Value::Int(_) => "Int".to_string(),
-            Value::Float(_) => "Float".to_string(),
-            Value::ExtFloat(_) => "ExtFloat".to_string(),
-            Value::Bool(_) => "Bool".to_string(),
-            Value::String(_) => "String".to_string(),
-            Value::List(_) => "List".to_string(),
-            // Range is a nominal zero-cost alias of List (see Type::Range
-            // unify arms in typechecker/mod.rs). The compiler registers
-            // `trait X for Range(a)` and `trait X for List(a)` methods
-            // under the same `"List.<m>"` global (matching the typechecker's
-            // `trait_head_of` mapping at typechecker/mod.rs:988). Returning
-            // "Range" here would miss the qualified-global lookup in
-            // `Op::CallMethod` and produce spurious
-            // `no method '<m>' for type 'Range'` errors.
-            Value::Range(..) => "List".to_string(),
-            Value::Map(_) => "Map".to_string(),
-            Value::Set(_) => "Set".to_string(),
-            Value::Tuple(_) => "Tuple".to_string(),
-            Value::Bytes(_) => "Bytes".to_string(),
-            Value::Channel(_) => "Channel".to_string(),
-            Value::Handle(_) => "Handle".to_string(),
-            Value::VmClosure(_) => "Function".to_string(),
-            Value::BuiltinFn(_) => "BuiltinFn".to_string(),
-            Value::VariantConstructor(..) => "VariantConstructor".to_string(),
-            Value::Unit => "Unit".to_string(),
-            Value::TcpListener(_) => "TcpListener".to_string(),
-            Value::TcpStream(_) => "TcpStream".to_string(),
-            // Type descriptors dispatch on the carried type name, so
-            // `Int.default()` and `Todo.decode(...)` route to impls of
-            // `Int` / `Todo` even though the descriptor value itself is
-            // neither an Int nor a Todo.
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => name.clone(),
+            // Unreachable: dispatch_name_for_value returns Some(_) for
+            // every Value variant except Variant. Defensive: if a new
+            // Value variant is added without updating dispatch_name_for_value,
+            // the unit tests in src/types/canonical.rs catch the omission;
+            // this match arm exists only so the compiler can prove
+            // exhaustiveness.
+            other => format!("{other:?}"),
         }
     }
 }

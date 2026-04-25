@@ -112,3 +112,55 @@ fn main() {
     // Inclusive: 2 + 3 + 4 = 9
     assert_eq!(out.trim(), "9");
 }
+
+// ── 4. Phase C runtime companion: `trait X for Range(a)` reachable ─
+
+/// Phase B added the typechecker-side `trait_impl_for_range_dispatches_on_list_receiver`
+/// test, which locked the typechecker's symmetric canonicalisation
+/// (registering a `for Range(a)` impl under the `"List"` key so a
+/// `List` receiver finds it). Phase C completes the symmetry by
+/// canonicalising the compiler's trait-impl global emission too:
+/// `trait Foo for Range(a) { fn bar(self) = ... }` now emits the
+/// global under `"List.bar"`, matching what the typechecker registered
+/// and what the VM (via `dispatch_name_for_value`) looks up at runtime
+/// for both `Value::List` and `Value::Range` receivers.
+///
+/// This is the runtime end-to-end: a `for Range(a)` impl invoked on a
+/// `Range` receiver. Pre-phase-C the typechecker accepted the call
+/// but the compiler had emitted `"Range.bar"` while runtime dispatch
+/// looked up `"List.bar"`, producing a runtime miss. With phase C
+/// every layer agrees on `"List"` as the canonical key.
+#[test]
+fn trait_impl_for_range_dispatches_on_range_receiver_runtime() {
+    let out = run_silt_ok(
+        "for_range_on_range",
+        r#"
+trait Foo { fn bar(self) -> Int }
+trait Foo for Range(a) { fn bar(self) -> Int = 99 }
+fn main() {
+    let r = 1..5
+    println(r.bar())
+}
+"#,
+    );
+    assert_eq!(out.trim(), "99");
+}
+
+/// Cross-symmetry: a `for Range(a)` impl invoked on a `List`
+/// receiver. Phase B's typechecker test already covered this at the
+/// type level; here we verify it runs to completion.
+#[test]
+fn trait_impl_for_range_dispatches_on_list_receiver_runtime() {
+    let out = run_silt_ok(
+        "for_range_on_list",
+        r#"
+trait Foo { fn bar(self) -> Int }
+trait Foo for Range(a) { fn bar(self) -> Int = 7 }
+fn main() {
+    let xs = [1, 2, 3]
+    println(xs.bar())
+}
+"#,
+    );
+    assert_eq!(out.trim(), "7");
+}
