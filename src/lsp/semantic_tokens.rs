@@ -148,6 +148,9 @@ fn collect_tokens(server: &Server, doc: &Document, program: &Program, out: &mut 
                 }
             }
             Decl::TraitImpl(ti) => {
+                if ti.is_auto_derived {
+                    continue;
+                }
                 for method in &ti.methods {
                     emit_fn_decl_tokens(method, source, out);
                     if !method.is_signature_only && !method.is_recovery_stub {

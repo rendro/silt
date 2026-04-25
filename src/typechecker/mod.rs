@@ -7,6 +7,7 @@
 //! - Type narrowing after `when` guard statements
 //! - Trait constraint checking
 
+mod auto_derive;
 mod builtins;
 mod exhaustiveness;
 mod inference;
@@ -21,6 +22,15 @@ pub(super) use crate::lexer::Span;
 pub(super) use crate::types::*;
 
 pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
+
+/// Snapshot of a user type's resolved body, used only by the auto-
+/// derive synthesis pass (`synthesize_auto_derive_impls`). Captures the
+/// EnumInfo/RecordInfo data in an owned form so the synthesis loop can
+/// iterate without holding a borrow on `self.enums` / `self.records`.
+enum TypeBodyKind {
+    Enum(Vec<VariantInfo>),
+    Record(Vec<(Symbol, Type)>),
+}
 
 /// Names of builtin traits that the compiler registers automatically
 /// with auto-derived impls for every primitive and builtin container.
@@ -1459,6 +1469,16 @@ impl TypeChecker {
         // the existing machinery unmodified.
         self.synthesize_default_methods(&mut program.decls);
 
+        // 2b.5: Auto-derive Display/Compare/Equal/Hash for every user
+        // enum and record that does not already have a manual impl.
+        // Mutates `program.decls`. The synthesized TraitImpls flow
+        // through `register_trait_impl` (step 2c below) and the
+        // compiler's TraitImpl emit path identical to user-written
+        // impls — producing real `<TypeName>.<method>` globals so
+        // `Op::CallMethod`'s qualified-global lookup finds them at
+        // runtime, never falling through to `dispatch_trait_method`.
+        self.synthesize_auto_derive_impls(&mut program.decls);
+
         // 2c: Register fn signatures and trait impls (now seeing
         // synthesized methods alongside explicit ones).
         for decl in &program.decls {
@@ -2259,8 +2279,33 @@ impl TypeChecker {
         }
 
         // Auto-derive builtin traits for user-defined types.
-        // All enums and records get Equal, Compare, Hash, Display since
-        // the runtime supports Eq/Ord/Hash on all Value variants.
+        //
+        // Round 62 split: non-generic enums/records are now also
+        // synthesized as real `TraitImpl` AST nodes by
+        // `synthesize_auto_derive_impls`, which routes them through
+        // `register_trait_impl` and the compiler emit path so
+        // `Op::CallMethod` finds a real `<TypeName>.<method>` global at
+        // dispatch time. The typecheck-stamp here remains load-bearing
+        // for two cases the synthesizer skips:
+        //
+        //   1. Generic types (`type Box(a) { Foo(a) }`,
+        //      `type Pair(a, b) { x: a, y: b }`): synthesis would need
+        //      `where a: Compare`-style impl-level clauses propagated
+        //      through `target_type_args`; that work is mechanical but
+        //      invasive and gated as a follow-up. Today the runtime
+        //      `dispatch_trait_method` path handles these.
+        //   2. Types whose fields don't all satisfy the trait (e.g. a
+        //      record with a `Map` field has no Compare on Map, so
+        //      Compare-synthesis would emit a body that fails
+        //      typecheck). The stamp here keeps the trait visible in
+        //      the constraint solver but `dispatch_trait_method` will
+        //      reject the actual call.
+        //
+        // For the synthesized cases, the second `trait_impl_set.insert`
+        // inside `register_trait_impl` is a no-op (the key is already
+        // present), and the duplicate-impl coherence check sees
+        // `is_auto_derived: true` from the prior method_table entry
+        // and allows the synthesized impl to overwrite it.
         let dummy_span = Span {
             line: 0,
             col: 0,
@@ -3055,6 +3100,236 @@ impl TypeChecker {
     /// loop — already iterates `ti.methods`. Cloning the default into
     /// the impl is the smallest delta that makes the existing code
     /// "just work".
+    /// Auto-derive `Display`, `Compare`, `Equal`, `Hash` impls for every
+    /// user-declared enum or record that does not already have a manual
+    /// `trait <X> for T` impl. Pushes synthesized [`TraitImpl`] AST nodes
+    /// onto `decls` so they flow through the same registration pipeline
+    /// (`register_trait_impl`) and the compiler's `Decl::TraitImpl`
+    /// emission path as user-written impls.
+    ///
+    /// Skipped for:
+    /// - Types with a manual impl of the same trait (existing
+    ///   override-auto-derive logic preserved by setting
+    ///   `is_auto_derived: true` on synthesized impls — the
+    ///   coherence check in `register_trait_impl` lets a user impl
+    ///   override an auto-derived one).
+    /// - **Generic** user types (`type Box(a) { Foo(a) }`,
+    ///   `type Pair(a, b) { x: a, y: b }`). These keep the prior
+    ///   typecheck-stamp + `dispatch_trait_method` behaviour. Synthesis
+    ///   of generic-typed bodies requires impl-level
+    ///   `where a: Compare`-style clauses on every recursive call site,
+    ///   plus correct propagation through `target_type_args` /
+    ///   `target_param_names` / `where_clauses`. That work is mechanical
+    ///   but invasive; gated as a follow-up. See the round-62 audit
+    ///   (TBD) for the deferred-work entry.
+    /// - The `Alias` body kind (handled separately by
+    ///   `register_type_alias`).
+    fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
+        // Scan for user-written impls so we can skip synthesis for
+        // (trait, type) pairs the user already covered. Use the
+        // canonical target-type symbol so `trait Compare for Bytes`
+        // (where `Bytes = List(Int)`) skips synthesis on `Bytes` AND
+        // on any user enum/record under the same canonical name.
+        let mut user_impls: std::collections::HashSet<(Symbol, Symbol)> =
+            std::collections::HashSet::new();
+        for decl in decls.iter() {
+            if let Decl::TraitImpl(ti) = decl
+                && !ti.is_auto_derived
+            {
+                let target = canonicalize_type_name(ti.target_type);
+                user_impls.insert((ti.trait_name, target));
+            }
+        }
+
+        let display_sym = intern("Display");
+        let compare_sym = intern("Compare");
+        let equal_sym = intern("Equal");
+        let hash_sym = intern("Hash");
+
+        // Pre-collect type names + body kind so we can check field types
+        // against `trait_impl_set` without holding a borrow on
+        // `program.decls` while we mutate `self.trait_impl_set` below.
+        // (We don't mutate trait_impl_set here, but we do need to call
+        // `type_name_for_impl` which takes `&self`.)
+        let mut tasks: Vec<(Symbol, TypeBodyKind)> = Vec::new();
+        for decl in decls.iter() {
+            if let Decl::Type(td) = decl
+                && td.params.is_empty()
+            {
+                match &td.body {
+                    TypeBody::Enum(_) => {
+                        if let Some(info) = self.enums.get(&td.name) {
+                            tasks.push((td.name, TypeBodyKind::Enum(info.variants.clone())));
+                        }
+                    }
+                    TypeBody::Record(_) => {
+                        if let Some(info) = self.records.get(&td.name) {
+                            tasks.push((td.name, TypeBodyKind::Record(info.fields.clone())));
+                        }
+                    }
+                    TypeBody::Alias(_) => {}
+                }
+            }
+        }
+
+        let mut synthesized: Vec<Decl> = Vec::new();
+        for (type_name, body) in tasks {
+            // Helper closures to scope the synthesis decisions per-trait.
+            let key = canonicalize_type_name(type_name);
+
+            // Resolve this type's field types in the form they appear in
+            // EnumInfo/RecordInfo (already-resolved Types). Use them to
+            // decide which traits to synthesize: a trait whose method
+            // body would call `.compare()` / `.hash()` on a field that
+            // doesn't satisfy that trait would fail the body-check pass.
+            // Skipping synthesis for those cases falls back to the
+            // typecheck-stamp behaviour from `register_type_decl`, which
+            // is intentionally permissive (the call site only fails if
+            // the user actually invokes the method).
+            //
+            // Recursive same-type references are accepted via
+            // self_supports = true: e.g. `type Tree { Leaf, Node(Tree, Tree) }`
+            // can derive Compare because the recursive `.compare()` calls
+            // resolve to the same synthesized method we're emitting.
+            let supports = |trait_sym: Symbol, ty: &Type| -> bool {
+                // Self-references — same nominal head as the type we're
+                // synthesizing for — are always allowed (the recursive
+                // body will lookup the same global we register).
+                if let Some(name) = self.type_name_for_impl(ty)
+                    && name == type_name
+                {
+                    return true;
+                }
+                self.field_type_supports_trait(trait_sym, ty)
+            };
+
+            let (mut compare_ok, mut equal_ok, mut hash_ok, mut display_ok) =
+                (true, true, true, true);
+            match &body {
+                TypeBodyKind::Enum(variants) => {
+                    for v in variants {
+                        for field_ty in &v.field_types {
+                            compare_ok &= supports(compare_sym, field_ty);
+                            equal_ok &= supports(equal_sym, field_ty);
+                            hash_ok &= supports(hash_sym, field_ty);
+                            display_ok &= supports(display_sym, field_ty);
+                        }
+                    }
+                }
+                TypeBodyKind::Record(fields) => {
+                    for (_, field_ty) in fields {
+                        compare_ok &= supports(compare_sym, field_ty);
+                        equal_ok &= supports(equal_sym, field_ty);
+                        hash_ok &= supports(hash_sym, field_ty);
+                        display_ok &= supports(display_sym, field_ty);
+                    }
+                }
+            }
+
+            match body {
+                TypeBodyKind::Enum(variants) => {
+                    // Convert resolved VariantInfo back into AST EnumVariant
+                    // shape (the auto_derive helpers operate on AST forms).
+                    // We only need .name and .fields.len() — the field
+                    // TypeExprs are not actually inspected by the
+                    // synthesis (it just emits .compare() / .hash() /
+                    // .display() / .equal() calls on positionally-named
+                    // bound vars).
+                    let ast_variants: Vec<EnumVariant> = variants
+                        .iter()
+                        .map(|v| EnumVariant {
+                            name: v.name,
+                            // Synthesize `Wildcard` placeholder TypeExprs;
+                            // the auto_derive helpers only count them.
+                            fields: v
+                                .field_types
+                                .iter()
+                                .map(|_| TypeExpr::new(
+                                    TypeExprKind::Named(intern("__synth_placeholder__")),
+                                    Span {
+                                        line: 0,
+                                        col: 0,
+                                        offset: 0,
+                                    },
+                                ))
+                                .collect(),
+                        })
+                        .collect();
+                    if display_ok && !user_impls.contains(&(display_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_display_impl_for_enum(type_name, &ast_variants),
+                        ));
+                    }
+                    if compare_ok && !user_impls.contains(&(compare_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_compare_impl_for_enum(type_name, &ast_variants),
+                        ));
+                    }
+                    if equal_ok && !user_impls.contains(&(equal_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_equal_impl_for_enum(type_name, &ast_variants),
+                        ));
+                    }
+                    if hash_ok && !user_impls.contains(&(hash_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_hash_impl_for_enum(type_name, &ast_variants),
+                        ));
+                    }
+                }
+                TypeBodyKind::Record(fields) => {
+                    let ast_fields: Vec<RecordField> = fields
+                        .iter()
+                        .map(|(name, _)| RecordField {
+                            name: *name,
+                            ty: TypeExpr::new(
+                                TypeExprKind::Named(intern("__synth_placeholder__")),
+                                Span {
+                                    line: 0,
+                                    col: 0,
+                                    offset: 0,
+                                },
+                            ),
+                        })
+                        .collect();
+                    if display_ok && !user_impls.contains(&(display_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_display_impl_for_record(type_name, &ast_fields),
+                        ));
+                    }
+                    if compare_ok && !user_impls.contains(&(compare_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_compare_impl_for_record(type_name, &ast_fields),
+                        ));
+                    }
+                    if equal_ok && !user_impls.contains(&(equal_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_equal_impl_for_record(type_name, &ast_fields),
+                        ));
+                    }
+                    if hash_ok && !user_impls.contains(&(hash_sym, key)) {
+                        synthesized.push(Decl::TraitImpl(
+                            auto_derive::synth_hash_impl_for_record(type_name, &ast_fields),
+                        ));
+                    }
+                }
+            }
+        }
+        decls.extend(synthesized);
+    }
+
+    /// Conservative check: is the field type `ty` known to satisfy
+    /// `trait_name` as recorded in `trait_impl_set`? Returns false on
+    /// unresolved tyvars or unknown nominal heads. Used by
+    /// `synthesize_auto_derive_impls` to decide whether a record / enum
+    /// can have a sound auto-derived impl.
+    fn field_type_supports_trait(&self, trait_name: Symbol, ty: &Type) -> bool {
+        let Some(type_name) = self.type_name_for_impl(ty) else {
+            return false;
+        };
+        let canonical = canonicalize_type_name(type_name);
+        self.trait_impl_set.contains(&(trait_name, canonical))
+    }
+
     fn synthesize_default_methods(&self, decls: &mut [Decl]) {
         for decl in decls.iter_mut() {
             let Decl::TraitImpl(ti) = decl else {
@@ -3613,7 +3888,7 @@ impl TypeChecker {
                 MethodEntry {
                     method_type: fn_type.clone(),
                     span: ti.span,
-                    is_auto_derived: false,
+                    is_auto_derived: ti.is_auto_derived,
                     trait_name: Some(ti.trait_name),
                     method_constraints: method_constraints.clone(),
                 },
@@ -4212,6 +4487,10 @@ impl ReplTypeContext {
 
         // Synthesize default method bodies into impls that omitted them.
         self.checker.synthesize_default_methods(&mut program.decls);
+
+        // Auto-derive Display/Compare/Equal/Hash for user types without
+        // a manual impl. See `check_program` for the rationale.
+        self.checker.synthesize_auto_derive_impls(&mut program.decls);
 
         // Register fn signatures and trait impls.
         for decl in &program.decls {

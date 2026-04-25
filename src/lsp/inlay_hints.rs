@@ -86,6 +86,9 @@ fn walk_decl(decl: &Decl, out: &mut Vec<HintRecord>) {
             walk_expr(value, out);
         }
         Decl::TraitImpl(ti) => {
+            if ti.is_auto_derived {
+                return;
+            }
             for method in &ti.methods {
                 collect_fn_hints(method, out);
             }

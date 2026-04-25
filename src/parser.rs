@@ -1626,6 +1626,7 @@ impl Parser {
                 where_clauses,
                 methods,
                 span,
+                is_auto_derived: false,
             }))
         }
     }

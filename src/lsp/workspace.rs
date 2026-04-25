@@ -197,6 +197,9 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
             collect_references_in_expr(&f.body, name, out);
         }
         Decl::TraitImpl(ti) => {
+            if ti.is_auto_derived {
+                return;
+            }
             for method in &ti.methods {
                 for param in &method.params {
                     collect_references_in_pattern(&param.pattern, name, out);

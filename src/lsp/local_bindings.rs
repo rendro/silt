@@ -63,6 +63,10 @@ pub(super) fn collect_local_bindings(program: &Program, source: &str) -> Vec<Loc
                 collect_local_bindings_in_expr(value, source, 0, source.len(), &mut bindings);
             }
             Decl::TraitImpl(ti) => {
+                // Skip auto-derived (synthesized) impls — see ast_walk.rs.
+                if ti.is_auto_derived {
+                    continue;
+                }
                 for method in &ti.methods {
                     let body_start = method.body.span.offset;
                     let (body_end, _) = expr_extent(&method.body, source);

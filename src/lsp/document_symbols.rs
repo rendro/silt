@@ -105,6 +105,9 @@ impl Server {
                 // the keyword it starts with. The range spans the whole
                 // impl block so clicking the symbol jumps to it.
                 Decl::TraitImpl(ti) => {
+                    if ti.is_auto_derived {
+                        continue;
+                    }
                     symbols.push(DocumentSymbol {
                         name: format!("impl {} for {}", ti.trait_name, ti.target_type),
                         detail: None,

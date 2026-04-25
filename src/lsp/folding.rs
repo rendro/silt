@@ -56,6 +56,9 @@ fn collect_decl_folds(decl: &Decl, source: &str, out: &mut Vec<FoldingRange>) {
             }
         }
         Decl::TraitImpl(ti) => {
+            if ti.is_auto_derived {
+                return;
+            }
             push_span_fold(&ti.span, source, out);
             for method in &ti.methods {
                 push_block_fold(&method.body.span, &method.body, source, out);

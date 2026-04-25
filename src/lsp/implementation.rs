@@ -38,6 +38,7 @@ impl Server {
             };
             for decl in &hit_program.decls {
                 if let Decl::TraitImpl(ti) = decl
+                    && !ti.is_auto_derived
                     && ti.trait_name == name
                 {
                     locations.push(Location::new(

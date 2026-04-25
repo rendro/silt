@@ -120,13 +120,14 @@ fn main() {
 
 // ── Bug 3: Record `.hash()` via `Hash` bound ────────────────────────
 
-/// `Hash` on a user-declared record must dispatch through the runtime
-/// `"hash"` arm. `impl Hash for Value` already hashes records
-/// structurally (`src/value.rs:1814`); the only fix needed was adding
-/// `Value::Record(..)` to the dispatch allowlist. The hash is a
-/// deterministic i64 derived from `DefaultHasher`. The concrete value
-/// observed for `Point { x: 1, y: 2 }` on this build is locked below —
-/// if hashing semantics change the test will flag it.
+/// `Hash` on a user-declared record dispatches through the synthesized
+/// `Point.hash` global emitted by the auto-derive pass (round 62).
+/// The synthesized body combines field hashes with a mod-prime FNV-
+/// style combine to avoid integer-overflow under silt's checked
+/// arithmetic — see `combine_hash_expr` in
+/// `src/typechecker/auto_derive.rs`. The concrete value observed for
+/// `Point { x: 1, y: 2 }` on this build is locked below; any change
+/// to the combine function will flag here.
 #[test]
 fn hash_runs_on_user_record() {
     let out = run_silt_ok(
@@ -140,5 +141,5 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "426486041218162106");
+    assert_eq!(out.trim(), "16900348");
 }

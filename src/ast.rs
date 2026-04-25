@@ -420,6 +420,15 @@ pub struct TraitImpl {
     pub where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
+    /// True when this impl block was synthesized by the auto-derive pass
+    /// (Display / Compare / Equal / Hash for user-declared enums and
+    /// records). Synthesized impls register their methods into the
+    /// method_table with `is_auto_derived: true` so that a subsequent
+    /// user-written `trait Compare for Color { ... }` is allowed to
+    /// override the generated body without colliding with the
+    /// duplicate-impl coherence check in `register_trait_impl`.
+    /// Default false for parser-produced impls.
+    pub is_auto_derived: bool,
 }
 
 #[derive(Debug, Clone)]

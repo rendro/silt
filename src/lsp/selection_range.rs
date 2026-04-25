@@ -108,6 +108,9 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
             }
         }
         Decl::TraitImpl(ti) => {
+            if ti.is_auto_derived {
+                return;
+            }
             for method in &ti.methods {
                 let (end, _) = expr_extent(&method.body, source);
                 if cursor >= method.span.offset && cursor <= end {
