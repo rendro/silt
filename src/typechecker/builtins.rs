@@ -201,6 +201,7 @@ impl TypeChecker {
             .insert(intern("Some"), intern("Option"));
         self.variant_to_enum
             .insert(intern("None"), intern("Option"));
+        crate::value::register_variant_decl_order(["Some", "None"]);
 
         // Result(a, e): Ok(a) | Err(e)
         {
@@ -226,6 +227,7 @@ impl TypeChecker {
         }
         self.variant_to_enum.insert(intern("Ok"), intern("Result"));
         self.variant_to_enum.insert(intern("Err"), intern("Result"));
+        crate::value::register_variant_decl_order(["Ok", "Err"]);
 
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
         {
@@ -251,6 +253,7 @@ impl TypeChecker {
         self.variant_to_enum.insert(intern("Stop"), intern("Step"));
         self.variant_to_enum
             .insert(intern("Continue"), intern("Step"));
+        crate::value::register_variant_decl_order(["Stop", "Continue"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -318,6 +321,7 @@ impl TypeChecker {
             .insert(intern("Empty"), intern("ChannelResult"));
         self.variant_to_enum
             .insert(intern("Sent"), intern("ChannelResult"));
+        crate::value::register_variant_decl_order(["Message", "Closed", "Sent", "Empty"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -395,6 +399,7 @@ impl TypeChecker {
             .insert(intern("Recv"), intern("ChannelOp"));
         self.variant_to_enum
             .insert(intern("Send"), intern("ChannelOp"));
+        crate::value::register_variant_decl_order(["Recv", "Send"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(

@@ -47,12 +47,14 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             ],
         },
     );
-    for variant in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+    let method_variants = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+    for variant in method_variants {
         checker
             .variant_to_enum
             .insert(intern(variant), intern("Method"));
         env.define(intern(variant), Scheme::mono(method_ty.clone()));
     }
+    crate::value::register_variant_decl_order(method_variants);
 
     // Response record
     let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));

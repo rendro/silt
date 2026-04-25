@@ -258,10 +258,19 @@ impl Vm {
         // `err.message()` to `IoError.message`, etc. User-declared enums
         // register these globals at codegen time; builtin enums have to
         // be seeded here so the same dispatch works.
+        //
+        // We also register declaration-order ordinals for every builtin
+        // variant in the same loop. The typechecker registers ordinals
+        // during `check_program`, but a Vm constructed without a
+        // preceding type-check pass (some unit tests, FFI use cases)
+        // still needs ordinals for `cmp_gen(Monday, Friday)` to honour
+        // declaration order. The two registrations are idempotent —
+        // re-registering the same (name, ordinal) is a no-op write.
         for (enum_name, variants) in module::builtin_enum_variants() {
-            for variant in *variants {
+            for (idx, variant) in variants.iter().enumerate() {
                 let key = format!("__type_of__{variant}");
                 self.globals.insert(key, Value::String((*enum_name).into()));
+                crate::value::register_variant_ordinal(variant, idx as u32);
             }
         }
 
@@ -439,9 +448,12 @@ impl Vm {
                     // Variant vs Variant: typechecker auto-derives Compare
                     // for enum variants (e.g. user `type Color { Red, Green }`
                     // and built-in Weekday from the time module).
-                    // `Value::cmp` handles Variant content-wise (see
-                    // src/value.rs:1551) and uses weekday ordinals when
-                    // applicable, so defer to it.
+                    // `Value::cmp` consults the global variant-ordinal
+                    // registry (populated by the typechecker for each
+                    // enum decl, in declaration order) and orders by
+                    // ordinal, then lexicographically by fields when
+                    // ordinals tie. The same registry is used for the
+                    // built-in Weekday/HttpMethod/Result/Option enums.
                     (Value::Variant(..), Value::Variant(..)) => receiver.cmp(other),
                     // Record vs Record: typechecker auto-derives Compare for
                     // user-declared records. `Value::cmp` orders records by

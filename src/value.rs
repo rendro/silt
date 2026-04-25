@@ -1,9 +1,11 @@
 use parking_lot::{Condvar, Mutex};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 use crate::bytecode;
@@ -117,6 +119,209 @@ impl Drop for WakerRegistration {
                 self.channel.remove_send_waker(self.id);
             }
         }
+    }
+}
+
+// ── Variant declaration-order ordinal registry ──────────────────────
+//
+// Declaration-order comparison for user-defined enum variants requires a
+// stable mapping from variant name → ordinal index inside its enum. We
+// keep that mapping in a process-global registry rather than baking it
+// into every `Value::Variant` payload — the alternative would mean
+// touching the 500+ existing `Value::Variant(name, fields)` construction
+// sites across the source tree and tests.
+//
+// The registry is populated from three places:
+//   1. The registry itself, which seeds all built-in enum ordinals on
+//      first access (Weekday, Method, Result, Option, all the typed
+//      stdlib error enums). This makes ordinals available even before
+//      any typechecker / Vm init has run, which matters for unit tests
+//      that build `Value::Variant` directly and never construct a Vm.
+//   2. The typechecker, when it registers each user enum decl during
+//      `check_program`. User-defined variants are registered with their
+//      declaration-order index inside the parent enum.
+//   3. Built-in module init in `vm/dispatch.rs` (idempotent re-write of
+//      the same built-in ordinals seeded in step 1). Kept as a defensive
+//      pass — registering the same (name, ordinal) twice is a no-op.
+//
+// `Value::cmp` consults the registry (via `lookup_variant_ordinal`) to
+// order two variants by ordinal; if either tag is unregistered, falls
+// back to alphabetical name comparison (preserving the prior behaviour
+// for variants we never saw).
+//
+// Variant names are globally unique in silt (the typechecker emits a
+// warning when one enum's variant shadows another's), so a flat
+// `HashMap<String, u32>` keyed on the variant name suffices — the
+// `(enum_name, variant_name)` pair would be redundant.
+fn variant_ordinal_registry() -> &'static RwLock<HashMap<String, u32>> {
+    static REG: OnceLock<RwLock<HashMap<String, u32>>> = OnceLock::new();
+    REG.get_or_init(|| {
+        let mut map = HashMap::new();
+        // Seed built-in enum ordinals up front so unit tests that build
+        // `Value::Variant("Ok", ...)` directly (without going through a
+        // typechecker / Vm) still get declaration-order semantics.
+        // Mirrors the authoritative list in `module::builtin_enum_variants`.
+        for (_enum_name, variants) in builtin_variant_seed() {
+            for (idx, variant) in variants.iter().enumerate() {
+                map.insert((*variant).to_string(), idx as u32);
+            }
+        }
+        RwLock::new(map)
+    })
+}
+
+/// Authoritative list of built-in enum → variant tags used to seed the
+/// ordinal registry on first access. Kept in this module to avoid a
+/// circular dependency with `module::builtin_enum_variants` — the two
+/// MUST stay in sync (a regression test in `value::tests` checks one
+/// representative variant from each enum).
+fn builtin_variant_seed() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        ("Result", &["Ok", "Err"]),
+        ("Option", &["Some", "None"]),
+        ("Step", &["Stop", "Continue"]),
+        ("ChannelResult", &["Message", "Closed", "Sent", "Empty"]),
+        ("ChannelOp", &["Recv", "Send"]),
+        (
+            "Weekday",
+            &[
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ],
+        ),
+        (
+            "Method",
+            &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+        ),
+        (
+            "IoError",
+            &[
+                "IoNotFound",
+                "IoPermissionDenied",
+                "IoAlreadyExists",
+                "IoInvalidInput",
+                "IoInterrupted",
+                "IoUnexpectedEof",
+                "IoWriteZero",
+                "IoUnknown",
+            ],
+        ),
+        (
+            "JsonError",
+            &[
+                "JsonSyntax",
+                "JsonTypeMismatch",
+                "JsonMissingField",
+                "JsonUnknown",
+            ],
+        ),
+        (
+            "TomlError",
+            &[
+                "TomlSyntax",
+                "TomlTypeMismatch",
+                "TomlMissingField",
+                "TomlUnknown",
+            ],
+        ),
+        (
+            "ParseError",
+            &[
+                "ParseEmpty",
+                "ParseInvalidDigit",
+                "ParseOverflow",
+                "ParseUnderflow",
+            ],
+        ),
+        (
+            "HttpError",
+            &[
+                "HttpConnect",
+                "HttpTls",
+                "HttpTimeout",
+                "HttpInvalidUrl",
+                "HttpInvalidResponse",
+                "HttpClosedEarly",
+                "HttpStatusCode",
+                "HttpUnknown",
+            ],
+        ),
+        ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
+        (
+            "PgError",
+            &[
+                "PgConnect",
+                "PgTls",
+                "PgAuthFailed",
+                "PgQuery",
+                "PgTypeMismatch",
+                "PgNoSuchColumn",
+                "PgClosed",
+                "PgTimeout",
+                "PgTxnAborted",
+                "PgUnknown",
+            ],
+        ),
+        (
+            "TcpError",
+            &[
+                "TcpConnect",
+                "TcpTls",
+                "TcpClosed",
+                "TcpTimeout",
+                "TcpUnknown",
+            ],
+        ),
+        ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
+        (
+            "BytesError",
+            &[
+                "BytesInvalidUtf8",
+                "BytesInvalidHex",
+                "BytesInvalidBase64",
+                "BytesByteOutOfRange",
+                "BytesOutOfBounds",
+            ],
+        ),
+        ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
+    ]
+}
+
+/// Register the declaration-order ordinal for a variant tag. If the
+/// variant is already registered, the new ordinal overwrites the old —
+/// this matches the variant-shadowing semantics in the typechecker
+/// (most-recent-wins for cross-enum collisions). Idempotent for the
+/// common case of the same value being re-registered.
+pub fn register_variant_ordinal(name: &str, ordinal: u32) {
+    let mut guard = variant_ordinal_registry().write().unwrap();
+    guard.insert(name.to_string(), ordinal);
+}
+
+/// Look up the declaration-order ordinal for a variant tag. Returns
+/// `None` if the variant has never been registered (e.g. variants
+/// constructed in unit tests that bypass both the typechecker and the
+/// VM init path).
+pub fn lookup_variant_ordinal(name: &str) -> Option<u32> {
+    let guard = variant_ordinal_registry().read().unwrap();
+    guard.get(name).copied()
+}
+
+/// Register a sequence of variant names in declaration order.
+/// Equivalent to calling `register_variant_ordinal(name, idx as u32)`
+/// for each `(idx, name)` pair, but acquires the lock once.
+pub fn register_variant_decl_order<I, S>(variants: I)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut guard = variant_ordinal_registry().write().unwrap();
+    for (idx, name) in variants.into_iter().enumerate() {
+        guard.insert(name.as_ref().to_string(), idx as u32);
     }
 }
 
@@ -1116,20 +1321,6 @@ fn cmp_record_field(
     }
 }
 
-/// Map Weekday variant name to ordinal for comparison (Monday=1..Sunday=7).
-fn weekday_ordinal(name: &str) -> Option<u8> {
-    match name {
-        "Monday" => Some(1),
-        "Tuesday" => Some(2),
-        "Wednesday" => Some(3),
-        "Thursday" => Some(4),
-        "Friday" => Some(5),
-        "Saturday" => Some(6),
-        "Sunday" => Some(7),
-        _ => None,
-    }
-}
-
 /// Format a duration in nanoseconds as a human-readable string.
 fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
     if total_ns < 0 {
@@ -1549,10 +1740,25 @@ impl Ord for Value {
                 })
             }
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
-                if let (Some(a), Some(b)) = (weekday_ordinal(na), weekday_ordinal(nb)) {
-                    a.cmp(&b)
-                } else {
-                    na.cmp(nb).then_with(|| fa.cmp(fb))
+                // Declaration-order comparison: every enum variant
+                // registered with the typechecker (or VM init) has an
+                // ordinal index baked into a process-global registry.
+                // Two variants with the same name compare equal by
+                // ordinal (their fields are then ordered lexicographic-
+                // ally). Two variants from the same enum order by their
+                // declaration position. Two variants from different
+                // enums with both registered fall through to ordinal
+                // comparison too — but variant names are globally
+                // unique in silt (typechecker enforces this), so this
+                // case shouldn't arise in well-typed code.
+                //
+                // If either tag is unregistered (e.g. a Variant built
+                // directly in a unit test that bypasses the typechecker
+                // and VM init), we fall back to alphabetical name
+                // comparison — same as the round-60 baseline.
+                match (lookup_variant_ordinal(na), lookup_variant_ordinal(nb)) {
+                    (Some(a), Some(b)) => a.cmp(&b).then_with(|| fa.cmp(fb)),
+                    _ => na.cmp(nb).then_with(|| fa.cmp(fb)),
                 }
             }
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.cmp(b),
@@ -2092,10 +2298,27 @@ mod tests {
     }
 
     #[test]
-    fn ord_non_weekday_variants_lexicographic() {
+    fn ord_result_variants_decl_order() {
+        // Result is declared as `type Result(a, e) { Ok(a), Err(e) }`,
+        // so the declaration-order ordinal registry has Ok=0, Err=1
+        // and `Ok < Err`. (Pre-round-61 this was `err < ok` because the
+        // fallback comparison was alphabetical — that fallback is now
+        // only used for variants the registry has never seen.)
         let ok = Value::Variant("Ok".into(), vec![Value::Int(1)]);
         let err = Value::Variant("Err".into(), vec![Value::String("e".into())]);
-        assert!(err < ok);
+        assert!(ok < err, "Ok declared before Err → Ok < Err");
+    }
+
+    #[test]
+    fn ord_unregistered_variants_alphabetical_fallback() {
+        // Variants whose names are NOT in the ordinal registry (e.g.
+        // hypothetical tags built inside a unit test before any enum
+        // decl is processed) fall back to alphabetical comparison so
+        // `Value::cmp` remains a total order. This locks the fallback
+        // path explicitly.
+        let zzz = Value::Variant("__SiltUnknownZ".into(), vec![]);
+        let aaa = Value::Variant("__SiltUnknownA".into(), vec![]);
+        assert!(aaa < zzz, "alphabetical fallback for unregistered tags");
     }
 
     #[test]

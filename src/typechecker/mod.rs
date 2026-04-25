@@ -1903,7 +1903,7 @@ impl TypeChecker {
                     }
                 }
 
-                for variant in variants {
+                for (decl_idx, variant) in variants.iter().enumerate() {
                     let field_types: Vec<Type> = variant
                         .fields
                         .iter()
@@ -1914,6 +1914,25 @@ impl TypeChecker {
                         name: variant.name,
                         field_types: field_types.clone(),
                     });
+
+                    // Register the variant's declaration-order ordinal
+                    // into the global variant-ordinal registry that
+                    // `Value::cmp` consults. This is what makes
+                    // `cmp_gen(Red, Green)` return `-1` for
+                    // `type Color { Red, Green, Blue }` regardless of
+                    // alphabetical order — the round-60 baseline used
+                    // alphabetical comparison everywhere except a
+                    // hand-rolled Weekday special case (now removed).
+                    //
+                    // Variant names are globally unique in silt (the
+                    // duplicate-name diagnostic above + the
+                    // cross-enum-shadow warning below ensure this), so
+                    // a flat name → ordinal map is sufficient — no
+                    // need to key on the parent enum.
+                    crate::value::register_variant_ordinal(
+                        &resolve(variant.name),
+                        decl_idx as u32,
+                    );
 
                     // Register the constructor in the type environment
                     let type_params: Vec<Type> =

@@ -57,9 +57,12 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 // ── Bug 1: Variant-vs-Variant `.compare()` via `Compare` bound ──────
 
 /// `Compare` on a user-declared enum-style variant must dispatch through
-/// the runtime `"compare"` arm. `Value::cmp` for variants without
-/// weekday-ordinal semantics is alphabetical by name: "Green" < "Red",
-/// so `Red.compare(Green)` = Greater = 1. Lock the observed value.
+/// the runtime `"compare"` arm. `Value::cmp` orders variants by their
+/// declaration-order ordinal (registered into the global variant-ordinal
+/// registry by the typechecker when it processes the enum decl). For
+/// `type Color { Red, Green, Blue }` we have Red=0, Green=1, Blue=2, so
+/// `Red.compare(Green)` = Less = -1. (Pre-round-61 this was alphabetical
+/// fallback returning 1.)
 #[test]
 fn compare_runs_on_user_variant() {
     let out = run_silt_ok(
@@ -70,12 +73,15 @@ fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() { println(cmp_gen(Red, Green)) }
 "#,
     );
-    assert_eq!(out.trim(), "1");
+    assert_eq!(out.trim(), "-1");
 }
 
 /// The built-in `Weekday` variant (from `import time`) is a Variant at
-/// runtime. `Value::cmp` applies the `weekday_ordinal` special case
-/// (`src/value.rs:1552`), so Monday (1) < Friday (5) = Less = -1.
+/// runtime. `Value::cmp` consults the global variant-ordinal registry,
+/// which seeds Weekday with Monday=0..Sunday=6, so Monday < Friday and
+/// `cmp_gen(Monday, Friday)` = Less = -1. (Pre-round-61 this used a
+/// hand-rolled `weekday_ordinal` table; the new registry-based path
+/// preserves the same semantics.)
 #[test]
 fn compare_runs_on_builtin_weekday() {
     let out = run_silt_ok(

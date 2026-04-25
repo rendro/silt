@@ -254,4 +254,9 @@ fn register_enum(
         };
         env.define(variant_sym, scheme);
     }
+    // Register declaration-order ordinals into the global registry that
+    // `Value::cmp` consults. Built-in error enums (IoError, JsonError,
+    // TimeError, ...) participate in declaration-order comparison just
+    // like user-defined enums.
+    crate::value::register_variant_decl_order(variants.iter().map(|(name, _)| *name));
 }
