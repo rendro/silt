@@ -1457,7 +1457,7 @@ impl TypeChecker {
         // before any TraitImpl is registered into method_table.
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
-                self.register_trait_decl(t);
+                self.register_trait_decl_user(t);
             }
         }
 
@@ -2942,7 +2942,22 @@ impl TypeChecker {
 
     // ── Register trait declarations ─────────────────────────────────
 
-    fn register_trait_decl(&mut self, t: &TraitDecl) {
+    /// User-source entry point for trait declaration registration.
+    /// Round 62 (item 3 of type-design improvements): trait registration
+    /// was previously two paths — this one for user `trait X { ... }`
+    /// declarations, and a hand-rolled `register_builtin_trait_decl` for
+    /// Display/Compare/Equal/Hash plus a one-off block for `Error`. The
+    /// two drifted: the built-in path didn't run the duplicate-method
+    /// check, didn't honor where_clauses or supertraits in general, and
+    /// any future feature added here had to be manually mirrored into
+    /// the built-in path.
+    ///
+    /// The unification: built-in traits now synthesize `TraitDecl` AST
+    /// nodes in `builtin_trait_decls()` and feed them through
+    /// `register_trait_decl_inner` directly (skipping only the
+    /// redefinition guard, which is keyed off user input). Future
+    /// trait-decl features automatically apply to built-ins.
+    fn register_trait_decl_user(&mut self, t: &TraitDecl) {
         // Reject redefinition of builtin trait names. The compiler has
         // already preregistered TraitInfo + auto-derived impls for these
         // names; letting a user `trait Equal { fn eq(self) -> Bool }`
@@ -2957,7 +2972,13 @@ impl TypeChecker {
             );
             return;
         }
+        self.register_trait_decl_inner(t);
+    }
 
+    /// Shared trait-registration body. Runs for both user-source decls
+    /// (after the redefinition guard in `register_trait_decl_user`) and
+    /// built-in synthetic decls (via `builtin_trait_decls`).
+    pub(super) fn register_trait_decl_inner(&mut self, t: &TraitDecl) {
         // GAP (round 35 F6): duplicate method names in a trait
         // declaration used to silently overwrite each other in the
         // trait's `methods` Vec (first entry won for method lookup but
@@ -4300,47 +4321,191 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
     }
 }
 
-/// Register a single built-in trait declaration with a one-method
-/// signature of the shape `fn <method>(a0, ..., a{arity-1}) -> <ret>`.
-/// Each `ai` is a fresh type variable. All per-trait fields other than
-/// the method signature are defaulted (empty params, no supertraits,
-/// no default bodies, zero span) — the four built-in traits Display,
-/// Compare, Equal, Hash share that shape exactly. Extracted round 61
-/// to collapse four near-identical blocks that differed only in the
-/// (trait_name, method_name, arity, return_ty) 4-tuple.
-fn register_builtin_trait_decl(
-    checker: &mut TypeChecker,
-    trait_name: &str,
-    method_name: &str,
-    arity: usize,
-    return_ty: Type,
-) {
-    let param_vars: Vec<Type> = (0..arity).map(|_| checker.fresh_var()).collect();
-    checker.traits.insert(
-        intern(trait_name),
-        TraitInfo {
+/// Synthesize `TraitDecl` AST nodes for the five built-in traits.
+///
+/// Round 62 (item 3 of type-design improvements) — built-in trait
+/// registration was previously a separate code path that hand-rolled
+/// `TraitInfo` entries directly, bypassing the duplicate-method check,
+/// supertrait/where-clause processing, and any future feature added to
+/// `register_trait_decl`. This function returns the same `TraitDecl`
+/// shape a parser would produce for hand-written user code, so the
+/// unified `register_trait_decl_inner` pipeline handles built-ins and
+/// user traits identically.
+///
+/// The five built-ins:
+/// - `Display`: `fn display(self) -> String` (signature only).
+/// - `Compare`: `fn compare(self, other) -> Int` (signature only). The
+///   second parameter is left untyped so `register_trait_decl_inner`
+///   allocates a fresh TyVar — matching the pre-unification shape that
+///   used `Type::Fun([fresh, fresh], Int)`.
+/// - `Equal`:   `fn equal(self, other) -> Bool` (signature only).
+/// - `Hash`:    `fn hash(self) -> Int` (signature only).
+/// - `Error: Display { fn message(self) -> String = self.display() }`.
+///   Carries a real default body so `synthesize_default_methods` can
+///   clone `self.display()` into impls that omit `message`.
+fn builtin_trait_decls() -> Vec<TraitDecl> {
+    let dummy_span = Span::new(0, 0);
+    let self_sym = intern("self");
+    let other_sym = intern("other");
+
+    fn self_param(self_sym: Symbol, span: Span) -> Param {
+        Param {
+            kind: ParamKind::Data,
+            pattern: Pattern::new(PatternKind::Ident(self_sym), span),
+            ty: None,
+        }
+    }
+    fn other_param(other_sym: Symbol, span: Span) -> Param {
+        // Leave `other`'s type as None so register_trait_decl_inner
+        // allocates a fresh TyVar — matches the pre-unification
+        // `Type::Fun([fresh_var(), fresh_var()], ret)` shape exactly.
+        Param {
+            kind: ParamKind::Data,
+            pattern: Pattern::new(PatternKind::Ident(other_sym), span),
+            ty: None,
+        }
+    }
+    fn unit_body(span: Span) -> Expr {
+        Expr::new(ExprKind::Unit, span)
+    }
+    fn named_ret(name: &str, span: Span) -> Option<TypeExpr> {
+        Some(TypeExpr::new(TypeExprKind::Named(intern(name)), span))
+    }
+    fn sig_only_method(name: &str, params: Vec<Param>, ret: &str, span: Span) -> FnDecl {
+        FnDecl {
+            name: intern(name),
+            params,
+            return_type: named_ret(ret, span),
+            where_clauses: Vec::new(),
+            body: unit_body(span),
+            is_pub: true,
+            span,
+            is_recovery_stub: false,
+            is_signature_only: true,
+            doc: None,
+        }
+    }
+
+    // Error.message default body: `self.display()`
+    let error_default_body = {
+        let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
+        let field_access = Expr::new(
+            ExprKind::FieldAccess(Box::new(self_ident), intern("display")),
+            dummy_span,
+        );
+        Expr::new(
+            ExprKind::Call(Box::new(field_access), Vec::new()),
+            dummy_span,
+        )
+    };
+    let error_message_fn = FnDecl {
+        name: intern("message"),
+        params: vec![self_param(self_sym, dummy_span)],
+        return_type: named_ret("String", dummy_span),
+        where_clauses: Vec::new(),
+        body: error_default_body,
+        is_pub: true,
+        span: dummy_span,
+        is_recovery_stub: false,
+        is_signature_only: false,
+        doc: None,
+    };
+
+    vec![
+        // trait Display { fn display(self) -> String }
+        TraitDecl {
+            name: intern("Display"),
             params: Vec::new(),
-            param_var_ids: Vec::new(),
             supertraits: Vec::new(),
-            supertrait_args: Vec::new(),
             param_where_clauses: Vec::new(),
-            methods: vec![(
-                intern(method_name),
-                Type::Fun(param_vars, Box::new(return_ty)),
+            methods: vec![sig_only_method(
+                "display",
+                vec![self_param(self_sym, dummy_span)],
+                "String",
+                dummy_span,
             )],
-            decl_span: Span::new(0, 0),
-            default_method_bodies: HashMap::new(),
+            span: dummy_span,
+            doc: None,
         },
-    );
+        // trait Compare { fn compare(self, other) -> Int }
+        TraitDecl {
+            name: intern("Compare"),
+            params: Vec::new(),
+            supertraits: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: vec![sig_only_method(
+                "compare",
+                vec![
+                    self_param(self_sym, dummy_span),
+                    other_param(other_sym, dummy_span),
+                ],
+                "Int",
+                dummy_span,
+            )],
+            span: dummy_span,
+            doc: None,
+        },
+        // trait Equal { fn equal(self, other) -> Bool }
+        TraitDecl {
+            name: intern("Equal"),
+            params: Vec::new(),
+            supertraits: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: vec![sig_only_method(
+                "equal",
+                vec![
+                    self_param(self_sym, dummy_span),
+                    other_param(other_sym, dummy_span),
+                ],
+                "Bool",
+                dummy_span,
+            )],
+            span: dummy_span,
+            doc: None,
+        },
+        // trait Hash { fn hash(self) -> Int }
+        TraitDecl {
+            name: intern("Hash"),
+            params: Vec::new(),
+            supertraits: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: vec![sig_only_method(
+                "hash",
+                vec![self_param(self_sym, dummy_span)],
+                "Int",
+                dummy_span,
+            )],
+            span: dummy_span,
+            doc: None,
+        },
+        // trait Error: Display { fn message(self) -> String = self.display() }
+        TraitDecl {
+            name: intern("Error"),
+            params: Vec::new(),
+            supertraits: vec![(intern("Display"), Vec::new())],
+            param_where_clauses: Vec::new(),
+            methods: vec![error_message_fn],
+            span: dummy_span,
+            doc: None,
+        },
+    ]
 }
 
-/// Register built-in trait declarations (Display/Compare/Equal/Hash)
+/// Register built-in trait declarations (Display/Compare/Equal/Hash/Error)
 /// and their auto-derived impls for primitives and builtin containers.
 ///
 /// This is the single source of truth for derive policy. Both
 /// `TypeChecker::check_program` and `ReplTypeContext::new` call it so
 /// `silt check` and the REPL never diverge on which types implement
 /// which traits.
+///
+/// Round 62 (item 3 of type-design improvements): the trait-decl
+/// registration step now flows through the same code path as user
+/// `trait X { ... }` declarations. See `builtin_trait_decls` for the
+/// synthesized AST nodes and `register_trait_decl_inner` for the
+/// shared body. The auto-derive policy below remains imperative — it's
+/// policy (which types pre-stamp Display/Compare/Equal/Hash impls), not
+/// declaration.
 ///
 /// Derive policy:
 /// - `Int`, `Float`, `Bool`, `String`, `()`, `List` get all four
@@ -4355,82 +4520,13 @@ fn register_builtin_trait_decl(
 ///   excluded because ordering on Variants is limited to same-name
 ///   variants at runtime.
 pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
-    // ── Register built-in trait declarations ────────────────────
-    // Round 61 dead-code fix: four near-identical blocks (Display,
-    // Compare, Equal, Hash) collapsed to one parameterised helper.
-    // Every per-block field (params/param_var_ids/supertraits/
-    // supertrait_args/param_where_clauses/decl_span/default_method_bodies)
-    // was already identical across the four sites — only the trait
-    // name, method name, arity, and return type varied. The sibling
-    // helper `register_auto_derived_impls_for` proved this shape is
-    // parameterisable.
-    register_builtin_trait_decl(checker, "Display", "display", 1, Type::String);
-    register_builtin_trait_decl(checker, "Compare", "compare", 2, Type::Int);
-    register_builtin_trait_decl(checker, "Equal", "equal", 2, Type::Bool);
-    register_builtin_trait_decl(checker, "Hash", "hash", 1, Type::Int);
-    // ── Error trait ─────────────────────────────────────────────
-    // Phase 1 of the stdlib error redesign (see
-    // `docs/proposals/stdlib-errors.md`). `trait Error: Display`
-    // provides a single `message(self) -> String` method whose default
-    // body delegates to `self.display()`, so impls that are happy with
-    // the default don't need to write a body. `Error` is NOT
-    // auto-derived — stdlib and user types must write
-    // `trait Error for MyErr { ... }` explicitly.
-    {
-        let error_self = checker.fresh_var();
-        // Synthesize the default body `self.display()` as a real
-        // FnDecl so `synthesize_default_methods` can clone it into
-        // impls that omit `message`. The synthesized FnDecl goes
-        // through the normal method-compilation pipeline.
-        let dummy_span = Span::new(0, 0);
-        let self_sym = intern("self");
-        let self_param = Param {
-            kind: ParamKind::Data,
-            pattern: Pattern::new(PatternKind::Ident(self_sym), dummy_span),
-            ty: None,
-        };
-        let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
-        let field_access = Expr::new(
-            ExprKind::FieldAccess(Box::new(self_ident), intern("display")),
-            dummy_span,
-        );
-        let default_body = Expr::new(
-            ExprKind::Call(Box::new(field_access), Vec::new()),
-            dummy_span,
-        );
-        let default_fn = FnDecl {
-            name: intern("message"),
-            params: vec![self_param],
-            return_type: Some(TypeExpr::new(
-                TypeExprKind::Named(intern("String")),
-                dummy_span,
-            )),
-            where_clauses: Vec::new(),
-            body: default_body,
-            is_pub: true,
-            span: dummy_span,
-            is_recovery_stub: false,
-            is_signature_only: false,
-            doc: None,
-        };
-        let mut default_bodies = HashMap::new();
-        default_bodies.insert(intern("message"), default_fn);
-        checker.traits.insert(
-            intern("Error"),
-            TraitInfo {
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                supertraits: vec![intern("Display")],
-                supertrait_args: vec![Vec::new()],
-                param_where_clauses: Vec::new(),
-                methods: vec![(
-                    intern("message"),
-                    Type::Fun(vec![error_self], Box::new(Type::String)),
-                )],
-                decl_span: Span::new(0, 0),
-                default_method_bodies: default_bodies,
-            },
-        );
+    // ── Register built-in trait declarations through the unified
+    //    register_trait_decl_inner pipeline. Same code path user
+    //    `trait X { fn ... }` declarations take, minus the
+    //    BUILTIN_TRAIT_NAMES redefinition check (which is keyed off
+    //    user input and lives on register_trait_decl_user). ─────────
+    for td in builtin_trait_decls() {
+        checker.register_trait_decl_inner(&td);
     }
 
     // ── Register auto-derived impls ─────────────────────────────
@@ -4748,7 +4844,7 @@ impl ReplTypeContext {
         // sees every TraitInfo before any TraitImpl is processed.
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
-                self.checker.register_trait_decl(t);
+                self.checker.register_trait_decl_user(t);
             }
         }
 
