@@ -33,24 +33,21 @@
 use std::fs;
 use std::path::PathBuf;
 
-/// Primitive type names as printed by `src/types.rs::impl Display for
-/// Type`, plus the builtin-container / callable / resource type names
-/// recognised by `src/typechecker/mod.rs::is_builtin_container`.
-/// `Unit` is the logical name even though the Display impl renders
-/// the unit type as `()` — in type-annotation position the surface
-/// form is `Unit`, which is what an editor grammar needs to recognise.
-/// The other names match the typechecker / Display output byte-for-
-/// byte.
+/// Primitive and built-in container type names sourced from the
+/// authoritative table at `silt::types::builtins::BUILTIN_TYPES`. The
+/// `()` surface alias is filtered out — it is a punctuation form, not
+/// a keyword token, and neither editor grammar represents it as such.
+/// Every other entry in `BUILTIN_TYPES` is asserted present in both
+/// grammars below.
 ///
-/// Authoritative source for the 6 builtin-container names (Range,
-/// Channel, Tuple, Fn, Fun, Handle): the `is_builtin_container`
-/// `match` arm in `src/typechecker/mod.rs` (around line 2823). Adding
-/// a new entry to that match arm without also adding it here (and to
-/// both editor grammars) will leave the new type un-highlighted.
-const PRIMITIVES: &[&str] = &[
-    "Int", "Float", "String", "Bool", "ExtFloat", "List", "Map", "Set", "Unit", "Range", "Channel",
-    "Tuple", "Fn", "Fun", "Handle",
-];
+/// Adding a new entry to `BUILTIN_TYPES` without also adding the name
+/// to both editor grammars will fail this test.
+fn primitives() -> Vec<&'static str> {
+    silt::types::builtins::iter_all()
+        .map(|b| b.name)
+        .filter(|n| *n != "()")
+        .collect()
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -138,7 +135,7 @@ fn editor_grammars_include_all_primitive_type_names() {
 
     let mut missing: Vec<String> = Vec::new();
 
-    for &prim in PRIMITIVES {
+    for prim in primitives() {
         if !grammar_mentions_name(&vim_scope, prim) {
             missing.push(format!(
                 "editors/vim/syntax/silt.vim (siltType keyword list) is missing \

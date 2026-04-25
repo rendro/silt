@@ -2814,14 +2814,11 @@ impl TypeChecker {
             let name_str = resolve(ti.target_type);
             let first_char = name_str.chars().next().unwrap_or('A');
             let is_lowercase_tyvar = first_char.is_lowercase();
-            let is_primitive = matches!(
-                name_str.as_str(),
-                "Int" | "Float" | "ExtFloat" | "Bool" | "String" | "()" | "Unit"
-            );
-            let is_builtin_container = matches!(
-                name_str.as_str(),
-                "List" | "Range" | "Map" | "Set" | "Channel" | "Tuple" | "Fn" | "Fun" | "Handle"
-            );
+            // Both checks consult the authoritative built-in type table
+            // at `crate::types::builtins`. A new built-in type added to
+            // BUILTIN_TYPES is automatically recognised here.
+            let is_primitive = crate::types::builtins::is_primitive(&name_str);
+            let is_builtin_container = crate::types::builtins::is_container(&name_str);
             let is_user_record = self.records.contains_key(&ti.target_type);
             let is_user_enum = self.enums.contains_key(&ti.target_type);
             if !is_lowercase_tyvar
@@ -2858,14 +2855,15 @@ impl TypeChecker {
             // fell through to `_ => Type::Generic("List", [a, b])` below,
             // silently producing a phantom 2-arg List type with no diagnostic.
             let name_str_for_arity = resolve(ti.target_type);
-            let builtin_arity: Option<(usize, &'static str)> = match name_str_for_arity.as_str() {
-                "List" => Some((1, "builtin")),
-                "Range" => Some((1, "builtin")),
-                "Set" => Some((1, "builtin")),
-                "Channel" => Some((1, "builtin")),
-                "Map" => Some((2, "builtin")),
-                _ => None,
-            };
+            // Derive fixed-arity builtin entries from the authoritative
+            // table. Variadic shapes (`Tuple`, `Fn`, `Fun`, `Handle`)
+            // carry `arity: None` and are intentionally skipped — they
+            // do not participate in this trait-impl arity check.
+            let builtin_arity: Option<(usize, &'static str)> = crate::types::builtins::lookup(
+                name_str_for_arity.as_str(),
+            )
+            .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
+            .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
             let expected_arity = self
                 .record_param_var_ids
                 .get(&ti.target_type)

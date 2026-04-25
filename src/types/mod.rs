@@ -3,6 +3,8 @@
 //! This module contains the core type representations used by the type checker,
 //! interpreter, and other parts of the compiler pipeline.
 
+pub mod builtins;
+
 use std::collections::HashMap;
 
 use crate::intern::Symbol;

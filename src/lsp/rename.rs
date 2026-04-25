@@ -19,12 +19,14 @@
 //!     over-reaches and the user must undo.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use lsp_server::{ErrorCode, Response};
 use lsp_types::{PrepareRenameResponse, Range, TextEdit, Uri, WorkspaceEdit};
 
 use crate::intern::resolve as resolve_sym;
 use crate::module;
+use crate::types::builtins as builtin_types;
 
 use super::Server;
 use super::ast_walk::find_ident_at_offset_with_source;
@@ -151,7 +153,7 @@ pub fn is_user_renameable(name: &str) -> bool {
     if module::all_builtin_constructor_names().any(|c| c == name) {
         return false;
     }
-    if BUILTIN_GLOBALS.contains(&name) {
+    if builtin_globals().contains(&name) {
         return false;
     }
     true
@@ -185,22 +187,26 @@ const SILT_KEYWORDS: &[&str] = &[
 // picked up automatically. Parity-lock test in
 // `tests/builtin_constructor_parity_tests.rs` guards the coupling.
 
-const BUILTIN_GLOBALS: &[&str] = &[
-    "println",
-    "print",
-    "panic",
-    "Int",
-    "Float",
-    "String",
-    "Bool",
-    "ExtFloat",
-    "List",
-    "Range",
-    "Map",
-    "Set",
-    "Channel",
-    "Tuple",
-    "Fn",
-    "Fun",
-    "Handle",
-];
+/// Built-in print/panic free functions that user code cannot rename.
+/// Type names (`Int`, `List`, `Map`, ...) are sourced separately from
+/// the authoritative table at `crate::types::builtins`, so adding a
+/// new built-in type does not require touching this file.
+const BUILTIN_FUNCTIONS: &[&str] = &["println", "print", "panic"];
+
+/// Combined list of every reserved global identifier — built-in
+/// functions plus every name in [`builtin_types::BUILTIN_TYPES`].
+/// Computed once on first access via [`OnceLock`]; the `&[&str]`
+/// surface mirrors the previous hand-rolled constant so existing
+/// callers keep working unchanged. Type-name entries are derived
+/// from `crate::types::builtins::iter_all()` so additions to that
+/// authoritative table propagate here automatically.
+pub(crate) fn builtin_globals() -> &'static [&'static str] {
+    static GLOBALS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    GLOBALS
+        .get_or_init(|| {
+            let mut v: Vec<&'static str> = BUILTIN_FUNCTIONS.to_vec();
+            v.extend(builtin_types::iter_all().map(|b| b.name));
+            v
+        })
+        .as_slice()
+}
