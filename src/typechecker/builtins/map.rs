@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // map.get: (Map(k, v), k) -> Option(v)  where k: Hash
@@ -274,4 +275,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    attach_module_docs(env, super::docs::MAP_MD);
 }

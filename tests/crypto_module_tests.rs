@@ -6,7 +6,6 @@
 //! are probabilistic on the "distinctness" arm but deterministic on
 //! the bounds-checking arms.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use silt::types::Severity;
@@ -527,14 +526,11 @@ fn main() {
 /// but runs in the other direction: docs → registration.
 #[test]
 fn test_documented_crypto_functions_match_registration() {
-    let doc_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs")
-        .join("stdlib")
-        .join("crypto.md");
-    let body = std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/crypto.md");
-
-    // The expected set is the on-disk truth: the function list in
-    // src/module.rs::builtin_module_functions("crypto").
+    // Round 62 phase-2 inlined the crypto module markdown into
+    // `super::docs::CRYPTO_MD`, attached as a module-level overview
+    // to every crypto.* binding via `attach_module_overview`. Every
+    // function registered must have a non-empty doc body.
+    let docs = silt::typechecker::builtin_docs();
     let expected = silt::module::builtin_module_functions("crypto");
     assert!(
         !expected.is_empty(),
@@ -542,16 +538,23 @@ fn test_documented_crypto_functions_match_registration() {
     );
 
     for name in &expected {
-        // Every function must appear in the doc body — either as a
-        // table row (`| `<name>` |`) or in running prose
-        // (`crypto.<name>`).
-        let bare = format!("`{}`", name);
         let qualified = format!("crypto.{}", name);
+        let body = docs.get(&qualified).cloned().unwrap_or_default();
+        assert!(
+            !body.trim().is_empty(),
+            "crypto.{name} has no registered builtin doc — verify \
+             `attach_module_overview(env, super::docs::CRYPTO_MD, \
+             \"crypto\")` fires from \
+             src/typechecker/builtins/crypto.rs"
+        );
+        // The crypto module overview should mention the function name
+        // (it appears in the Summary table at minimum).
+        let bare = format!("`{}`", name);
         assert!(
             body.contains(&bare) || body.contains(&qualified),
-            "docs/stdlib/crypto.md does not document the function `{name}`. \
-             Every function in src/module.rs::builtin_module_functions(\"crypto\") \
-             must be mentioned by name in the per-module doc."
+            "the crypto module doc (now inlined as `super::docs::CRYPTO_MD`) \
+             does not mention the function `{name}`. Add a row for it to \
+             the Summary table."
         );
     }
 }

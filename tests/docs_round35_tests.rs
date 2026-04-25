@@ -54,36 +54,54 @@ fn traits_md_supertrait_example_uses_match_not_if_else() {
     );
 }
 
-// ─── F17b: tcp.md must not carry the internal PR-2 label ──────────────
+// ─── F17b: tcp module doc must not carry the internal PR-2 label ─────
 
 #[test]
 fn tcp_md_has_no_pr_2_stub_label() {
-    let path = doc_path(&["docs", "stdlib", "tcp.md"]);
-    let body = read(&path);
+    // Round 62 phase-2: the former `docs/stdlib/tcp.md` is now
+    // inlined into `super::docs::TCP_MD` (in
+    // `src/typechecker/builtins/docs.rs`) and surfaced via LSP
+    // hover on every `tcp.*` builtin via `attach_module_overview`.
+    // We pull any registered tcp.* doc as a representative sample
+    // — the body is identical for every name.
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .keys()
+        .filter(|k| k.starts_with("tcp."))
+        .find_map(|k| docs.get(k))
+        .cloned()
+        .expect("expected at least one tcp.* builtin doc registered");
     assert!(
         !body.contains("PR-2"),
-        "docs/stdlib/tcp.md still contains the internal project label \
-         \"PR-2\" (used on the peer_addr / set_nodelay rows). Rephrase to \
-         user-facing wording that matches the runtime error."
+        "the tcp module doc (now inlined as `super::docs::TCP_MD` in \
+         src/typechecker/builtins/docs.rs) still contains the internal \
+         project label \"PR-2\" (used on the peer_addr / set_nodelay \
+         rows). Rephrase to user-facing wording that matches the \
+         runtime error."
     );
 }
 
-// ─── F17c: bytes.md must not version-pin tcp ──────────────────────────
+// ─── F17c: bytes module doc must not version-pin tcp ─────────────────
 
 #[test]
 fn bytes_md_has_no_v0_9_version_pin_on_tcp() {
-    let path = doc_path(&["docs", "stdlib", "bytes.md"]);
-    let body = read(&path);
+    // Round 62 phase-2: bytes module markdown is `super::docs::BYTES_MD`.
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .keys()
+        .filter(|k| k.starts_with("bytes."))
+        .find_map(|k| docs.get(k))
+        .cloned()
+        .expect("expected at least one bytes.* builtin doc registered");
     assert!(
         !body.contains("from v0.9"),
-        "docs/stdlib/bytes.md still contains the stale \"from v0.9\" \
-         version pin on the tcp reference. TCP has shipped — drop the \
-         version tail."
+        "the bytes module doc (now inlined as `super::docs::BYTES_MD`) \
+         still contains the stale \"from v0.9\" version pin on the tcp \
+         reference. TCP has shipped — drop the version tail."
     );
-    // Broader check: no v0.9 reference at all in bytes.md.
     assert!(
         !body.contains("v0.9"),
-        "docs/stdlib/bytes.md still references `v0.9`; generalize the \
+        "the bytes module doc still references `v0.9`; generalize the \
          wording so it does not pin to a shipped release."
     );
 }
@@ -97,18 +115,19 @@ fn modules_md_does_not_carry_stale_key_functions_table() {
 
     // The old table's header is "| Module    | Key Functions ..." — the
     // signature "Key Functions" column should be gone in favor of the
-    // per-module stdlib index.
+    // per-module LSP-delivered docs.
     assert!(
         !body.contains("Key Functions"),
         "docs/language/modules.md still contains the stale \"Key \
-         Functions\" table. Delete it and point to docs/stdlib/index.md \
-         (the authoritative source)."
+         Functions\" table. Delete it and point to the LSP-delivered \
+         per-name docs (round 62 phase-2)."
     );
 
-    // And the replacement text must point at docs/stdlib/index.md.
+    // The replacement text should point users at the LSP for stdlib
+    // discovery.
     assert!(
-        body.contains("stdlib/index.md"),
-        "docs/language/modules.md must point to `docs/stdlib/index.md` as \
-         the authoritative source for built-in modules."
+        body.contains("LSP") || body.contains("hover"),
+        "docs/language/modules.md must point users at the LSP / editor \
+         hover for built-in module docs (round 62 phase-2)."
     );
 }

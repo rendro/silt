@@ -24,9 +24,29 @@ fn read_concurrency_doc() -> String {
     std::fs::read_to_string(path).expect("docs/concurrency.md must be readable")
 }
 
+/// Round 62 phase-2: the formerly-on-disk `docs/stdlib/channel-task.md`
+/// is now the `super::docs::CHANNEL_TASK_MD` constant in
+/// `src/typechecker/builtins/docs.rs`, attached per-name to every
+/// `channel.*` and `task.*` binding via `attach_module_docs`. Reading
+/// `task.cancel`'s registered doc gives us the section body that the
+/// old prose-grep tests used to scan; the surrounding sections are
+/// other names' docs and are scanned the same way.
 fn read_channel_task_doc() -> String {
-    let path = Path::new("docs/stdlib/channel-task.md");
-    std::fs::read_to_string(path).expect("docs/stdlib/channel-task.md must be readable")
+    let docs = silt::typechecker::builtin_docs();
+    // Concatenate every channel/task builtin's registered doc into a
+    // single haystack so the existing substring-presence assertions
+    // below keep working without code-shaping every call site.
+    let mut joined = String::new();
+    let mut keys: Vec<&String> = docs
+        .keys()
+        .filter(|k| k.starts_with("channel.") || k.starts_with("task."))
+        .collect();
+    keys.sort();
+    for k in keys {
+        joined.push_str(docs.get(k).map(|s| s.as_str()).unwrap_or(""));
+        joined.push_str("\n\n");
+    }
+    joined
 }
 
 /// The stale wording from before the round-52 fix must not reappear.
@@ -165,26 +185,26 @@ fn channel_task_doc_drops_stale_task_cancel_wording() {
 /// agree.
 #[test]
 fn channel_task_doc_documents_cooperative_cancel_semantics() {
-    let doc = read_channel_task_doc();
-    assert!(
-        doc.contains("## `task.cancel`"),
-        "docs/stdlib/channel-task.md must still have a `task.cancel` section"
-    );
+    let docs = silt::typechecker::builtin_docs();
+    let doc = docs
+        .get("task.cancel")
+        .cloned()
+        .expect("task.cancel must have a registered builtin doc");
     assert!(
         doc.contains("first-writer-wins"),
-        "docs/stdlib/channel-task.md must describe first-writer-wins \
-         semantics for task.cancel, matching docs/concurrency.md."
+        "the inlined `task.cancel` doc must describe first-writer-wins \
+         semantics, matching docs/concurrency.md."
     );
     assert!(
         doc.contains("Err(\"cancelled\")"),
-        "docs/stdlib/channel-task.md must name the exact error value \
+        "the inlined `task.cancel` doc must name the exact error value \
          `Err(\"cancelled\")` that the cancelled handle resolves to."
     );
     let lower = doc.to_lowercase();
     assert!(
         lower.contains("cooperative"),
-        "docs/stdlib/channel-task.md must call task.cancel a cooperative \
-         request, not a synchronous stop signal (round-52 correction)."
+        "the inlined `task.cancel` doc must call task.cancel a \
+         cooperative request, not a synchronous stop signal."
     );
 }
 

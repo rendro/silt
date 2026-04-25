@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // int.parse: (String) -> Result(Int, ParseError)
@@ -62,4 +63,6 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("int.to_string"),
         Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
     );
+
+    attach_module_docs_filtered(env, super::docs::INT_FLOAT_MD, "int");
 }

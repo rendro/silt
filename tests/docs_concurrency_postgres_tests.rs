@@ -73,8 +73,9 @@ fn docs_why_silt_does_not_claim_postgres_ships_in_box() {
         !doc.contains(stale_fragment),
         "docs/why-silt.md still lists `postgres` in the \"all ship in-box\" sentence. That \
          is inconsistent with Cargo.toml (default features do not include `postgres`) and \
-         with docs/stdlib/postgres.md (which correctly labels the module \"opt-in feature\" \
-         and tells readers to build with `--features postgres`)."
+         with the postgres module's inlined doc (round 62 phase-2 moved that prose into \
+         `super::docs::POSTGRES_MD`; it labels the module \"opt-in feature\" and tells \
+         readers to build with `--features postgres`)."
     );
 
     // A gentler check: the substring "`postgres`" must not appear on

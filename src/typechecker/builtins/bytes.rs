@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The opaque Bytes type. Forward-compat: when promoted to a
@@ -168,4 +169,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             Box::new(Type::List(Box::new(bytes_ty))),
         )),
     );
+
+    attach_module_overview(env, super::docs::BYTES_MD, "bytes");
+    attach_module_docs(env, super::docs::BYTES_MD);
 }

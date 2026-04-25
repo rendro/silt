@@ -43,6 +43,16 @@ pub(super) const BUILTIN_AUTO_DERIVED_TRAIT_NAMES: &[&str] =
 #[derive(Debug, Clone)]
 pub(super) struct TypeEnv {
     pub(super) bindings: HashMap<Symbol, Scheme>,
+    /// Documentation strings for built-in names (stdlib functions,
+    /// constants, type/trait declarations, error variants).
+    /// Populated alongside `bindings` via `define_with_doc` /
+    /// `attach_doc` from the per-module registration sites under
+    /// `src/typechecker/builtins/`. Only the root env carries entries
+    /// — child scopes inherit the parent's view via `lookup_doc` so we
+    /// don't have to walk the parent chain in every editor request.
+    /// Surfaced through LSP hover / completion / signature-help via
+    /// `pub fn builtin_docs()`.
+    pub(super) builtin_docs: HashMap<Symbol, String>,
     parent: Option<Box<TypeEnv>>,
 }
 
@@ -50,6 +60,7 @@ impl TypeEnv {
     pub(super) fn new() -> Self {
         TypeEnv {
             bindings: HashMap::new(),
+            builtin_docs: HashMap::new(),
             parent: None,
         }
     }
@@ -57,12 +68,29 @@ impl TypeEnv {
     pub(super) fn child(&self) -> Self {
         TypeEnv {
             bindings: HashMap::new(),
+            builtin_docs: HashMap::new(),
             parent: Some(Box::new(self.clone())),
         }
     }
 
     pub(super) fn define(&mut self, name: Symbol, scheme: Scheme) {
         self.bindings.insert(name, scheme);
+    }
+
+    /// Attach a markdown doc string to an already-defined name. Used
+    /// by per-module registration sites under
+    /// `src/typechecker/builtins/` (via `attach_module_docs`) so LSP
+    /// hover / completion / signature-help can render the same prose
+    /// that round 62 phase-2 inlined from the former
+    /// `docs/stdlib/*.md` files. No-op if the name
+    /// has not been `define`d (the doc would never be reachable);
+    /// keeps the parity walker robust against renames in the markdown
+    /// without requiring the registration site to also be updated in
+    /// lockstep.
+    pub(super) fn attach_doc(&mut self, name: Symbol, doc: &str) {
+        if self.bindings.contains_key(&name) {
+            self.builtin_docs.insert(name, doc.to_string());
+        }
     }
 
     pub(super) fn lookup(&self, name: Symbol) -> Option<&Scheme> {
@@ -3899,6 +3927,41 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
         }
     }
     sigs
+}
+
+/// Return a map of every built-in name (qualified or bare) to its
+/// markdown doc string, for the LSP to render in hover / completion /
+/// signature-help. Includes everything registered with
+/// `env.define_with_doc` / `env.attach_doc` under
+/// `src/typechecker/builtins/` plus the unqualified globals
+/// (`println`, `panic`, `Some`, `Ok`, …) registered in
+/// `register_builtins` itself. Names without a registered doc are
+/// omitted; callers do an `Option<&str>` lookup.
+///
+/// The map is keyed by the resolved (string) name so LSP code can
+/// look up `"list.map"` directly without going through the intern
+/// table — symmetric with `builtin_type_signatures`.
+pub fn builtin_docs() -> std::collections::HashMap<String, String> {
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    let mut docs = std::collections::HashMap::new();
+    for (name, doc) in &env.builtin_docs {
+        docs.insert(resolve(*name), doc.clone());
+    }
+    docs
+}
+
+/// Test-only: iterate `(qualified_name, doc)` for every built-in name
+/// that has a registered doc. Used by the parity walker
+/// (`tests/docs_stdlib_println_parity_tests.rs`) to scan inlined
+/// markdown for `\`\`\`silt` fenced blocks with `println(...) --
+/// expected` annotations and run them against `silt run`.
+#[doc(hidden)]
+pub fn iter_builtin_docs() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = builtin_docs().into_iter().collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and

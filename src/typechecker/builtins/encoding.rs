@@ -2,10 +2,14 @@
 //!
 //! Narrow surface: just URL / percent encoding. Base64 and hex live on
 //! the `bytes` module because they consume / produce `Bytes`, not
-//! `String`. See `src/builtins/encoding.rs` for the runtime side and
-//! `docs/stdlib/encoding.md` for the user-facing rationale.
+//! `String`. See `src/builtins/encoding.rs` for the runtime side; the
+//! user-facing rationale is in `super::docs::ENCODING_MD` (round 62
+//! phase-2 inlined the former `docs/stdlib/encoding.md`).
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
+use super::docs::attach_module_docs;
+use super::docs::attach_module_overview;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     let result = |ok_ty: Type, err_ty: Type| -> Type {
@@ -54,4 +58,14 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             Box::new(result(pair_list, Type::String)),
         )),
     );
+
+    // Encoding has only `## \`form_encode\`` style sections (bare,
+    // not module-qualified) plus prose chunks with no per-fn
+    // sections (`url_encode`, `url_decode`). Overview-attach the
+    // whole markdown to every encoding.* binding first; per-section
+    // attach below would no-op for unqualified sections (see
+    // attach_module_docs's heading parser) but is harmless.
+    attach_module_overview(env, super::docs::ENCODING_MD, "encoding");
+    attach_module_docs(env, super::docs::ENCODING_MD);
+    attach_module_docs_filtered(env, super::docs::JSON_MD, "json");
 }

@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     let listener_ty = Type::Generic(intern("TcpListener"), vec![]);
@@ -130,4 +131,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             )),
         );
     }
+
+    attach_module_overview(env, super::docs::TCP_MD, "tcp");
+    attach_module_docs(env, super::docs::TCP_MD);
 }

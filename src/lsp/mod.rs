@@ -76,6 +76,14 @@ struct Server {
     documents: HashMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
+    /// Cached markdown docs for every built-in name with a registered
+    /// doc string. Populated once at startup from
+    /// `typechecker::builtin_docs()`. Used by `hover` /
+    /// `signature_help` / `completion` to surface stdlib prose. The
+    /// runtime source for these strings is the per-module
+    /// `env.define_with_doc` / `env.attach_doc` registration sites
+    /// under `src/typechecker/builtins/`.
+    builtin_docs: HashMap<String, String>,
     /// Per-URI cache of the last computed diagnostics. Populated by
     /// `update_document` so the pull-based `textDocument/diagnostic`
     /// handler can answer without re-running the pipeline.
@@ -88,6 +96,7 @@ impl Server {
             connection,
             documents: HashMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
+            builtin_docs: typechecker::builtin_docs(),
             diagnostics_cache: HashMap::new(),
         }
     }

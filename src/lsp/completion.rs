@@ -51,10 +51,17 @@ impl Server {
         // Builtins (globals + stdlib)
         for (name, kind) in builtins() {
             let detail = self.builtin_sigs.get(&name).cloned();
+            let documentation = self.builtin_docs.get(&name).map(|d| {
+                Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: d.clone(),
+                })
+            });
             items.push(CompletionItem {
                 label: name,
                 kind: Some(kind),
                 detail,
+                documentation,
                 ..CompletionItem::default()
             });
         }
@@ -112,20 +119,34 @@ impl Server {
             for func in module::builtin_module_functions(prefix) {
                 let qualified = format!("{prefix}.{func}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
+                let documentation = self.builtin_docs.get(&qualified).map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d.clone(),
+                    })
+                });
                 items.push(CompletionItem {
                     label: func.to_string(),
                     kind: Some(CompletionItemKind::FUNCTION),
                     detail,
+                    documentation,
                     ..CompletionItem::default()
                 });
             }
             for constant in module::builtin_module_constants(prefix) {
                 let qualified = format!("{prefix}.{constant}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
+                let documentation = self.builtin_docs.get(&qualified).map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d.clone(),
+                    })
+                });
                 items.push(CompletionItem {
                     label: constant.to_string(),
                     kind: Some(CompletionItemKind::CONSTANT),
                     detail,
+                    documentation,
                     ..CompletionItem::default()
                 });
             }

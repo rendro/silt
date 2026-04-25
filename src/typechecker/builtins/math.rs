@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Functions that can produce non-finite results: (Float) -> ExtFloat
@@ -53,16 +54,12 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         Scheme::mono(Type::Fun(vec![], Box::new(Type::Float))),
     );
 
-    // Math constants
+    // Math constants. Float constants moved to `float.rs` so the
+    // overview-attach there can see them — `register_float_builtins`
+    // runs before `register_math_builtins`, and `attach_module_overview`
+    // walks `env.bindings` at call time.
     env.define(intern("math.pi"), Scheme::mono(Type::Float));
     env.define(intern("math.e"), Scheme::mono(Type::Float));
 
-    // Float constants
-    env.define(intern("float.max_value"), Scheme::mono(Type::Float));
-    env.define(intern("float.min_value"), Scheme::mono(Type::Float));
-    env.define(intern("float.epsilon"), Scheme::mono(Type::Float));
-    env.define(intern("float.min_positive"), Scheme::mono(Type::Float));
-    env.define(intern("float.infinity"), Scheme::mono(Type::ExtFloat));
-    env.define(intern("float.neg_infinity"), Scheme::mono(Type::ExtFloat));
-    env.define(intern("float.nan"), Scheme::mono(Type::ExtFloat));
+    attach_module_docs(env, super::docs::MATH_MD);
 }

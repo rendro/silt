@@ -5,6 +5,7 @@
 //! `Bytes` value; fallible operations return `Result(_, String)`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The opaque Bytes type — same construction as the bytes module so
@@ -82,4 +83,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             Box::new(Type::Bool),
         )),
     );
+
+    attach_module_overview(env, super::docs::CRYPTO_MD, "crypto");
+    attach_module_docs(env, super::docs::CRYPTO_MD);
 }

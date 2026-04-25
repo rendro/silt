@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // io.inspect: a -> String
@@ -68,4 +69,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Box::new(Type::List(Box::new(Type::String))),
         )),
     );
+
+    attach_module_docs_filtered(env, super::docs::IO_FS_MD, "io");
 }

@@ -15,7 +15,7 @@
 //!   `peer_addr`/`set_nodelay`, and the "v0.9 module surface" claim in
 //!   bytes.md) must stay out.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn manifest_dir() -> &'static Path {
@@ -139,79 +139,65 @@ fn readme_tooling_block_matches_main_help() {
 }
 
 // ─── G8: Stdlib indexes + per-module docs ────────────────────────────
+//
+// Round 62 phase-2 deleted `docs/stdlib/index.md` and
+// `docs/stdlib-reference.md` (along with every per-module page) and
+// moved the per-module markdown into `super::docs::*_MD` constants.
+// The tests below now check that each formerly-listed module has at
+// least one binding with a non-empty registered doc, and that
+// postgres-specific contracts (opt-in feature, --features postgres
+// hint, every documented builtin) are preserved in the inlined
+// markdown.
 
 const REQUIRED_INDEX_MODULES: &[&str] = &["bytes", "tcp", "stream", "postgres"];
 
 #[test]
 fn stdlib_index_references_all_per_module_pages() {
-    let path = manifest_dir().join("docs").join("stdlib").join("index.md");
-    let body = read(&path);
+    let docs = silt::typechecker::builtin_docs();
     for module in REQUIRED_INDEX_MODULES {
-        // Reference either as a markdown link target `<module>.md` or
-        // as a backticked name. The link form is the contract we want
-        // to enforce — the module should be clickable from the index.
-        let link = format!("({}.md)", module);
+        let dot = format!("{module}.");
+        let any = docs
+            .iter()
+            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
         assert!(
-            body.contains(&link),
-            "{} is missing a link to `{}.md` in the Module Index",
-            path.display(),
-            module
+            any,
+            "no `{module}.*` binding has a non-empty registered doc — \
+             round 62 phase-2 inlined the per-module prose into \
+             `super::docs::*_MD` (see src/typechecker/builtins/docs.rs). \
+             Restore the section."
         );
     }
 }
 
 #[test]
 fn stdlib_reference_table_references_all_per_module_pages() {
-    let path = manifest_dir().join("docs").join("stdlib-reference.md");
-    let body = read(&path);
-    for module in REQUIRED_INDEX_MODULES {
-        let link = format!("(stdlib/{}.md)", module);
-        assert!(
-            body.contains(&link),
-            "{} is missing a link to `stdlib/{}.md` in the per-module table",
-            path.display(),
-            module
-        );
-    }
+    // Same contract as above; round 62 phase-2 collapsed both the
+    // `stdlib/index.md` table and the `stdlib-reference.md` table
+    // into the single LSP-delivered surface. Kept as a parallel
+    // assertion so future drift is easier to bisect.
+    stdlib_index_references_all_per_module_pages();
 }
 
 #[test]
 fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
-    let path = manifest_dir()
-        .join("docs")
-        .join("stdlib")
-        .join("postgres.md");
-    assert!(
-        path.is_file(),
-        "docs/stdlib/postgres.md does not exist: {}",
-        path.display()
-    );
-    let body = read(&path);
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .keys()
+        .filter(|k| k.starts_with("postgres."))
+        .find_map(|k| docs.get(k))
+        .cloned()
+        .expect("at least one postgres.* binding must have a registered doc");
 
-    // Frontmatter must be present and match neighboring stdlib pages.
-    // Accept either LF or CRLF (Git autocrlf on Windows may rewrite).
-    assert!(
-        body.starts_with("---\n") || body.starts_with("---\r\n"),
-        "postgres.md must begin with YAML frontmatter (starting with '---')"
-    );
-    assert!(
-        body.contains("title: \"postgres\""),
-        "postgres.md frontmatter must include title: \"postgres\""
-    );
-    assert!(
-        body.contains("section: \"Standard Library\""),
-        "postgres.md frontmatter must include section: \"Standard Library\""
-    );
-
-    // Opt-in feature header — mirror the precedent at tcp.md's
+    // Opt-in feature header — mirror the precedent at tcp's
     // "TLS (opt-in feature)" section.
     assert!(
         body.contains("opt-in feature") || body.contains("opt-in"),
-        "postgres.md must flag itself as opt-in (mirror tcp.md TLS precedent)"
+        "the inlined postgres doc must flag the module as opt-in"
     );
     assert!(
         body.contains("--features postgres"),
-        "postgres.md must show how to enable the feature (e.g. `--features postgres`)"
+        "the inlined postgres doc must show how to enable the feature \
+         (e.g. `--features postgres`)"
     );
 
     // Every postgres builtin must be documented by name.
@@ -231,10 +217,6 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     ];
     let mut missing: Vec<&str> = Vec::new();
     for name in REQUIRED_BUILTINS {
-        // The table uses bare function names (e.g. `connect`) so we
-        // accept either the full `postgres.connect` form or the bare
-        // name. Require both a surface mention of the fully-qualified
-        // name in the doc body *or* a table row for it.
         let bare = name.strip_prefix("postgres.").unwrap();
         let table_row = format!("`{}`", bare);
         if !body.contains(name) && !body.contains(&table_row) {
@@ -243,18 +225,24 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     }
     assert!(
         missing.is_empty(),
-        "postgres.md is missing documentation for builtin(s): {:?}",
-        missing
+        "the inlined postgres doc (super::docs::POSTGRES_MD) is \
+         missing documentation for builtin(s): {missing:?}"
     );
 }
 
 /// Coverage walker: for every `register_<name>_builtins` definition in
-/// `src/typechecker/builtins.rs`, assert that a matching
-/// `docs/stdlib/<name>.md` exists (or that `<name>` is explicitly
-/// documented on a combined page we know about).
+/// `src/typechecker/builtins.rs`, assert that at least one `<name>.*`
+/// builtin name has a registered doc string. Round 62 phase-2 inlined
+/// the per-module markdown into `super::docs::*_MD` constants under
+/// `src/typechecker/builtins/docs.rs` and the per-module register
+/// function calls `attach_module_docs` (or the overview/filtered
+/// variants) to stamp those bodies onto each binding's
+/// `env.builtin_docs` entry.
 ///
 /// This is the future-proofing lock: if a new `register_foo_builtins`
-/// ships, this test fails until `docs/stdlib/foo.md` is added.
+/// ships, this test fails until the corresponding `FOO_MD` blob has a
+/// `## \`foo.X\`` section attached for at least one of the names it
+/// registers.
 #[test]
 fn every_register_builtins_has_a_per_module_doc() {
     let src_path = manifest_dir()
@@ -263,28 +251,25 @@ fn every_register_builtins_has_a_per_module_doc() {
         .join("builtins.rs");
     let src = read(&src_path);
 
-    // Modules that share a combined page with neighboring modules.
-    // The keys are `<name>` as it appears in `register_<name>_builtins`;
-    // the values are the doc filename (without .md) that actually hosts
-    // them. Keep this in sync with docs/stdlib/ layout.
-    let combined = |name: &str| -> Option<&'static str> {
-        match name {
-            "int" | "float" => Some("int-float"),
-            "io" | "fs" | "env" => Some("io-fs"),
-            "result" | "option" => Some("result-option"),
-            "channel" => Some("channel-task"),
-            _ => None,
-        }
-    };
+    let docs = silt::typechecker::builtin_docs();
 
-    let stdlib_dir = manifest_dir().join("docs").join("stdlib");
+    // The `errors` module is special: `register_errors_builtins`
+    // registers bare-name variant constructors (`IoNotFound`,
+    // `JsonSyntax`, …), not `errors.*`. We assert each of those
+    // variants has a registered doc rather than scanning a prefix.
+    fn errors_have_docs(docs: &std::collections::HashMap<String, String>) -> bool {
+        // A representative sample — every variant is attached the
+        // same body via `attach_enum_variant_docs` in errors.rs, so
+        // checking one is sufficient for the coverage smoke test.
+        ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"]
+            .iter()
+            .all(|n| docs.get(*n).map(|d| !d.trim().is_empty()).unwrap_or(false))
+    }
 
     let mut missing: Vec<String> = Vec::new();
     let mut seen_any = false;
     for line in src.lines() {
         let trimmed = line.trim_start();
-        // Match definitions, not call sites, so we don't double-count.
-        // The definition form is `fn register_<name>_builtins(`.
         let after_fn = match trimmed.strip_prefix("fn register_") {
             Some(r) => r,
             None => continue,
@@ -299,13 +284,21 @@ fn every_register_builtins_has_a_per_module_doc() {
         }
         seen_any = true;
 
-        let doc_stem = combined(name).unwrap_or(name);
-        let doc_path = stdlib_dir.join(format!("{}.md", doc_stem));
-        if !doc_path.is_file() {
+        let has_any_doc = if name == "errors" {
+            errors_have_docs(&docs)
+        } else {
+            let dot = format!("{name}.");
+            docs.iter()
+                .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty())
+        };
+        if !has_any_doc {
             missing.push(format!(
-                "register_{}_builtins has no docs (expected {})",
-                name,
-                doc_path.display()
+                "register_{}_builtins has no inlined docs — no `{}.*` \
+                 binding has a non-empty `super::docs::*_MD` section \
+                 attached. Add one and call `attach_module_docs` (or \
+                 `attach_module_overview` for module-level prose) from \
+                 `register(checker, env)`.",
+                name, name
             ));
         }
     }
@@ -342,43 +335,56 @@ fn getting_started_does_not_reference_coming_in_v0_7() {
 
 #[test]
 fn tcp_doc_has_no_bare_v0_9_limitation_pin() {
-    let path = manifest_dir().join("docs").join("stdlib").join("tcp.md");
-    let body = read(&path);
-    // The prior wording was "return Err in v0.9 (they require unwrapping ...)".
-    // We allow `v0.9` elsewhere (e.g. historical notes), but not as a
-    // version pin on the peer_addr / set_nodelay limitation.
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .keys()
+        .filter(|k| k.starts_with("tcp."))
+        .find_map(|k| docs.get(k))
+        .cloned()
+        .expect("at least one tcp.* binding must have a registered doc");
     assert!(
         !body.contains("return Err in v0.9"),
-        "docs/stdlib/tcp.md still contains the stale \"return Err in v0.9\" \
-         version-pinned wording; drop the version pin or retarget to \
-         current release."
+        "the inlined tcp doc (super::docs::TCP_MD) still contains the \
+         stale \"return Err in v0.9\" version-pinned wording; drop the \
+         version pin or retarget to current release."
     );
 }
 
 #[test]
 fn bytes_doc_has_no_v0_9_module_surface_claim() {
-    let path = manifest_dir().join("docs").join("stdlib").join("bytes.md");
-    let body = read(&path);
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .keys()
+        .filter(|k| k.starts_with("bytes."))
+        .find_map(|k| docs.get(k))
+        .cloned()
+        .expect("at least one bytes.* binding must have a registered doc");
     assert!(
         !body.contains("v0.9 module surface"),
-        "docs/stdlib/bytes.md still contains the stale \"v0.9 module surface\" \
-         forward-compat claim; generalize the wording."
+        "the inlined bytes doc (super::docs::BYTES_MD) still contains \
+         the stale \"v0.9 module surface\" forward-compat claim; \
+         generalize the wording."
     );
 }
 
 // ─── Supporting integrity checks ─────────────────────────────────────
 
-/// Paranoia check: every module we claim to link from the indexes
-/// must actually have a file on disk.
+/// Paranoia check: every module we claim to deliver via LSP must
+/// actually have at least one registered builtin doc. Round 62
+/// phase-2 replaced the on-disk file presence check.
 #[test]
 fn required_index_modules_have_files() {
-    let stdlib_dir: PathBuf = manifest_dir().join("docs").join("stdlib");
+    let docs = silt::typechecker::builtin_docs();
     for module in REQUIRED_INDEX_MODULES {
-        let path = stdlib_dir.join(format!("{}.md", module));
+        let dot = format!("{module}.");
+        let any = docs
+            .iter()
+            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
         assert!(
-            path.is_file(),
-            "docs/stdlib/{}.md must exist (referenced by index)",
-            module
+            any,
+            "module `{module}` has no registered builtin doc — round 62 \
+             phase-2 inlined the per-module markdown into \
+             `super::docs::*_MD` (in src/typechecker/builtins/docs.rs)."
         );
     }
 }

@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ── Time module type definitions ──────────────────────────────
@@ -349,4 +350,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("time.sleep"),
         Scheme::mono(Type::Fun(vec![duration_ty], Box::new(Type::Unit))),
     );
+
+    attach_module_docs(env, super::docs::TIME_MD);
 }

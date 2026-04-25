@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.exists / fs.is_file / fs.is_dir / fs.is_symlink: (String) -> Bool
@@ -147,4 +148,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     for name in &["fs.walk", "fs.glob"] {
         env.define(intern(name), string_to_result_list_string.clone());
     }
+
+    attach_module_docs_filtered(env, super::docs::IO_FS_MD, "fs");
 }

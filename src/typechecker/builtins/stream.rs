@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
@@ -447,4 +448,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             )),
         );
     }
+
+    attach_module_overview(env, super::docs::STREAM_MD, "stream");
+    attach_module_docs(env, super::docs::STREAM_MD);
 }

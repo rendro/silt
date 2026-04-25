@@ -10,7 +10,6 @@
 //!   tricky strings (emoji, quotes, newlines, nulls).
 //! - Doc ↔ registration cross-check mirroring the crypto module's test.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use silt::types::Severity;
@@ -380,15 +379,12 @@ fn main() {
 
 /// Mirror of `test_documented_crypto_functions_match_registration`:
 /// every function registered for the `encoding` module in
-/// `src/module.rs` must appear in the per-module doc page.
+/// `src/module.rs` must have a non-empty inlined builtin doc (round
+/// 62 phase-2 moved encoding's prose into
+/// `super::docs::ENCODING_MD`).
 #[test]
 fn test_documented_encoding_functions_match_registration() {
-    let doc_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs")
-        .join("stdlib")
-        .join("encoding.md");
-    let body = std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/encoding.md");
-
+    let docs = silt::typechecker::builtin_docs();
     let expected = silt::module::builtin_module_functions("encoding");
     assert!(
         !expected.is_empty(),
@@ -396,13 +392,16 @@ fn test_documented_encoding_functions_match_registration() {
     );
 
     for name in &expected {
-        let bare = format!("`{}`", name);
         let qualified = format!("encoding.{}", name);
+        let body = docs.get(&qualified).cloned().unwrap_or_default();
         assert!(
-            body.contains(&bare) || body.contains(&qualified),
-            "docs/stdlib/encoding.md does not document the function `{name}`. \
-             Every function in src/module.rs::builtin_module_functions(\"encoding\") \
-             must be mentioned by name in the per-module doc."
+            !body.trim().is_empty(),
+            "encoding.{name} has no registered builtin doc. Round 62 \
+             phase-2 attaches `super::docs::ENCODING_MD` (and its \
+             json sibling) to every encoding.* binding via \
+             `attach_module_overview` + `attach_module_docs`. Verify \
+             both calls fire from \
+             `src/typechecker/builtins/encoding.rs`."
         );
     }
 }

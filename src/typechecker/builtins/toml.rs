@@ -7,6 +7,7 @@
 //! compose naturally.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let _ = checker; // no per-type record state to register for toml
@@ -102,4 +103,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    attach_module_docs(env, super::docs::TOML_MD);
 }

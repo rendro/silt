@@ -229,7 +229,9 @@ The bare `silt update` command regenerates `silt.lock` from the current package'
 ## What's next
 
 - **[Language Guide](language-guide.md)** — complete coverage of every feature
-- **[Standard Library](stdlib/index.md)** — all modules and functions
+- **Standard Library** — every built-in function, constant, and type carries
+  its docs through the LSP. Hover `list.map`, `math.cos`, `Result`, …
+  in your editor to see signature, prose, and runnable examples.
 - **[Concurrency](concurrency.md)** — the full CSP model, channels, and select
 - **[FFI Guide](ffi.md)** — embed silt in Rust applications
 - **[Editor Setup](editor-setup.md)** — configure your editor for silt

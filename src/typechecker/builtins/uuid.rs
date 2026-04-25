@@ -4,9 +4,11 @@
 //! parsing with validation, a predicate helper, and the nil sentinel.
 //! All UUIDs cross the language boundary as `String` (canonical
 //! lowercase hyphenated form). See `src/builtins/uuid.rs` for the
-//! runtime side and `docs/stdlib/uuid.md` for the user-facing docs.
+//! runtime side; round 62 phase-2 inlined the user-facing markdown
+//! into `super::docs::UUID_MD`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     let result = |ok_ty: Type, err_ty: Type| -> Type {
@@ -45,4 +47,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("uuid.is_valid"),
         Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
     );
+
+    attach_module_overview(env, super::docs::UUID_MD, "uuid");
+    attach_module_docs(env, super::docs::UUID_MD);
 }

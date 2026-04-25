@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // result.map_ok: (Result(a,e), (a -> b)) -> Result(b,e)
@@ -147,4 +148,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    attach_module_docs_filtered(env, super::docs::RESULT_OPTION_MD, "result");
 }

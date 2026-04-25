@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ── HTTP module type definitions ─────────────────────────────
@@ -178,4 +179,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             )),
         )),
     );
+
+    attach_module_overview(env, super::docs::HTTP_MD, "http");
+    attach_module_docs(env, super::docs::HTTP_MD);
 }

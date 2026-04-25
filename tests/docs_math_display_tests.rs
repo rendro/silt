@@ -1,5 +1,7 @@
-//! Regression lock for the `math.acos(1.0)` doc snippet output in
-//! `docs/stdlib/math.md`.
+//! Regression lock for the `math.acos(1.0)` doc snippet output that
+//! lives in the `math.acos` doc string registered by
+//! `src/typechecker/builtins/math.rs` (round 62 phase-2 LSP doc
+//! inlining moved this prose out of the deleted `docs/stdlib/math.md`).
 //!
 //! Round 60 audit L11: the doc snippet's comment claimed the program
 //! prints `0.0`, but silt's Float Display drops the trailing `.0` for
@@ -7,17 +9,18 @@
 //! updates the doc to match the CLI output and leaves a parenthetical
 //! explaining the Display-formatting quirk.
 //!
-//! This test does both: (a) source-grep locks the corrected comment on
-//! the doc page and (b) actually runs the snippet through the `silt`
-//! CLI and asserts the stdout is a bare `0` so the doc can't drift
-//! back.
+//! This test does both: (a) introspects the registered builtin doc
+//! string for `math.acos` and locks the corrected `-- 0` annotation,
+//! and (b) actually runs the snippet through the `silt` CLI and
+//! asserts the stdout is a bare `0` so the doc can't drift back.
 
-use std::path::Path;
 use std::process::Command;
 
-fn read_math_doc() -> String {
-    let path = Path::new("docs/stdlib/math.md");
-    std::fs::read_to_string(path).expect("docs/stdlib/math.md must be readable")
+fn read_math_acos_doc() -> String {
+    let docs = silt::typechecker::builtin_docs();
+    docs.get("math.acos")
+        .cloned()
+        .expect("math.acos doc must be registered (see src/typechecker/builtins/math.rs)")
 }
 
 /// The comment in the `math.acos` snippet must show the actual CLI
@@ -27,20 +30,20 @@ fn read_math_doc() -> String {
 /// that the `println(angle)  -- 0` form is present.
 #[test]
 fn math_acos_doc_snippet_shows_bare_zero_output() {
-    let doc = read_math_doc();
+    let doc = read_math_acos_doc();
     // The `  -- 0.0` claim must not reappear as the annotated output.
     assert!(
         !doc.contains("println(angle)  -- 0.0"),
-        "docs/stdlib/math.md still claims `math.acos(1.0) else 0.0` \
+        "math.acos builtin doc still claims `math.acos(1.0) else 0.0` \
          prints `0.0`. Silt's Float Display drops the trailing `.0` \
          for integer-valued floats, so the actual stdout is `0`."
     );
     // The corrected annotation must be present.
     assert!(
         doc.contains("println(angle)  -- 0"),
-        "docs/stdlib/math.md `math.acos` snippet must annotate the \
-         stdout as `0` (no trailing `.0`), matching the Float Display \
-         behaviour. Got doc:\n{doc}"
+        "math.acos builtin doc must annotate the stdout as `0` (no \
+         trailing `.0`), matching the Float Display behaviour. Got \
+         doc:\n{doc}"
     );
 }
 

@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs_filtered, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // float.parse: (String) -> Result(Float, ParseError)
@@ -117,4 +118,24 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("float.to_int"),
         Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Int))),
     );
+
+    // Float constants. Moved from `math.rs` (round 62 phase-2) so
+    // `attach_module_overview` below can see them — `register_float_builtins`
+    // runs before `register_math_builtins`, and the overview walks
+    // `env.bindings` at call time.
+    env.define(intern("float.max_value"), Scheme::mono(Type::Float));
+    env.define(intern("float.min_value"), Scheme::mono(Type::Float));
+    env.define(intern("float.epsilon"), Scheme::mono(Type::Float));
+    env.define(intern("float.min_positive"), Scheme::mono(Type::Float));
+    env.define(intern("float.infinity"), Scheme::mono(Type::ExtFloat));
+    env.define(intern("float.neg_infinity"), Scheme::mono(Type::ExtFloat));
+    env.define(intern("float.nan"), Scheme::mono(Type::ExtFloat));
+
+    // The `## Float Constants` section in int-float.md does not
+    // map to per-name `## float.epsilon` headings, so first
+    // overview-attach the whole markdown to every float.* binding,
+    // then let attach_module_docs_filtered overwrite for the
+    // function names that DO have per-section bodies.
+    attach_module_overview(env, super::docs::INT_FLOAT_MD, "float");
+    attach_module_docs_filtered(env, super::docs::INT_FLOAT_MD, "float");
 }

@@ -2,7 +2,8 @@
 //! enums are registered correctly as ordinary silt types.
 //!
 //! Design reference: `docs/proposals/stdlib-errors.md`.
-//! User-facing reference: `docs/stdlib/errors.md`.
+//! User-facing reference: `super::docs::ERRORS_MD` (round 62 phase-2
+//! inlined the former `docs/stdlib/errors.md` into the typechecker).
 //!
 //! These tests cover the three invariants the proposal requires for
 //! Phase 0:

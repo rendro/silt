@@ -904,8 +904,8 @@ SILT_IO_TIMEOUT=5s silt run server.silt
 ```
 
 For scoped, per-call deadlines rather than a process-wide cap, use
-[`task.deadline(dur, fn)`](stdlib/channel-task.md#taskdeadline) or
-[`task.spawn_until(dur, fn)`](stdlib/channel-task.md#taskspawn_until).
+`task.deadline(dur, fn)` or `task.spawn_until(dur, fn)` (hover either
+in your editor for the LSP docs).
 Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
 fires, and the caller sees the same typed variant as the module's normal
 timeout path.

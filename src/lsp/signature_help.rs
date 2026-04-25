@@ -53,8 +53,12 @@ impl Server {
                 let (label, params_info) = build_signature_from_def(&fn_name, def);
                 (label, params_info, def.doc.clone())
             } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
-                // Show builtin type signature (no individual param info)
-                (format!("{fn_name}: {sig}"), vec![], None)
+                // Show builtin type signature (no individual param info).
+                // Phase-2 builtin docs: surface stdlib markdown
+                // alongside the signature so signature-help is a real
+                // documentation surface for builtins, not just a type.
+                let doc_text = self.builtin_docs.get(&fn_name).cloned();
+                (format!("{fn_name}: {sig}"), vec![], doc_text)
             } else {
                 return None;
             };

@@ -28,8 +28,10 @@ use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 /// Upper bound on `crypto.random_bytes(n)`. Chosen to match the 1 MiB
-/// cap documented at `docs/stdlib/crypto.md`; this is a sanity guard
-/// against accidental giant allocations, not a security boundary.
+/// cap documented in `super::super::typechecker::builtins::docs::CRYPTO_MD`
+/// (round 62 phase-2 inlined the former `docs/stdlib/crypto.md`); this
+/// is a sanity guard against accidental giant allocations, not a
+/// security boundary.
 const RANDOM_BYTES_CAP: i64 = 1_048_576;
 
 /// Dispatch `crypto.<name>(args)`.

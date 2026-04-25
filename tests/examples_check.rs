@@ -723,47 +723,30 @@ fn bindings_and_functions_globals_list_matches_reality() {
     );
 }
 
-/// Regression lock for the LATENT audit: `docs/stdlib/io-fs.md`'s frontmatter
-/// `title:` used to say "io / fs" even though the file also documents
-/// `env.*` and both `docs/stdlib/index.md` and `docs/stdlib-reference.md`
-/// already refer to it as "io / fs / env". This test guarantees the three
-/// labels stay in sync.
+/// Round 62 phase-2 obsoleted this test: the `docs/stdlib/io-fs.md`
+/// file (and its frontmatter title), `docs/stdlib/index.md`, and
+/// `docs/stdlib-reference.md` were all deleted as part of inlining
+/// stdlib prose into `super::docs::IO_FS_MD` for LSP delivery. The
+/// io / fs / env coverage is now verified by the
+/// `every_authoritative_builtin_has_a_non_empty_doc` lock in
+/// `tests/docs_stdlib_println_parity_tests.rs`. Keeping a stub here
+/// so the migration is visible in `git log -p`.
 #[test]
 fn io_fs_frontmatter_title_matches_stdlib_index() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let io_fs_path = manifest_dir.join("docs").join("stdlib").join("io-fs.md");
-    let body = std::fs::read_to_string(&io_fs_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", io_fs_path.display(), e));
-
-    // The frontmatter `title:` must be "io / fs / env".
-    assert!(
-        body.contains("title: \"io / fs / env\""),
-        "{}: frontmatter title must be `io / fs / env` to match the stdlib \
-         index entries and the file's actual env coverage, but got:\n{}",
-        io_fs_path.display(),
-        body.lines().take(6).collect::<Vec<_>>().join("\n")
-    );
-
-    // And the stdlib index/reference must still label it consistently.
-    let index_path = manifest_dir.join("docs").join("stdlib").join("index.md");
-    let index_body = std::fs::read_to_string(&index_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", index_path.display(), e));
-    assert!(
-        index_body.contains("io / fs / env"),
-        "{}: expected a reference to `io / fs / env` so the frontmatter \
-         title and index label stay in sync",
-        index_path.display()
-    );
-
-    let reference_path = manifest_dir.join("docs").join("stdlib-reference.md");
-    if reference_path.is_file() {
-        let reference_body = std::fs::read_to_string(&reference_path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {}", reference_path.display(), e));
+    // Sanity-poke the new contract: the io / fs / env modules each
+    // have at least one binding with a non-empty registered doc.
+    let docs = silt::typechecker::builtin_docs();
+    for prefix in &["io.", "fs.", "env."] {
+        let any = docs
+            .iter()
+            .any(|(k, v)| k.starts_with(prefix) && !v.trim().is_empty());
         assert!(
-            reference_body.contains("io / fs / env"),
-            "{}: expected a reference to `io / fs / env` so the frontmatter \
-             title and stdlib-reference label stay in sync",
-            reference_path.display()
+            any,
+            "no `{prefix}*` binding has a non-empty registered doc — \
+             round 62 phase-2 inlined the io-fs prose into \
+             `super::docs::IO_FS_MD` and each of io / fs / env attaches \
+             its own filtered subset via `attach_module_docs_filtered`. \
+             Restore the section."
         );
     }
 }
@@ -961,99 +944,80 @@ fn all_doc_fn_test_blocks_compile() {
 }
 
 /// Targeted regression lock for round 15 BROKEN finding:
-/// `docs/stdlib/int-float.md` used to claim that `float.to_int` "Accepts both
-/// `Float` and `ExtFloat`", but the typechecker signature in
-/// `src/typechecker/builtins.rs` is `(Float) -> Int` only. Passing the result
-/// of `1.0 / 2.0` (an `ExtFloat`) to `float.to_int` fails `silt check` with
-/// `type mismatch: expected Float, got ExtFloat`. The convergent fix was to
-/// strike the false clause from the description, not to widen the signature.
+/// `float.to_int`'s doc used to claim that it "Accepts both `Float`
+/// and `ExtFloat`", but the typechecker signature in
+/// `src/typechecker/builtins.rs` is `(Float) -> Int` only. Round 62
+/// phase-2 inlined the int-float doc into
+/// `super::docs::INT_FLOAT_MD`; we look up `float.to_int`'s
+/// registered builtin doc.
 ///
-/// This test asserts the false phrase stays gone, in both its plain-text and
-/// backticked forms. If someone re-adds the claim, this test fails loudly.
+/// If someone re-adds the claim, this test fails loudly.
 #[test]
 fn int_float_doc_does_not_claim_float_to_int_accepts_extfloat() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest_dir
-        .join("docs")
-        .join("stdlib")
-        .join("int-float.md");
-    let body = std::fs::read_to_string(&doc_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .get("float.to_int")
+        .cloned()
+        .expect("float.to_int builtin doc must be registered");
 
     assert!(
         !body.contains("Accepts both Float and ExtFloat"),
-        "{}: reintroduced the false claim that `float.to_int` accepts \
-         `ExtFloat`. The typechecker signature is `(Float) -> Int` only \
-         (see src/typechecker/builtins.rs). Strike the clause or widen the \
-         signature first; don't let the doc lie.",
-        doc_path.display()
+        "float.to_int's inlined builtin doc reintroduced the false claim \
+         that it accepts `ExtFloat`. The typechecker signature is \
+         `(Float) -> Int` only. Strike the clause from the corresponding \
+         section in `super::docs::INT_FLOAT_MD` (in \
+         src/typechecker/builtins/docs.rs)."
     );
     assert!(
         !body.contains("Accepts both `Float` and `ExtFloat`"),
-        "{}: reintroduced the false claim that `float.to_int` accepts \
-         `ExtFloat` (backticked form). The typechecker signature is \
-         `(Float) -> Int` only (see src/typechecker/builtins.rs). Strike \
-         the clause or widen the signature first; don't let the doc lie.",
-        doc_path.display()
+        "float.to_int's inlined builtin doc reintroduced the false claim \
+         in backticked form."
     );
 }
 
-/// Regression lock for round 15 GAP finding G7: `docs/stdlib/int-float.md`
-/// used to document only the 2-arg form of `float.to_string`, contradicting
-/// the runtime which accepts both 1-arg (shortest round-trippable) and
-/// 2-arg (fixed decimal places) forms — see `src/builtins/numeric.rs`
-/// around line 160 and the comment in `src/typechecker/builtins.rs` around
-/// line 1462. `docs/language/modules.md` additionally claimed
-/// "takes two arguments -- no overloading" which is now actively false.
+/// Regression lock for round 15 GAP finding G7: `float.to_string`'s
+/// doc used to document only the 2-arg form, contradicting the
+/// runtime which accepts both 1-arg (shortest round-trippable) and
+/// 2-arg (fixed decimal places) forms. Round 62 phase-2 inlined the
+/// int-float prose into `super::docs::INT_FLOAT_MD`.
 ///
 /// This test pins:
-///   (a) int-float.md documents BOTH the 1-arg and 2-arg signatures
+///   (a) the inlined float.to_string doc lists BOTH signatures
 ///   (b) modules.md no longer claims "no overloading" for float.to_string
 #[test]
 fn test_float_to_string_doc_documents_both_overloads() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let int_float = manifest_dir
-        .join("docs")
-        .join("stdlib")
-        .join("int-float.md");
     let modules = manifest_dir
         .join("docs")
         .join("language")
         .join("modules.md");
 
-    let int_float_body = std::fs::read_to_string(&int_float)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", int_float.display(), e));
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .get("float.to_string")
+        .cloned()
+        .expect("float.to_string builtin doc must be registered");
     let modules_body = std::fs::read_to_string(&modules)
         .unwrap_or_else(|e| panic!("failed to read {}: {}", modules.display(), e));
 
-    // (a) int-float.md must document the 1-arg form.
+    // (a) the inlined float.to_string doc must include the 1-arg form.
     assert!(
-        int_float_body.contains("float.to_string(f: Float) -> String"),
-        "{}: missing 1-arg signature `float.to_string(f: Float) -> String`. \
-         The runtime (src/builtins/numeric.rs) supports both the 1-arg \
-         (shortest round-trippable) and 2-arg (fixed decimal places) \
-         forms; the doc must list both so users know the 1-arg form is \
-         real.",
-        int_float.display()
+        body.contains("float.to_string(f: Float) -> String"),
+        "float.to_string builtin doc is missing the 1-arg signature. \
+         Both overloads must appear in the corresponding section of \
+         `super::docs::INT_FLOAT_MD`."
     );
-    // (a) int-float.md must also document the 2-arg form.
+    // (a) and the 2-arg form.
     assert!(
-        int_float_body.contains("float.to_string(f: Float, decimals: Int) -> String"),
-        "{}: missing 2-arg signature \
-         `float.to_string(f: Float, decimals: Int) -> String`. Both \
-         overloads must be documented.",
-        int_float.display()
+        body.contains("float.to_string(f: Float, decimals: Int) -> String"),
+        "float.to_string builtin doc is missing the 2-arg signature."
     );
 
-    // (b) modules.md must no longer claim "no overloading" for float.to_string.
-    // The original phrasing was `takes **two arguments** -- no overloading`.
-    // Reject any resurrection of that claim.
+    // (b) modules.md must no longer claim "no overloading".
     assert!(
         !modules_body.contains("no overloading"),
         "{}: reintroduced the false 'no overloading' claim for \
-         float.to_string. The runtime and typechecker both accept the \
-         1-arg shortest-round-trippable form; the doc must not claim \
-         otherwise.",
+         float.to_string.",
         modules.display()
     );
     assert!(
@@ -1583,33 +1547,31 @@ fn all_doc_fn_main_blocks_run_if_safe() {
 
 #[test]
 fn docs_mention_task_deadline_builtin() {
-    let doc = std::fs::read_to_string("docs/stdlib/channel-task.md")
-        .expect("docs/stdlib/channel-task.md must be readable");
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .get("task.deadline")
+        .cloned()
+        .expect("task.deadline builtin doc must be registered");
     assert!(
-        doc.contains("## `task.deadline`"),
-        "docs/stdlib/channel-task.md must have a `## ` task.deadline section"
+        body.contains("task.deadline(dur: Duration"),
+        "task.deadline builtin doc should show the (Duration, () -> a) -> a signature"
     );
     assert!(
-        doc.contains("task.deadline(dur: Duration"),
-        "task.deadline docs should show the (Duration, () -> a) -> a signature"
-    );
-    assert!(
-        doc.contains("I/O timeout (task.deadline exceeded)"),
-        "task.deadline docs should quote the exact error message silt emits"
+        body.contains("I/O timeout (task.deadline exceeded)"),
+        "task.deadline builtin doc should quote the exact error message silt emits"
     );
 }
 
 #[test]
 fn docs_mention_task_spawn_until_builtin() {
-    let doc = std::fs::read_to_string("docs/stdlib/channel-task.md")
-        .expect("docs/stdlib/channel-task.md must be readable");
+    let docs = silt::typechecker::builtin_docs();
+    let body = docs
+        .get("task.spawn_until")
+        .cloned()
+        .expect("task.spawn_until builtin doc must be registered");
     assert!(
-        doc.contains("## `task.spawn_until`"),
-        "docs/stdlib/channel-task.md must have a `## ` task.spawn_until section"
-    );
-    assert!(
-        doc.contains("task.spawn_until(dur: Duration"),
-        "task.spawn_until docs should show the (Duration, () -> a) -> Handle(a) signature"
+        body.contains("task.spawn_until(dur: Duration"),
+        "task.spawn_until builtin doc should show the (Duration, () -> a) -> Handle(a) signature"
     );
 }
 

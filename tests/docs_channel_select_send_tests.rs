@@ -6,147 +6,91 @@
 //! arms. The receive-only and `(channel, value)` tuple forms are gone;
 //! every list element is a `ChannelOp`. One way to do things.
 //!
+//! Round 62 phase-2 inlined the formerly on-disk markdown into
+//! `super::docs::*_MD` constants exposed via
+//! `silt::typechecker::builtin_docs()` and surfaced through LSP
+//! hover / completion / signature-help.
+//!
 //! These tests pin three things so neither the docs nor the code can
 //! silently regress:
 //!
-//!   1. `docs/stdlib/globals.md`'s `Sent` section must NOT contain the
-//!      "reserved for future use" phrasing. Reverting the doc fix makes
-//!      this fail.
+//!   1. The `Sent` constructor's builtin doc must NOT contain the
+//!      "reserved for future use" phrasing.
 //!
-//!   2. `docs/stdlib/channel-task.md`'s `channel.select` section must
-//!      document the `ChannelOp` element shape and the `Sent` result
-//!      that a send arm produces.
+//!   2. The `channel.select` builtin doc must document the
+//!      `ChannelOp` element shape and the `Sent` result that a send
+//!      arm produces.
 //!
 //!   3. A silt program that calls `channel.select([Send(ch, value)])`
-//!      must compile and run, producing the `(ch, Sent)` arm. Dropping
-//!      the `SelectOpKind::Send` branch (or the `Send` constructor
-//!      registration in `src/typechecker/builtins.rs` /
-//!      `src/vm/dispatch.rs`) makes this fail.
+//!      must compile and run, producing the `(ch, Sent)` arm.
 //!
 //! The third check executes a direct inline silt snippet — not just a
 //! doc-extracted block — so that a doc-only revert still leaves a
 //! runtime-level lock.
 
-use std::path::Path;
 use std::time::Duration;
 
 use silt::scheduler::test_support::InProcessRunner;
 use silt::value::Value;
 
-/// Round-23 B1: the `Sent` section in `docs/stdlib/globals.md` must not
-/// revert to the "reserved for future use" phrasing. If a future edit
-/// re-adds that wording, this test fails with a precise pointer.
+/// Round-23 B1: the `Sent` constructor's builtin doc must not
+/// revert to the "reserved for future use" phrasing.
 #[test]
 fn globals_sent_section_is_not_marked_reserved() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest_dir.join("docs").join("stdlib").join("globals.md");
-    let body = std::fs::read_to_string(&doc_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
-
-    // Locate the `## `Sent`` section so the assertion narrows to just
-    // that subsection rather than the whole file.
-    let sent_idx = body
-        .find("## `Sent`")
-        .expect("docs/stdlib/globals.md must have a `## `Sent`` section");
-    let rest = &body[sent_idx..];
-    // Bound the section to the next `## ` heading (or end of file).
-    let section_end = rest[3..].find("\n## ").map(|i| i + 3).unwrap_or(rest.len());
-    let section = &rest[..section_end];
+    let docs = silt::typechecker::builtin_docs();
+    let section = docs
+        .get("Sent")
+        .cloned()
+        .expect("Sent constructor must have a registered builtin doc");
 
     assert!(
         !section
             .to_ascii_lowercase()
             .contains("reserved for future use"),
-        "{}: the `Sent` section reintroduced the 'reserved for future use' \
-         phrasing, but `channel.select` actively supports mixed send/receive \
-         operations (see src/builtins/concurrency.rs `parse_select_ops`). \
-         Section contents:\n{}",
-        doc_path.display(),
-        section
+        "the `Sent` builtin doc reintroduced the 'reserved for future \
+         use' phrasing, but `channel.select` actively supports mixed \
+         send/receive operations (see src/builtins/concurrency.rs \
+         `parse_select_ops`). Section contents:\n{section}"
     );
 
-    // Positive lock: the section must mention `channel.select` so it
-    // links the `Sent` variant to its actual use site.
     assert!(
         section.contains("channel.select"),
-        "{}: the `Sent` section must reference `channel.select` so readers \
-         can find the send-arm documentation. Section contents:\n{}",
-        doc_path.display(),
-        section
+        "the `Sent` builtin doc must reference `channel.select` so \
+         readers can find the use site. Section contents:\n{section}"
     );
 }
 
-/// `docs/stdlib/channel-task.md`'s `channel.select` section must document
-/// the `ChannelOp` element form. Reverting to the pre-round-52 signature
-/// (`List(Channel(a))` with raw tuples for send) or dropping the `Sent`
-/// result from the prose makes this fail.
+/// The inlined `channel.select` doc must document the `ChannelOp`
+/// element form. Reverting to the pre-round-52 signature
+/// (`List(Channel(a))` with raw tuples for send) or dropping the
+/// `Sent` result from the prose makes this fail.
 #[test]
 fn channel_select_doc_documents_send_form() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest_dir
-        .join("docs")
-        .join("stdlib")
-        .join("channel-task.md");
-    let body = std::fs::read_to_string(&doc_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+    let docs = silt::typechecker::builtin_docs();
+    let section = docs
+        .get("channel.select")
+        .cloned()
+        .expect("channel.select must have a registered builtin doc");
 
-    // (a) The summary-table signature must name `ChannelOp` — the
-    //     tagged element shape that unified the two pre-round-52 forms.
-    let select_row_idx = body
-        .find("| `select` |")
-        .expect("docs/stdlib/channel-task.md summary table must have a `select` row");
-    let row_end = body[select_row_idx..]
-        .find('\n')
-        .map(|i| select_row_idx + i)
-        .unwrap_or(body.len());
-    let row = &body[select_row_idx..row_end];
-    assert!(
-        row.contains("ChannelOp"),
-        "{}: the `select` summary-table row must reference `ChannelOp(a)` as \
-         the element shape (one-way-to-do-things unification). Row was:\n{}",
-        doc_path.display(),
-        row
-    );
-
-    // (b) The descriptive section must name the `Sent` result — the
-    //     unique anchor that only shows up once the doc admits send
-    //     arms exist.
-    let section_idx = body
-        .find("## `channel.select`")
-        .expect("docs/stdlib/channel-task.md must have a `## `channel.select`` section");
-    let rest = &body[section_idx..];
-    let section_end = rest[3..].find("\n## ").map(|i| i + 3).unwrap_or(rest.len());
-    let section = &rest[..section_end];
+    // The descriptive section must name the `Sent` result.
     assert!(
         section.contains("Sent"),
-        "{}: the `channel.select` section must document the `Sent` result \
-         that a send arm produces. Section contents:\n{}",
-        doc_path.display(),
-        section
+        "the `channel.select` builtin doc must document the `Sent` \
+         result that a send arm produces. Section contents:\n{section}"
     );
-    // (c) And it must show both `Recv` and `Send` constructors so
-    //     readers see the only two legal element shapes.
+    // And it must show both `Recv` and `Send` constructors so
+    // readers see the only two legal element shapes.
     assert!(
         section.contains("Recv") && section.contains("Send"),
-        "{}: the `channel.select` section must show both `Recv(ch)` and \
-         `Send(ch, value)` as the ChannelOp constructors — these are the \
-         one-way legal element shapes. Section contents:\n{}",
-        doc_path.display(),
-        section
+        "the `channel.select` builtin doc must show both `Recv(ch)` \
+         and `Send(ch, value)` as the ChannelOp constructors. Section \
+         contents:\n{section}"
     );
 }
 
 /// Round-23 B1: executable lock. A silt program that uses
 /// `channel.select` with a send arm MUST compile and run successfully and
-/// produce the send-side result. If `SelectOpKind::Send` is removed from
-/// `src/builtins/concurrency.rs` (or `parse_select_ops` is narrowed back
-/// to bare channels only), this test fails.
-///
-/// Scenario: a buffered channel of capacity 1 starts empty, so the send
-/// arm is immediately ready. The select picks it, the match arm that
-/// destructures `(^out, Sent)` fires, and `main` returns 1. If the send
-/// form is rejected at parse time, the compile step in `InProcessRunner`
-/// surfaces a hard error and the assertion below fires.
+/// produce the send-side result.
 #[test]
 fn channel_select_send_arm_runs_and_returns_sent() {
     let src = r#"
@@ -173,104 +117,64 @@ fn main() {
     );
 }
 
-/// Round-52 audit G2/G3: lock the `Available After Import` summary table
-/// in `docs/stdlib/globals.md`. This is a separate regression surface
-/// from the per-variant `## `Sent`` prose section (already locked by
-/// `globals_sent_section_is_not_marked_reserved`). Prior to round-52 the
-/// table row for `Sent` still read "Reserved for future select-send
-/// support", and the `Recv` / `Send` `ChannelOp` constructors — registered
-/// globally by `src/typechecker/builtins.rs` and dispatched by
-/// `src/vm/dispatch.rs` — were missing from the table entirely.
-///
-/// This test pins only the summary table (between the `## Available After
-/// Import` heading and the next `## ` heading) so that a reader skimming
-/// top-down still discovers all `import channel` globals, and so that the
-/// stale "reserved for future" wording cannot sneak back into the row.
+/// Round-52 audit G2/G3: the `Available After Import` summary in the
+/// inlined globals doc (`super::docs::GLOBALS_MD`) must list `Sent`,
+/// `Recv`, and `Send` and describe their `channel.select` role.
 #[test]
 fn globals_available_after_import_table_covers_select_ops() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest_dir.join("docs").join("stdlib").join("globals.md");
-    let body = std::fs::read_to_string(&doc_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+    let docs = silt::typechecker::builtin_docs();
+    // The globals doc body is attached to every unqualified global; we
+    // pull `println`'s as the representative.
+    let body = docs
+        .get("println")
+        .cloned()
+        .expect("println builtin doc must be registered (carries the globals doc)");
 
-    // Narrow to just the `## Available After Import` section — this is
-    // the summary table, not the per-variant prose further down.
-    let heading_idx = body
-        .find("## Available After Import")
-        .expect("docs/stdlib/globals.md must have a `## Available After Import` section");
-    let rest = &body[heading_idx..];
-    // Stop at the next `## ` heading (which begins the per-variant
-    // prose, e.g. `## `print``).
-    let section_end = rest[3..].find("\n## ").map(|i| i + 3).unwrap_or(rest.len());
-    let table = &rest[..section_end];
-
-    // (a) The `Sent` row must not still be marked as reserved — the
-    //     per-variant `## `Sent`` section was updated in round 51/52 but
-    //     the table row lagged behind until round-52 audit G2.
-    let lower = table.to_ascii_lowercase();
+    let lower = body.to_ascii_lowercase();
     assert!(
         !lower.contains("reserved for future"),
-        "{}: the `Available After Import` table still contains \
-         'Reserved for future' phrasing. The `Sent` row must describe the \
-         current behavior (result variant produced by a completed \
-         `channel.select` send arm). Table contents:\n{}",
-        doc_path.display(),
-        table
+        "the inlined globals doc still contains 'Reserved for future' \
+         phrasing. The `Sent` row must describe the current behavior \
+         (result variant produced by a completed `channel.select` send \
+         arm)."
     );
 
-    // (b) The table must have a row for each of `Sent`, `Recv`, and
-    //     `Send`. The `| `Name` |` prefix is how every existing row in
-    //     this table starts, so matching that form keeps the assertion
-    //     tight against the table grammar rather than matching stray
-    //     references elsewhere in the file.
     for name in &["Sent", "Recv", "Send"] {
         let needle = format!("| `{name}` |");
         assert!(
-            table.contains(&needle),
-            "{}: the `Available After Import` table is missing a row for \
-             `{name}`. These constructors are globally callable after \
-             `import channel` (registered in `src/typechecker/builtins.rs` \
-             and dispatched by `src/vm/dispatch.rs`). Table contents:\n{}",
-            doc_path.display(),
-            table
+            body.contains(&needle),
+            "the inlined globals doc is missing a row for `{name}` in \
+             the `Available After Import` table. These constructors \
+             are globally callable after `import channel`."
         );
     }
 
-    // (c) The `Recv` and `Send` rows must describe their role in
-    //     `channel.select` — the one and only legal use site. Matching
-    //     the row substring (from the row-start marker up to the next
-    //     newline) keeps the assertion scoped to the row.
+    // The `Recv` and `Send` rows must describe their role in
+    // `channel.select`.
     for name in &["Recv", "Send"] {
-        let row_start = table
+        let row_start = body
             .find(&format!("| `{name}` |"))
             .expect("row presence already asserted above");
-        let row_end = table[row_start..]
+        let row_end = body[row_start..]
             .find('\n')
             .map(|i| row_start + i)
-            .unwrap_or(table.len());
-        let row = &table[row_start..row_end];
+            .unwrap_or(body.len());
+        let row = &body[row_start..row_end];
         assert!(
             row.contains("ChannelOp"),
-            "{}: the `{name}` row must name the `ChannelOp(a)` result \
+            "the `{name}` row must name the `ChannelOp(a)` result \
              type — that is the unified `channel.select` element shape. \
-             Row was:\n{}",
-            doc_path.display(),
-            row
+             Row was:\n{row}"
         );
         assert!(
             row.contains("channel.select") || row.contains("select"),
-            "{}: the `{name}` row must mention `channel.select` so \
-             readers can find the use site. Row was:\n{}",
-            doc_path.display(),
-            row
+            "the `{name}` row must mention `channel.select` so \
+             readers can find the use site. Row was:\n{row}"
         );
     }
 }
 
-/// Round-23 B1: mixed send/receive arms must also work. This exercises
-/// the same `SelectOpKind` dispatch but makes the receive arm the one
-/// that wins — guarding against a regression that special-cases only
-/// all-send or all-receive lists.
+/// Round-23 B1: mixed send/receive arms must also work.
 #[test]
 fn channel_select_mixed_send_and_receive_arms_run() {
     let src = r#"

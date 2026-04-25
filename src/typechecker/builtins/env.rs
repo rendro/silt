@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // env.get: (String) -> Option(String)
@@ -50,4 +51,6 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             ])))),
         )),
     );
+
+    attach_module_docs_filtered(env, super::docs::IO_FS_MD, "env");
 }

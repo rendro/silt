@@ -16,6 +16,7 @@ use super::*;
 mod bytes;
 mod channel;
 mod crypto;
+mod docs;
 mod encoding;
 mod env;
 mod errors;
@@ -832,6 +833,37 @@ impl TypeChecker {
         self.register_stream_builtins(env);
         self.register_toml_builtins(env);
         self.register_errors_builtins(env);
+
+        // ── Built-in doc strings (round 62 phase-2 LSP doc inlining) ──
+        //
+        // Attach the inlined markdown for the globals (`println`,
+        // `print`, `panic`, `Ok`/`Err`/`Some`/`None`, plus the
+        // import-gated constructors `Stop`/`Continue`/`Message`/
+        // `Closed`/`Empty`/`Sent`/`Recv`/`Send`) and the regex
+        // module — those names are registered here in this file
+        // rather than in a per-module submodule, so the attach
+        // calls run here. The per-module submodules attach their
+        // own blobs from their `register` entry points.
+        //
+        // For globals we attach the FULL `GLOBALS_MD` body to every
+        // prelude / import-gated name. The summary tables ("Always
+        // Available" / "Available After Import") are at the top of
+        // the doc and describe every name; per-`##` slicing would
+        // hide the table from `Sent`/`Recv`/`Send` even though they
+        // appear in it. Hover on any global surfaces the same prose
+        // — the LSP renders the markdown as a single document and
+        // the user scrolls to the relevant section.
+        for name in &[
+            "print", "println", "panic", "Ok", "Err", "Some", "None",
+            "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
+            "Recv", "Send",
+        ] {
+            let sym = intern(name);
+            if env.bindings.contains_key(&sym) {
+                env.builtin_docs.insert(sym, docs::GLOBALS_MD.to_string());
+            }
+        }
+        docs::attach_module_docs(env, docs::REGEX_MD);
     }
 
     fn register_list_builtins(&mut self, env: &mut TypeEnv) {

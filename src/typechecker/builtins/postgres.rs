@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The postgres builtin module exposes opaque handles and ADTs that
@@ -269,4 +270,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("postgres.uuidv7"),
         Scheme::mono(Type::Fun(vec![], Box::new(Type::String))),
     );
+
+    attach_module_overview(env, super::docs::POSTGRES_MD, "postgres");
+    attach_module_docs(env, super::docs::POSTGRES_MD);
 }

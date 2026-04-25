@@ -1,10 +1,15 @@
-//! Regression lock for GAP(round 59): `docs/stdlib/globals.md` and
+//! Regression lock for GAP(round 59): the `Globals` stdlib doc and
 //! `docs/language/bindings-and-functions.md` both enumerate the set of
 //! primitive type descriptors available in the global namespace
 //! (`Int`, `Float`, `String`, `Bool`, …). Round 58 added `ExtFloat` to
 //! the typechecker registration in `src/typechecker/builtins.rs`, but
 //! both docs were not updated, leaving `ExtFloat` undocumented as a
 //! top-level descriptor even though it works identically to the others.
+//!
+//! Round 62 phase-2 inlined the former `docs/stdlib/globals.md` into
+//! `src/typechecker/builtins/docs.rs::GLOBALS_MD`. We now look up
+//! `println`'s registered builtin doc as the surface presented to LSP
+//! hover; the same prose carries the descriptor table.
 //!
 //! This test walks `src/typechecker/builtins.rs` to extract the
 //! authoritative list of primitive descriptor names (the string
@@ -67,18 +72,30 @@ fn read_doc(rel: &str) -> String {
 }
 
 /// Every primitive descriptor registered in the typechecker must be
-/// listed in the Globals stdlib page.
+/// listed in the Globals stdlib doc (round 62 phase-2: now embedded
+/// in `super::docs::GLOBALS_MD` and surfaced via LSP hover on
+/// `println`).
 #[test]
 fn globals_md_lists_every_primitive_descriptor() {
     let names = primitive_descriptor_names();
-    let doc = read_doc("docs/stdlib/globals.md");
+    let docs = silt::typechecker::builtin_docs();
+    let doc = docs
+        .get("println")
+        .cloned()
+        .expect("globals.md prose is attached to `println` (and the rest of \
+                 the unqualified globals); round 62 phase-2 inlined it via \
+                 `attach_module_docs(env, GLOBALS_MD)` in \
+                 src/typechecker/builtins.rs");
     for name in &names {
         let token = format!("`{name}`");
         assert!(
             doc.contains(&token),
-            "docs/stdlib/globals.md is missing the primitive type descriptor \
-             `{name}` (registered in src/typechecker/builtins.rs). Add a row \
-             for it to the primitive-type-descriptor table."
+            "the Globals doc (now inlined as `super::docs::GLOBALS_MD` in \
+             src/typechecker/builtins/docs.rs) is missing the primitive \
+             type descriptor `{name}` (registered in \
+             src/typechecker/builtins.rs). Add a row for it to the \
+             primitive-type-descriptor table inside the GLOBALS_MD raw \
+             string."
         );
     }
 }

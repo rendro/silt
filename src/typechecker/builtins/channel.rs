@@ -3,6 +3,7 @@
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // channel.new: (Int) -> Channel(a)
@@ -187,4 +188,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    attach_module_docs(env, super::docs::CHANNEL_TASK_MD);
 }

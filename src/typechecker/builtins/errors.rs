@@ -12,6 +12,7 @@
 //! and final.
 
 use super::super::*;
+use super::docs::attach_module_docs;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     register_enum(
@@ -215,6 +216,63 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    attach_module_docs(env, super::docs::ERRORS_MD);
+
+    // Each enum-section in errors.md describes a whole enum
+    // (e.g. `### \`IoError\``); the body lists every variant in a
+    // table. Variants are registered as bare bindings (`IoNotFound`,
+    // `IoPermissionDenied`, …) and the parser-driven attach above
+    // matched only the enum *name* — variant bindings have no doc
+    // yet. Stamp the enum-section body onto every variant so hover on
+    // `IoNotFound` surfaces the IoError table. Per-variant prose is
+    // not phase-2 scope.
+    super::docs::attach_enum_variant_docs(
+        env,
+        super::docs::ERRORS_MD,
+        &[
+            ("IoError", &[
+                "IoNotFound", "IoPermissionDenied", "IoAlreadyExists",
+                "IoInvalidInput", "IoInterrupted", "IoUnexpectedEof",
+                "IoWriteZero", "IoUnknown",
+            ]),
+            ("JsonError", &[
+                "JsonSyntax", "JsonTypeMismatch", "JsonMissingField", "JsonUnknown",
+            ]),
+            ("TomlError", &[
+                "TomlSyntax", "TomlTypeMismatch", "TomlMissingField", "TomlUnknown",
+            ]),
+            ("ParseError", &[
+                "ParseEmpty", "ParseInvalidDigit", "ParseOverflow", "ParseUnderflow",
+            ]),
+            ("HttpError", &[
+                "HttpConnect", "HttpTls", "HttpTimeout", "HttpInvalidUrl",
+                "HttpInvalidResponse", "HttpClosedEarly", "HttpStatusCode",
+                "HttpUnknown",
+            ]),
+            ("TcpError", &[
+                "TcpConnect", "TcpTls", "TcpClosed", "TcpTimeout", "TcpUnknown",
+            ]),
+            ("PgError", &[
+                "PgConnect", "PgTls", "PgAuthFailed", "PgQuery",
+                "PgTypeMismatch", "PgNoSuchColumn", "PgClosed", "PgTimeout",
+                "PgTxnAborted", "PgUnknown",
+            ]),
+            ("TimeError", &[
+                "TimeParseFormat", "TimeOutOfRange",
+            ]),
+            ("BytesError", &[
+                "BytesInvalidUtf8", "BytesInvalidHex", "BytesInvalidBase64",
+                "BytesByteOutOfRange", "BytesOutOfBounds",
+            ]),
+            ("ChannelError", &[
+                "ChannelClosed", "ChannelTimeout",
+            ]),
+            ("RegexError", &[
+                "RegexInvalidPattern", "RegexTooBig",
+            ]),
+        ],
+    );
 }
 
 /// Register a concrete (no type parameters) builtin enum + its variants.

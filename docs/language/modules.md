@@ -82,8 +82,10 @@ import list
 import channel
 ```
 
-See the [Standard Library Index](../stdlib/index.md) for the full list and
-each module's reference.
+Stdlib documentation is delivered through the LSP — hover any
+qualified built-in name (`list.map`, `math.cos`, `Result`, …) in your
+editor to see the reference for that name. The list of built-in
+modules is enumerated by `silt::module::BUILTIN_MODULES`.
 
 ## Circular imports
 
