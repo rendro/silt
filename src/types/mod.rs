@@ -4,6 +4,7 @@
 //! interpreter, and other parts of the compiler pipeline.
 
 pub mod builtins;
+pub mod canonical;
 
 use std::collections::HashMap;
 
