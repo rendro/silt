@@ -3158,10 +3158,19 @@ impl TypeChecker {
         // so generic-param fields trivially satisfy the trait being
         // synthesized.
         let mut tasks: Vec<(Symbol, Vec<Symbol>, TypeBodyKind)> = Vec::new();
+        // Track which type names came from a user `Decl::Type` so the
+        // built-in walk below skips entries the user shadows. The set
+        // is keyed on the unresolved name (not canonicalized) because
+        // shadowing happens by name: a user `type Weekday { ... }`
+        // would re-register into `self.enums` under the same `Weekday`
+        // symbol, and the user task already exists in `tasks`.
+        let mut user_decl_type_names: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
         for decl in decls.iter() {
             if let Decl::Type(td) = decl {
                 match &td.body {
                     TypeBody::Enum(_) => {
+                        user_decl_type_names.insert(td.name);
                         if let Some(info) = self.enums.get(&td.name) {
                             tasks.push((
                                 td.name,
@@ -3171,6 +3180,7 @@ impl TypeChecker {
                         }
                     }
                     TypeBody::Record(_) => {
+                        user_decl_type_names.insert(td.name);
                         if let Some(info) = self.records.get(&td.name) {
                             tasks.push((
                                 td.name,
@@ -3183,30 +3193,78 @@ impl TypeChecker {
                 }
             }
         }
-        // ASYMMETRY (round 62 follow-up): Built-in enums (Option,
-        // Result, Weekday, HttpMethod, ChannelResult, ChannelOp, Step,
-        // ...) and built-in records (Response, Request, FileStat,
-        // Date, Time, DateTime, ...) are registered directly into
+        // Built-in enums and records are registered directly into
         // `self.enums` / `self.records` from `register_builtins` and
-        // builtin module init paths, not via a top-level `Decl::Type`.
-        // They are NOT processed by this synth pass.
+        // the per-module init paths under `src/typechecker/builtins/`
+        // without ever appearing as a top-level `Decl::Type`. Walk
+        // both maps to give them the same synth treatment as user
+        // types: every built-in `(trait, type)` pair pre-stamped in
+        // `trait_impl_set` (see `register_builtin_trait_impls`)
+        // receives a synthesized `<Type>.<method>` global, so
+        // `Op::CallMethod`'s qualified-global lookup resolves at
+        // runtime without falling through to `dispatch_trait_method`.
         //
-        // Consequence: built-in enums/records continue to rely on the
-        // typecheck-stamp + `dispatch_trait_method` runtime fallback
-        // for Compare/Equal/Hash/Display. The VM dispatch arms in
-        // `src/vm/dispatch.rs` for `(Variant, Variant)`, `(Record,
-        // Record)`, and the Variant/Record entries in the hash
-        // allowlist remain LIVE for built-in receivers and MUST NOT
-        // be deleted in this round.
+        // This is the second half of the round-62 work: round 62
+        // covered every user enum / record (generic + non-generic);
+        // this round extends coverage to built-in enums / records.
+        // After this pass, the Variant / Record arms in
+        // `dispatch_trait_method` and the corresponding entries in
+        // the hash allowlist are unreachable and can be deleted.
         //
-        // The deadness instrumentation in `dispatch.rs` (round 62)
-        // proves user types don't hit those arms; built-in types
-        // still do, by design. A future round can lift this asymmetry
-        // by either (a) emitting synthetic `Decl::Type` nodes for
-        // each built-in and routing them through the same synth
-        // pipeline, or (b) directly synthesizing into `self.enums` /
-        // `self.records` and registering the resulting impls without
-        // an AST round-trip.
+        // Iteration order: enums then records, sorted by name within
+        // each map, so the synthesized AST is deterministic.
+        let mut builtin_enum_names: Vec<Symbol> = self
+            .enums
+            .keys()
+            .copied()
+            .filter(|n| !user_decl_type_names.contains(n))
+            .collect();
+        builtin_enum_names.sort_by_key(|s| resolve(*s));
+        for type_name in builtin_enum_names {
+            if let Some(info) = self.enums.get(&type_name) {
+                tasks.push((
+                    type_name,
+                    info.params.clone(),
+                    TypeBodyKind::Enum(info.variants.clone()),
+                ));
+            }
+        }
+        let mut builtin_record_names: Vec<Symbol> = self
+            .records
+            .keys()
+            .copied()
+            .filter(|n| !user_decl_type_names.contains(n))
+            .collect();
+        builtin_record_names.sort_by_key(|s| resolve(*s));
+        for type_name in builtin_record_names {
+            if let Some(info) = self.records.get(&type_name) {
+                // Built-in records are non-generic; the params vec is
+                // empty. (Generic built-in records would need their
+                // param Symbol names tracked alongside `record_param_var_ids`
+                // — extend this branch the day a generic built-in
+                // record appears.)
+                let params = self
+                    .record_param_var_ids
+                    .get(&type_name)
+                    .map(|ids| {
+                        // No symbolic param names are tracked for
+                        // built-in records; synth helpers only need a
+                        // count + uniqueness, so synthesize fresh
+                        // placeholder Symbols. Today this branch is
+                        // unreachable because every built-in record
+                        // is non-generic.
+                        (0..ids.len())
+                            .map(|i| intern(&format!("__builtin_rec_param_{i}__")))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                tasks.push((
+                    type_name,
+                    params,
+                    TypeBodyKind::Record(info.fields.clone()),
+                ));
+            }
+        }
 
         let mut synthesized: Vec<Decl> = Vec::new();
         for (type_name, type_params, body) in tasks {
@@ -3292,6 +3350,22 @@ impl TypeChecker {
                 }
             }
 
+            // Per-trait policy gate. A `(trait, type)` pair receives
+            // a synthesized impl ONLY if it is already present in
+            // `trait_impl_set`. For user-declared types,
+            // `register_type_decl` pre-stamps all four built-in traits
+            // unconditionally (line ~2314), so this gate is a no-op
+            // for the user-type path. For built-in types,
+            // `register_builtin_trait_impls` stamps only the
+            // policy-permitted traits (e.g. Compare is excluded for
+            // Option/Result/Tuple/Map/Set, see `non_ordering_traits`),
+            // and the gate honours that exclusion — synth would
+            // otherwise produce a `Compare:Option` impl that breaks
+            // `tests/trait_init_parity_tests.rs`.
+            let policy_allows = |trait_sym: Symbol| -> bool {
+                self.trait_impl_set.contains(&(trait_sym, key))
+            };
+
             match body {
                 TypeBodyKind::Enum(variants) => {
                     // Convert resolved VariantInfo back into AST EnumVariant
@@ -3321,7 +3395,10 @@ impl TypeChecker {
                                 .collect(),
                         })
                         .collect();
-                    if display_ok && !user_impls.contains(&(display_sym, key)) {
+                    if display_ok
+                        && policy_allows(display_sym)
+                        && !user_impls.contains(&(display_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_enum(
                                 type_name,
@@ -3330,7 +3407,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok && !user_impls.contains(&(compare_sym, key)) {
+                    if compare_ok
+                        && policy_allows(compare_sym)
+                        && !user_impls.contains(&(compare_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_enum(
                                 type_name,
@@ -3339,7 +3419,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok && !user_impls.contains(&(equal_sym, key)) {
+                    if equal_ok
+                        && policy_allows(equal_sym)
+                        && !user_impls.contains(&(equal_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_equal_impl_for_enum(
                                 type_name,
@@ -3348,7 +3431,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if hash_ok && !user_impls.contains(&(hash_sym, key)) {
+                    if hash_ok
+                        && policy_allows(hash_sym)
+                        && !user_impls.contains(&(hash_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_hash_impl_for_enum(
                                 type_name,
@@ -3373,7 +3459,10 @@ impl TypeChecker {
                             ),
                         })
                         .collect();
-                    if display_ok && !user_impls.contains(&(display_sym, key)) {
+                    if display_ok
+                        && policy_allows(display_sym)
+                        && !user_impls.contains(&(display_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_record(
                                 type_name,
@@ -3382,7 +3471,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok && !user_impls.contains(&(compare_sym, key)) {
+                    if compare_ok
+                        && policy_allows(compare_sym)
+                        && !user_impls.contains(&(compare_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_record(
                                 type_name,
@@ -3391,7 +3483,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok && !user_impls.contains(&(equal_sym, key)) {
+                    if equal_ok
+                        && policy_allows(equal_sym)
+                        && !user_impls.contains(&(equal_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_equal_impl_for_record(
                                 type_name,
@@ -3400,7 +3495,10 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if hash_ok && !user_impls.contains(&(hash_sym, key)) {
+                    if hash_ok
+                        && policy_allows(hash_sym)
+                        && !user_impls.contains(&(hash_sym, key))
+                    {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_hash_impl_for_record(
                                 type_name,
@@ -4360,6 +4458,77 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Option/Result: Equal/Hash/Display only (generic wrappers, stored
     // as polymorphic templates).
     register_auto_derived_impls_for(checker, &["Option", "Result"], non_ordering_traits);
+
+    // ── Built-in enums + records that flow through synth ────────────
+    //
+    // Round-62 follow-up: extend auto-derive coverage from primitives
+    // and the four parametric containers to every built-in enum and
+    // record registered in `register_builtins`. Each entry below
+    // pre-stamps `trait_impl_set` for the policy-permitted traits so
+    // `synthesize_auto_derive_impls` knows which (trait, type) pairs
+    // are allowed to receive a synthesized `<Type>.<method>` global,
+    // and `field_type_supports_trait` returns true for fields that
+    // reference these types (e.g. `Option(DateTime)` on `FileStat`).
+    //
+    // Trait selection mirrors the existing patterns:
+    //   - All four traits where every variant / field is orderable.
+    //   - Equal/Hash/Display only when a field type lacks Compare
+    //     (e.g. records carrying a `Map` field — `Response`/`Request`).
+    //   - Skip entirely for types whose fields can't satisfy any of
+    //     the four (e.g. `ChannelOp` carries `Channel(_)`); the synth
+    //     pass's `field_type_supports_trait` gate would block synth
+    //     anyway and a stamp without a runtime impl would surface as
+    //     a misleading "no method" error.
+    //
+    // The synth pass (`synthesize_auto_derive_impls`) discovers these
+    // types via a uniform walk over `self.enums` / `self.records` and
+    // emits the same `TraitImpl` AST that user-declared types receive,
+    // producing real `<Type>.<method>` globals at compile time. After
+    // this round, `Op::CallMethod` always finds a qualified-global
+    // entry for built-in enum/record receivers, and the Variant /
+    // Record arms in `dispatch_trait_method` are dead.
+
+    // Built-in enums — non-generic, all four traits.
+    register_auto_derived_impls_for(
+        checker,
+        &[
+            "Step",
+            "ChannelResult",
+            "Method",
+            "Weekday",
+            // Stdlib error enums: Display + Error are already registered
+            // in `errors.rs`; re-stamping with all_auto_traits adds the
+            // missing Equal/Compare/Hash without disturbing the existing
+            // entries (insert is idempotent).
+            "IoError",
+            "JsonError",
+            "TomlError",
+            "ParseError",
+            "HttpError",
+            "RegexError",
+            "PgError",
+            "TcpError",
+            "TimeError",
+            "BytesError",
+            "ChannelError",
+        ],
+        all_auto_traits,
+    );
+
+    // Built-in records — Date/Time/DateTime/Duration/Instant/FileStat
+    // and Weekday are already stamped by `register_auto_derived_impls_for`
+    // calls in `time.rs` / `fs.rs` (kept there so the per-module file
+    // owns its derive policy). Re-stamping is harmless if any drift
+    // appears here.
+
+    // HTTP records carry a `Map(String, String)` headers field. Map
+    // has no Compare (see line 4359), so Compare is excluded.
+    register_auto_derived_impls_for(checker, &["Response", "Request"], non_ordering_traits);
+
+    // ChannelOp variants carry `Channel(_)` which has no Compare /
+    // Equal / Hash / Display impl. No stamps; the synth pass walks
+    // `self.enums` and skips this entry because every trait fails
+    // the field-support gate.
 }
 
 /// Register auto-derived trait impls and method-table entries for a

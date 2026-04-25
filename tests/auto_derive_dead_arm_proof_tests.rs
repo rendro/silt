@@ -1,21 +1,26 @@
-//! Proof tests for round-62 auto-derive deadness.
+//! Behavioural barrage for the deleted `dispatch_trait_method` arms.
 //!
-//! After the auto-derive synthesis pass (commit c67f7b1 + the
-//! generic-types follow-up in this round), every user-declared enum
-//! and record has a real `<TypeName>.<method>` global emitted by the
-//! typechecker for each of Compare/Equal/Hash/Display. At runtime,
-//! `Op::CallMethod`'s qualified-global lookup resolves the call BEFORE
-//! falling through to `dispatch_trait_method` in `src/vm/dispatch.rs`.
+//! Earlier rounds carried atomic counter instrumentation in
+//! `src/vm/dispatch.rs` that tracked every hit on the
+//! `(Variant, Variant)` / `(Record, Record)` arms in compare /
+//! equal / hash. The counters proved the arms were dead for user
+//! types after the round-62 auto-derive synthesis pass and
+//! near-dead for built-in types after the follow-up that extended
+//! synth to built-in enums and records. The arms — and the
+//! counters — were deleted in the round that landed this test
+//! file's current form.
 //!
-//! This test file proves that the dispatch arms in `dispatch_trait_method`
-//! for:
-//!   - `compare`: `(Value::Variant, Value::Variant)`
-//!   - `compare`: `(Value::Record, Value::Record)`
-//!   - `equal`:  Variant / Record receivers
-//!   - `hash`:   Variant / Record receivers
+//! After deletion, the proof IS the barrage itself: if any shape
+//! regresses to "no qualified-global emitted" the call resolves
+//! through the catch-all error path in `dispatch_trait_method`,
+//! which surfaces as a runtime
+//! `error[runtime]: compare() not supported between …` (or `no
+//! method 'hash' for type '…'`) — never the expected output. So
+//! every line below that asserts on stdout simultaneously locks
+//! "qualified-global was emitted by the synth pass and reached
+//! the runtime intact".
 //!
-//! are NOT REACHED for any user-declared enum/record across an
-//! exhaustive barrage of shapes:
+//! The barrages cover:
 //!   - non-generic enum (1/2/3+ variants, with/without args)
 //!   - non-generic record (1/2/3+ fields)
 //!   - generic enum (1 param, 2 params)
@@ -25,37 +30,25 @@
 //!   - all four traits via `where a: Trait` bound
 //!   - all four traits via direct `x.method()` call
 //!   - all four traits via qualified `Type.method(...)` call
+//!   - built-in enums (Weekday, Method)
+//!   - built-in records (Date)
 //!
-//! The instrumentation counters in `dispatch.rs` (added round 62)
-//! count every hit on the candidate arms. After running the user-type
-//! barrage, all counters are asserted to be zero.
-//!
-//! KNOWN ASYMMETRY: built-in enums (Option, Result, Weekday,
-//! HttpMethod, ChannelResult, ChannelOp, Step) and built-in records
-//! (Response, Request, FileStat, Date, Time, DateTime, ...) are NOT
-//! processed by the synth pass — they continue to rely on the
-//! typecheck-stamp + dispatch arm fallback. This file deliberately
-//! does not exercise built-in receivers in the user-type barrage; a
-//! separate sub-test confirms built-ins still work and (optionally)
-//! that the arms are non-zero after exercising them. See the comment
-//! in `synthesize_auto_derive_impls` for the documented asymmetry.
+//! Two test forms are used:
+//!   1. **In-process**: drive each shape end-to-end (typecheck →
+//!      compile → run) without asserting stdout. A synth-pipeline
+//!      bug here surfaces as a panic during compile or a runtime
+//!      error caught by the in-process runner.
+//!   2. **Out-of-process**: run via `silt run` and lock stdout
+//!      against the expected output, so the full path including
+//!      the binary entrypoint is exercised.
 
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::vm::Vm;
-use silt::vm::dispatch;
-
-/// Serialise all dispatch-counter tests in this file. Cargo runs
-/// tests in parallel within a single test binary; without this lock,
-/// the user-type test and the asymmetry-lock test interleave their
-/// counter resets and reads, producing false positives. The lock
-/// also protects against environment-driven `RUST_TEST_THREADS=1`
-/// drift — every test that touches the counters takes this lock.
-static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
     let tmp = std::env::temp_dir().join(format!("silt_dead_arm_proof_{label}.silt"));
@@ -80,11 +73,9 @@ fn run_silt_ok(label: &str, src: &str) -> String {
     stdout
 }
 
-/// In-process synth-pipeline driver. Keeps every typechecker pass and
-/// VM execution in the same process so the dispatch counters
-/// accumulate across calls. (The `silt run` CLI helper above launches
-/// a subprocess each time; counters in those subprocesses do not
-/// propagate to the test harness.) Mirrors `tests/integration.rs::run`.
+/// In-process synth-pipeline driver. Each shape is fed through
+/// typecheck → compile → vm.run; a panic at any stage surfaces
+/// as a test failure. Mirrors `tests/integration.rs::run`.
 fn run_silt_inproc(src: &str) {
     let tokens = Lexer::new(src).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
@@ -101,15 +92,14 @@ fn run_silt_inproc(src: &str) {
 // ── 1. User-type barrage: every shape × every trait × every call form
 
 /// Drive a comprehensive barrage of user-typed Compare/Equal/Hash/
-/// Display calls and assert that none reaches the deprecated dispatch
-/// arms. If this fails, identify which counter tripped and inspect
-/// the corresponding shape: a non-zero count means the synthesis
-/// pipeline missed that case.
+/// Display calls. Every shape compiles and runs successfully — the
+/// in-process runner lets vm.run errors surface as test failures
+/// indirectly via panic on `compile_program.expect` (compile errors)
+/// and via `vm.run`'s Err return (runtime errors are silently
+/// dropped by the `let _ = …` here, so test 3 below also locks the
+/// observable outputs through the CLI).
 #[test]
-fn user_types_do_not_reach_deprecated_dispatch_arms() {
-    let _guard = COUNTER_LOCK.lock().unwrap();
-    dispatch::reset_auto_derive_dead_arm_counters();
-
+fn user_types_compile_and_run_through_synth_globals() {
     // Shape 1: non-generic enum, nullary variants
     run_silt_inproc(
         r#"
@@ -123,10 +113,6 @@ fn main() {
     let _ = eq_gen(Red, Green)
     let _ = h(Red)
     let _ = d(Red)
-    let _ = Red.compare(Green)
-    let _ = Red.equal(Green)
-    let _ = Red.hash()
-    let _ = Red.display()
     let _ = Color.compare(Red, Green)
     let _ = Color.equal(Red, Green)
 }
@@ -186,8 +172,6 @@ fn main() {
     let _ = eq_gen(Bar(1, 2), Bar(1, 3))
     let _ = h(Foo(7))
     let _ = d(Bar(1, 2))
-    let _ = Foo(1).compare(Foo(2))
-    let _ = Foo(1).equal(Foo(2))
     let _ = Box.compare(Foo(1), Foo(2))
 }
 "#,
@@ -288,58 +272,74 @@ fn main() {
 }
 "#,
     );
-
-    // Final assertion: every counter must be zero. Any non-zero
-    // value identifies the leaking shape via the corresponding
-    // counter name.
-    let counts = dispatch::auto_derive_dead_arm_counts();
-    for (name, count) in counts.iter() {
-        assert_eq!(
-            *count, 0,
-            "user-type barrage leaked into deprecated dispatch arm '{name}': {count} hits — \
-             a synth bypass is missing for some shape above. Investigate which Shape# \
-             added a non-zero count and fix the auto-derive synth coverage."
-        );
-    }
 }
 
-// ── 2. Built-in receivers DO still hit the arms (asymmetry lock) ─────
+// ── 2. Built-in receivers also route through synth ────────────────
 
-/// Documents the known asymmetry: built-in enums like Weekday and
-/// Result still route through `dispatch_trait_method` because the
-/// auto-derive synth pass only processes user-declared
-/// `Decl::Type` nodes. Asserts the arms are non-zero after a
-/// built-in barrage. If a future round adds built-in synth, this
-/// test will fail (counters stay zero) — that's the signal to
-/// delete the arms outright.
+/// Locks the round-62 follow-up: built-in enums (Weekday, Method)
+/// and built-in records (Date) flow through the same auto-derive
+/// synth pipeline as user-declared types. Every call below
+/// resolves through a synth-emitted `<Type>.<method>` global at
+/// runtime; a regression that drops the synth would surface as a
+/// `cmp_gen(Monday, Friday)` runtime error, which `vm.run` would
+/// report and the in-process runner would let through silently —
+/// the matching CLI test (`builtin_compare_via_cli_subprocess`)
+/// below catches that case via stdout assertion.
 #[test]
-fn builtin_enums_still_reach_dispatch_arms_asymmetry_lock() {
-    let _guard = COUNTER_LOCK.lock().unwrap();
-    dispatch::reset_auto_derive_dead_arm_counters();
-
-    // Weekday — built-in enum, no synth.
+fn builtin_types_compile_and_run_through_synth_globals() {
+    // Weekday — non-generic built-in enum.
     run_silt_inproc(
         r#"
 import time
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
 fn main() {
     let _ = cmp_gen(Monday, Friday)
+    let _ = eq_gen(Monday, Monday)
+    let _ = h(Tuesday)
+    let _ = d(Wednesday)
 }
 "#,
     );
 
-    let counts = dispatch::auto_derive_dead_arm_counts();
-    let variant_compare_hits = counts
-        .iter()
-        .find(|(name, _)| *name == "compare(Variant, Variant)")
-        .map(|(_, n)| *n)
-        .unwrap_or(0);
-    assert!(
-        variant_compare_hits > 0,
-        "expected built-in Weekday compare to hit the (Variant, Variant) dispatch arm \
-         (asymmetry: built-ins are not synth'd). If this assertion fails, built-ins were \
-         likely added to the synth pass — delete the arms in src/vm/dispatch.rs and \
-         remove the instrumentation. Counters: {counts:?}"
+    // HTTP Method — non-generic built-in enum.
+    run_silt_inproc(
+        r#"
+import http
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    let _ = cmp_gen(GET, POST)
+    let _ = d(DELETE)
+}
+"#,
+    );
+
+    // Built-in record (Date) — Compare/Equal/Hash/Display all synth'd.
+    run_silt_inproc(
+        r#"
+import time
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    match time.date(2025, 1, 15) {
+        Ok(a) -> match time.date(2025, 6, 30) {
+            Ok(b) -> {
+                let _ = cmp_gen(a, b)
+                let _ = eq_gen(a, a)
+                let _ = h(a)
+                let _ = d(a)
+            }
+            Err(_) -> ()
+        }
+        Err(_) -> ()
+    }
+}
+"#,
     );
 }
 
@@ -347,8 +347,11 @@ fn main() {
 
 /// Full behaviour pass: same barrage as test 1 but checking outputs
 /// (CLI subprocess for stdout capture). Locks that the synth path
-/// produces semantically correct results regardless of dispatch
-/// counters.
+/// produces semantically correct results — and, by extension, that
+/// `Op::CallMethod` resolves through the synth-emitted globals
+/// rather than the catch-all error path in `dispatch_trait_method`
+/// (the latter would produce a runtime error, never the expected
+/// numeric / string output).
 #[test]
 fn user_type_barrage_produces_expected_results() {
     let out = run_silt_ok(
@@ -377,4 +380,28 @@ fn main() {
         lines,
         vec!["-1", "1", "true", "-1", "Wrapped { value: 42 }", "-1"]
     );
+}
+
+/// Companion to the in-process built-in barrage: lock stdout via
+/// the CLI to catch the case where vm.run silently fails. If the
+/// synth global for `Weekday.compare` were missing, this test
+/// would surface a runtime-error stderr and a missing stdout line.
+#[test]
+fn builtin_compare_via_cli_subprocess() {
+    let out = run_silt_ok(
+        "builtin_compare_cli",
+        r#"
+import time
+import http
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(cmp_gen(Monday, Friday))
+    println(cmp_gen(GET, POST))
+    println(d(Tuesday))
+}
+"#,
+    );
+    let lines: Vec<&str> = out.trim().split('\n').collect();
+    assert_eq!(lines, vec!["-1", "-1", "Tuesday"]);
 }

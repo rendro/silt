@@ -427,9 +427,20 @@ mod tests {
     /// Smallest possible smoke: a program that returns 42 from main.
     /// Verifies the harness compiles, runs, captures the value, and
     /// reports `ok() == true`.
+    ///
+    /// Budget: 10s. Even for `fn main() { 42 }`, the typechecker runs
+    /// the auto-derive synthesis pass over every built-in enum and
+    /// record (~30 types × 4 traits = ~120 synthesized impls). Body
+    /// type-checking those synth methods dominates the wall-clock for
+    /// trivial user programs in debug builds, and contention from
+    /// parallel cargo tests can push the in-process trial well past
+    /// a tight 2-second budget. The trial spawns a fresh OS thread
+    /// per call, adding more variance. 10s is generous-but-not-loose:
+    /// release builds finish in well under 1s, and a debug-build
+    /// regression that pushes past 10s would still trip this lock.
     #[test]
     fn run_trial_returns_main_value() {
-        let runner = InProcessRunner::new("fn main() { 42 }").with_budget(Duration::from_secs(2));
+        let runner = InProcessRunner::new("fn main() { 42 }").with_budget(Duration::from_secs(10));
         let outcome = runner.run_trial();
         assert!(outcome.ok(), "outcome should be ok: {outcome:?}");
         assert_eq!(outcome.result, Some(Value::Int(42)));

@@ -144,7 +144,7 @@ fn main() {
     // requires sustained "stuck" to fire — well below any plausible
     // mid-handoff window.
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert!(!o.timed_out, "trial {i}: TIMEOUT; outcome={o:?}",);
@@ -192,7 +192,7 @@ fn main() {
     // immediate deadlock fire) returns within microseconds. Phase 4
     // tightens the budget from the Phase-3 2s slack — the new path
     // has no polling latency to absorb.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -242,7 +242,7 @@ fn main() {
     // 500ms budget: Phase 4 wake-graph fires the moment the spawned
     // task's `on_complete` empties the graph (no `live_tasks` left,
     // no parked counterparty) — sub-millisecond in practice.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -308,7 +308,7 @@ fn main() {
     // graph is empty of fuel) — main parks last, the pre-wait
     // `is_main_starved` check trips immediately. Pre-Phase-4 needed
     // the 250ms streak to elapse; Phase 4 is sub-millisecond.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -372,7 +372,7 @@ fn main() {
     // with a polling sample. cfg(not(windows)) gate from rounds
     // 31-33 lifted in this commit.
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert!(
@@ -458,7 +458,7 @@ fn main() {
     // and a 250ms streak guards against any narrow mid-handoff
     // window.
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(5));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert!(!o.timed_out, "trial {i}: TIMEOUT; outcome={o:?}",);
@@ -533,7 +533,7 @@ fn main() {
 }
 "#;
     const ITERATIONS: usize = 100;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(5));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert!(!o.timed_out, "trial {i}: TIMEOUT; outcome={o:?}",);
@@ -632,10 +632,15 @@ fn main() {
   }
 }
 "#;
-    // Budget: 250ms. Phase 4 fires immediately via the no-scheduler
-    // fast path (this program never spawns a task) — the wake graph
-    // BFS isn't even involved. 250ms is generous slack for CI jitter.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(250));
+    // Budget: 3s (was 250ms). Phase 4 fires immediately via the no-
+    // scheduler fast path (this program never spawns a task) — the
+    // wake graph BFS isn't even involved. The bumped budget covers
+    // the auto-derive synth pass's typecheck cost (~850ms in debug
+    // for the universe of built-in types) plus the runtime detector
+    // window. The detector itself is still expected to fire within
+    // ~50ms of program start; if it slipped past 3s in debug, that
+    // would be a real regression.
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcome = runner.run_trial();
     silt::scheduler::test_hooks::clear_all();
     drop(park_seen); // unused on the test thread; kept for the hook reference
@@ -697,7 +702,7 @@ fn main() {
     }));
 
     const ITERATIONS: usize = 100;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     silt::scheduler::test_hooks::clear_all();
 

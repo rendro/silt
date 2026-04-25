@@ -896,67 +896,107 @@ impl Compiler {
                 // would emit `"Range.bar"` while the typechecker
                 // registers `"List.bar"`, leaving the impl unreachable.
                 let canonical_target = canonicalize_type_name(trait_impl.target_type);
-                for method in &trait_impl.methods {
-                    let span = method.span;
-                    if method.params.len() > u8::MAX as usize {
-                        return Err(CompileError {
-                            message: format!(
-                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
-                                trait_impl.target_type,
-                                method.name,
-                                method.params.len()
-                            ),
-                            span,
-                        });
+
+                // Auto-derived impls for built-in enums and records
+                // synthesize bodies that reference the target type's
+                // own variants (e.g. `Display for BytesError`'s body
+                // matches `BytesInvalidUtf8`, `BytesOutOfBounds`, ...).
+                // Those names are import-gated under `import bytes`,
+                // but the synth happens unconditionally for every
+                // built-in regardless of which user imports — the
+                // user importing `time` would still see the
+                // `BytesError.display` global registered. To compile
+                // its body without tripping the gate, we temporarily
+                // pretend every builtin module is imported for the
+                // duration of the impl-body compilation. The gate is
+                // restored after the impl is done so the rest of the
+                // user's program sees the original import set.
+                //
+                // This is sound because the synthesized body is the
+                // single source that references those gated variants
+                // — the user's own code still hits the gate.
+                let saved_imports = if trait_impl.is_auto_derived {
+                    let saved = self.imported_builtin_modules.clone();
+                    for &m in module::BUILTIN_MODULES {
+                        self.imported_builtin_modules.insert(m.to_string());
                     }
-                    let arity = method.params.len() as u8;
-                    let qualified_name = format!("{}.{}", canonical_target, method.name);
+                    Some(saved)
+                } else {
+                    None
+                };
 
-                    self.contexts
-                        .push(CompileContext::new(qualified_name.clone(), arity));
+                // Inner closure so we can restore `imported_builtin_modules`
+                // on every exit path (success and error).
+                let result: Result<(), CompileError> = (|| {
+                    for method in &trait_impl.methods {
+                        let span = method.span;
+                        if method.params.len() > u8::MAX as usize {
+                            return Err(CompileError {
+                                message: format!(
+                                    "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
+                                    trait_impl.target_type,
+                                    method.name,
+                                    method.params.len()
+                                ),
+                                span,
+                            });
+                        }
+                        let arity = method.params.len() as u8;
+                        let qualified_name =
+                            format!("{}.{}", canonical_target, method.name);
 
-                    // Add parameters as locals.
-                    for (i, param) in method.params.iter().enumerate() {
-                        match &param.pattern.kind {
-                            PatternKind::Ident(name) => {
-                                self.warn_if_shadows_module(*name, param.pattern.span);
-                                self.add_local(*name);
-                            }
-                            _ => {
-                                let slot = self.add_local(intern(&format!("__param_{i}__")));
-                                self.current_chunk().emit_op(Op::GetLocal, span);
-                                self.current_chunk().emit_u16(slot, span);
-                                let _hidden = self.add_local(intern("__param_copy__"));
-                                self.current_chunk().emit_op(Op::SetLocal, span);
-                                self.current_chunk().emit_u16(_hidden, span);
-                                self.compile_pattern_bind(&param.pattern, span)?;
+                        self.contexts
+                            .push(CompileContext::new(qualified_name.clone(), arity));
+
+                        // Add parameters as locals.
+                        for (i, param) in method.params.iter().enumerate() {
+                            match &param.pattern.kind {
+                                PatternKind::Ident(name) => {
+                                    self.warn_if_shadows_module(*name, param.pattern.span);
+                                    self.add_local(*name);
+                                }
+                                _ => {
+                                    let slot =
+                                        self.add_local(intern(&format!("__param_{i}__")));
+                                    self.current_chunk().emit_op(Op::GetLocal, span);
+                                    self.current_chunk().emit_u16(slot, span);
+                                    let _hidden = self.add_local(intern("__param_copy__"));
+                                    self.current_chunk().emit_op(Op::SetLocal, span);
+                                    self.current_chunk().emit_u16(_hidden, span);
+                                    self.compile_pattern_bind(&param.pattern, span)?;
+                                }
                             }
                         }
+
+                        self.compile_expr(&method.body)?;
+                        self.current_chunk().emit_op(Op::Return, span);
+
+                        let ctx = self.contexts.pop().ok_or(CompileError {
+                            message: "compiler bug: missing trait method context".into(),
+                            span,
+                        })?;
+                        let func = ctx.function;
+                        let vm_closure = Arc::new(VmClosure {
+                            function: Arc::new(func),
+                            upvalues: vec![],
+                        });
+                        let closure_val = Value::VmClosure(vm_closure);
+                        let fi = self.add_constant(closure_val, span)?;
+                        self.current_chunk().emit_op(Op::Constant, span);
+                        self.current_chunk().emit_u16(fi, span);
+
+                        let name_idx =
+                            self.add_constant(Value::String(qualified_name), span)?;
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
                     }
-
-                    self.compile_expr(&method.body)?;
-                    self.current_chunk().emit_op(Op::Return, span);
-
-                    let ctx = self.contexts.pop().ok_or(CompileError {
-                        message: "compiler bug: missing trait method context".into(),
-                        span,
-                    })?;
-                    let func = ctx.function;
-                    let vm_closure = Arc::new(VmClosure {
-                        function: Arc::new(func),
-                        upvalues: vec![],
-                    });
-                    let closure_val = Value::VmClosure(vm_closure);
-                    let fi = self.add_constant(closure_val, span)?;
-                    self.current_chunk().emit_op(Op::Constant, span);
-                    self.current_chunk().emit_u16(fi, span);
-
-                    let name_idx = self.add_constant(Value::String(qualified_name), span)?;
-                    self.current_chunk().emit_op(Op::SetGlobal, span);
-                    self.current_chunk().emit_u16(name_idx, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
+                    Ok(())
+                })();
+                if let Some(saved) = saved_imports {
+                    self.imported_builtin_modules = saved;
                 }
-                Ok(())
+                result
             }
 
             Decl::Trait(_) => {
