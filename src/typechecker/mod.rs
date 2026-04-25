@@ -998,8 +998,17 @@ impl TypeChecker {
     /// Convert a resolved Type to a type name string suitable for matching
     /// against `TraitImplInfo.target_type`. Returns `None` if the type is
     /// unresolved (still a type variable) or cannot be mapped to a name.
+    ///
+    /// Phase B: routes through `crate::types::canonical::canonicalize` so
+    /// that `Range(T)` collapses to `List(T)` before name lookup. The
+    /// dedicated Range arm is therefore no longer needed (it became
+    /// unreachable once the input was canonicalised). This is the single
+    /// source of truth for the dispatch-name oracle on the typechecker
+    /// side; the VM and compiler will reach the same conclusion via
+    /// `canonical_name` in phase C.
     pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<Symbol> {
-        match ty {
+        let ty = crate::types::canonical::canonicalize(ty);
+        match &ty {
             Type::Int => Some(intern("Int")),
             Type::Float => Some(intern("Float")),
             Type::Bool => Some(intern("Bool")),
@@ -1008,12 +1017,6 @@ impl TypeChecker {
             Type::Record(name, _) => Some(*name),
             Type::Generic(name, _) => Some(*name),
             Type::List(_) => Some(intern("List")),
-            // Range acts as List for trait-impl lookup: traits registered
-            // against List (e.g. Iterable, Sized) apply to Range since the
-            // runtime representation is identical. Without this mapping,
-            // auto-derived trait methods on Range receivers (e.g. `.len()`)
-            // would fail to resolve.
-            Type::Range(_) => Some(intern("List")),
             Type::Map(_, _) => Some(intern("Map")),
             Type::Set(_) => Some(intern("Set")),
             Type::Channel(_) => Some(intern("Channel")),
@@ -1026,6 +1029,11 @@ impl TypeChecker {
             // silently dropped.
             Type::Fun(_, _) => Some(intern("Fun")),
             Type::Var(_) => None, // unresolved
+            // Range was eliminated by canonicalize above; this arm is
+            // unreachable. Phase B deletion target.
+            Type::Range(_) => unreachable!(
+                "canonicalize should have collapsed Range(_) to List(_) before this match"
+            ),
             _ => None,
         }
     }
@@ -1037,13 +1045,14 @@ impl TypeChecker {
     /// declaration order. Anything else (Int, String, Record without type
     /// params, etc.) has no positional args. Used by `verify_trait_obligation`
     /// to walk into an impl's where-clause obligations.
+    ///
+    /// Phase B: canonicalise the input first so a Range receiver supplies
+    /// its element type via the List arm rather than a dedicated Range arm.
     pub(super) fn type_args_of(ty: &Type) -> Vec<Type> {
-        match ty {
+        let ty = crate::types::canonical::canonicalize(ty);
+        match &ty {
             Type::Generic(_, args) => args.clone(),
-            Type::List(inner)
-            | Type::Range(inner)
-            | Type::Set(inner)
-            | Type::Channel(inner) => {
+            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
                 vec![(**inner).clone()]
             }
             Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
@@ -1152,7 +1161,17 @@ impl TypeChecker {
     /// either side is a type variable (defer), or both are concrete and
     /// structurally equal. Used by `verify_trait_obligation` to reject
     /// `where a: TryInto(Int)` when only `TryInto(Float) for ...` exists.
+    ///
+    /// Phase B: canonicalise both sides at entry. The recursive walk
+    /// then never sees `Type::Range`; the dedicated `(Range, Range)`
+    /// pair-arm is unreachable and removed.
     fn trait_arg_compatible(a: &Type, b: &Type) -> bool {
+        let a = crate::types::canonical::canonicalize(a);
+        let b = crate::types::canonical::canonicalize(b);
+        Self::trait_arg_compatible_canon(&a, &b)
+    }
+
+    fn trait_arg_compatible_canon(a: &Type, b: &Type) -> bool {
         match (a, b) {
             (Type::Error, _) | (_, Type::Error) => true,
             (Type::Var(_), _) | (_, Type::Var(_)) => true,
@@ -1163,25 +1182,34 @@ impl TypeChecker {
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => true,
             (Type::List(x), Type::List(y))
-            | (Type::Range(x), Type::Range(y))
             | (Type::Set(x), Type::Set(y))
-            | (Type::Channel(x), Type::Channel(y)) => Self::trait_arg_compatible(x, y),
+            | (Type::Channel(x), Type::Channel(y)) => Self::trait_arg_compatible_canon(x, y),
             (Type::Map(k1, v1), Type::Map(k2, v2)) => {
-                Self::trait_arg_compatible(k1, k2) && Self::trait_arg_compatible(v1, v2)
+                Self::trait_arg_compatible_canon(k1, k2)
+                    && Self::trait_arg_compatible_canon(v1, v2)
             }
             (Type::Tuple(xs), Type::Tuple(ys)) => {
                 xs.len() == ys.len()
-                    && xs.iter().zip(ys.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
+                    && xs
+                        .iter()
+                        .zip(ys.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
             }
             (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
-                    && Self::trait_arg_compatible(r1, r2)
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
+                    && Self::trait_arg_compatible_canon(r1, r2)
             }
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 n1 == n2
                     && a1.len() == a2.len()
-                    && a1.iter().zip(a2.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
             }
             (Type::Record(n1, _), Type::Record(n2, _)) => n1 == n2,
             (Type::Record(n1, _), Type::Generic(n2, _))
@@ -1491,7 +1519,17 @@ impl TypeChecker {
         }
         for i in 0..program.decls.len() {
             if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
-                let target = ti.target_type;
+                // Phase B: lookup keys for the method table and the
+                // legacy `"<T>.<m>"` TypeEnv binding share the
+                // canonical target-type symbol with the registration
+                // path in `register_trait_impl` — `Range` collapses
+                // to `List`. Without this, a `trait Foo for Range(a)`
+                // impl's body-check pass would store the body-inferred
+                // type under the (uncanonicalised) `"Range"` key,
+                // leaving the canonical `"List"` entry stuck on the
+                // still-polymorphic template and producing a type
+                // cascade at the first call site.
+                let target = canonicalize_type_name(ti.target_type);
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
@@ -2230,6 +2268,33 @@ impl TypeChecker {
         te: &TypeExpr,
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
+        // Phase B: canonicalise the result so user-written `Range(T)`
+        // annotations arrive at the unifier (and at every other
+        // typechecker consumer) as `List(T)`. The user's source
+        // spelling is irrelevant downstream — diagnostic display of
+        // value-side types (e.g. the `Range(Int)` from a `1..n`
+        // expression) is preserved because expression-level inference
+        // (`ExprKind::Range` in `inference.rs`) keeps producing
+        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:594`)
+        // therefore still fires for the asymmetric case of a
+        // (canonicalised) annotation meeting an internally-inferred
+        // Range, but only the value side carries Range past this
+        // point.
+        //
+        // Idempotence note: canonicalize is structurally idempotent
+        // (see canonicalize_idempotent test in src/types/canonical.rs),
+        // so the recursive `self.resolve_type_expr(...)` calls inside
+        // the match each canonicalise their subtree, and the outer
+        // call canonicalises the already-canonical result — a no-op.
+        let resolved = self.resolve_type_expr_inner(te, param_vars);
+        crate::types::canonical::canonicalize(&resolved)
+    }
+
+    fn resolve_type_expr_inner(
+        &mut self,
+        te: &TypeExpr,
+        param_vars: &mut HashMap<Symbol, Type>,
+    ) -> Type {
         match &te.kind {
             TypeExprKind::Named(name) => {
                 // Check if it's a type param variable
@@ -2784,7 +2849,21 @@ impl TypeChecker {
     }
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
-        let impl_key = (ti.trait_name, ti.target_type);
+        // Phase B: canonicalise the target-type symbol so an impl
+        // `trait Foo for Range(a)` registers under the same key
+        // (`"List"`) that dispatch lookup will use for both `Range(_)`
+        // and `List(_)` receivers. Round 61's
+        // `value_type_name_for_dispatch` fix collapsed receivers to
+        // `"List"` at runtime; with phase B's `type_name_for_impl`
+        // canonicalising at the lookup side too, the impl table
+        // would otherwise be unreachable for an explicitly
+        // Range-targeted impl. Without this canonicalisation the
+        // round-61 lock test
+        // `user_trait_method_on_list_dispatches_for_range_receiver`
+        // (and its siblings) regresses to "type 'Range' does not
+        // implement trait 'Foo'".
+        let target_type = canonicalize_type_name(ti.target_type);
+        let impl_key = (ti.trait_name, target_type);
 
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
@@ -2796,7 +2875,7 @@ impl TypeChecker {
                 .unwrap_or_else(|| intern("display"));
             let is_overriding_auto = self
                 .method_table
-                .get(&(ti.target_type, first_method))
+                .get(&(target_type, first_method))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(true);
             if !is_overriding_auto {
@@ -3024,7 +3103,7 @@ impl TypeChecker {
         }
         if !impl_obligations_by_index.is_empty() {
             self.impl_constraints
-                .insert((ti.trait_name, ti.target_type), impl_obligations_by_index);
+                .insert((ti.trait_name, target_type), impl_obligations_by_index);
         }
 
         // GAP (round 35 F5): extraneous trait-impl methods — methods on
@@ -3072,7 +3151,7 @@ impl TypeChecker {
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
                 self.impl_trait_args
-                    .insert((ti.trait_name, ti.target_type), resolved_trait_args.clone());
+                    .insert((ti.trait_name, target_type), resolved_trait_args.clone());
                 if !trait_info.param_where_clauses.is_empty() {
                     for (param_name, bound_trait) in &trait_info.param_where_clauses {
                         let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
@@ -3189,7 +3268,7 @@ impl TypeChecker {
             // overwrite the earlier one and route every `.method()`
             // call to the last-registered trait. Reject with an
             // ambiguity error that names both traits.
-            if let Some(existing) = self.method_table.get(&(ti.target_type, method.name))
+            if let Some(existing) = self.method_table.get(&(target_type, method.name))
                 && !existing.is_auto_derived
                 && let Some(existing_trait) = existing.trait_name
                 && existing_trait != ti.trait_name
@@ -3262,7 +3341,7 @@ impl TypeChecker {
             // constraints into pending_where_constraints for the
             // finalize-pass check.
             self.method_table.insert(
-                (ti.target_type, method.name),
+                (target_type, method.name),
                 MethodEntry {
                     method_type: fn_type.clone(),
                     span: ti.span,
@@ -3275,7 +3354,12 @@ impl TypeChecker {
             // Legacy: register in TypeEnv as "TypeName.method_name".
             // Attach the same constraints to the scheme so the method
             // body's check_fn_body_with_name sees them as active.
-            let key = intern(&format!("{}.{}", ti.target_type, method.name));
+            // Phase B: use the canonicalised `target_type` so a Range-
+            // targeted impl registers under "List.<m>" — matching the
+            // dispatch path in inference.rs (FieldAccess) which now
+            // looks up `(intern("List"), method)` for both List and
+            // Range receivers.
+            let key = intern(&format!("{}.{}", target_type, method.name));
             let mut scheme = self.generalize(env, &fn_type);
             for (tv, trait_name) in &method_constraints {
                 if !scheme.constraints.contains(&(*tv, *trait_name)) {
@@ -3288,6 +3372,23 @@ impl TypeChecker {
 }
 
 // ── Helper functions ────────────────────────────────────────────────
+
+/// Phase B helper: canonicalise a type-name [`Symbol`] so dispatch
+/// tables (`trait_impl_set`, `method_table`, `impl_constraints`,
+/// `impl_trait_args`, the legacy `"<T>.<m>"` TypeEnv key) all use the
+/// single canonical name. Today the only collapse is `Range -> List`,
+/// matching `crate::types::canonical::canonical_name`'s reduction
+/// rule. Other names round-trip unchanged.
+///
+/// Used by `register_trait_impl` so that `trait Foo for Range(a)`
+/// registers under `"List"` — the same key both List and Range
+/// receivers reach via [`Self::type_name_for_impl`] at dispatch time.
+pub(super) fn canonicalize_type_name(name: Symbol) -> Symbol {
+    match resolve(name).as_str() {
+        "Range" => intern("List"),
+        _ => name,
+    }
+}
 
 /// Walk two types in parallel and build a mapping from `old` tyvars to
 /// `new` tyvars wherever they appear at the same structural position.
@@ -3874,7 +3975,17 @@ impl ReplTypeContext {
         // Check trait impl method bodies
         for i in 0..program.decls.len() {
             if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
-                let target = ti.target_type;
+                // Phase B: lookup keys for the method table and the
+                // legacy `"<T>.<m>"` TypeEnv binding share the
+                // canonical target-type symbol with the registration
+                // path in `register_trait_impl` — `Range` collapses
+                // to `List`. Without this, a `trait Foo for Range(a)`
+                // impl's body-check pass would store the body-inferred
+                // type under the (uncanonicalised) `"Range"` key,
+                // leaving the canonical `"List"` entry stuck on the
+                // still-polymorphic template and producing a type
+                // cascade at the first call site.
+                let target = canonicalize_type_name(ti.target_type);
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));

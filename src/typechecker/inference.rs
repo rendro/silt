@@ -2002,6 +2002,14 @@ impl TypeChecker {
                 // Could be record.field — infer the object type
                 let obj_ty = self.infer_expr(obj, env);
                 let obj_ty = self.apply(&obj_ty);
+                // Phase B: canonicalise before dispatch so a Range
+                // receiver (from `1..n`) lands in the List arm. The
+                // dedicated `Type::List(_) | Type::Range(_)` arm
+                // below is therefore reduced to `Type::List(_)`; no
+                // separate Range redirect to the List method table
+                // is needed because the Range form has been collapsed
+                // away upstream of this match.
+                let obj_ty = crate::types::canonical::canonicalize(&obj_ty);
 
                 // Field / method access
                 //
@@ -2154,11 +2162,12 @@ impl TypeChecker {
                         );
                         Type::Error
                     }
-                    // Collection types. Range(T) is a nominal alias for
-                    // List(T) (see Type::Range in src/types.rs); method
-                    // dispatch on a Range receiver routes through the
-                    // List method table.
-                    Type::List(_) | Type::Range(_) => {
+                    // Collection types. Phase B: Range receivers were
+                    // canonicalised to List upstream of this match, so
+                    // the dispatch-time redirect (formerly
+                    // `Type::List(_) | Type::Range(_)`) is reduced to a
+                    // single List arm. Range no longer reaches here.
+                    Type::List(_) => {
                         if let Some(entry) =
                             self.method_table.get(&(intern("List"), field)).cloned()
                         {
