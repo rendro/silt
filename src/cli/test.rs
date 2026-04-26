@@ -214,8 +214,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // enforce the trait-orphan rule for `silt test` (round 63 item
         // 5). The compile path below reuses the same setup.
         let (local_pkg, package_roots) = package_setup_for_file(path.as_str(), true);
-        let type_errors =
-            typechecker::check_with_package(&mut program, Some(local_pkg));
+        // Round 64 item 6A: pre-compile-typecheck imports through the
+        // compiler so the entrypoint typecheck can see sibling
+        // modules' exports (cross-module let-generalization). The
+        // compiler is reused below for `compile_declarations` so the
+        // pre-typecheck typecheck doubles as the import-load
+        // (compile_file_module's caching avoids re-reading sources).
+        let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
+        compiler.pre_typecheck_imports(&program);
+        let exports = compiler.module_exports_snapshot();
+        let (type_errors, _entry_exports) = typechecker::check_with_package_and_imports(
+            &mut program,
+            Some(local_pkg),
+            exports,
+        );
         let mut has_type_error = false;
         let mut printed_type_errors: usize = 0;
         for te in &type_errors {
@@ -243,9 +255,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // `silt.toml` so cross-file `import foo` resolves consistently
         // regardless of which file `silt test` was pointed at, and
         // auto-update the lockfile when the manifest has new deps.
-        // (The setup tuple is resolved above so the typechecker can
-        // enforce the orphan rule with the same package symbol.)
-        let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
+        // (The compiler instance is the one constructed above —
+        // pre_typecheck_imports populated its module_exports cache
+        // already; the compile pass below reuses that work.)
         let functions = match compiler.compile_declarations(&program) {
             Ok(f) => f,
             Err(e) => {

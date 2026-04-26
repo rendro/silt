@@ -316,6 +316,168 @@ pub(super) struct PendingWhereConstraint {
     pub(super) bound_trait_args: Vec<Type>,
 }
 
+// ── Helpers for cross-module remap (round 64 item 6A) ───────────────
+
+/// Collect every TyVar referenced in a `Scheme` (its quantified vars,
+/// the type body, and the constraint list).
+pub(super) fn collect_tyvars_in_scheme(
+    scheme: &Scheme,
+    out: &mut std::collections::BTreeSet<TyVar>,
+) {
+    for v in &scheme.vars {
+        out.insert(*v);
+    }
+    for v in free_vars_in(&scheme.ty) {
+        out.insert(v);
+    }
+    for (tv, _) in &scheme.constraints {
+        out.insert(*tv);
+    }
+}
+
+/// Free vars across a slice of types (helper used during cross-module
+/// merge — avoids the verbose nested loop at every call site).
+pub(super) fn free_vars_in_types(types: &[Type]) -> Vec<TyVar> {
+    let mut out: Vec<TyVar> = Vec::new();
+    for t in types {
+        for v in free_vars_in(t) {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
+/// Re-stamp every TyVar inside a `Scheme` through the supplied
+/// remapping. Producer ids in `tv_remap` keys map to consumer ids in
+/// `tv_remap` values; any tyvar absent from the map is left alone (it's
+/// outside the snapshot's reach).
+pub(super) fn remap_scheme(
+    scheme: &Scheme,
+    tv_remap: &HashMap<TyVar, TyVar>,
+    ty_remap: &HashMap<TyVar, Type>,
+) -> Scheme {
+    let new_vars: Vec<TyVar> = scheme
+        .vars
+        .iter()
+        .map(|v| *tv_remap.get(v).unwrap_or(v))
+        .collect();
+    let new_ty = substitute_vars(&scheme.ty, ty_remap);
+    let new_constraints: Vec<(TyVar, Symbol)> = scheme
+        .constraints
+        .iter()
+        .map(|(tv, t)| (*tv_remap.get(tv).unwrap_or(tv), *t))
+        .collect();
+    Scheme {
+        vars: new_vars,
+        ty: new_ty,
+        constraints: new_constraints,
+    }
+}
+
+// ── Cross-module exports (round 64 item 6A) ─────────────────────────
+
+/// A snapshot of a module's public surface that downstream importers
+/// can use to typecheck against.
+///
+/// The typechecker at module B (which does `import a`) consults a
+/// `HashMap<Symbol, ModuleExports>` keyed by module name; if the
+/// imported module's exports are present, the typechecker merges them
+/// into its env (qualifying schemes as `a.fn_name`) and seeds its
+/// internal state (`enums`, `records`, `traits`, `trait_impl_set`,
+/// `method_table`) so cross-module typechecking sees the producer's
+/// pub-decl signatures, generic parameters, where clauses, and trait
+/// impls.
+///
+/// Built by `check_program` at the end of typechecking — for every
+/// `pub fn` / `pub let` / `pub type` / `pub trait` declaration, the
+/// final scheme/info is captured here. `trait_impls` collects every
+/// `Decl::TraitImpl` in the program (impls are not `pub`-gated; they
+/// flow whenever the trait or the type is visible to the importer).
+///
+/// Producer-side serialization is shallow-clone: `Scheme`, `EnumInfo`,
+/// `RecordInfo`, `TraitInfo`, and `TraitImpl` are all `Clone`, so the
+/// exports map carries owned snapshots that survive the producer
+/// `TypeChecker` being dropped.
+#[derive(Debug, Clone)]
+pub struct ModuleExports {
+    /// `pub fn` and `pub let` schemes, keyed by the bare name as
+    /// declared. The importer rewrites the key to `module.name` when
+    /// merging into its env.
+    pub(super) schemes: Vec<(Symbol, Scheme)>,
+    /// `pub type ... { variants }` snapshots.
+    pub(super) enums: Vec<(Symbol, EnumInfo)>,
+    /// `pub type ... { fields }` snapshots.
+    pub(super) records: Vec<(Symbol, RecordInfo)>,
+    /// `pub type X = Target` aliases — preserved so the importer's
+    /// `resolve_type_expr_inner` accepts uses of `X` in annotations.
+    pub(super) aliases: Vec<Symbol>,
+    /// Type-parameter arity for each alias (parallel to `aliases`).
+    pub(super) alias_arity: Vec<usize>,
+    /// `pub trait T { ... }` snapshots.
+    pub(super) traits: Vec<(Symbol, TraitInfo)>,
+    /// Variant → enum name map for every pub enum's variants. Used so
+    /// `a.Red` resolves to the same variant the producer saw.
+    pub(super) variant_to_enum: Vec<(Symbol, Symbol)>,
+    /// Trait-impl table snapshots — every `(trait_name, target_type)`
+    /// pair the producer registered, with its method entries, span,
+    /// constraints, and trait-arg bindings.
+    pub(super) trait_impl_entries: Vec<TraitImplExport>,
+    /// Record type → param TyVar ids, mirroring
+    /// `record_param_var_ids` in the producer's TypeChecker.
+    pub(super) record_param_var_ids: Vec<(Symbol, Vec<TyVar>)>,
+    /// Variant constructor schemes — bound under bare names by the
+    /// producer (`Red: () -> Color`, `Some(a) -> Option(a)`). Stored
+    /// here so the importer can re-bind them under both bare and
+    /// qualified-by-module names.
+    pub(super) variant_schemes: Vec<(Symbol, Scheme)>,
+    /// Type-name schemes registered for first-class type values
+    /// (`TypeOf(EnumName)`, `TypeOf(RecordName)`) — mirrors what the
+    /// producer's register_type_decl bound under the type's bare name.
+    pub(super) type_name_schemes: Vec<(Symbol, Scheme)>,
+}
+
+/// Snapshot of one `(trait_name, target_type)` impl in the producer's
+/// state. Carries every table entry that depends on the impl so the
+/// importer can replicate it without re-running `register_trait_impl`
+/// (which would re-emit orphan / duplicate-impl diagnostics that
+/// belong to the producer's compile, not the importer's).
+#[derive(Debug, Clone)]
+pub(super) struct TraitImplExport {
+    pub(super) trait_name: Symbol,
+    pub(super) target_type: Symbol,
+    pub(super) span: Span,
+    pub(super) impl_constraints: Vec<(usize, Symbol)>,
+    pub(super) impl_trait_args: Vec<Type>,
+    /// Method entries keyed by method name.
+    pub(super) methods: Vec<(Symbol, MethodEntry)>,
+}
+
+impl Default for ModuleExports {
+    fn default() -> Self {
+        Self {
+            schemes: Vec::new(),
+            enums: Vec::new(),
+            records: Vec::new(),
+            aliases: Vec::new(),
+            alias_arity: Vec::new(),
+            traits: Vec::new(),
+            variant_to_enum: Vec::new(),
+            trait_impl_entries: Vec::new(),
+            record_param_var_ids: Vec::new(),
+            variant_schemes: Vec::new(),
+            type_name_schemes: Vec::new(),
+        }
+    }
+}
+
+impl ModuleExports {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 // ── The type checker ────────────────────────────────────────────────
 
 pub struct TypeChecker {
@@ -489,6 +651,13 @@ pub struct TypeChecker {
     ///     the user renamed the module, so its original name is no
     ///     longer in scope.
     pub(super) imported_modules: std::collections::HashSet<Symbol>,
+    /// Cross-module typechecking (round 64 item 6A): exports from
+    /// previously-typechecked sibling modules, keyed by module name as
+    /// it appears in `import` statements. Populated by callers (the
+    /// compiler) before `check_program` runs so the import-decl loop
+    /// can consult this map instead of emitting "unknown module"
+    /// warnings. Empty for ad-hoc scripts and the REPL.
+    pub(super) module_exports: HashMap<Symbol, ModuleExports>,
 }
 
 impl Default for TypeChecker {
@@ -532,6 +701,7 @@ impl TypeChecker {
             last_field_access_was_method: false,
             current_package: None,
             imported_modules: std::collections::HashSet::new(),
+            module_exports: HashMap::new(),
         }
     }
 
@@ -1730,9 +1900,461 @@ impl TypeChecker {
         });
     }
 
+    // ── Cross-module exports (round 64 item 6A) ─────────────────────
+
+    /// Merge the producer-side snapshot for `module_sym` into this
+    /// typechecker's state and the supplied env. Re-uses producer
+    /// schemes/infos by allocating fresh tyvars in this checker's
+    /// space wherever the producer's tyvars need to flow through, so
+    /// later instantiation at call sites yields fresh polymorphic vars
+    /// without colliding with producer ids.
+    ///
+    /// Caller-provided `qualified_prefix` is the symbol the consumer
+    /// uses to reach the module — `module` for `import a` (=`"a"`),
+    /// `alias` for `import a as al` (=`"al"`). Schemes are bound under
+    /// `prefix.name`. `bind_bare` controls whether to also bind the
+    /// bare name (used for `import a.{ id, add }` which copies under
+    /// the bare item name into env).
+    ///
+    /// Returns `true` if `module_sym` was found in `self.module_exports`,
+    /// `false` if the module is unknown (caller falls back to its
+    /// pre-existing "unknown module" warning).
+    pub(super) fn merge_imported_module_exports(
+        &mut self,
+        module_sym: Symbol,
+        qualified_prefix: Symbol,
+        env: &mut TypeEnv,
+    ) -> bool {
+        let Some(exports) = self.module_exports.get(&module_sym).cloned() else {
+            return false;
+        };
+
+        // Build a fresh-var remapping for every producer TyVar referenced
+        // by the snapshot, so the consumer's TyVar space stays separate
+        // from the producer's. This avoids two issues:
+        //   (a) producer ids that happen to collide with consumer ids
+        //       would alias unrelated types via `apply` chains;
+        //   (b) substitution slots in `self.subst` are sized by
+        //       `next_var`; producer ids past our `next_var` would index
+        //       out of bounds.
+        // Walk every Type in the snapshot to collect producer tyvars,
+        // then allocate fresh consumer tyvars for each.
+        let mut producer_tyvars: std::collections::BTreeSet<TyVar> =
+            std::collections::BTreeSet::new();
+        for (_, scheme) in &exports.schemes {
+            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
+        }
+        for (_, scheme) in &exports.variant_schemes {
+            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
+        }
+        for (_, scheme) in &exports.type_name_schemes {
+            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
+        }
+        for (_, info) in &exports.enums {
+            for v in &info.param_var_ids {
+                producer_tyvars.insert(*v);
+            }
+            for variant in &info.variants {
+                for ft in &variant.field_types {
+                    for v in free_vars_in(ft) {
+                        producer_tyvars.insert(v);
+                    }
+                }
+            }
+        }
+        for (_, info) in &exports.records {
+            for (_, ft) in &info.fields {
+                for v in free_vars_in(ft) {
+                    producer_tyvars.insert(v);
+                }
+            }
+        }
+        for (_, ids) in &exports.record_param_var_ids {
+            for v in ids {
+                producer_tyvars.insert(*v);
+            }
+        }
+        for (_, info) in &exports.traits {
+            for v in &info.param_var_ids {
+                producer_tyvars.insert(*v);
+            }
+            for (_, mty) in &info.methods {
+                for v in free_vars_in(mty) {
+                    producer_tyvars.insert(v);
+                }
+            }
+        }
+        for entry in &exports.trait_impl_entries {
+            for v in free_vars_in_types(&entry.impl_trait_args) {
+                producer_tyvars.insert(v);
+            }
+            for (_, m) in &entry.methods {
+                for v in free_vars_in(&m.method_type) {
+                    producer_tyvars.insert(v);
+                }
+                for (tv, _) in &m.method_constraints {
+                    producer_tyvars.insert(*tv);
+                }
+            }
+        }
+
+        let mut tv_remap: HashMap<TyVar, TyVar> = HashMap::new();
+        let mut ty_remap: HashMap<TyVar, Type> = HashMap::new();
+        for old_tv in &producer_tyvars {
+            let fresh = self.fresh_tyvar_id();
+            tv_remap.insert(*old_tv, fresh);
+            ty_remap.insert(*old_tv, Type::Var(fresh));
+        }
+
+        // Merge schemes under qualified prefix.
+        let prefix_str = resolve(qualified_prefix);
+        for (name, scheme) in &exports.schemes {
+            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
+            let qualified = intern(&format!("{prefix_str}.{}", resolve(*name)));
+            env.define(qualified, new_scheme);
+        }
+
+        // Merge enums.
+        for (name, info) in &exports.enums {
+            let new_param_ids: Vec<TyVar> = info
+                .param_var_ids
+                .iter()
+                .map(|v| *tv_remap.get(v).unwrap_or(v))
+                .collect();
+            let new_variants: Vec<VariantInfo> = info
+                .variants
+                .iter()
+                .map(|v| VariantInfo {
+                    name: v.name,
+                    field_types: v
+                        .field_types
+                        .iter()
+                        .map(|ft| substitute_vars(ft, &ty_remap))
+                        .collect(),
+                })
+                .collect();
+            let new_info = EnumInfo {
+                params: info.params.clone(),
+                param_var_ids: new_param_ids,
+                variants: new_variants,
+                defined_in: info.defined_in,
+            };
+            self.enums.entry(*name).or_insert(new_info);
+        }
+
+        // Merge variant_to_enum.
+        for (variant, enum_name) in &exports.variant_to_enum {
+            self.variant_to_enum.entry(*variant).or_insert(*enum_name);
+        }
+
+        // Merge variant schemes (under bare name AND qualified `prefix.Variant`).
+        for (name, scheme) in &exports.variant_schemes {
+            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
+            let bare = *name;
+            // Bind bare so pattern matching `Red` still works.
+            if env.lookup(bare).is_none() {
+                env.define(bare, new_scheme.clone());
+            }
+            let qualified = intern(&format!("{prefix_str}.{}", resolve(bare)));
+            env.define(qualified, new_scheme);
+        }
+
+        // Merge type-name schemes under both bare and qualified
+        // (so `module.Color` referenced as a value works too).
+        for (name, scheme) in &exports.type_name_schemes {
+            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
+            if env.lookup(*name).is_none() {
+                env.define(*name, new_scheme.clone());
+            }
+            let qualified = intern(&format!("{prefix_str}.{}", resolve(*name)));
+            env.define(qualified, new_scheme);
+        }
+
+        // Merge records.
+        for (name, info) in &exports.records {
+            let new_fields: Vec<(Symbol, Type)> = info
+                .fields
+                .iter()
+                .map(|(fname, fty)| (*fname, substitute_vars(fty, &ty_remap)))
+                .collect();
+            let new_info = RecordInfo {
+                fields: new_fields,
+                defined_in: info.defined_in,
+            };
+            self.records.entry(*name).or_insert(new_info);
+        }
+
+        // Merge record_param_var_ids.
+        for (name, ids) in &exports.record_param_var_ids {
+            let remapped: Vec<TyVar> =
+                ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
+            self.record_param_var_ids.entry(*name).or_insert(remapped);
+        }
+
+        // Merge type aliases (just track the names + arity for the
+        // resolve-time fast-path).
+        for (i, name) in exports.aliases.iter().enumerate() {
+            self.type_aliases.insert(*name);
+            if let Some(arity) = exports.alias_arity.get(i) {
+                self.type_alias_arity.entry(*name).or_insert(*arity);
+            }
+        }
+
+        // Merge traits.
+        for (name, info) in &exports.traits {
+            let new_param_ids: Vec<TyVar> = info
+                .param_var_ids
+                .iter()
+                .map(|v| *tv_remap.get(v).unwrap_or(v))
+                .collect();
+            let new_methods: Vec<(Symbol, Type)> = info
+                .methods
+                .iter()
+                .map(|(mname, mty)| (*mname, substitute_vars(mty, &ty_remap)))
+                .collect();
+            let new_info = TraitInfo {
+                params: info.params.clone(),
+                param_var_ids: new_param_ids,
+                param_where_clauses: info.param_where_clauses.clone(),
+                supertraits: info.supertraits.clone(),
+                supertrait_args: info.supertrait_args.clone(),
+                methods: new_methods,
+                decl_span: info.decl_span,
+                default_method_bodies: info.default_method_bodies.clone(),
+                assoc_types: info.assoc_types.clone(),
+                defined_in: info.defined_in,
+            };
+            self.traits.entry(*name).or_insert(new_info);
+        }
+
+        // Merge trait impls.
+        for entry in &exports.trait_impl_entries {
+            let key = (entry.trait_name, entry.target_type);
+            // Skip if already present (e.g. duplicate via diamond
+            // imports, or auto-derive already populated).
+            if self.trait_impl_set.contains(&key) {
+                continue;
+            }
+            self.trait_impl_set.insert(key);
+            self.trait_impl_spans.insert(key, entry.span);
+            if !entry.impl_constraints.is_empty() {
+                self.impl_constraints
+                    .insert(key, entry.impl_constraints.clone());
+            }
+            if !entry.impl_trait_args.is_empty() {
+                let remapped: Vec<Type> = entry
+                    .impl_trait_args
+                    .iter()
+                    .map(|t| substitute_vars(t, &ty_remap))
+                    .collect();
+                self.impl_trait_args.insert(key, remapped);
+            }
+            for (mname, m) in &entry.methods {
+                let new_method_type = substitute_vars(&m.method_type, &ty_remap);
+                let new_constraints: Vec<(TyVar, Symbol)> = m
+                    .method_constraints
+                    .iter()
+                    .map(|(tv, t)| (*tv_remap.get(tv).unwrap_or(tv), *t))
+                    .collect();
+                let new_entry = MethodEntry {
+                    method_type: new_method_type,
+                    span: m.span,
+                    is_auto_derived: m.is_auto_derived,
+                    trait_name: m.trait_name,
+                    method_constraints: new_constraints,
+                };
+                self.method_table
+                    .insert((entry.target_type, *mname), new_entry);
+
+                // Also bind a `<TargetType>.<method>` env scheme so
+                // `MyType::method` style calls and explicit
+                // `MyType.method(value)` resolve through env lookup
+                // (matching the producer's bind in register_trait_impl).
+                let bind_key =
+                    intern(&format!("{}.{}", resolve(entry.target_type), resolve(*mname)));
+                if env.lookup(bind_key).is_none() {
+                    let scheme = self.generalize_method_template(&substitute_vars(
+                        &m.method_type,
+                        &ty_remap,
+                    ));
+                    env.define(bind_key, scheme);
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Helper: build a scheme from a method template type, generalizing
+    /// over its free type variables. Used during cross-module merge to
+    /// register method entries under their `Type.method` env keys.
+    fn generalize_method_template(&self, ty: &Type) -> Scheme {
+        let fvs = free_vars_in(ty);
+        Scheme {
+            vars: fvs,
+            ty: ty.clone(),
+            constraints: Vec::new(),
+        }
+    }
+
+    /// Walk this TypeChecker's state at the end of `check_program` and
+    /// build a `ModuleExports` snapshot of every `pub` declaration in
+    /// `program`. Round 64 item 6A.
+    pub(super) fn collect_module_exports(
+        &self,
+        program: &Program,
+        env: &TypeEnv,
+    ) -> ModuleExports {
+        let mut exports = ModuleExports::new();
+        let mut pub_type_names: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        let mut pub_trait_names: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        let local_pkg = self.defining_package();
+
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) if f.is_pub => {
+                    if let Some(scheme) = env.lookup(f.name) {
+                        exports.schemes.push((f.name, scheme.clone()));
+                    }
+                }
+                Decl::Let {
+                    pattern,
+                    is_pub: true,
+                    ..
+                } => {
+                    if let PatternKind::Ident(name) = &pattern.kind
+                        && let Some(scheme) = env.lookup(*name)
+                    {
+                        exports.schemes.push((*name, scheme.clone()));
+                    }
+                }
+                Decl::Type(td) if td.is_pub => {
+                    pub_type_names.insert(td.name);
+                    match &td.body {
+                        TypeBody::Enum(_) => {
+                            if let Some(info) = self.enums.get(&td.name) {
+                                exports.enums.push((td.name, info.clone()));
+                                // Variant schemes + variant_to_enum.
+                                for variant in &info.variants {
+                                    exports
+                                        .variant_to_enum
+                                        .push((variant.name, td.name));
+                                    if let Some(scheme) = env.lookup(variant.name) {
+                                        exports
+                                            .variant_schemes
+                                            .push((variant.name, scheme.clone()));
+                                    }
+                                }
+                            }
+                            // Type-name scheme (TypeOf(EnumName)).
+                            if let Some(scheme) = env.lookup(td.name) {
+                                exports.type_name_schemes.push((td.name, scheme.clone()));
+                            }
+                        }
+                        TypeBody::Record(_) => {
+                            if let Some(info) = self.records.get(&td.name) {
+                                exports.records.push((td.name, info.clone()));
+                            }
+                            if let Some(ids) = self.record_param_var_ids.get(&td.name) {
+                                exports
+                                    .record_param_var_ids
+                                    .push((td.name, ids.clone()));
+                            }
+                            if let Some(scheme) = env.lookup(td.name) {
+                                exports.type_name_schemes.push((td.name, scheme.clone()));
+                            }
+                        }
+                        TypeBody::Alias(_) => {
+                            exports.aliases.push(td.name);
+                            exports.alias_arity.push(td.params.len());
+                        }
+                    }
+                }
+                Decl::Trait(t) => {
+                    pub_trait_names.insert(t.name);
+                    if let Some(info) = self.traits.get(&t.name) {
+                        exports.traits.push((t.name, info.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Trait impls: include every impl whose trait OR target type was
+        // declared in this module (i.e. defined_in == local_pkg). The
+        // orphan rule has already validated that an impl is not foreign-
+        // foreign, so any impl in this program is safe to export.
+        for (key, span) in &self.trait_impl_spans {
+            // Only export impls whose trait or target is local to this
+            // package. Avoids re-exporting the auto-derived blanket impls
+            // that register_builtin_trait_impls populated (those carry
+            // builtin-pkg defined_in).
+            let trait_local = self
+                .traits
+                .get(&key.0)
+                .map(|t| t.defined_in == local_pkg)
+                .unwrap_or(false);
+            let type_local = self
+                .enums
+                .get(&key.1)
+                .map(|e| e.defined_in == local_pkg)
+                .or_else(|| {
+                    self.records
+                        .get(&key.1)
+                        .map(|r| r.defined_in == local_pkg)
+                })
+                .unwrap_or(false);
+            if !trait_local && !type_local {
+                continue;
+            }
+            // Collect all methods for this (trait, type).
+            let methods: Vec<(Symbol, MethodEntry)> = self
+                .method_table
+                .iter()
+                .filter(|((t, _), _)| *t == key.1)
+                .filter_map(|((_, m), entry)| {
+                    // Only include methods that this trait declared.
+                    let trait_info = self.traits.get(&key.0)?;
+                    if trait_info.methods.iter().any(|(mn, _)| *mn == *m) {
+                        Some((*m, entry.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if methods.is_empty() {
+                continue;
+            }
+            let entry = TraitImplExport {
+                trait_name: key.0,
+                target_type: key.1,
+                span: *span,
+                impl_constraints: self
+                    .impl_constraints
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_default(),
+                impl_trait_args: self.impl_trait_args.get(key).cloned().unwrap_or_default(),
+                methods,
+            };
+            exports.trait_impl_entries.push(entry);
+        }
+
+        exports
+    }
+
     // ── Check a full program ────────────────────────────────────────
 
     pub fn check_program(&mut self, program: &mut Program) {
+        let _ = self.check_program_returning_env(program);
+    }
+
+    /// Variant of [`check_program`] that returns the final TypeEnv for
+    /// the caller (used by [`check_with_package_and_imports`] so it can
+    /// snapshot the program's exports).
+    pub(super) fn check_program_returning_env(&mut self, program: &mut Program) -> TypeEnv {
         let mut env = TypeEnv::new();
 
         // Built-in registration must run with `current_package = None`
@@ -1776,6 +2398,18 @@ impl TypeChecker {
                         // Gated constructors (like Monday, GET) are already
                         // registered under their bare name — no alias needed.
                     }
+                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
+                    // Round 64 item 6A: cross-module typecheck found
+                    // the producer's exports — schemes are now bound
+                    // under `module.name`. Also alias each requested
+                    // selective `item` to the bare name in env.
+                    self.imported_modules.insert(*module);
+                    for item in items {
+                        let qualified = intern(&format!("{module}.{item}"));
+                        if let Some(scheme) = env.lookup(qualified).cloned() {
+                            env.define(*item, scheme);
+                        }
+                    }
                 } else {
                     self.warning(
                         format!(
@@ -1817,6 +2451,11 @@ impl TypeChecker {
                     for (aliased, scheme) in to_alias {
                         env.define(aliased, scheme);
                     }
+                } else if self.merge_imported_module_exports(*module, *alias, &mut env) {
+                    // Round 64 item 6A: schemes registered under
+                    // `alias.name` (matching the aliased prefix the
+                    // user wrote).
+                    self.imported_modules.insert(*alias);
                 } else {
                     self.warning(
                         format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
@@ -1830,8 +2469,12 @@ impl TypeChecker {
                     // Built-in module names are already bound via register_builtins
                     // under their `module.func` qualified form — no additional
                     // action required here.
+                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
+                    // Round 64 item 6A: producer-side exports merged.
+                    self.imported_modules.insert(*module);
                 } else {
-                    // Non-builtin (user) module: the compiler handles these at
+                    // Non-builtin (user) module without producer-side
+                    // exports available: the compiler handles these at
                     // link time. Emit the same "unknown module" warning we use
                     // for Items/Alias so the CLI's diagnostic-suppression
                     // heuristic in main.rs fires, and add a minimal binding for
@@ -2201,6 +2844,8 @@ impl TypeChecker {
 
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
+
+        env
     }
 
     // ── Validate trait implementations ────────────────────────────────
@@ -5649,6 +6294,29 @@ pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec
     checker.current_package = package;
     checker.check_program(program);
     checker.errors
+}
+
+/// Cross-module entry point (round 64 item 6A): typecheck `program`
+/// against an explicit owning `package` AND a map of pre-typechecked
+/// sibling modules' exports. The typechecker consults `module_exports`
+/// when it encounters `import other_user_pkg` decls, merging the
+/// producer's pub schemes/types/traits/impls into the env so call
+/// sites typecheck strongly (instantiating polymorphic schemes,
+/// honouring where-clauses, dispatching trait methods).
+///
+/// Returns `(errors, this_module's exports)` so the compiler can cache
+/// the new module's exports for downstream importers.
+pub fn check_with_package_and_imports(
+    program: &mut Program,
+    package: Option<Symbol>,
+    module_exports: HashMap<Symbol, ModuleExports>,
+) -> (Vec<TypeError>, ModuleExports) {
+    let mut checker = TypeChecker::new();
+    checker.current_package = package;
+    checker.module_exports = module_exports;
+    let env = checker.check_program_returning_env(program);
+    let exports = checker.collect_module_exports(program, &env);
+    (checker.errors, exports)
 }
 
 // ── Persistent REPL type context ───────────────────────────────────

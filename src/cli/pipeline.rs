@@ -102,11 +102,27 @@ pub(crate) fn run_compile_pipeline(
     // a refreshed lockfile to disk.
     let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
 
+    // Round 64 item 6A: build the compiler up-front so it can
+    // pre-typecheck the entrypoint's user-module imports before the
+    // entrypoint itself is typechecked. The cached exports map is
+    // then threaded into both the entrypoint typecheck and the
+    // compile pass — the latter reuses already-loaded module
+    // typechecks via `compiled_modules` / `module_exports`.
+    let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
+    if !has_parse_errors {
+        compiler.pre_typecheck_imports(&program);
+    }
+    let module_exports = compiler.module_exports_snapshot();
+
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
     let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
-        let raw_type_errors =
-            typechecker::check_with_package(&mut program, Some(local_pkg));
+        let (raw_type_errors, _entry_exports) =
+            typechecker::check_with_package_and_imports(
+                &mut program,
+                Some(local_pkg),
+                module_exports,
+            );
         raw_type_errors
             .iter()
             .map(|e| SourceError::from_type_error(e, &source, path))
@@ -131,7 +147,6 @@ pub(crate) fn run_compile_pipeline(
     }
 
     // Compile.
-    let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
     match compiler.compile_program(&program) {
         Ok(functions) => {
             let compile_warnings: Vec<SourceError> = compiler

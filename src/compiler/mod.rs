@@ -453,6 +453,15 @@ pub struct Compiler {
     /// enums (Result, Option, IoError, etc.) support the same qualifier
     /// syntax as user-declared enums.
     known_enum_variants: HashMap<String, HashSet<String>>,
+    /// Round 64 item 6A: producer-side typecheck snapshots for every
+    /// user module the compiler has loaded. Keyed by the module name
+    /// as it appears in `import` statements. Populated incrementally
+    /// by `compile_file_module_inner` after typechecking each module,
+    /// so when the importer module is typechecked (whether by the
+    /// pipeline pre-typecheck of the entrypoint or by the recursive
+    /// inner-module pass), the typechecker has seen every dependency
+    /// it transitively imported.
+    module_exports: HashMap<Symbol, typechecker::ModuleExports>,
 }
 
 /// Seed `known_enum_variants` with the builtin enums. Called from
@@ -495,6 +504,7 @@ impl Compiler {
             module_private_fns: HashMap::new(),
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
+            module_exports: HashMap::new(),
         }
     }
 
@@ -531,6 +541,7 @@ impl Compiler {
             module_private_fns: HashMap::new(),
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
+            module_exports: HashMap::new(),
         }
     }
 
@@ -1290,6 +1301,136 @@ impl Compiler {
         self.compiling_package_stack.last().copied()
     }
 
+    // ── Cross-module typecheck pre-pass (round 64 item 6A) ─────────
+
+    /// Walk the entrypoint program for `import other_user_module`
+    /// decls and recursively load + typecheck each user module so
+    /// `self.module_exports` is populated before the entrypoint's own
+    /// typecheck runs. Built-in modules and modules already cached are
+    /// skipped. Errors are intentionally swallowed here — the real
+    /// compile pass below will surface module load / parse / compile
+    /// errors with full source context.
+    ///
+    /// Called by [`Compiler::pre_typecheck_imports`] (used by the CLI
+    /// pipeline before its top-level typecheck) and from inside
+    /// `compile_file_module_inner` so transitive imports are also seen
+    /// before each module's own typecheck.
+    pub fn pre_typecheck_imports(&mut self, program: &Program) {
+        self.pre_typecheck_user_imports(program);
+    }
+
+    /// Borrow the current cross-module exports snapshot. Cloned by
+    /// the CLI pipeline so the entrypoint typecheck can consult it
+    /// without holding a `&self` on the compiler.
+    pub fn module_exports_snapshot(
+        &self,
+    ) -> HashMap<Symbol, typechecker::ModuleExports> {
+        self.module_exports.clone()
+    }
+
+    /// Internal worker for [`pre_typecheck_imports`]. Same body —
+    /// kept private and named distinctly so internal call sites
+    /// (compile_file_module_inner) read clearly.
+    fn pre_typecheck_user_imports(&mut self, program: &Program) {
+        let modules: Vec<(Symbol, Span)> = program
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                Decl::Import(ImportTarget::Module(m), span) => Some((*m, *span)),
+                Decl::Import(ImportTarget::Items(m, _), span) => Some((*m, *span)),
+                Decl::Import(ImportTarget::Alias(m, _), span) => Some((*m, *span)),
+                _ => None,
+            })
+            .collect();
+        for (m, span) in modules {
+            let name = resolve(m);
+            if module::is_builtin_module(&name) {
+                continue;
+            }
+            if self.module_exports.contains_key(&m) {
+                continue;
+            }
+            let _ = self.pre_typecheck_user_module(&name, span);
+        }
+    }
+
+    /// Pre-typecheck one user module (no bytecode emit). Recursive in
+    /// case the module itself imports other user modules.
+    fn pre_typecheck_user_module(
+        &mut self,
+        module_name: &str,
+        span: Span,
+    ) -> Result<(), CompileError> {
+        // Resolve the module file path the same way compile_file_module
+        // does, so cross-package vs intra-package routing is identical.
+        let resolved = self.resolve_import(module_name, span)?;
+
+        // Skip if the producer's exports are already in the cache.
+        if self.module_exports.contains_key(&intern(&resolved.module)) {
+            return Ok(());
+        }
+
+        // Cycle guard: if we're already pre-typechecking this module up
+        // the stack, bail without populating exports. The full
+        // compile pass enforces real cycle errors with proper diagnostics.
+        if self.compiling_modules.contains(&resolved.cache_key) {
+            return Ok(());
+        }
+        self.compiling_modules.insert(resolved.cache_key.clone());
+        self.compiling_modules_stack.push(CompilingFrame {
+            cache_key: resolved.cache_key.clone(),
+            package: resolved.package,
+            module: resolved.module.clone(),
+        });
+        self.compiling_package_stack.push(resolved.package);
+
+        let result = (|| -> Result<(), CompileError> {
+            let source = std::fs::read_to_string(&resolved.file_path).map_err(|e| {
+                CompileError {
+                    message: format!("cannot load module '{module_name}': {e}"),
+                    span,
+                }
+            })?;
+
+            let tokens = Lexer::new(&source).tokenize().map_err(|_| CompileError {
+                message: format!("lex error in '{module_name}'"),
+                span,
+            })?;
+            let (mut program, _) = Parser::new(tokens).parse_program_recovering();
+
+            // Recurse: pre-typecheck this module's own imports first.
+            self.pre_typecheck_user_imports(&program);
+
+            // Typecheck with the accumulated exports.
+            let (_errors, exports) = typechecker::check_with_package_and_imports(
+                &mut program,
+                self.current_package(),
+                self.module_exports.clone(),
+            );
+            self.module_exports
+                .insert(intern(&resolved.module), exports);
+            Ok(())
+        })();
+
+        self.compiling_modules.remove(&resolved.cache_key);
+        if let Some(pos) = self
+            .compiling_modules_stack
+            .iter()
+            .rposition(|f| f.cache_key == resolved.cache_key)
+        {
+            self.compiling_modules_stack.remove(pos);
+        }
+        if let Some(pos) = self
+            .compiling_package_stack
+            .iter()
+            .rposition(|p| *p == resolved.package)
+        {
+            self.compiling_package_stack.remove(pos);
+        }
+
+        result
+    }
+
     /// Inner implementation of file module compilation, separated so that
     /// the circular-import guard can wrap it cleanly.
     fn compile_file_module_inner(
@@ -1382,8 +1523,22 @@ impl Compiler {
         // enforce the trait-orphan rule (round 63 item 5) — `impl Trait
         // for Type` is rejected when both the trait and the type's head
         // are foreign to this package.
-        let _type_errors =
-            typechecker::check_with_package(&mut program, self.current_package());
+        //
+        // Round 64 item 6A: pre-walk imports of THIS module so any
+        // sibling user modules it depends on are typechecked first
+        // (and their exports cached) before this module's own
+        // typecheck. Then thread the accumulated exports through the
+        // typechecker so cross-module call sites typecheck strongly,
+        // and capture this module's own exports for downstream
+        // importers (the entrypoint, sibling modules).
+        let module_sym = intern(module_name);
+        self.pre_typecheck_user_imports(&program);
+        let (_type_errors, this_exports) = typechecker::check_with_package_and_imports(
+            &mut program,
+            self.current_package(),
+            self.module_exports.clone(),
+        );
+        self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();

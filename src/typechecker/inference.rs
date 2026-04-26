@@ -1813,6 +1813,31 @@ impl TypeChecker {
         }
     }
 
+    /// Round 64 item 6A helper: when the Call arm sees a callee shape
+    /// `module_ident.field` and the qualified `module.field` scheme is
+    /// in env, we want to use that scheme directly so where-clause
+    /// constraints flow through (`instantiate_with_constraints` carries
+    /// them, but `infer_expr` on the FieldAccess discards them via
+    /// `instantiate`). This shortcut is only safe when the FieldAccess
+    /// arm's import-gating side-effect would have succeeded — i.e. the
+    /// module is either a non-builtin (user) name OR a builtin already
+    /// listed in `imported_modules`. Otherwise we fall through to the
+    /// regular `infer_expr` so the FieldAccess arm can emit the
+    /// "module 'X' is not imported" diagnostic at this call site.
+    fn callee_module_is_in_scope(&self, callee: &Expr) -> bool {
+        let ExprKind::FieldAccess(obj, _) = &callee.kind else {
+            return false;
+        };
+        let ExprKind::Ident(mod_name) = &obj.kind else {
+            return false;
+        };
+        let mod_str = resolve(*mod_name);
+        if !crate::module::is_builtin_module(&mod_str) {
+            return true;
+        }
+        self.imported_modules.contains(mod_name)
+    }
+
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
@@ -3050,6 +3075,22 @@ impl TypeChecker {
                 // Reset the method-dispatch flag so stale values from prior
                 // FieldAccess evaluations don't leak into this Call.
                 self.last_field_access_was_method = false;
+                // Round 64 item 6A: extract qualified module-call name
+                // (`mod.fn`) so the where-clause-aware lookup below
+                // also fires for cross-module calls. Without this, the
+                // FieldAccess arm's `instantiate` call discards the
+                // imported fn's `where` constraints, so the obligation
+                // never reaches `verify_trait_obligation` at the call
+                // site.
+                let qualified_call_name = if let ExprKind::FieldAccess(obj, field) = &callee.kind {
+                    if let ExprKind::Ident(mod_name) = &obj.kind {
+                        Some(intern(&format!("{}.{field}", resolve(*mod_name))))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                     if let Some(scheme) = env.lookup(name).cloned() {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
@@ -3058,6 +3099,17 @@ impl TypeChecker {
                         let ty = self.infer_expr(callee, env);
                         (self.apply(&ty), vec![])
                     }
+                } else if let Some(name) = qualified_call_name
+                    && let Some(scheme) = env.lookup(name).cloned()
+                    && self.callee_module_is_in_scope(callee)
+                {
+                    let (ty, constraints) = self.instantiate_with_constraints(&scheme);
+                    // Mirror the FieldAccess side-effect: pre-set the
+                    // callee's expr.ty to the instantiated type so any
+                    // downstream consumer (LSP type-at-cursor, etc.)
+                    // sees the same type the Call arm consumes here.
+                    callee.ty = Some(self.apply(&ty));
+                    (self.apply(&ty), constraints)
                 } else {
                     let ty = self.infer_expr(callee, env);
                     (self.apply(&ty), vec![])
