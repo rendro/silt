@@ -46,6 +46,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     field_types: vec![],
                 },
             ],
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
     let method_variants = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -77,6 +78,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 (intern("body"), Type::String),
                 (intern("headers"), map_ss.clone()),
             ],
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
 
@@ -102,6 +104,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 (intern("headers"), map_ss.clone()),
                 (intern("body"), Type::String),
             ],
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
 

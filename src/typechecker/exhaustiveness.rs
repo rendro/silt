@@ -1493,6 +1493,7 @@ fn main() { area(Circle(1.0)) }
                         field_types: vec![expr_ty.clone(), expr_ty.clone()],
                     },
                 ],
+                defined_in: super::TypeChecker::builtin_pkg(),
             },
         );
         tc.variant_to_enum.insert(leaf_name, expr_name);

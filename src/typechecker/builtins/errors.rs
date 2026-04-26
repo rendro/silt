@@ -297,6 +297,7 @@ fn register_enum(
                     field_types: fields.to_vec(),
                 })
                 .collect(),
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
 

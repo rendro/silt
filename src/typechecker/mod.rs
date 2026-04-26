@@ -160,6 +160,15 @@ pub(super) struct EnumInfo {
     /// The actual TyVar ids assigned to each type parameter (same order as `params`).
     pub(super) param_var_ids: Vec<TyVar>,
     pub(super) variants: Vec<VariantInfo>,
+    /// Package symbol where this enum was originally declared. Used by
+    /// the trait-orphan check in `register_trait_impl` to determine
+    /// whether the impl's target type is local to the current package.
+    /// Built-in enums registered by `register_builtins` carry the
+    /// sentinel `intern("__builtin__")`; user enums carry the
+    /// `current_package` value at the time their decl was processed,
+    /// or `intern("__builtin__")` when there is no enclosing package
+    /// (ad-hoc scripts, REPL).
+    pub(super) defined_in: Symbol,
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +181,10 @@ pub(super) struct VariantInfo {
 #[derive(Debug, Clone)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
+    /// Package symbol where this record was originally declared. See
+    /// `EnumInfo::defined_in` for semantics — used by the trait-orphan
+    /// check in `register_trait_impl`.
+    pub(super) defined_in: Symbol,
 }
 
 /// Information about a declared trait.
@@ -223,6 +236,15 @@ pub(super) struct TraitInfo {
     /// name and the trait bounds the impl-supplied binding must satisfy.
     /// Empty for traits with no associated types (the common case).
     pub(super) assoc_types: Vec<AssocTypeInfo>,
+    /// Package symbol where this trait was originally declared. Used
+    /// by the trait-orphan check in `register_trait_impl` to determine
+    /// whether the impl's trait is local to the current package.
+    /// Built-in traits registered through `builtin_trait_decls` carry
+    /// the sentinel `intern("__builtin__")`; user traits carry the
+    /// `current_package` value at decl-processing time, or
+    /// `intern("__builtin__")` when there is no enclosing package
+    /// (ad-hoc scripts, REPL).
+    pub(super) defined_in: Symbol,
 }
 
 /// Information about a single associated-type declaration inside a
@@ -439,6 +461,15 @@ pub struct TypeChecker {
     /// callee to decide arity semantics (method call adds implicit self;
     /// field/module calls do not).
     pub(super) last_field_access_was_method: bool,
+    /// Trait-orphan check (round 63 item 5): the package symbol whose
+    /// source we're currently typechecking. `Some(pkg)` is set by
+    /// `check_with_package` when the compiler invokes the typechecker
+    /// for an imported module so per-package decls (traits/enums/
+    /// records) are stamped with the right `defined_in`. `None` means
+    /// "scratch / REPL / ad-hoc script": treat every decl as local
+    /// (sentinel `__builtin__`) so the orphan rule never trips on a
+    /// program that has no package context.
+    pub(super) current_package: Option<Symbol>,
     /// Round 56 item 4: the set of module names visible through `import`
     /// statements in the current program. Populated at the start of
     /// `check()`. Used by the `FieldAccess` path to decide whether
@@ -499,8 +530,26 @@ impl TypeChecker {
             current_fn_param_tyvars: Vec::new(),
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
+            current_package: None,
             imported_modules: std::collections::HashSet::new(),
         }
+    }
+
+    /// Sentinel package symbol used as the `defined_in` for built-in
+    /// trait/enum/record entries (and for user decls processed without
+    /// an enclosing package, i.e. ad-hoc scripts and the REPL). Distinct
+    /// from any real package name because user package names are
+    /// validated against [a-z][a-z0-9_-]* by the manifest layer, so a
+    /// double-underscore name cannot collide.
+    pub(super) fn builtin_pkg() -> Symbol {
+        intern("__builtin__")
+    }
+
+    /// Returns the `defined_in` package stamp to record on a decl
+    /// processed at the current cursor position: the active
+    /// `current_package` if set, otherwise the built-in sentinel.
+    pub(super) fn defining_package(&self) -> Symbol {
+        self.current_package.unwrap_or_else(Self::builtin_pkg)
     }
 
     // ── Fresh variables ─────────────────────────────────────────────
@@ -1686,6 +1735,17 @@ impl TypeChecker {
     pub fn check_program(&mut self, program: &mut Program) {
         let mut env = TypeEnv::new();
 
+        // Built-in registration must run with `current_package = None`
+        // so every built-in trait/enum/record decl is stamped with the
+        // `__builtin__` sentinel via `defining_package()`. Without this
+        // RAII swap, calling `check_with_package(prog, Some("myapp"))`
+        // would stamp `Display` (and every other built-in) with
+        // `defined_in = "myapp"`, defeating the orphan rule's
+        // built-in counterparty arm: `trait Display for List(a)` in
+        // user code would then look "trait-local" and silently
+        // register. Round 63 item 5.
+        let saved_current_pkg = self.current_package.take();
+
         // Register builtins in the type environment
         self.register_builtins(&mut env);
 
@@ -1693,6 +1753,10 @@ impl TypeChecker {
         // `ReplTypeContext::new` so `silt check` and the REPL stay in
         // sync on derive policy).
         register_builtin_trait_impls(self);
+
+        // Restore the user-supplied package so subsequent decls in
+        // `program` are stamped against the real owning package.
+        self.current_package = saved_current_pkg;
 
         // Round 56 item 4: reset the import set so a fresh check_program
         // call doesn't inherit modules imported by a previous run.
@@ -1803,15 +1867,27 @@ impl TypeChecker {
                 }
                 match &td.body {
                     TypeBody::Enum(_) => {
+                        let pkg = self.defining_package();
                         self.enums.entry(td.name).or_insert_with(|| EnumInfo {
                             variants: Vec::new(),
                             params: td.params.clone(),
                             param_var_ids: Vec::new(),
+                            // Placeholder stamp: the real entry overwrites
+                            // this in `register_type_decl` below. Stamp the
+                            // current package now so a stray orphan check
+                            // that races ahead of the real registration
+                            // (e.g. a malformed program with an impl
+                            // referencing a forward-declared enum) sees a
+                            // sensible local-package value rather than the
+                            // built-in sentinel.
+                            defined_in: pkg,
                         });
                     }
                     TypeBody::Record(_) => {
+                        let pkg = self.defining_package();
                         self.records.entry(td.name).or_insert_with(|| RecordInfo {
                             fields: Vec::new(),
+                            defined_in: pkg,
                         });
                     }
                     TypeBody::Alias(_) => {
@@ -2569,6 +2645,7 @@ impl TypeChecker {
                         params: td.params.clone(),
                         param_var_ids: var_ids,
                         variants: variant_infos,
+                        defined_in: self.defining_package(),
                     },
                 );
             }
@@ -2612,6 +2689,7 @@ impl TypeChecker {
                     td.name,
                     RecordInfo {
                         fields: field_types.clone(),
+                        defined_in: self.defining_package(),
                     },
                 );
 
@@ -3526,6 +3604,7 @@ impl TypeChecker {
             })
             .collect();
         let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _)| *n).collect();
+        let pkg = self.defining_package();
         self.traits.insert(
             t.name,
             TraitInfo {
@@ -3538,6 +3617,7 @@ impl TypeChecker {
                 decl_span: t.span,
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
+                defined_in: pkg,
             },
         );
 
@@ -3673,6 +3753,7 @@ impl TypeChecker {
                 decl_span: t.span,
                 default_method_bodies,
                 assoc_types,
+                defined_in: pkg,
             },
         );
     }
@@ -4156,6 +4237,103 @@ impl TypeChecker {
         }
     }
 
+    /// Apply the trait-orphan rule. Returns `true` when the impl is
+    /// allowed, `false` after emitting an error and signalling the
+    /// caller to skip the rest of registration. See the call site in
+    /// `register_trait_impl` for the rule statement.
+    fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: Symbol) -> bool {
+        let trait_pkg = self.traits.get(&ti.trait_name).map(|t| t.defined_in);
+        // Compute the head-type package by reconstructing a Type from
+        // the impl's target name + args. We use the canonicalised
+        // `target_type` symbol because the round-23 GAP #1 unknown-
+        // target check has already validated the name; for the orphan
+        // walk we just need the head symbol's `defined_in`.
+        let head_pkg = if let Some(info) = self.enums.get(&target_type) {
+            Some(info.defined_in)
+        } else if let Some(info) = self.records.get(&target_type) {
+            Some(info.defined_in)
+        } else {
+            // Built-in head (List/Map/Set/Channel/Range/Tuple/Fn/Int/...):
+            // no enum or record registered under this name. Treat as
+            // stdlib-owned (`None`) so the trait-local arm can satisfy
+            // the rule when a user package writes `trait MyTrait for
+            // List(...)`.
+            let head_str = resolve(target_type);
+            if crate::types::builtins::is_primitive(head_str.as_str())
+                || crate::types::builtins::is_container(head_str.as_str())
+            {
+                None
+            } else {
+                // Truly unknown — the round-23 GAP #1 check already
+                // emitted a diagnostic. Don't double-report; allow the
+                // orphan walk to fall through.
+                return true;
+            }
+        };
+
+        let builtin = Self::builtin_pkg();
+        // A package "p" is local iff it equals the current package.
+        // Built-in stamps (`__builtin__` or `None`) are never local on
+        // their own — they're stdlib-owned, and the orphan rule
+        // requires the OTHER arm to be locally owned. The REPL /
+        // scratch script case (current_package = None) treats every
+        // arm as local so the rule is effectively disabled there.
+        let current_pkg_sym = self.current_package;
+        // Returns true when a package stamp identifies the active
+        // current_package. None and `__builtin__` are stdlib-owned
+        // and return false. The REPL path (current_package=None)
+        // short-circuits before reaching here so we don't have to
+        // special-case it inside this helper.
+        let is_local = |pkg: Option<Symbol>| -> bool {
+            let Some(cur) = current_pkg_sym else {
+                return true;
+            };
+            match pkg {
+                None => false,
+                Some(p) if p == builtin => false,
+                Some(p) => p == cur,
+            }
+        };
+
+        // Unknown trait — the unknown-trait diagnostic fires elsewhere.
+        // Treat as local so we don't pile a misleading orphan
+        // diagnostic on top of it.
+        if trait_pkg.is_none() {
+            return true;
+        }
+        let trait_local = is_local(trait_pkg);
+        let type_local = is_local(head_pkg);
+
+        if trait_local || type_local {
+            return true;
+        }
+
+        // Both arms are foreign. Build a diagnostic that names both
+        // packages, the impl's trait, and the impl's target type.
+        let trait_pkg_name = trait_pkg
+            .map(resolve)
+            .unwrap_or_else(|| "(unknown)".to_string());
+        let head_pkg_name = head_pkg
+            .map(resolve)
+            .unwrap_or_else(|| "__builtin__".to_string());
+        let current_pkg_name = current_pkg_sym
+            .map(resolve)
+            .unwrap_or_else(|| "(scratch)".to_string());
+        self.error(
+            format!(
+                "orphan impl: trait '{}' is from package '{}' and type '{}' is from package '{}'; \
+                 either the trait or the type must be defined in the current package '{}'",
+                resolve(ti.trait_name),
+                trait_pkg_name,
+                resolve(ti.target_type),
+                head_pkg_name,
+                current_pkg_name,
+            ),
+            ti.span,
+        );
+        false
+    }
+
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
         // Phase B: canonicalise the target-type symbol so an impl
         // `trait Foo for Range(a)` registers under the same key
@@ -4196,6 +4374,26 @@ impl TypeChecker {
                 );
                 return;
             }
+        }
+
+        // Trait-orphan rule (round 63 item 5): reject `impl Trait for Type`
+        // when both the trait and the target type's head are foreign to
+        // the current package. Auto-derived synthetic impls are exempt
+        // — they're conceptually the stdlib's implementation specialised
+        // to a user-supplied type parameter, and the synth pass never
+        // races against another package over a built-in head.
+        //
+        // Built-ins (`__builtin__`) are stdlib-owned and treated as a
+        // wild-card counterparty: a user package implementing a built-in
+        // trait for one of its own types satisfies the type-local arm,
+        // and a user package implementing one of its own traits for a
+        // built-in type satisfies the trait-local arm.
+        if !ti.is_auto_derived && !self.check_orphan_rule(ti, target_type) {
+            // Skip the rest of impl registration on rejection: don't
+            // poison `trait_impl_set` / `method_table` with an entry the
+            // user wasn't allowed to register, otherwise downstream
+            // dispatch would silently route through this orphan.
+            return;
         }
 
         self.trait_impl_set.insert(impl_key);
@@ -5438,6 +5636,21 @@ pub fn check(program: &mut Program) -> Vec<TypeError> {
     checker.errors
 }
 
+/// Run the type checker on a program with an explicit owning package.
+///
+/// `package` is the package symbol whose source the program belongs to
+/// — supplied by the compiler when typechecking each module so the
+/// trait-orphan rule (round 63 item 5) can identify which traits, enums,
+/// and records were declared locally. Pass `None` for ad-hoc scripts /
+/// REPL inputs to disable orphan enforcement (every decl looks local
+/// to the scratch package).
+pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec<TypeError> {
+    let mut checker = TypeChecker::new();
+    checker.current_package = package;
+    checker.check_program(program);
+    checker.errors
+}
+
 // ── Persistent REPL type context ───────────────────────────────────
 
 /// Persistent type-checking context for the REPL.
@@ -5943,27 +6156,33 @@ mod size_locks {
 
     #[test]
     fn enum_info_size_locked() {
+        // Round 63 item 5 added `defined_in: Symbol` to track the
+        // owning package for the trait-orphan rule.
         assert_eq!(
             std::mem::size_of::<EnumInfo>(),
-            72,
+            80,
             "EnumInfo size changed — see module doc"
         );
     }
 
     #[test]
     fn record_info_size_locked() {
+        // Round 63 item 5 added `defined_in: Symbol` to track the
+        // owning package for the trait-orphan rule.
         assert_eq!(
             std::mem::size_of::<RecordInfo>(),
-            24,
+            32,
             "RecordInfo size changed — see module doc"
         );
     }
 
     #[test]
     fn trait_info_size_locked() {
+        // Round 63 item 5 added `defined_in: Symbol` to track the
+        // owning package for the trait-orphan rule.
         assert_eq!(
             std::mem::size_of::<TraitInfo>(),
-            240,
+            248,
             "TraitInfo size changed — see module doc"
         );
     }

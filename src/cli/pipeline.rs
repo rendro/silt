@@ -84,10 +84,29 @@ pub(crate) fn run_compile_pipeline(
         .collect();
     let has_parse_errors = !parse_errors.is_empty();
 
+    // Derive the package_roots map: when `path` is inside a silt
+    // package, this loads `silt.toml` and (for dep-resolving commands)
+    // auto-regenerates `silt.lock` if stale before resolving the dep
+    // tree. For ad-hoc scripts outside any package, falls back to a
+    // synthetic local-only setup keyed off the file's parent directory.
+    //
+    // Resolved before typechecking so the typechecker can stamp this
+    // module's trait/enum/record decls with their owning package and
+    // enforce the orphan rule. Imported modules are typechecked
+    // separately by the compiler with their own package context.
+    //
+    // The `auto_update_lock` flag distinguishes mutation-allowed
+    // callers (`silt run`, `silt check`, `silt test`) from read-only
+    // callers (`silt disasm`, `silt fmt`). Read-only callers still
+    // need a dep map; they just resolve in-memory rather than writing
+    // a refreshed lockfile to disk.
+    let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
+
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
     let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
-        let raw_type_errors = typechecker::check(&mut program);
+        let raw_type_errors =
+            typechecker::check_with_package(&mut program, Some(local_pkg));
         raw_type_errors
             .iter()
             .map(|e| SourceError::from_type_error(e, &source, path))
@@ -110,19 +129,6 @@ pub(crate) fn run_compile_pipeline(
             compile_warnings: Vec::new(),
         };
     }
-
-    // Derive the package_roots map: when `path` is inside a silt
-    // package, this loads `silt.toml` and (for dep-resolving commands)
-    // auto-regenerates `silt.lock` if stale before resolving the dep
-    // tree. For ad-hoc scripts outside any package, falls back to a
-    // synthetic local-only setup keyed off the file's parent directory.
-    //
-    // The `auto_update_lock` flag distinguishes mutation-allowed
-    // callers (`silt run`, `silt check`, `silt test`) from read-only
-    // callers (`silt disasm`, `silt fmt`). Read-only callers still
-    // need a dep map; they just resolve in-memory rather than writing
-    // a refreshed lockfile to disk.
-    let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
 
     // Compile.
     let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);

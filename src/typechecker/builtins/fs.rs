@@ -104,6 +104,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("FileStat"),
         RecordInfo {
             fields: file_stat_fields,
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
     super::super::register_auto_derived_impls_for(

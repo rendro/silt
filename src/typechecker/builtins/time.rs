@@ -83,6 +83,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     field_types: vec![],
                 },
             ],
+            defined_in: super::super::TypeChecker::builtin_pkg(),
         },
     );
     let weekday_variants = [

@@ -209,7 +209,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // Matches `silt run`'s behavior exactly. Real missing modules are
         // still caught by the compiler's own "cannot load module" error
         // in the block below.
-        let type_errors = typechecker::check(&mut program);
+        //
+        // Resolve the local package up front so the typechecker can
+        // enforce the trait-orphan rule for `silt test` (round 63 item
+        // 5). The compile path below reuses the same setup.
+        let (local_pkg, package_roots) = package_setup_for_file(path.as_str(), true);
+        let type_errors =
+            typechecker::check_with_package(&mut program, Some(local_pkg));
         let mut has_type_error = false;
         let mut printed_type_errors: usize = 0;
         for te in &type_errors {
@@ -237,7 +243,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // `silt.toml` so cross-file `import foo` resolves consistently
         // regardless of which file `silt test` was pointed at, and
         // auto-update the lockfile when the manifest has new deps.
-        let (local_pkg, package_roots) = package_setup_for_file(path.as_str(), true);
+        // (The setup tuple is resolved above so the typechecker can
+        // enforce the orphan rule with the same package symbol.)
         let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
         let functions = match compiler.compile_declarations(&program) {
             Ok(f) => f,

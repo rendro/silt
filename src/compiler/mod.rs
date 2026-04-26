@@ -1376,7 +1376,14 @@ impl Compiler {
         // Type errors are not fatal here — modules with transitive imports will
         // have "undefined" errors from the type checker because module resolution
         // only happens during compilation.  The compiler resolves them below.
-        let _type_errors = typechecker::check(&mut program);
+        //
+        // Pass the package symbol so the typechecker can stamp this
+        // module's trait/enum/record decls with their owning package and
+        // enforce the trait-orphan rule (round 63 item 5) — `impl Trait
+        // for Type` is rejected when both the trait and the type's head
+        // are foreign to this package.
+        let _type_errors =
+            typechecker::check_with_package(&mut program, self.current_package());
 
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();

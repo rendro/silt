@@ -63,6 +63,7 @@ pub(super) fn record_with_fields(
         sym,
         RecordInfo {
             fields: fields.clone(),
+            defined_in: TypeChecker::builtin_pkg(),
         },
     );
     Type::Record(sym, fields)
@@ -195,6 +196,7 @@ impl TypeChecker {
                             field_types: vec![],
                         },
                     ],
+                    defined_in: TypeChecker::builtin_pkg(),
                 },
             );
         }
@@ -223,6 +225,7 @@ impl TypeChecker {
                             field_types: vec![res_e],
                         },
                     ],
+                    defined_in: TypeChecker::builtin_pkg(),
                 },
             );
         }
@@ -248,6 +251,7 @@ impl TypeChecker {
                             field_types: vec![step_a],
                         },
                     ],
+                    defined_in: TypeChecker::builtin_pkg(),
                 },
             );
         }
@@ -310,6 +314,7 @@ impl TypeChecker {
                             field_types: vec![],
                         },
                     ],
+                    defined_in: TypeChecker::builtin_pkg(),
                 },
             );
         }
@@ -393,6 +398,7 @@ impl TypeChecker {
                             field_types: vec![ch_a, co_a],
                         },
                     ],
+                    defined_in: TypeChecker::builtin_pkg(),
                 },
             );
         }
