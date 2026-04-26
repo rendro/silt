@@ -53,6 +53,21 @@ pub enum Type {
     Error,
     /// A bottom type for expressions that never produce a value (return, panic).
     Never,
+    /// Associated-type projection: `<receiver as trait_name>::assoc_name`.
+    ///
+    /// Two states:
+    ///   - **Concrete receiver**: the canonicaliser reduces this to the
+    ///     impl's binding for `assoc_name`. The reduction is the dispatch
+    ///     oracle's only behaviour for projections.
+    ///   - **Abstract receiver** (still a type variable, or another
+    ///     unreduced AssocProj): stays as `AssocProj` and propagates
+    ///     through inference. Two abstract `AssocProj`s unify iff they
+    ///     have the same receiver, trait_name, and assoc_name.
+    AssocProj {
+        receiver: Box<Type>,
+        trait_name: Symbol,
+        assoc_name: Symbol,
+    },
 }
 
 impl std::fmt::Display for Type {
@@ -137,6 +152,16 @@ impl std::fmt::Display for Type {
             // suggesting a second, distinct failure.
             Type::Error => write!(f, "_"),
             Type::Never => write!(f, "Never"),
+            Type::AssocProj {
+                receiver,
+                trait_name,
+                assoc_name,
+            } => {
+                // Render the qualified form `<recv as Trait>::Name` for
+                // diagnostics so the receiver/trait/assoc-name triple is
+                // unambiguous regardless of context.
+                write!(f, "<{receiver} as {trait_name}>::{assoc_name}")
+            }
         }
     }
 }
@@ -256,6 +281,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
         }
         Type::Set(inner) => free_vars_in(inner),
         Type::Channel(inner) => free_vars_in(inner),
+        Type::AssocProj { receiver, .. } => free_vars_in(receiver),
         Type::Int
         | Type::Float
         | Type::ExtFloat
@@ -304,6 +330,15 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
         ),
         Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
         Type::Channel(inner) => Type::Channel(Box::new(substitute_vars(inner, mapping))),
+        Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => Type::AssocProj {
+            receiver: Box::new(substitute_vars(receiver, mapping)),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
+        },
         _ => ty.clone(),
     }
 }
@@ -381,6 +416,15 @@ pub fn substitute_enum_params(
                 .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
                 .collect(),
         ),
+        Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => Type::AssocProj {
+            receiver: Box::new(substitute_enum_params(receiver, param_var_ids, type_args)),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
+        },
         _ => field_ty.clone(),
     }
 }

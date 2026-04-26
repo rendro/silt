@@ -306,6 +306,15 @@ pub(super) fn type_expr_to_type(te: &TypeExpr) -> Type {
             }
         }
         TypeExprKind::SelfType => Type::Generic(intern("Self"), vec![]),
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => Type::AssocProj {
+            receiver: Box::new(type_expr_to_type(receiver)),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
+        },
         _ => Type::String, // fallback
     }
 }

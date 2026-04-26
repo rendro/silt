@@ -219,6 +219,21 @@ pub(super) struct TraitInfo {
     /// registration, body checking, dispatch, compilation) treats it
     /// identically to an explicitly-written method.
     pub(super) default_method_bodies: HashMap<Symbol, FnDecl>,
+    /// Associated-type declarations on this trait. Each entry carries a
+    /// name and the trait bounds the impl-supplied binding must satisfy.
+    /// Empty for traits with no associated types (the common case).
+    pub(super) assoc_types: Vec<AssocTypeInfo>,
+}
+
+/// Information about a single associated-type declaration inside a
+/// trait. Bounds are stored as `(trait_name, trait_args)` pairs — the
+/// `trait_args` are the AST `TypeExpr`s captured at decl time and
+/// resolved against the impl's binding type at impl-registration time.
+#[derive(Debug, Clone)]
+pub(super) struct AssocTypeInfo {
+    pub(super) name: Symbol,
+    pub(super) bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+    pub(super) span: Span,
 }
 
 /// A registered trait method implementation (new trait system).
@@ -528,6 +543,18 @@ impl TypeChecker {
             Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
             Type::Channel(inner) => Type::Channel(Box::new(self.apply(inner))),
+            // Walk into AssocProj receivers so a once-fresh tyvar that
+            // later unified with a concrete type gets propagated, which
+            // unblocks `canonicalize`'s impl-binding lookup.
+            Type::AssocProj {
+                receiver,
+                trait_name,
+                assoc_name,
+            } => Type::AssocProj {
+                receiver: Box::new(self.apply(receiver)),
+                trait_name: *trait_name,
+                assoc_name: *assoc_name,
+            },
             _ => ty.clone(),
         }
     }
@@ -537,6 +564,24 @@ impl TypeChecker {
     pub(super) fn unify(&mut self, t1: &Type, t2: &Type, span: Span) {
         let t1 = self.apply(t1);
         let t2 = self.apply(t2);
+
+        // Associated-type projections: canonicalise both sides first so
+        // concrete-receiver projections reduce to their impl bindings
+        // before structural matching. The canonicaliser is a fixed-point
+        // function (idempotent), so calling it on already-concrete shapes
+        // is a no-op. Only enter this fast-path when at least one side
+        // is an AssocProj — keeps the cost out of the hot unification
+        // path for normal types.
+        let t1 = if matches!(&t1, Type::AssocProj { .. }) {
+            crate::types::canonical::canonicalize(&self.apply(&t1))
+        } else {
+            t1
+        };
+        let t2 = if matches!(&t2, Type::AssocProj { .. }) {
+            crate::types::canonical::canonicalize(&self.apply(&t2))
+        } else {
+            t2
+        };
 
         match (&t1, &t2) {
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
@@ -2514,6 +2559,7 @@ impl TypeChecker {
                 }
                 self.find_alias_cycle(ret, visiting)
             }
+            Type::AssocProj { receiver, .. } => self.find_alias_cycle(receiver, visiting),
             Type::Int
             | Type::Float
             | Type::ExtFloat
@@ -2797,7 +2843,82 @@ impl TypeChecker {
                     self.fresh_var()
                 }
             }
+            TypeExprKind::AssocProj {
+                receiver,
+                trait_name,
+                assoc_name,
+            } => {
+                // Build a `Type::AssocProj` whose receiver is the
+                // resolved receiver type. The canonicaliser at
+                // `resolve_type_expr`'s wrapper layer reduces it to
+                // the impl's binding when the receiver is concrete
+                // and a binding is registered; otherwise the
+                // projection stays abstract.
+                //
+                // Sentinel-trait check: the parser emits
+                // `__no_enclosing_trait__` when `Self::X` was written
+                // outside a trait/impl body. Surface a clear
+                // diagnostic at use-site so the user understands the
+                // syntax requires an enclosing trait.
+                let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
+                if resolve(*trait_name) == "__no_enclosing_trait__" {
+                    self.error(
+                        "`Self::Item` is only valid inside a trait or trait-impl body; \
+                         use the qualified form `<T as Trait>::Item` here"
+                            .to_string(),
+                        te.span,
+                    );
+                    return Type::Error;
+                }
+                // Resolve the assoc-type name to its declaring trait.
+                // `Self::Item` inside `trait Sub: Super` may reference
+                // `Item` declared on `Super`; in that case the AssocProj
+                // must use `Super` as the trait_name so the binding
+                // (registered under `(Super, target, Item)`) is found
+                // by canonicalize. Walk the supertrait chain in BFS
+                // order; first declaring trait wins.
+                let declaring_trait = self
+                    .find_assoc_type_declaring_trait(*trait_name, *assoc_name)
+                    .unwrap_or(*trait_name);
+                Type::AssocProj {
+                    receiver: Box::new(recv_ty),
+                    trait_name: declaring_trait,
+                    assoc_name: *assoc_name,
+                }
+            }
         }
+    }
+
+    /// Walk the supertrait chain rooted at `trait_name` and return the
+    /// first trait whose `assoc_types` declares `assoc_name`. Returns
+    /// `None` when neither the trait nor any reachable supertrait
+    /// declares the name (the AssocProj will then stay abstract and
+    /// the typechecker emits the standard "type does not implement
+    /// trait" diagnostic at use-site).
+    fn find_assoc_type_declaring_trait(
+        &self,
+        trait_name: Symbol,
+        assoc_name: Symbol,
+    ) -> Option<Symbol> {
+        let mut frontier: Vec<Symbol> = vec![trait_name];
+        let mut seen: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        while let Some(t) = frontier.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if let Some(info) = self.traits.get(&t) {
+                if info.assoc_types.iter().any(|a| a.name == assoc_name) {
+                    return Some(t);
+                }
+                for s in &info.supertraits {
+                    if !seen.contains(s) {
+                        frontier.push(*s);
+                    }
+                }
+            }
+        }
+        None
     }
 
     // ── Register function declarations ──────────────────────────────
@@ -2996,6 +3117,40 @@ impl TypeChecker {
             }
         }
 
+        // Pre-register a stub TraitInfo for `t` carrying just its
+        // supertraits and assoc_types. This lets `resolve_type_expr`
+        // resolve `Self::AssocName` projections inside method
+        // signatures by walking the supertrait chain — e.g. a `Sub`
+        // method declaring `Self::Item` (where `Item` lives on
+        // `Super`) needs `self.traits[Sub].supertraits = [Super]` to
+        // be visible during method-type resolution. The stub is
+        // overwritten with the fully-populated TraitInfo at the end
+        // of this function.
+        let pre_assoc_types: Vec<AssocTypeInfo> = t
+            .assoc_types
+            .iter()
+            .map(|a| AssocTypeInfo {
+                name: a.name,
+                bounds: a.bounds.clone(),
+                span: a.span,
+            })
+            .collect();
+        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _)| *n).collect();
+        self.traits.insert(
+            t.name,
+            TraitInfo {
+                params: t.params.clone(),
+                param_var_ids: Vec::new(),
+                supertraits: pre_supertraits,
+                supertrait_args: Vec::new(),
+                param_where_clauses: Vec::new(),
+                methods: Vec::new(),
+                decl_span: t.span,
+                default_method_bodies: HashMap::new(),
+                assoc_types: pre_assoc_types,
+            },
+        );
+
         let self_var = self.fresh_var();
         // Allocate a fresh TyVar for each trait-level parameter. These
         // are in scope across every method signature — writing
@@ -3038,6 +3193,18 @@ impl TypeChecker {
                         ParamKind::Data => {
                             if let Some(te) = &param.ty {
                                 self.resolve_type_expr(te, &mut param_map)
+                            } else if matches!(&param.pattern.kind,
+                                PatternKind::Ident(n) if *n == intern("self"))
+                            {
+                                // Bare `self` parameter shares the trait's
+                                // self_var so any AssocProj on the return
+                                // type (which references the same Self
+                                // tyvar) reduces correctly when the impl
+                                // unifies its concrete self-type into the
+                                // param. Without this, the param was a
+                                // separate fresh var, leaving the AssocProj's
+                                // receiver permanently abstract.
+                                self_var.clone()
                             } else {
                                 self.fresh_var()
                             }
@@ -3078,6 +3245,32 @@ impl TypeChecker {
         let supertrait_args: Vec<Vec<TypeExpr>> =
             t.supertraits.iter().map(|(_, a)| a.clone()).collect();
 
+        // Reject duplicate assoc-type names within the same trait.
+        // Mirrors the duplicate-method check above.
+        let mut seen_assoc: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        for a in &t.assoc_types {
+            if !seen_assoc.insert(a.name) {
+                self.error(
+                    format!(
+                        "duplicate associated type '{}' in trait '{}'",
+                        resolve(a.name),
+                        resolve(t.name)
+                    ),
+                    a.span,
+                );
+            }
+        }
+        let assoc_types: Vec<AssocTypeInfo> = t
+            .assoc_types
+            .iter()
+            .map(|a| AssocTypeInfo {
+                name: a.name,
+                bounds: a.bounds.clone(),
+                span: a.span,
+            })
+            .collect();
+
         self.traits.insert(
             t.name,
             TraitInfo {
@@ -3089,6 +3282,7 @@ impl TypeChecker {
                 methods,
                 decl_span: t.span,
                 default_method_bodies,
+                assoc_types,
             },
         );
     }
@@ -3943,6 +4137,120 @@ impl TypeChecker {
             }
         }
 
+        // ── Associated-type bindings ───────────────────────────────
+        //
+        // For each `type Name = T` in the impl:
+        //   - reject duplicate bindings;
+        //   - resolve the bound type through impl_param_map (so impl-
+        //     level type-vars are visible);
+        //   - register the binding into the canonical assoc-binding
+        //     registry under (trait_name, target_canonical_head, name)
+        //     so the canonicaliser can reduce `<T as Trait>::Name`.
+        // After processing the impl-supplied bindings, verify that
+        // every assoc-type the trait declares has a binding here, and
+        // that each binding satisfies the trait's declared bounds.
+        let trait_assoc_types: Vec<AssocTypeInfo> = self
+            .traits
+            .get(&ti.trait_name)
+            .map(|info| info.assoc_types.clone())
+            .unwrap_or_default();
+        // Index the impl's bindings by name for lookup + duplicate check.
+        let mut impl_binding_map: HashMap<Symbol, Type> = HashMap::new();
+        let mut seen_binding: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        for binding in &ti.assoc_type_bindings {
+            if !seen_binding.insert(binding.name) {
+                self.error(
+                    format!(
+                        "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
+                        resolve(binding.name),
+                        resolve(ti.trait_name),
+                        resolve(ti.target_type),
+                    ),
+                    binding.span,
+                );
+                continue;
+            }
+            // Reject bindings whose name is not declared in the trait.
+            // (Trait info may be missing if the trait itself was
+            // unknown — in that case the per-impl unknown-trait error
+            // already fired and we silently skip the binding.)
+            let known = trait_assoc_types.iter().any(|a| a.name == binding.name);
+            if !trait_assoc_types.is_empty() || self.traits.contains_key(&ti.trait_name) {
+                if self.traits.contains_key(&ti.trait_name) && !known {
+                    self.error(
+                        format!(
+                            "associated type '{}' is not declared in trait '{}'",
+                            resolve(binding.name),
+                            resolve(ti.trait_name),
+                        ),
+                        binding.span,
+                    );
+                    continue;
+                }
+            }
+            let resolved = self.resolve_type_expr(&binding.ty, &mut impl_param_map);
+            impl_binding_map.insert(binding.name, resolved.clone());
+            // Register into the canonical assoc-binding registry. The
+            // registry keys on the canonical target head (so Range and
+            // List collapse), parallel to method_table's
+            // canonicalize_type_name routing above.
+            crate::types::canonical::register_assoc_binding(
+                ti.trait_name,
+                ti.target_type,
+                binding.name,
+                resolved,
+            );
+        }
+        // Verify each declared assoc-type has a binding and that the
+        // binding satisfies any declared bounds.
+        for assoc in &trait_assoc_types {
+            let Some(bound_ty) = impl_binding_map.get(&assoc.name) else {
+                self.error(
+                    format!(
+                        "impl of '{}' for '{}' is missing required associated type '{}'",
+                        resolve(ti.trait_name),
+                        resolve(ti.target_type),
+                        resolve(assoc.name),
+                    ),
+                    ti.span,
+                );
+                continue;
+            };
+            let applied = self.apply(bound_ty);
+            for (bound_trait, bound_args) in &assoc.bounds {
+                if !self.traits.contains_key(bound_trait) {
+                    self.error(
+                        format!(
+                            "unknown trait '{}' in bound on associated type '{}::{}'",
+                            resolve(*bound_trait),
+                            resolve(ti.trait_name),
+                            resolve(assoc.name),
+                        ),
+                        assoc.span,
+                    );
+                    continue;
+                }
+                // Resolve bound trait args at the impl site so any
+                // lowercase tyvars from the impl are visible.
+                let resolved_bound_args: Vec<Type> = bound_args
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
+                    .collect();
+                // For type-variable bindings (e.g. `type Item = a` in a
+                // parameterized impl), defer the obligation to the
+                // pending-where path — verify_trait_obligation already
+                // accepts a Var receiver and emits a clean diagnostic
+                // for unresolved cases at finalize time.
+                self.verify_trait_obligation(
+                    *bound_trait,
+                    &resolved_bound_args,
+                    &applied,
+                    assoc.span,
+                );
+            }
+        }
+
         let trait_method_names: Option<std::collections::HashSet<Symbol>> = self
             .traits
             .get(&ti.trait_name)
@@ -4187,7 +4495,7 @@ fn head_symbol_of(ty: &Type) -> Option<Symbol> {
         Type::Tuple(_) => Some(intern("Tuple")),
         Type::Fun(_, _) => Some(intern("Fn")),
         Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_) | Type::Error | Type::Never => None,
+        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } => None,
     }
 }
 
@@ -4310,6 +4618,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
         Type::Channel(inner) => occurs_in(var, inner),
+        Type::AssocProj { receiver, .. } => occurs_in(var, receiver),
         Type::Int
         | Type::Float
         | Type::ExtFloat
@@ -4424,6 +4733,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "String",
                 dummy_span,
             )],
+            assoc_types: Vec::new(),
             span: dummy_span,
             doc: None,
         },
@@ -4442,6 +4752,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Int",
                 dummy_span,
             )],
+            assoc_types: Vec::new(),
             span: dummy_span,
             doc: None,
         },
@@ -4460,6 +4771,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Bool",
                 dummy_span,
             )],
+            assoc_types: Vec::new(),
             span: dummy_span,
             doc: None,
         },
@@ -4475,6 +4787,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Int",
                 dummy_span,
             )],
+            assoc_types: Vec::new(),
             span: dummy_span,
             doc: None,
         },
@@ -4485,6 +4798,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             supertraits: vec![(intern("Display"), Vec::new())],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
+            assoc_types: Vec::new(),
             span: dummy_span,
             doc: None,
         },
@@ -5237,7 +5551,7 @@ mod size_locks {
     fn trait_info_size_locked() {
         assert_eq!(
             std::mem::size_of::<TraitInfo>(),
-            216,
+            240,
             "TraitInfo size changed — see module doc"
         );
     }

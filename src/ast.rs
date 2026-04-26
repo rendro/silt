@@ -249,6 +249,25 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
+    /// Associated-type projection.
+    ///
+    /// Two surface forms feed this single AST shape:
+    ///
+    /// - `Self::Item` inside a trait body — `receiver` is
+    ///   `TypeExprKind::SelfType` and `trait_name` is the enclosing
+    ///   trait (filled in by the parser from its current trait context).
+    /// - `<TypeExpr as Trait>::Item` outside a trait body — `receiver`
+    ///   is the user-supplied type expression and `trait_name` is the
+    ///   trait the projection is qualified against.
+    ///
+    /// The typechecker resolves this to `Type::AssocProj { ... }`,
+    /// which canonicalises to the impl's binding when the receiver is
+    /// concrete and stays abstract on a type variable.
+    AssocProj {
+        receiver: Box<TypeExpr>,
+        trait_name: Symbol,
+        assoc_name: Symbol,
+    },
 }
 
 // ── Statements ───────────────────────────────────────────────────────
@@ -279,6 +298,37 @@ pub enum Stmt {
 /// and carries the supplied args for parameterized traits
 /// (`where a: TryInto(Int)` yields `[TypeExpr::Named("Int")]`).
 pub type WhereClause = (Symbol, Symbol, Vec<TypeExpr>);
+
+/// An associated-type declaration inside a trait body.
+///
+/// `trait Iterator { type Item; ... }` — declares an abstract type that
+/// each impl must bind. v1 supports declared bounds:
+/// `trait Container { type Item: Compare + Hash; ... }` requires every
+/// impl's `type Item = X` to satisfy each listed bound. Defaults are
+/// not supported in v1; the parser rejects `type Item = Default`.
+#[derive(Debug, Clone)]
+pub struct AssocTypeDecl {
+    pub name: Symbol,
+    /// Declared trait bounds, e.g. `[Compare, Hash]` for
+    /// `type Item: Compare + Hash`. Each entry is a trait name plus
+    /// any trait args (parameterized traits like `TryInto(Int)`).
+    /// Empty for unbounded `type Item`.
+    pub bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+    pub span: Span,
+}
+
+/// An associated-type binding inside a trait impl body.
+///
+/// `impl Iterator for IntList { type Item = Int; ... }` binds the
+/// trait's `Item` to `Int`. The typechecker verifies that the bound
+/// type satisfies each declared bound and that every assoc-type the
+/// trait declares has a binding.
+#[derive(Debug, Clone)]
+pub struct AssocTypeBinding {
+    pub name: Symbol,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
@@ -378,6 +428,11 @@ pub struct TraitDecl {
     /// verified at `register_trait_impl` time.
     pub param_where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
+    /// Associated-type declarations: `trait Iterator { type Item; ... }`.
+    /// Empty for traits with no associated types (the common case).
+    /// Each entry's bounds must be satisfied by the impl-supplied type;
+    /// every entry must have a corresponding binding in every impl.
+    pub assoc_types: Vec<AssocTypeDecl>,
     pub span: Span,
     /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
     pub doc: Option<String>,
@@ -419,6 +474,13 @@ pub struct TraitImpl {
     /// including multi-trait bounds via `+`.
     pub where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
+    /// Associated-type bindings supplied by this impl. Each entry binds
+    /// one of the trait's declared associated types to a concrete type
+    /// expression. The typechecker enforces:
+    ///   - every assoc-type the trait declares has a binding here;
+    ///   - no name appears twice;
+    ///   - the bound type satisfies each declared trait bound.
+    pub assoc_type_bindings: Vec<AssocTypeBinding>,
     pub span: Span,
     /// True when this impl block was synthesized by the auto-derive pass
     /// (Display / Compare / Equal / Hash for user-declared enums and

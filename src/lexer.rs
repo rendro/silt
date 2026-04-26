@@ -72,6 +72,10 @@ pub enum Token {
     // Punctuation
     Comma,
     Colon,
+    ColonColon, // :: — used for associated-type projection (`Self::Item`,
+    // `<a as Trait>::Item`). Lexed as a single 2-char token so the parser
+    // can distinguish it from a stray double-colon (`x: : T`) and so the
+    // formatter can round-trip the token directly.
     Dot,
     Eq, // =
 
@@ -136,6 +140,7 @@ impl fmt::Display for Token {
             Token::HashBracket => write!(f, "#["),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
+            Token::ColonColon => write!(f, "::"),
             Token::Dot => write!(f, "."),
             Token::Eq => write!(f, "="),
             Token::Newline => write!(f, "\\n"),
@@ -715,7 +720,19 @@ impl Lexer {
             '?' => Ok((Token::Question, start)),
             '^' => Ok((Token::Caret, start)),
             ',' => Ok((Token::Comma, start)),
-            ':' => Ok((Token::Colon, start)),
+            ':' => {
+                // Associated-type projection: `Self::Item` and
+                // `<a as Trait>::Item` use `::` as a 2-char token. A
+                // single `:` continues to mean record/field/where-clause
+                // separator. Lookahead disambiguates without disturbing
+                // any existing single-`:` site.
+                if self.peek() == Some(':') {
+                    self.advance_char();
+                    Ok((Token::ColonColon, start))
+                } else {
+                    Ok((Token::Colon, start))
+                }
+            }
             '(' => Ok((Token::LParen, start)),
             ')' => Ok((Token::RParen, start)),
             '[' => Ok((Token::LBracket, start)),

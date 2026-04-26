@@ -476,6 +476,13 @@ pub struct Parser {
     /// paths build the index eagerly; the bytecode VM paths that only
     /// see tokens don't bother.
     doc_index: Option<DocIndex>,
+    /// Name of the trait whose body the parser is currently inside.
+    /// Used by `Self::Item` projection sugar to fill in the implicit
+    /// trait-name. `None` outside a trait/impl body. The parser sets
+    /// this on entry to `parse_trait_or_impl`'s body and restores it on
+    /// exit so nested-but-illegal forms (parser doesn't allow nested
+    /// traits, so this is purely defensive) cannot leak between siblings.
+    current_trait_name: Option<Symbol>,
 }
 
 impl Parser {
@@ -488,6 +495,7 @@ impl Parser {
             depth: 0,
             in_fn_recovery: false,
             doc_index: None,
+            current_trait_name: None,
         }
     }
 
@@ -504,6 +512,7 @@ impl Parser {
             depth: 0,
             in_fn_recovery: false,
             doc_index: Some(DocIndex::from_source(source)),
+            current_trait_name: None,
         }
     }
 
@@ -1514,12 +1523,26 @@ impl Parser {
             if self.at(&Token::LBrace) {
                 self.advance();
             }
+            // Trait body: methods (`fn ...`) interleaved with
+            // associated-type declarations (`type Item` or
+            // `type Item: Compare + Hash`). Both are accepted in any
+            // order; the parser collects them into separate vecs so
+            // downstream consumers don't have to re-classify.
+            let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
+            let mut assoc_types: Vec<crate::ast::AssocTypeDecl> = Vec::new();
             self.skip_nl();
             while !self.at(&Token::RBrace) {
+                if self.at(&Token::Type) {
+                    let assoc = self.parse_assoc_type_decl()?;
+                    assoc_types.push(assoc);
+                    self.skip_nl();
+                    continue;
+                }
                 methods.push(self.parse_fn_decl()?);
                 self.skip_nl();
             }
+            self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
             Ok(Decl::Trait(TraitDecl {
                 name,
@@ -1527,6 +1550,7 @@ impl Parser {
                 supertraits,
                 param_where_clauses,
                 methods,
+                assoc_types,
                 span,
                 doc,
             }))
@@ -1610,12 +1634,25 @@ impl Parser {
             let where_clauses = self.parse_where_clauses_opt()?;
             self.skip_nl();
             self.expect(&Token::LBrace)?;
+            // Impl body: methods (`fn ...`) interleaved with
+            // associated-type bindings (`type Item = Int`). Each
+            // binding must be a complete RHS — defaults / abstract
+            // assoc types are illegal in impls.
+            let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
+            let mut assoc_type_bindings: Vec<crate::ast::AssocTypeBinding> = Vec::new();
             self.skip_nl();
             while !self.at(&Token::RBrace) {
+                if self.at(&Token::Type) {
+                    let binding = self.parse_assoc_type_binding()?;
+                    assoc_type_bindings.push(binding);
+                    self.skip_nl();
+                    continue;
+                }
                 methods.push(self.parse_fn_decl()?);
                 self.skip_nl();
             }
+            self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_name: name,
@@ -1625,6 +1662,7 @@ impl Parser {
                 target_param_names,
                 where_clauses,
                 methods,
+                assoc_type_bindings,
                 span,
                 is_auto_derived: false,
             }))
@@ -1657,6 +1695,53 @@ impl Parser {
         }
     }
 
+    // ── Associated-type decl / binding ────────────────────────────────
+
+    /// Parse an associated-type declaration inside a trait body.
+    /// Accepted forms:
+    ///   `type Item`
+    ///   `type Item: Compare`
+    ///   `type Item: Compare + Hash`
+    /// Defaults (`type Item = Default`) are rejected; v1 reserves the
+    /// syntax for a future extension.
+    fn parse_assoc_type_decl(&mut self) -> Result<crate::ast::AssocTypeDecl> {
+        let span = self.span();
+        self.expect(&Token::Type)?;
+        let (name, _) = self.expect_ident()?;
+        let mut bounds: Vec<(Symbol, Vec<TypeExpr>)> = Vec::new();
+        if self.at(&Token::Colon) {
+            self.advance();
+            let (tn, args) = self.parse_trait_ref()?;
+            bounds.push((tn, args));
+            while self.at(&Token::Plus) {
+                self.advance();
+                let (tn, args) = self.parse_trait_ref()?;
+                bounds.push((tn, args));
+            }
+        }
+        if self.at(&Token::Eq) {
+            return Err(ParseError {
+                message: "associated-type defaults are not supported in v1; \
+                          declare the type abstractly (`type Item`) and bind it \
+                          in each impl"
+                    .to_string(),
+                span,
+            });
+        }
+        Ok(crate::ast::AssocTypeDecl { name, bounds, span })
+    }
+
+    /// Parse an associated-type binding inside a trait impl body.
+    /// Form: `type Item = TypeExpr`.
+    fn parse_assoc_type_binding(&mut self) -> Result<crate::ast::AssocTypeBinding> {
+        let span = self.span();
+        self.expect(&Token::Type)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&Token::Eq)?;
+        let ty = self.parse_type_expr()?;
+        Ok(crate::ast::AssocTypeBinding { name, ty, span })
+    }
+
     // ── Type expressions ─────────────────────────────────────────────
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
@@ -1666,6 +1751,30 @@ impl Parser {
         // header diagnostics (parse_trait_or_impl) to point at the
         // offending argument rather than the outer `trait` keyword.
         let start = self.span();
+        // Qualified projection: `<TypeExpr as TraitName>::IDENT`. The
+        // `<` here is unambiguous because every other use of `<` is
+        // an operator at expression position; in type-expr position
+        // the only legal opener is the qualified form.
+        if self.at(&Token::Lt) {
+            self.advance();
+            self.skip_nl();
+            let receiver = self.parse_type_expr()?;
+            self.skip_nl();
+            self.expect(&Token::As)?;
+            let (trait_name, _) = self.expect_ident()?;
+            self.skip_nl();
+            self.expect(&Token::Gt)?;
+            self.expect(&Token::ColonColon)?;
+            let (assoc_name, _) = self.expect_ident()?;
+            return Ok(TypeExpr::new(
+                TypeExprKind::AssocProj {
+                    receiver: Box::new(receiver),
+                    trait_name,
+                    assoc_name,
+                },
+                start,
+            ));
+        }
         // Function type: Fn(A, B) -> C
         if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn")) {
             self.advance();
@@ -1697,7 +1806,33 @@ impl Parser {
             return Ok(TypeExpr::new(TypeExprKind::Tuple(elems), start));
         }
         let (name, _) = self.expect_ident()?;
+        // `Self::Item` — sugar for `<Self as <enclosing_trait>>::Item`.
+        // The trait name is supplied by the parser's enclosing-trait
+        // context (set by parse_trait_or_impl on entry to the body).
+        // Outside a trait/impl body the projection is an error; it is
+        // caught by the typechecker (current_trait_name absent).
         if name == intern::intern("Self") {
+            if self.at(&Token::ColonColon) {
+                self.advance();
+                let (assoc_name, _) = self.expect_ident()?;
+                let trait_name = self.current_trait_name.unwrap_or_else(|| {
+                    // Outside a trait body — leave a sentinel so the
+                    // typechecker can produce a clear diagnostic. The
+                    // parser doesn't have enough context to error here
+                    // (the token stream looks like a perfectly normal
+                    // type expression). Use an interned placeholder.
+                    intern::intern("__no_enclosing_trait__")
+                });
+                let recv = TypeExpr::new(TypeExprKind::SelfType, start);
+                return Ok(TypeExpr::new(
+                    TypeExprKind::AssocProj {
+                        receiver: Box::new(recv),
+                        trait_name,
+                        assoc_name,
+                    },
+                    start,
+                ));
+            }
             return Ok(TypeExpr::new(TypeExprKind::SelfType, start));
         }
         if self.peek() == &Token::LParen {

@@ -4282,7 +4282,50 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
                 .join(" + ")
         )
     };
-    format!("{prefix}trait {}{supers} {{\n{}\n{prefix}}}", t.name, body)
+    // Associated-type declarations render before methods inside the
+    // body, matching the typical Rust trait-body convention. Each entry
+    // is `type Name` or `type Name: Bound + Bound2`. The parser keeps
+    // assoc-types and methods in two separate vecs so we rebuild a
+    // stable order here (assoc-types first, then methods).
+    let assoc_lines = if t.assoc_types.is_empty() {
+        String::new()
+    } else {
+        let inner = indent(depth + 1);
+        t.assoc_types
+            .iter()
+            .map(|a| {
+                let bounds = if a.bounds.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ": {}",
+                        a.bounds
+                            .iter()
+                            .map(|(n, args)| {
+                                if args.is_empty() {
+                                    resolve(*n)
+                                } else {
+                                    let rendered: Vec<String> =
+                                        args.iter().map(format_type_expr).collect();
+                                    format!("{}({})", resolve(*n), rendered.join(", "))
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" + ")
+                    )
+                };
+                format!("{}type {}{}\n", inner, resolve(a.name), bounds)
+            })
+            .collect::<String>()
+    };
+    if assoc_lines.is_empty() {
+        format!("{prefix}trait {}{supers} {{\n{}\n{prefix}}}", t.name, body)
+    } else {
+        format!(
+            "{prefix}trait {}{supers} {{\n{}{}\n{prefix}}}",
+            t.name, assoc_lines, body
+        )
+    }
 }
 
 fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
@@ -4304,10 +4347,26 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
             .join(", ");
         format!("{}({args})", t.target_type)
     };
-    format!(
-        "{prefix}trait {} for {target} {{\n{}\n{prefix}}}",
-        t.trait_name, body
-    )
+    let assoc_lines = if t.assoc_type_bindings.is_empty() {
+        String::new()
+    } else {
+        let inner = indent(depth + 1);
+        t.assoc_type_bindings
+            .iter()
+            .map(|b| format!("{}type {} = {}\n", inner, resolve(b.name), format_type_expr(&b.ty)))
+            .collect::<String>()
+    };
+    if assoc_lines.is_empty() {
+        format!(
+            "{prefix}trait {} for {target} {{\n{}\n{prefix}}}",
+            t.trait_name, body
+        )
+    } else {
+        format!(
+            "{prefix}trait {} for {target} {{\n{}{}\n{prefix}}}",
+            t.trait_name, assoc_lines, body
+        )
+    }
 }
 
 /// Format a list of trait/trait-impl methods with interleaved standalone
@@ -5600,6 +5659,26 @@ fn format_type_expr(ty: &TypeExpr) -> String {
             format!("Fn({}) -> {}", param_strs.join(", "), format_type_expr(ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => {
+            // Render `Self::Item` for the common Self-receiver case so
+            // round-trip output matches what users wrote inside trait
+            // bodies. Outside Self, use the qualified `<T as Trait>::N`
+            // form. The parser accepts both spellings.
+            if matches!(receiver.kind, TypeExprKind::SelfType) {
+                format!("Self::{}", resolve(*assoc_name))
+            } else {
+                format!(
+                    "<{} as {}>::{}",
+                    format_type_expr(receiver),
+                    resolve(*trait_name),
+                    resolve(*assoc_name)
+                )
+            }
+        }
     }
 }
 

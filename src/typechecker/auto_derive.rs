@@ -255,6 +255,7 @@ fn trait_impl(
         target_param_names,
         where_clauses,
         methods,
+        assoc_type_bindings: Vec::new(),
         span: synth_span(),
         is_auto_derived: true,
     }

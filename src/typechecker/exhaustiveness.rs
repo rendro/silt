@@ -905,6 +905,11 @@ impl TypeChecker {
             Type::Var(_) => true,
             Type::Error => true,
             Type::Never => true,
+            // An unreduced AssocProj is an abstract type whose
+            // inhabitants are unknown until the receiver resolves.
+            // Treat as non-enumerable so the witness-split path takes
+            // care of it (matches the behaviour of `Type::Var`).
+            Type::AssocProj { .. } => true,
         }
     }
 

@@ -3994,6 +3994,14 @@ pub(super) fn resolve_supertrait_arg(
             Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
         ),
         TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
+        TypeExprKind::AssocProj { .. } => {
+            // Associated-type projections aren't meaningful as
+            // supertrait args either: a supertrait arg is a fixed
+            // type expression substituted from the enclosing trait's
+            // params. Returning `Type::Error` matches the SelfType
+            // arm and lets the caller continue without a cascade.
+            Type::Error
+        }
     }
 }
 

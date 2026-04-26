@@ -134,6 +134,77 @@ pub fn clear_aliases() {
     guard.clear();
 }
 
+// ── Associated-type bindings registry (Phase: associated types) ──────
+//
+// Mirrors the alias-registry pattern above. Keys are
+// `(trait_name, target_canonical_head, assoc_name)` resolved to
+// strings (for the same `Symbol`-vs-thread-local-interner reason).
+// The typechecker populates this at impl registration; the
+// canonicaliser reads it when reducing `Type::AssocProj` whose
+// receiver canonicalises to a concrete head.
+
+#[derive(Debug, Clone)]
+pub struct AssocBinding {
+    /// The bound type. Stored already-canonicalised, so the reducer
+    /// returns it directly with no re-entry into the impl table for
+    /// this entry. (Recursive entries — bindings whose value is
+    /// itself an `AssocProj` — re-enter through `canonicalize` on the
+    /// enclosing type, not through this stored value.)
+    pub ty: Type,
+}
+
+fn assoc_registry() -> &'static RwLock<HashMap<(String, String, String), AssocBinding>> {
+    static REG: OnceLock<RwLock<HashMap<(String, String, String), AssocBinding>>> =
+        OnceLock::new();
+    REG.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Register an `assoc-type` impl binding.
+///
+/// Called by the typechecker when processing a `TraitImpl`: for each
+/// `type Item = X` binding, the target's canonical head is computed
+/// (so `Range` and `List` collapse to the same key) and the resolved
+/// type is stored. Re-registering the same triple overwrites the
+/// previous entry (matches the alias-registry convention; the
+/// typechecker enforces uniqueness via its duplicate-impl check, so
+/// in practice this only fires once per triple).
+pub fn register_assoc_binding(
+    trait_name: Symbol,
+    target_head: Symbol,
+    assoc_name: Symbol,
+    ty: Type,
+) {
+    let head_canon = canonicalize_type_name(target_head);
+    let mut guard = assoc_registry().write().unwrap();
+    guard.insert(
+        (resolve(trait_name), resolve(head_canon), resolve(assoc_name)),
+        AssocBinding {
+            ty: canonicalize(&ty),
+        },
+    );
+}
+
+/// Look up an `assoc-type` binding by `(trait, target_head, assoc_name)`.
+/// Returns `None` when no impl has registered the binding.
+pub fn lookup_assoc_binding(
+    trait_name: Symbol,
+    target_head: Symbol,
+    assoc_name: Symbol,
+) -> Option<AssocBinding> {
+    let head_canon = canonicalize_type_name(target_head);
+    let guard = assoc_registry().read().unwrap();
+    guard
+        .get(&(resolve(trait_name), resolve(head_canon), resolve(assoc_name)))
+        .cloned()
+}
+
+/// Clear every registered assoc-type binding. Provided for test
+/// isolation symmetric with `clear_aliases`.
+pub fn clear_assoc_bindings() {
+    let mut guard = assoc_registry().write().unwrap();
+    guard.clear();
+}
+
 /// Reduce a type to its canonical form.
 ///
 /// Recursive structural walk. The current reduction set is:
@@ -193,6 +264,49 @@ pub fn canonicalize(ty: &Type) -> Type {
         ),
         Type::Generic(name, args) => {
             Type::Generic(*name, args.iter().map(canonicalize).collect())
+        }
+
+        // ── Associated-type projection ─────────────────────────────
+        // `<T as Trait>::Item` reduces to the impl's binding when the
+        // receiver is concrete. If the receiver canonicalises to a
+        // type-variable (or to another unreduced AssocProj), the
+        // projection itself is canonical: it stays as `AssocProj` and
+        // propagates through inference until the variable is solved.
+        // Cycle protection: the receiver is canonicalised first, so any
+        // alias chain on the receiver collapses before we look up the
+        // binding; the binding's stored type was canonicalised at
+        // registration time, so re-entering canonicalize here cannot
+        // re-trigger this arm on the same projection (it would have a
+        // concrete head different from the input).
+        Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => {
+            let canon_recv = canonicalize(receiver);
+            // Try to find a head symbol on the canonicalised receiver.
+            // Concrete heads -> impl-table lookup. None -> abstract.
+            if let Some(head) = head_symbol_of_canon(&canon_recv) {
+                if let Some(binding) = lookup_assoc_binding(*trait_name, head, *assoc_name) {
+                    // The stored binding was canonicalised at registration
+                    // time. Canonicalise again here so any nested alias /
+                    // assoc-projection inside the binding (registered
+                    // before another alias became known) reduces too. The
+                    // recursion terminates because the binding's head is
+                    // not the same as the AssocProj's input head.
+                    return canonicalize(&binding.ty);
+                }
+            }
+            // No binding (or abstract receiver): keep as canonical
+            // AssocProj. The typechecker emits a "type does not
+            // implement trait" diagnostic at the originating site if
+            // the receiver was concrete and no impl matches; the
+            // canonicaliser itself stays silent.
+            Type::AssocProj {
+                receiver: Box::new(canon_recv),
+                trait_name: *trait_name,
+                assoc_name: *assoc_name,
+            }
         }
 
         // ── Leaf shapes: identity ──────────────────────────────────
@@ -297,6 +411,11 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Var(_) => "_".to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
+        // An unreduced AssocProj has no dispatch head — it is an
+        // abstract type pending receiver resolution. Same placeholder
+        // as Var to keep dispatch tables from accidentally keying on a
+        // pending projection.
+        Type::AssocProj { .. } => "_".to_string(),
     }
 }
 
@@ -360,7 +479,7 @@ fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
         Type::Tuple(_) => Some(intern("Tuple")),
         Type::Fun(_, _) => Some(intern("Fn")),
         Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_) | Type::Error | Type::Never => None,
+        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } => None,
     }
 }
 
