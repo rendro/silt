@@ -658,6 +658,41 @@ pub struct TypeChecker {
     /// can consult this map instead of emitting "unknown module"
     /// warnings. Empty for ad-hoc scripts and the REPL.
     pub(super) module_exports: HashMap<Symbol, ModuleExports>,
+    /// Round 64 item 6B (annotated polymorphic recursion): names of
+    /// `fn` declarations whose signature is fully annotated (every
+    /// parameter has an explicit type AND the return type is
+    /// declared). Populated by `register_fn_decl`.
+    ///
+    /// The narrowing pass in `check_program` (which collapses a
+    /// scheme's quantified vars after body inference observes them
+    /// constrained) is SKIPPED for these fns. Locking the registered
+    /// scheme as authoritative permits `instantiate_with_constraints`
+    /// at the recursive call site to allocate fresh tyvars on every
+    /// invocation — i.e. polymorphic recursion. Without the
+    /// annotation, the same body that recurses with concrete
+    /// non-polymorphic args would be undecidable to infer (Mycroft
+    /// 1984), so silt keeps the existing monomorphic-recursion
+    /// behaviour and emits a diagnostic note suggesting the user add
+    /// annotations.
+    pub(super) fully_annotated_fn_names: std::collections::HashSet<Symbol>,
+    /// Round 64 item 6B: name of the function whose body is currently
+    /// being type-checked. Set by `check_fn_body_with_name` before
+    /// recursing into the body and cleared after. The Call arm
+    /// consults this to detect a recursive call site and, if the fn
+    /// is NOT in `fully_annotated_fn_names`, attach a helpful note
+    /// to any type mismatch diagnostic at that call.
+    pub(super) current_fn_name: Option<Symbol>,
+    /// Round 64 item 6B: names of fns whose body inference observed a
+    /// recursive call (callee == enclosing fn). Populated by the Call
+    /// arm of `infer_expr` whenever `callee_fn_name == current_fn_name`.
+    /// Used by the narrowing pass to decide whether to lock an
+    /// annotated fn's scheme: only fns that actually recurse need
+    /// the lock — every other annotated fn keeps the legacy
+    /// narrowing behaviour so existing test invariants (e.g.
+    /// `fn grab(b: Box) -> Int = b.value` narrowing the bare `Box`
+    /// param to `Int` and then surfacing a "type mismatch" at the
+    /// caller) keep firing.
+    pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
 }
 
 impl Default for TypeChecker {
@@ -702,6 +737,9 @@ impl TypeChecker {
             current_package: None,
             imported_modules: std::collections::HashSet::new(),
             module_exports: HashMap::new(),
+            fully_annotated_fn_names: std::collections::HashSet::new(),
+            current_fn_name: None,
+            recursive_fn_names: std::collections::HashSet::new(),
         }
     }
 
@@ -2739,6 +2777,13 @@ impl TypeChecker {
         // own equivalent reset/repopulate pairing, or this invariant breaks
         // and duplicate obligations leak into finalize.
         let body_types: HashMap<Symbol, Type> = std::mem::take(&mut self.fn_body_types);
+        // Round 64 item 6B: collect annotated-fn signature mismatches
+        // here so they survive the truncate-on-recheck step that runs
+        // when SOME OTHER unannotated fn was narrowed in this batch.
+        // We append them after the recheck so the user always sees
+        // the "polymorphic signature but body pins to concrete type"
+        // diagnostic.
+        let mut annotated_signature_mismatches: Vec<(Symbol, Span)> = Vec::new();
         if !body_types.is_empty() {
             let mut any_narrowed = false;
             for (name, constrained_type) in &body_types {
@@ -2747,6 +2792,43 @@ impl TypeChecker {
                 if let Some(original_scheme) = env.lookup(*name).cloned()
                     && original_scheme.vars.len() != new_scheme.vars.len()
                 {
+                    // Round 64 item 6B (annotated polymorphic recursion):
+                    // a fully-annotated fn's signature is authoritative.
+                    // If the body's instantiation would narrow the
+                    // scheme — i.e. an annotated polymorphic var was
+                    // pinned to a concrete type by body usage (e.g.
+                    // `fn f(x: a) -> Int = x + 1` pins `a` to Int via
+                    // the `+` operator's unification) — that's a
+                    // signature mismatch the user should fix. Record
+                    // the violation now and emit the diagnostic after
+                    // the recheck phase below (see the
+                    // `annotated_signature_mismatches` drain). Leaving
+                    // the scheme intact (a) surfaces the contradiction
+                    // at the user's annotation site without silently
+                    // monomorphising it, and (b) preserves the
+                    // polymorphic shape so a same-body recursive call
+                    // still instantiates afresh — which is the whole
+                    // point of annotated poly-recursion.
+                    // Lock the scheme only when the fn is BOTH fully
+                    // annotated AND actually recursive. Annotated-but-
+                    // non-recursive fns keep the legacy narrowing
+                    // behaviour so test invariants like "bare-Box
+                    // narrowing of `b: Box` to `Box(Int)` surfaces a
+                    // type-mismatch at the caller" continue to hold.
+                    if self.fully_annotated_fn_names.contains(name)
+                        && self.recursive_fn_names.contains(name)
+                    {
+                        let fn_span = program
+                            .decls
+                            .iter()
+                            .find_map(|d| match d {
+                                Decl::Fn(fd) if fd.name == *name => Some(fd.span),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| Span::new(0, 0));
+                        annotated_signature_mismatches.push((*name, fn_span));
+                        continue;
+                    }
                     // Scheme was narrowed — some vars got constrained
                     any_narrowed = true;
                     let mut final_scheme = new_scheme.clone();
@@ -2832,6 +2914,24 @@ impl TypeChecker {
                     }
                 }
             }
+        }
+
+        // Round 64 item 6B: surface annotated-fn signature
+        // mismatches recorded above. These are emitted post-narrowing
+        // and post-recheck so the truncate-on-recheck step does not
+        // erase them; they're the user-facing "your annotation is
+        // inconsistent with the body" diagnostic.
+        for (name, fn_span) in annotated_signature_mismatches {
+            self.error(
+                format!(
+                    "function '{}' has a polymorphic signature but its body uses \
+                     a parameter as a concrete type; either add a `where` constraint \
+                     (e.g. `where a: Display`) or replace the type variable with \
+                     the concrete type the body actually requires",
+                    resolve(name)
+                ),
+                fn_span,
+            );
         }
 
         // Resolve any deferred checks (field-access / numeric ops on type
@@ -4129,6 +4229,24 @@ impl TypeChecker {
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
         let mut scheme = self.generalize(env, &fn_type);
+
+        // Round 64 item 6B (annotated polymorphic recursion): record
+        // whether the user's signature is fully annotated. A `Data`
+        // parameter is annotated iff it carries an explicit `ty`;
+        // `Type` parameters are annotated by construction (the binder
+        // itself is the annotation). The return type is annotated iff
+        // `return_type` is Some. When both hold for every parameter
+        // and the return, the narrowing pass in `check_program` will
+        // skip this fn — keeping its scheme polymorphic across all
+        // recursive call sites in its own body.
+        if !f.is_recovery_stub {
+            let all_params_annotated = f.params.iter().all(|p| {
+                matches!(p.kind, ParamKind::Type) || p.ty.is_some()
+            });
+            if all_params_annotated && f.return_type.is_some() {
+                self.fully_annotated_fn_names.insert(f.name);
+            }
+        }
 
         // Resolve where clauses to (TyVar, trait_name) using param_map.
         // Type variables must be introduced via explicit type annotations in the signature.

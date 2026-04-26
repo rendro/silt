@@ -566,6 +566,15 @@ impl TypeChecker {
             }
         }
 
+        // Round 64 item 6B: record the fn name we're checking so the
+        // Call arm can detect recursive call sites and attach the
+        // polymorphic-recursion-hint note when an unannotated fn's
+        // body recurses with a different concrete type. We track the
+        // bare AST decl name (`f.name`) — recursive references inside
+        // the body always use that name, not the method-table-style
+        // `Type.method` lookup key used for trait impls.
+        let prev_fn_name = self.current_fn_name.replace(f.name);
+
         // B4: capture the instantiated param tyvars so call-site where-
         // clause checks can determine whether a pending obligation
         // touches the enclosing fn's own polymorphism (vs. an unrelated
@@ -617,6 +626,7 @@ impl TypeChecker {
         self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;
         self.current_fn_param_tyvars = prev_fn_param_tyvars;
+        self.current_fn_name = prev_fn_name;
 
         Some(constrained_fn)
     }
@@ -3122,6 +3132,25 @@ impl TypeChecker {
                 let arg_types: Vec<Type> =
                     args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
 
+                // Round 64 item 6B: detect a recursive call to the
+                // enclosing fn so we can (1) attach a polymorphic-
+                // recursion hint if the unify below fails AND the
+                // enclosing fn is not fully annotated, and (2) flag
+                // the enclosing fn as "recursive" so the narrowing
+                // pass in `check_program` knows to lock its scheme
+                // when it's also fully annotated.
+                let is_recursive_call = match (callee_fn_name, self.current_fn_name) {
+                    (Some(c), Some(cur)) => c == cur,
+                    _ => false,
+                };
+                if is_recursive_call
+                    && let Some(cur) = self.current_fn_name
+                {
+                    self.recursive_fn_names.insert(cur);
+                }
+                let recursion_hint_span = span;
+                let pre_call_error_count = self.errors.len();
+
                 let result_ty = match &callee_ty {
                     Type::Fun(params, ret) => {
                         // Unify argument types with parameter types. For a
@@ -3229,6 +3258,29 @@ impl TypeChecker {
                             });
                         }
                     }
+                }
+
+                // Round 64 item 6B: if this Call recursed into the
+                // enclosing fn (callee == current_fn_name) and produced
+                // a fresh diagnostic, AND the enclosing fn isn't fully
+                // annotated, attach a help note pointing the user at
+                // the polymorphic-recursion escape hatch. The note is
+                // only emitted once per recursive call site, after the
+                // mismatch error is in place.
+                if is_recursive_call
+                    && self.errors.len() > pre_call_error_count
+                    && let Some(cur) = self.current_fn_name
+                    && !self.fully_annotated_fn_names.contains(&cur)
+                {
+                    self.warning(
+                        format!(
+                            "help: '{}' is recursing with arguments of a different type \
+                             than its inferred signature; add explicit type annotations \
+                             to enable polymorphic recursion",
+                            resolve(cur)
+                        ),
+                        recursion_hint_span,
+                    );
                 }
 
                 result_ty
