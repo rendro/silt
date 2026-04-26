@@ -292,6 +292,14 @@ impl TypeChecker {
                 matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))
                     || matches!(&p.kind, PatternKind::Tuple(ts) if ts.is_empty())
             }),
+            // Anon records: a fully-covering anon-record pattern (one
+            // whose listed fields are all irrefutable, with or without
+            // a `...rest` binding) covers the whole row-poly value. Any
+            // other anon-record pattern leaves a non-trivial witness.
+            Type::AnonRecord { .. } => !matrix.iter().any(|p| {
+                matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))
+                    || Self::is_fully_covering_pattern(p)
+            }),
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => !matrix
                 .iter()
@@ -592,6 +600,27 @@ impl TypeChecker {
                     }
                     tuple_rows.push(synth(PatternKind::Tuple(cols)));
                 }
+                // Anon record patterns also pivot through the per-field
+                // tuple decomposition — `{name: n, ...rest}` covers every
+                // value of any column not listed in the pattern (rest
+                // captures them), so unlisted fields become wildcards
+                // here. For closed anon patterns, the same is true:
+                // unlisted fields can't appear at runtime in a value
+                // unified with a closed anon record.
+                PatternKind::AnonRecord {
+                    fields: r_fields, ..
+                } => {
+                    let mut cols: Vec<Pattern> = Vec::with_capacity(rec_fields.len());
+                    for (fname, _) in rec_fields {
+                        let pat = r_fields
+                            .iter()
+                            .find(|(n, _)| n == fname)
+                            .and_then(|(_, sp)| sp.clone())
+                            .unwrap_or(synth(PatternKind::Wildcard));
+                        cols.push(pat);
+                    }
+                    tuple_rows.push(synth(PatternKind::Tuple(cols)));
+                }
                 _ => {}
             }
         }
@@ -810,6 +839,24 @@ impl TypeChecker {
                 Some(p) => Self::is_fully_covering_pattern(p),
                 None => true,
             }),
+            // An anon-record pattern with a `...rest` binding (or an
+            // unrestricted shorthand) covers all records carrying the
+            // listed fields. Without rest, coverage requires every
+            // sub-pattern to itself be fully covering (i.e. wildcards
+            // / idents only).
+            PatternKind::AnonRecord { fields, rest } => {
+                if rest.is_some() {
+                    fields.iter().all(|(_, sub)| match sub {
+                        Some(p) => Self::is_fully_covering_pattern(p),
+                        None => true,
+                    })
+                } else {
+                    fields.iter().all(|(_, sub)| match sub {
+                        Some(p) => Self::is_fully_covering_pattern(p),
+                        None => true,
+                    })
+                }
+            }
             PatternKind::Tuple(ps) => ps.iter().all(Self::is_fully_covering_pattern),
             PatternKind::Or(alts) => alts.iter().any(Self::is_fully_covering_pattern),
             _ => false,
@@ -910,6 +957,10 @@ impl TypeChecker {
             // Treat as non-enumerable so the witness-split path takes
             // care of it (matches the behaviour of `Type::Var`).
             Type::AssocProj { .. } => true,
+            // Anonymous structural records: row-polymorphic open shapes
+            // have unbounded inhabitants; closed shapes are products
+            // with no constructor enumeration. Witness-split handles both.
+            Type::AnonRecord { .. } => true,
         }
     }
 

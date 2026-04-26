@@ -67,6 +67,14 @@ pub enum ExprKind {
         expr: Box<Expr>,
         fields: Vec<(Symbol, Expr)>,
     },
+    /// Anonymous (row-polymorphic) record literal: `{name: "A", age: 30}`
+    /// or with a spread head `{...other, age: 30}`. The optional
+    /// `spread` is the base record whose fields are copied; `fields`
+    /// are added/overridden on top.
+    AnonRecord {
+        spread: Option<Box<Expr>>,
+        fields: Vec<(Symbol, Expr)>,
+    },
 
     // Control flow
     Match {
@@ -191,6 +199,15 @@ pub enum PatternKind {
         fields: Vec<(Symbol, Option<Pattern>)>,
         has_rest: bool,
     },
+    /// Anonymous record pattern with optional named rest binding:
+    /// `{name: n, ...rest}` binds `rest` to a record carrying the
+    /// unmatched fields. `rest = None` means closed (no extra fields
+    /// allowed). v1 forbids unnamed rest (`{x, ...}`); use `{x, ...rest}`
+    /// or omit the pattern entirely.
+    AnonRecord {
+        fields: Vec<(Symbol, Option<Pattern>)>,
+        rest: Option<Symbol>,
+    },
     /// Match a list: [a, b, c] or [head, ...tail] or []
     List(Vec<Pattern>, Option<Box<Pattern>>),
     /// Or-pattern: 0 | 1 -> "small"
@@ -267,6 +284,15 @@ pub enum TypeExprKind {
         receiver: Box<TypeExpr>,
         trait_name: Symbol,
         assoc_name: Symbol,
+    },
+    /// Anonymous structural record type, optionally row-polymorphic:
+    /// `{name: String, age: Int}` (closed) or `{name: String, ...r}`
+    /// (open, where `r` is a row variable name). Multiple annotations
+    /// in the same scope sharing a row name `r` refer to the same
+    /// row variable, so `fn id(p: {name: String, ...r}) -> {name: String, ...r}` threads it.
+    AnonRecord {
+        fields: Vec<(Symbol, TypeExpr)>,
+        tail: Option<Symbol>,
     },
 }
 

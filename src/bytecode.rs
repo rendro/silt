@@ -167,6 +167,13 @@ pub enum Op {
     DestructListRest, // operand: u8 start
     /// Extract named record field. Peek record, push value.
     DestructRecordField, // operand: u16 name_index
+    /// Construct a new record from TOS by removing the listed field
+    /// names. The record on TOS is consumed (popped) and a new
+    /// `Value::Record(synthetic_name, fields_map_minus_excluded)` is
+    /// pushed. Used by row-polymorphic anon-record patterns to bind
+    /// the `...rest` portion. Layout: u8 count, then count u16 name
+    /// indices into the constant pool (string).
+    DestructRecordRest, // operand: u8 count, count*u16 name indices
     /// Test if TOS is a record with given type name. Peek, push bool.
     TestRecordTag, // operand: u16 name_index
     /// Test if TOS map contains key. Peek, push bool.
@@ -268,6 +275,7 @@ impl Op {
             b if b == Op::DestructList as u8 => Some(Op::DestructList),
             b if b == Op::DestructListRest as u8 => Some(Op::DestructListRest),
             b if b == Op::DestructRecordField as u8 => Some(Op::DestructRecordField),
+            b if b == Op::DestructRecordRest as u8 => Some(Op::DestructRecordRest),
             b if b == Op::TestRecordTag as u8 => Some(Op::TestRecordTag),
             b if b == Op::TestMapHasKey as u8 => Some(Op::TestMapHasKey),
             b if b == Op::DestructMapValue as u8 => Some(Op::DestructMapValue),

@@ -194,6 +194,27 @@ impl Compiler {
                 Ok(all_jumps)
             }
 
+            PatternKind::AnonRecord { fields, .. } => {
+                // No tag check — anon records are structural.
+                let mut all_jumps = Vec::new();
+                for (field_name, sub_pat) in fields {
+                    let sub_pattern = match sub_pat {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    if !self.pattern_is_irrefutable(sub_pattern) {
+                        let field_idx =
+                            self.add_constant(Value::String(resolve(*field_name)), span)?;
+                        self.current_chunk().emit_op(Op::DestructRecordField, span);
+                        self.current_chunk().emit_u16(field_idx, span);
+                        let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+                Ok(all_jumps)
+            }
+
             PatternKind::Range(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Int(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Int(*hi), span)?;
@@ -620,6 +641,27 @@ impl Compiler {
                 Ok(all_jumps)
             }
 
+            PatternKind::AnonRecord { fields, .. } => {
+                let mut all_jumps = Vec::new();
+                for (field_name, sub_pat) in fields {
+                    let sub_pattern = match sub_pat {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    if !self.pattern_is_irrefutable(sub_pattern) {
+                        let field_idx =
+                            self.add_constant(Value::String(resolve(*field_name)), span)?;
+                        self.current_chunk().emit_op(Op::DestructRecordField, span);
+                        self.current_chunk().emit_u16(field_idx, span);
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+                Ok(all_jumps)
+            }
+
             PatternKind::Map(entries) => {
                 let mut all_jumps = Vec::new();
 
@@ -869,6 +911,57 @@ impl Compiler {
                 self.compile_compound_bind(items, span)?;
             }
 
+            PatternKind::AnonRecord { fields, rest } => {
+                let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(pat) => {
+                            if self.pattern_has_bindings(pat) {
+                                items.push((
+                                    BindDestructKind::RecordField(*field_name),
+                                    pat.clone(),
+                                ));
+                            }
+                        }
+                        None => {
+                            items.push((
+                                BindDestructKind::RecordField(*field_name),
+                                Pattern::new(PatternKind::Ident(*field_name), pattern.span),
+                            ));
+                        }
+                    }
+                }
+                self.compile_compound_bind(items, span)?;
+                if let Some(rest_name) = rest {
+                    // Compile `...rest` as: dup the parent record, drop
+                    // each named field, push a new record with the
+                    // remainder, bind to rest_name. Done via a sequence
+                    // of opcodes — for v1 we emit a dedicated runtime
+                    // helper through DestructRecordRest.
+                    let names: Vec<Symbol> =
+                        fields.iter().map(|(n, _)| *n).collect();
+                    self.current_chunk().emit_op(Op::Dup, span);
+                    // Encode: count u8, then count name indices u16 each.
+                    if names.len() > u8::MAX as usize {
+                        return Err(CompileError {
+                            message: "anon record pattern cannot exclude more than 255 fields".into(),
+                            span,
+                        });
+                    }
+                    self.current_chunk().emit_op(Op::DestructRecordRest, span);
+                    self.current_chunk().emit_u8(names.len() as u8, span);
+                    for n in &names {
+                        let idx = self.add_constant(Value::String(resolve(*n)), span)?;
+                        self.current_chunk().emit_u16(idx, span);
+                    }
+                    // Result on top of stack: new record. Bind to rest_name.
+                    self.warn_if_shadows_module(*rest_name, pattern.span);
+                    let slot = self.add_local(*rest_name);
+                    self.current_chunk().emit_op(Op::SetLocal, span);
+                    self.current_chunk().emit_u16(slot, span);
+                }
+            }
+
             PatternKind::Map(entries) => {
                 let items: Vec<(BindDestructKind, Pattern)> = entries
                     .iter()
@@ -1026,6 +1119,13 @@ impl Compiler {
                     None => true, // shorthand {name} always binds
                 }
             }),
+            PatternKind::AnonRecord { fields, rest } => {
+                rest.is_some()
+                    || fields.iter().any(|(_, p)| match p {
+                        Some(pat) => self.pattern_has_bindings(pat),
+                        None => true,
+                    })
+            }
             PatternKind::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
             PatternKind::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
         }
@@ -1069,6 +1169,19 @@ impl Compiler {
                             names.insert(*field_name);
                         }
                     }
+                }
+            }
+            PatternKind::AnonRecord { fields, rest } => {
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(pat) => Self::collect_binding_names(pat, names),
+                        None => {
+                            names.insert(*field_name);
+                        }
+                    }
+                }
+                if let Some(r) = rest {
+                    names.insert(*r);
                 }
             }
             PatternKind::Or(alts) => {

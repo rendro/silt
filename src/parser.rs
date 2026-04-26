@@ -1805,6 +1805,43 @@ impl Parser {
             self.expect(&Token::RParen)?;
             return Ok(TypeExpr::new(TypeExprKind::Tuple(elems), start));
         }
+        // Anonymous record type: `{name: Type, age: Type}` or open
+        // `{name: Type, ...r}`.
+        if self.at(&Token::LBrace) {
+            self.advance();
+            self.skip_nl();
+            let mut fields: Vec<(Symbol, TypeExpr)> = Vec::new();
+            let mut tail: Option<Symbol> = None;
+            let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+            while !self.at(&Token::RBrace) {
+                self.skip_nl();
+                if self.at(&Token::DotDotDot) {
+                    self.advance();
+                    // Row variable name (e.g. `r` in `...r`). Required.
+                    let (rname, _) = self.expect_ident()?;
+                    tail = Some(rname);
+                    self.skip_nl();
+                    break;
+                }
+                let (fname, _) = self.expect_ident()?;
+                self.expect(&Token::Colon)?;
+                self.skip_nl();
+                let fty = self.parse_type_expr()?;
+                if !seen.insert(fname) {
+                    return Err(ParseError {
+                        message: format!("duplicate field '{}' in anon record type", fname),
+                        span: self.span(),
+                    });
+                }
+                fields.push((fname, fty));
+                self.expect_list_sep("anon record type fields", '}', &Token::RBrace)?;
+            }
+            self.expect(&Token::RBrace)?;
+            return Ok(TypeExpr::new(
+                TypeExprKind::AnonRecord { fields, tail },
+                start,
+            ));
+        }
         let (name, _) = self.expect_ident()?;
         // `Self::Item` — sugar for `<Self as <enclosing_trait>>::Item`.
         // The trait name is supplied by the parser's enclosing-trait
@@ -2584,9 +2621,15 @@ impl Parser {
                 Ok(Expr::new(ExprKind::SetLit(elems), span))
             }
             Token::LBrace => {
-                // Could be a trailing closure or a block.
+                // Could be a trailing closure, an anonymous record
+                // literal, or a block. Disambiguation order:
+                //   1. trailing-closure heuristic (existing) — `{ x -> ... }`
+                //   2. anon-record literal — `{ Ident: ... }` or `{ ...spread, ... }`
+                //   3. block — fallthrough
                 if self.is_trailing_closure() {
                     self.parse_trailing_closure_as_lambda()
+                } else if self.is_anon_record_literal() {
+                    self.parse_anon_record_literal()
                 } else {
                     self.parse_block()
                 }
@@ -3043,6 +3086,90 @@ impl Parser {
 
     // ── Record fields ────────────────────────────────────────────────
 
+    /// Lookahead: is the current `{` the start of an anonymous-record
+    /// literal? Two shapes match:
+    ///   - `{ Ident COLON ... }` — closed anon record literal
+    ///   - `{ DotDotDot ... }` — spread head (extend op `{...other, ...}`)
+    /// Disambiguation runs after `is_trailing_closure()` returned false,
+    /// so the lookahead can be aggressive without needing to defer to
+    /// the closure heuristic.
+    fn is_anon_record_literal(&self) -> bool {
+        if self.peek() != &Token::LBrace {
+            return false;
+        }
+        let mut i = self.pos + 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        // Spread head is unambiguous.
+        if matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::DotDotDot)) {
+            return true;
+        }
+        // `Ident COLON` (with possible newlines between) — anon record.
+        if !matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Ident(_))) {
+            return false;
+        }
+        i += 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Colon))
+    }
+
+    /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
+    /// the caller has confirmed via `is_anon_record_literal` that the
+    /// current `{` opens an anon-record literal. Consumes the closing
+    /// `}` itself.
+    fn parse_anon_record_literal(&mut self) -> Result<Expr> {
+        let span = self.span();
+        self.expect(&Token::LBrace)?;
+        self.skip_nl();
+        let mut spread: Option<Box<Expr>> = None;
+        if self.at(&Token::DotDotDot) {
+            self.advance();
+            self.skip_nl();
+            let e = self.parse_expr()?;
+            spread = Some(Box::new(e));
+            // After the spread expression, expect a comma if more
+            // fields follow, else closing brace.
+            self.skip_nl();
+            if self.at(&Token::Comma) {
+                self.advance();
+                self.skip_nl();
+            } else if !self.at(&Token::RBrace) {
+                return Err(ParseError {
+                    message: "expected ',' or '}' after spread expression in anon record literal".into(),
+                    span: self.span(),
+                });
+            }
+        }
+        let mut fields: Vec<(Symbol, Expr)> = Vec::new();
+        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+        while !self.at(&Token::RBrace) {
+            self.skip_nl();
+            if self.at(&Token::DotDotDot) {
+                return Err(ParseError {
+                    message: "v1 row polymorphism allows only one spread head per anon record literal".into(),
+                    span: self.span(),
+                });
+            }
+            let (name, _) = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            self.skip_nl();
+            let value = self.parse_expr()?;
+            if !seen.insert(name) {
+                return Err(ParseError {
+                    message: format!("duplicate field '{}' in anon record literal", name),
+                    span: self.span(),
+                });
+            }
+            fields.push((name, value));
+            self.expect_list_sep("anon record literal fields", '}', &Token::RBrace)?;
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Expr::new(ExprKind::AnonRecord { spread, fields }, span))
+    }
+
     fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
         let mut fields = Vec::new();
         self.skip_nl();
@@ -3282,6 +3409,39 @@ impl Parser {
                     // Single-element parenthesized pattern
                     Ok(first)
                 }
+            }
+            Token::LBrace => {
+                // Anonymous record pattern: `{name: n, age: a}` or
+                // `{name: n, ...rest}`. Only entered in pattern position
+                // (parse_primary_pattern), so we don't conflict with
+                // block / trailing-closure disambiguation in expression
+                // contexts.
+                self.advance();
+                self.skip_nl();
+                let mut fields: Vec<(Symbol, Option<Pattern>)> = Vec::new();
+                let mut rest: Option<Symbol> = None;
+                while !self.at(&Token::RBrace) {
+                    self.skip_nl();
+                    if self.at(&Token::DotDotDot) {
+                        self.advance();
+                        // Named rest binding required (B6: no unnamed rest).
+                        let (rname, _) = self.expect_ident()?;
+                        rest = Some(rname);
+                        self.skip_nl();
+                        break;
+                    }
+                    let (field_name, _) = self.expect_ident()?;
+                    let sub = if self.peek_skip_nl() == &Token::Colon {
+                        self.advance();
+                        Some(self.parse_pattern()?)
+                    } else {
+                        None
+                    };
+                    fields.push((field_name, sub));
+                    self.expect_list_sep("anon record pattern fields", '}', &Token::RBrace)?;
+                }
+                self.expect(&Token::RBrace)?;
+                Ok(mk(PatternKind::AnonRecord { fields, rest }))
             }
             Token::LBracket => {
                 self.advance(); // consume [

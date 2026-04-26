@@ -666,6 +666,17 @@ impl TypeChecker {
                         );
                     }
                 }
+                Type::AnonRecord { fields: af, .. } => {
+                    if let Some(field_ty) = af.get(&field) {
+                        let ft = field_ty.clone();
+                        self.unify(&result_ty, &ft, span);
+                    } else {
+                        self.error(
+                            format!("anon record has no field '{field}'"),
+                            span,
+                        );
+                    }
+                }
                 Type::Generic(type_name, type_args) => {
                     // User-declared records with or without type parameters
                     // are represented as Type::Generic(name, args). Look up
@@ -968,6 +979,16 @@ impl TypeChecker {
                     }
                 }
             }
+            PatternKind::AnonRecord { fields, .. } => {
+                // An anon record pattern is irrefutable on a record value
+                // with the listed fields. Recurse into sub-patterns so a
+                // nested refutable shape is still caught.
+                for (_, sub_pat) in fields {
+                    if let Some(p) = sub_pat {
+                        self.reject_refutable_constructor_in_let(p, span);
+                    }
+                }
+            }
             PatternKind::Or(alts) => {
                 for p in alts {
                     self.reject_refutable_constructor_in_let(p, span);
@@ -1205,6 +1226,29 @@ impl TypeChecker {
                 }
                 for (name, sp) in union_binders {
                     seen.insert(name, sp);
+                }
+            }
+            PatternKind::AnonRecord { fields, rest } => {
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(sp) => {
+                            Self::collect_pattern_binders_into(sp, seen, on_dup);
+                        }
+                        None => {
+                            if seen.contains_key(field_name) {
+                                on_dup(*field_name, pattern.span);
+                            } else {
+                                seen.insert(*field_name, pattern.span);
+                            }
+                        }
+                    }
+                }
+                if let Some(rest_name) = rest {
+                    if seen.contains_key(rest_name) {
+                        on_dup(*rest_name, pattern.span);
+                    } else {
+                        seen.insert(*rest_name, pattern.span);
+                    }
                 }
             }
         }
@@ -1710,6 +1754,62 @@ impl TypeChecker {
                     self.error(msg, pattern.span);
                 }
             }
+            PatternKind::AnonRecord { fields, rest } => {
+                // For each field, allocate a fresh field type. Build an
+                // open anon-record type and unify with the scrutinee —
+                // unify handles widening from a nominal record so
+                // `match person { {name: n, ...rest} -> ... }` works on
+                // a `type Person { ... }` value too.
+                use std::collections::BTreeMap;
+                let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
+                for (fname, _) in fields.iter() {
+                    field_tys.insert(*fname, self.fresh_var());
+                }
+                // The row tail is open (a fresh row variable) regardless
+                // of whether the pattern has a `...rest` binding — when
+                // there's no rest, the leftover fields just aren't named.
+                let row_var = self.fresh_tyvar_id();
+                let anon_ty = Type::AnonRecord {
+                    fields: field_tys.clone(),
+                    tail: RowTail::Var(row_var),
+                };
+                self.unify(ty, &anon_ty, span);
+                // Resolve to get post-unification field types.
+                let resolved = self.apply(&anon_ty);
+                let resolved_fields: BTreeMap<Symbol, Type> = if let Type::AnonRecord {
+                    fields: rf,
+                    ..
+                } = &resolved
+                {
+                    rf.clone()
+                } else {
+                    field_tys.clone()
+                };
+                for (fname, sub) in fields.iter() {
+                    let ft = resolved_fields
+                        .get(fname)
+                        .cloned()
+                        .unwrap_or_else(|| self.fresh_var());
+                    let ft = self.apply(&ft);
+                    match sub {
+                        Some(p) => self.bind_pattern(p, &ft, env, span),
+                        None => {
+                            // Shorthand `{name}` binds `name` directly.
+                            env.define(*fname, Scheme::mono(ft));
+                        }
+                    }
+                }
+                if let Some(rest_name) = rest {
+                    // Bind rest to a record carrying just the row var —
+                    // unification will plug it in to the leftover row.
+                    let rest_ty = Type::AnonRecord {
+                        fields: BTreeMap::new(),
+                        tail: RowTail::Var(row_var),
+                    };
+                    let rest_ty = self.apply(&rest_ty);
+                    env.define(*rest_name, Scheme::mono(rest_ty));
+                }
+            }
         }
     }
 
@@ -2036,6 +2136,33 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 match &obj_ty {
+                    Type::AnonRecord { fields, tail } => {
+                        if let Some(ft) = fields.get(&field) {
+                            ft.clone()
+                        } else if let RowTail::Var(_) = tail {
+                            // Open row: extend the row variable with this
+                            // new field. Bind the existing row var to
+                            // `{field: fresh, ...new_row}` and surface the
+                            // fresh field type.
+                            use std::collections::BTreeMap;
+                            let result_ty = self.fresh_var();
+                            let new_row = self.fresh_tyvar_id();
+                            let mut new_fields = BTreeMap::new();
+                            new_fields.insert(field, result_ty.clone());
+                            let extended = Type::AnonRecord {
+                                fields: new_fields,
+                                tail: RowTail::Var(new_row),
+                            };
+                            self.unify(&obj_ty, &extended, span);
+                            result_ty
+                        } else {
+                            self.error(
+                                format!("anon record has no field '{field}'"),
+                                span,
+                            );
+                            Type::Error
+                        }
+                    }
                     Type::Record(rec_name, fields) => {
                         // Direct field access first
                         if let Some((_, ft)) = fields.iter().find(|(n, _)| *n == field) {
@@ -2313,11 +2440,36 @@ impl TypeChecker {
                                 Type::Error
                             }
                         } else {
-                            // B4: Unconstrained type variable — may resolve later to
-                            // a record/variant. Record the obligation and re-check at
-                            // the end of inference. Return a fresh var for the result
-                            // type so downstream inference can continue.
+                            // B3 (row polymorphism): unconstrained type
+                            // variable + field access — if the field name
+                            // is not a known method (registered impl OR
+                            // declared on any trait), generate an open
+                            // anon-record constraint so
+                            // `fn first_name(p) = p.name` infers
+                            // `p: {name: a, ...r} -> a`. When the field
+                            // is a method name, fall back to the legacy
+                            // deferred-check path so trait dispatch keeps
+                            // working unchanged.
                             let result_ty = self.fresh_var();
+                            let is_known_impl_method = self
+                                .method_table
+                                .keys()
+                                .any(|(_, m)| *m == field);
+                            let is_declared_trait_method = self
+                                .traits
+                                .values()
+                                .any(|info| info.methods.iter().any(|(n, _)| *n == field));
+                            if !is_known_impl_method && !is_declared_trait_method {
+                                let row_var = self.fresh_tyvar_id();
+                                use std::collections::BTreeMap;
+                                let mut fmap = BTreeMap::new();
+                                fmap.insert(field, result_ty.clone());
+                                let row_ty = Type::AnonRecord {
+                                    fields: fmap,
+                                    tail: RowTail::Var(row_var),
+                                };
+                                self.unify(&obj_ty, &row_ty, span);
+                            }
                             self.pending_field_accesses.push((
                                 obj_ty.clone(),
                                 field,
@@ -3201,6 +3353,43 @@ impl TypeChecker {
                 //     with a user-defined record type). BROKEN-1.
                 //  3. Anything else — compile-time reject. BROKEN-2.
                 let mut handled = false;
+                // Anon record (row-poly) update: validate each field
+                // against the row's known fields when present; for open
+                // rows, missing fields are added to the row variable.
+                if let Type::AnonRecord {
+                    fields: af,
+                    tail: at,
+                } = &resolved
+                {
+                    let af = af.clone();
+                    let at = at.clone();
+                    for (field_name, field_expr) in &mut *fields {
+                        let ft = self.infer_expr(field_expr, env);
+                        if let Some(declared_ty) = af.get(field_name) {
+                            self.unify(&ft, declared_ty, span);
+                        } else if let RowTail::Var(_) = at {
+                            // Open row: extend by unifying with a
+                            // record carrying this new field.
+                            use std::collections::BTreeMap;
+                            let new_row = self.fresh_tyvar_id();
+                            let mut new_fields = BTreeMap::new();
+                            new_fields.insert(*field_name, ft.clone());
+                            let extended = Type::AnonRecord {
+                                fields: new_fields,
+                                tail: RowTail::Var(new_row),
+                            };
+                            self.unify(&resolved, &extended, span);
+                        } else {
+                            self.error(
+                                format!(
+                                    "unknown field '{field_name}' in closed anon record"
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                    handled = true;
+                }
                 if let Type::Record(rec_name, rec_fields) = &resolved {
                     let declared: std::collections::HashMap<Symbol, Type> =
                         rec_fields.iter().map(|(n, t)| (*n, t.clone())).collect();
@@ -3337,6 +3526,139 @@ impl TypeChecker {
                     }
                 }
                 base_ty
+            }
+
+            ExprKind::AnonRecord { spread, fields } => {
+                use std::collections::BTreeMap;
+                // Phase F: Extend operator. With a spread, infer
+                // base's type, then merge the listed `fields` on top.
+                // Reject duplicate field names in the literal portion.
+                {
+                    let mut seen: std::collections::HashSet<Symbol> =
+                        std::collections::HashSet::new();
+                    for (fn_name, _) in fields.iter() {
+                        if !seen.insert(*fn_name) {
+                            self.error(
+                                format!(
+                                    "duplicate field '{}' in anon record literal",
+                                    fn_name
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
+                // Type each new field expression.
+                let new_field_tys: Vec<(Symbol, Type)> = fields
+                    .iter_mut()
+                    .map(|(n, e)| (*n, self.infer_expr(e, env)))
+                    .collect();
+                let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
+                for (n, t) in &new_field_tys {
+                    field_map.insert(*n, t.clone());
+                }
+                if let Some(base_expr) = spread {
+                    let base_ty = self.infer_expr(base_expr, env);
+                    let base_ty = self.apply(&base_ty);
+                    let base_canon = crate::types::canonical::canonicalize(&base_ty);
+                    // Determine base's known fields and tail.
+                    let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
+                        match &base_canon {
+                            Type::AnonRecord { fields, tail } => {
+                                (fields.clone(), tail.clone())
+                            }
+                            Type::Record(_, fs) => {
+                                let mut m = BTreeMap::new();
+                                for (n, t) in fs {
+                                    m.insert(*n, t.clone());
+                                }
+                                (m, RowTail::Closed)
+                            }
+                            Type::Generic(name, args)
+                                if self.records.contains_key(name) =>
+                            {
+                                let rec_info =
+                                    self.records.get(name).cloned().unwrap();
+                                let inst: Vec<(Symbol, Type)> = if let Some(
+                                    param_var_ids,
+                                ) =
+                                    self.record_param_var_ids.get(name).cloned()
+                                {
+                                    let mapping: HashMap<TyVar, Type> =
+                                        if args.len() == param_var_ids.len() {
+                                            param_var_ids
+                                                .iter()
+                                                .zip(args.iter())
+                                                .map(|(&v, t)| (v, t.clone()))
+                                                .collect()
+                                        } else {
+                                            param_var_ids
+                                                .iter()
+                                                .map(|&v| (v, self.fresh_var()))
+                                                .collect()
+                                        };
+                                    rec_info
+                                        .fields
+                                        .iter()
+                                        .map(|(n, t)| {
+                                            (*n, substitute_vars(t, &mapping))
+                                        })
+                                        .collect()
+                                } else {
+                                    rec_info.fields.clone()
+                                };
+                                let mut m = BTreeMap::new();
+                                for (n, t) in &inst {
+                                    m.insert(*n, t.clone());
+                                }
+                                (m, RowTail::Closed)
+                            }
+                            _ => {
+                                if !matches!(
+                                    base_canon,
+                                    Type::Error | Type::Var(_) | Type::Never
+                                ) {
+                                    self.error(
+                                        format!(
+                                            "spread requires a record base, but '{base_canon}' is not a record type"
+                                        ),
+                                        base_expr.span,
+                                    );
+                                }
+                                (BTreeMap::new(), RowTail::Closed)
+                            }
+                        };
+                    // Reject extending an existing field (decision: no
+                    // override; user must restrict first, which v1 doesn't
+                    // support).
+                    for (n, _) in &new_field_tys {
+                        if base_fields.contains_key(n) {
+                            self.error(
+                                format!(
+                                    "cannot extend record with existing field '{n}'; v1 row polymorphism does not support override"
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                    // Result fields = base ∪ new (new wins on collision —
+                    // already errored, but keep last write semantically
+                    // benign for cascade).
+                    let mut merged: BTreeMap<Symbol, Type> = base_fields.clone();
+                    for (n, t) in &new_field_tys {
+                        merged.insert(*n, t.clone());
+                    }
+                    Type::AnonRecord {
+                        fields: merged,
+                        tail: base_tail,
+                    }
+                } else {
+                    // Closed anon record literal.
+                    Type::AnonRecord {
+                        fields: field_map,
+                        tail: RowTail::Closed,
+                    }
+                }
             }
 
             ExprKind::Match {
@@ -3941,6 +4263,50 @@ impl TypeChecker {
                     self.error(msg, pattern.span);
                 }
             }
+            PatternKind::AnonRecord { fields, rest } => {
+                use std::collections::BTreeMap;
+                let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
+                for (fname, _) in fields.iter() {
+                    field_tys.insert(*fname, self.fresh_var());
+                }
+                let row_var = self.fresh_tyvar_id();
+                let anon_ty = Type::AnonRecord {
+                    fields: field_tys.clone(),
+                    tail: RowTail::Var(row_var),
+                };
+                self.unify(expected, &anon_ty, span);
+                let resolved = self.apply(&anon_ty);
+                let resolved_fields: BTreeMap<Symbol, Type> = if let Type::AnonRecord {
+                    fields: rf,
+                    ..
+                } = &resolved
+                {
+                    rf.clone()
+                } else {
+                    field_tys.clone()
+                };
+                for (fname, sub) in fields.iter() {
+                    let ft = resolved_fields
+                        .get(fname)
+                        .cloned()
+                        .unwrap_or_else(|| self.fresh_var());
+                    let ft = self.apply(&ft);
+                    match sub {
+                        Some(p) => self.check_pattern(p, &ft, env, span),
+                        None => {
+                            env.define(*fname, Scheme::mono(ft));
+                        }
+                    }
+                }
+                if let Some(rest_name) = rest {
+                    let rest_ty = Type::AnonRecord {
+                        fields: BTreeMap::new(),
+                        tail: RowTail::Var(row_var),
+                    };
+                    let rest_ty = self.apply(&rest_ty);
+                    env.define(*rest_name, Scheme::mono(rest_ty));
+                }
+            }
         }
     }
 }
@@ -4000,6 +4366,11 @@ pub(super) fn resolve_supertrait_arg(
             // type expression substituted from the enclosing trait's
             // params. Returning `Type::Error` matches the SelfType
             // arm and lets the caller continue without a cascade.
+            Type::Error
+        }
+        TypeExprKind::AnonRecord { .. } => {
+            // Anon records aren't meaningful as supertrait args either —
+            // supertrait params are referred to by name.
             Type::Error
         }
     }

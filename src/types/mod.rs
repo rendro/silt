@@ -6,7 +6,7 @@
 pub mod builtins;
 pub mod canonical;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::intern::Symbol;
 use crate::lexer::Span;
@@ -15,6 +15,18 @@ use crate::lexer::Span;
 
 /// A unique identifier for type variables.
 pub type TyVar = usize;
+
+/// Tail of a row (record) type. Either closed (no extra fields) or
+/// open with a unification variable that may bind to a record holding
+/// the remaining fields. See `Type::AnonRecord`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RowTail {
+    /// The record is closed: it has exactly the listed fields and no more.
+    Closed,
+    /// The record may have additional fields. The TyVar is a row variable
+    /// that unification can bind to a record carrying the leftover fields.
+    Var(TyVar),
+}
 
 /// The core type representation used during inference.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +79,14 @@ pub enum Type {
         receiver: Box<Type>,
         trait_name: Symbol,
         assoc_name: Symbol,
+    },
+    /// An anonymous structural record type (row-polymorphic capable).
+    /// `{name: String, age: Int}` is closed; `{name: String, ...r}` has
+    /// a row-tail variable. Field order is irrelevant for equality —
+    /// `BTreeMap` gives stable ordering for canonicalisation/rendering.
+    AnonRecord {
+        fields: BTreeMap<Symbol, Type>,
+        tail: RowTail,
     },
 }
 
@@ -161,6 +181,26 @@ impl std::fmt::Display for Type {
                 // diagnostics so the receiver/trait/assoc-name triple is
                 // unambiguous regardless of context.
                 write!(f, "<{receiver} as {trait_name}>::{assoc_name}")
+            }
+            Type::AnonRecord { fields, tail } => {
+                write!(f, "{{")?;
+                let mut first = true;
+                for (n, t) in fields.iter() {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    first = false;
+                    write!(f, "{n}: {t}")?;
+                }
+                if matches!(tail, RowTail::Var(_)) {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    // Row variables render as `..` to indicate "more
+                    // fields possible". Don't leak the internal id.
+                    write!(f, "...")?;
+                }
+                write!(f, "}}")
             }
         }
     }
@@ -282,6 +322,22 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
         Type::Set(inner) => free_vars_in(inner),
         Type::Channel(inner) => free_vars_in(inner),
         Type::AssocProj { receiver, .. } => free_vars_in(receiver),
+        Type::AnonRecord { fields, tail } => {
+            let mut fvs = Vec::new();
+            for t in fields.values() {
+                for v in free_vars_in(t) {
+                    if !fvs.contains(&v) {
+                        fvs.push(v);
+                    }
+                }
+            }
+            if let RowTail::Var(v) = tail
+                && !fvs.contains(v)
+            {
+                fvs.push(*v);
+            }
+            fvs
+        }
         Type::Int
         | Type::Float
         | Type::ExtFloat
@@ -339,6 +395,38 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             trait_name: *trait_name,
             assoc_name: *assoc_name,
         },
+        Type::AnonRecord { fields, tail } => {
+            let new_fields: BTreeMap<Symbol, Type> = fields
+                .iter()
+                .map(|(n, t)| (*n, substitute_vars(t, mapping)))
+                .collect();
+            let new_tail = match tail {
+                RowTail::Closed => RowTail::Closed,
+                RowTail::Var(v) => match mapping.get(v) {
+                    // If the row var resolved to a record, merge its
+                    // fields and propagate its tail.
+                    Some(Type::AnonRecord {
+                        fields: extra_fields,
+                        tail: extra_tail,
+                    }) => {
+                        let mut merged = new_fields.clone();
+                        for (n, t) in extra_fields.iter() {
+                            merged.insert(*n, substitute_vars(t, mapping));
+                        }
+                        return Type::AnonRecord {
+                            fields: merged,
+                            tail: extra_tail.clone(),
+                        };
+                    }
+                    Some(_other) => RowTail::Var(*v), // can't merge sensibly
+                    None => RowTail::Var(*v),
+                },
+            };
+            Type::AnonRecord {
+                fields: new_fields,
+                tail: new_tail,
+            }
+        }
         _ => ty.clone(),
     }
 }
@@ -424,6 +512,13 @@ pub fn substitute_enum_params(
             receiver: Box::new(substitute_enum_params(receiver, param_var_ids, type_args)),
             trait_name: *trait_name,
             assoc_name: *assoc_name,
+        },
+        Type::AnonRecord { fields, tail } => Type::AnonRecord {
+            fields: fields
+                .iter()
+                .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
+                .collect(),
+            tail: tail.clone(),
         },
         _ => field_ty.clone(),
     }

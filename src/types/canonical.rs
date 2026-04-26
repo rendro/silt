@@ -266,6 +266,14 @@ pub fn canonicalize(ty: &Type) -> Type {
             Type::Generic(*name, args.iter().map(canonicalize).collect())
         }
 
+        // ── Anonymous structural records ───────────────────────────
+        // Recurse on each field. Tail is preserved as-is — row variables
+        // are inference-internal and unification handles their binding.
+        Type::AnonRecord { fields, tail } => Type::AnonRecord {
+            fields: fields.iter().map(|(n, t)| (*n, canonicalize(t))).collect(),
+            tail: tail.clone(),
+        },
+
         // ── Associated-type projection ─────────────────────────────
         // `<T as Trait>::Item` reduces to the impl's binding when the
         // receiver is concrete. If the receiver canonicalises to a
@@ -416,8 +424,14 @@ pub fn canonical_name(ty: &Type) -> String {
         // as Var to keep dispatch tables from accidentally keying on a
         // pending projection.
         Type::AssocProj { .. } => "_".to_string(),
+        // Anonymous structural records have no nominal name; use a
+        // synthetic dispatch key. v1 of row polymorphism does not
+        // auto-derive any trait on anon records, so dispatch via this
+        // key is intentionally never registered.
+        Type::AnonRecord { .. } => "<anon>".to_string(),
     }
 }
+
 
 /// Canonicalise a type-name [`Symbol`] for dispatch-table keys.
 ///
@@ -479,7 +493,7 @@ fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
         Type::Tuple(_) => Some(intern("Tuple")),
         Type::Fun(_, _) => Some(intern("Fn")),
         Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } => None,
+        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } | Type::AnonRecord { .. } => None,
     }
 }
 

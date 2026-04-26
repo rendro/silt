@@ -1919,6 +1919,33 @@ impl Vm {
                     )));
                 }
             }
+            Op::DestructRecordRest => {
+                let count = self.read_u8()? as usize;
+                let mut excluded: Vec<String> = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let ni = self.read_u16()? as usize;
+                    excluded.push(self.read_constant_string(ni)?);
+                }
+                let val = self.pop()?;
+                if let Value::Record(_, fields) = val {
+                    let mut rest_fields: std::collections::BTreeMap<String, Value> =
+                        std::collections::BTreeMap::new();
+                    for (k, v) in fields.iter() {
+                        if !excluded.iter().any(|e| e == k) {
+                            rest_fields.insert(k.clone(), v.clone());
+                        }
+                    }
+                    self.push(Value::Record(
+                        "<anon>".to_string(),
+                        std::sync::Arc::new(rest_fields),
+                    ));
+                } else {
+                    return Err(VmError::new(format!(
+                        "record rest destructure: expected record, got {}",
+                        self.user_facing_type_name(&val)
+                    )));
+                }
+            }
             Op::TestRecordTag => {
                 let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;

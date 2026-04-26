@@ -2483,6 +2483,48 @@ impl Compiler {
                 }
             }
 
+            ExprKind::AnonRecord { spread, fields } => {
+                if fields.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "anon record literal cannot have more than 255 fields".into(),
+                        span,
+                    });
+                }
+                if let Some(base) = spread {
+                    // Extend op: compile base, then RecordUpdate-style merge
+                    // (RecordUpdate already supports adding new fields too).
+                    self.compile_expr(base)?;
+                    let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
+                    for (_, val) in fields {
+                        self.compile_expr(val)?;
+                    }
+                    self.current_chunk().emit_op(Op::RecordUpdate, span);
+                    self.current_chunk().emit_u8(field_names.len() as u8, span);
+                    for fname in &field_names {
+                        let field_idx =
+                            self.add_constant(Value::String(resolve(*fname)), span)?;
+                        self.current_chunk().emit_u16(field_idx, span);
+                    }
+                } else {
+                    // Closed anon record literal: same encoding as nominal
+                    // RecordCreate but with synthetic name "<anon>".
+                    let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
+                    for (_, val) in fields {
+                        self.compile_expr(val)?;
+                    }
+                    let type_name_idx =
+                        self.add_constant(Value::String("<anon>".to_string()), span)?;
+                    self.current_chunk().emit_op(Op::MakeRecord, span);
+                    self.current_chunk().emit_u16(type_name_idx, span);
+                    self.current_chunk().emit_u8(field_names.len() as u8, span);
+                    for fname in &field_names {
+                        let field_idx =
+                            self.add_constant(Value::String(resolve(*fname)), span)?;
+                        self.current_chunk().emit_u16(field_idx, span);
+                    }
+                }
+            }
+
             ExprKind::Loop { bindings, body } => {
                 self.compile_loop(bindings, body, span)?;
             }

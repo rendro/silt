@@ -90,6 +90,7 @@ fn op_from_byte(byte: u8) -> Option<Op> {
         b if b == Op::DestructList as u8 => Op::DestructList,
         b if b == Op::DestructListRest as u8 => Op::DestructListRest,
         b if b == Op::DestructRecordField as u8 => Op::DestructRecordField,
+        b if b == Op::DestructRecordRest as u8 => Op::DestructRecordRest,
         b if b == Op::TestRecordTag as u8 => Op::TestRecordTag,
         b if b == Op::TestMapHasKey as u8 => Op::TestMapHasKey,
         b if b == Op::DestructMapValue as u8 => Op::DestructMapValue,
@@ -173,6 +174,7 @@ fn op_name(op: Op) -> &'static str {
         Op::DestructList => "DestructList",
         Op::DestructListRest => "DestructListRest",
         Op::DestructRecordField => "DestructRecordField",
+        Op::DestructRecordRest => "DestructRecordRest",
         Op::TestRecordTag => "TestRecordTag",
         Op::TestMapHasKey => "TestMapHasKey",
         Op::DestructMapValue => "DestructMapValue",
@@ -433,6 +435,24 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
                 write!(
                     line,
                     "\n      |  field {field_name_index:<5} ; {field_comment}"
+                )
+                .unwrap();
+                next += 2;
+            }
+            (line, next)
+        }
+
+        // ── DestructRecordRest: u8 count, then count x u16 name_index
+        Op::DestructRecordRest => {
+            let field_count = code[offset + 1];
+            let mut line = format!("{offset:04}  {name:<20} {field_count}");
+            let mut next = offset + 2;
+            for _ in 0..field_count {
+                let field_name_index = read_u16(code, next);
+                let field_comment = constant_comment(chunk, field_name_index);
+                write!(
+                    line,
+                    "\n      |  exclude {field_name_index:<5} ; {field_comment}"
                 )
                 .unwrap();
                 next += 2;

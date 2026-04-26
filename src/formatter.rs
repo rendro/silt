@@ -2759,6 +2759,14 @@ fn expr_max_line(expr: &Expr) -> usize {
                 visit(v);
             }
         }
+        ExprKind::AnonRecord { spread, fields } => {
+            if let Some(s) = spread {
+                visit(s);
+            }
+            for (_, v) in fields {
+                visit(v);
+            }
+        }
         ExprKind::Match { expr, arms } => {
             if let Some(e) = expr.as_deref() {
                 visit(e);
@@ -5424,6 +5432,17 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             )
         }
 
+        ExprKind::AnonRecord { spread, fields } => {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(s) = spread {
+                parts.push(format!("...{}", format_expr(s, depth)));
+            }
+            for (fname, fexpr) in fields {
+                parts.push(format!("{fname}: {}", format_expr(fexpr, depth)));
+            }
+            format!("{{ {} }}", parts.join(", "))
+        }
+
         ExprKind::Match { expr, arms } => match expr {
             Some(scrutinee) => {
                 let scrutinee_str = format_expr(scrutinee, depth);
@@ -5640,6 +5659,22 @@ fn format_pattern(pattern: &Pattern) -> String {
             format!("#{{ {} }}", items.join(", "))
         }
         PatternKind::Pin(name) => format!("^{name}"),
+        PatternKind::AnonRecord { fields, rest } => {
+            let mut items: Vec<String> = fields
+                .iter()
+                .map(|(fname, sub)| {
+                    if let Some(p) = sub {
+                        format!("{fname}: {}", format_pattern(p))
+                    } else {
+                        resolve(*fname)
+                    }
+                })
+                .collect();
+            if let Some(rname) = rest {
+                items.push(format!("...{}", resolve(*rname)));
+            }
+            format!("{{ {} }}", items.join(", "))
+        }
     }
 }
 
@@ -5678,6 +5713,16 @@ fn format_type_expr(ty: &TypeExpr) -> String {
                     resolve(*assoc_name)
                 )
             }
+        }
+        TypeExprKind::AnonRecord { fields, tail } => {
+            let mut items: Vec<String> = fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", resolve(*n), format_type_expr(t)))
+                .collect();
+            if let Some(rname) = tail {
+                items.push(format!("...{}", resolve(*rname)));
+            }
+            format!("{{ {} }}", items.join(", "))
         }
     }
 }

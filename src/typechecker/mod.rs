@@ -512,6 +512,16 @@ impl TypeChecker {
         Type::Var(v)
     }
 
+    /// Allocate a fresh `TyVar` id without wrapping it in `Type::Var`.
+    /// Used by row polymorphism for `RowTail::Var(id)` where the id is
+    /// the binding target rather than a type position.
+    pub(super) fn fresh_tyvar_id(&mut self) -> TyVar {
+        let v = self.next_var;
+        self.next_var += 1;
+        self.subst.push(None);
+        v
+    }
+
     // ── Substitution / apply ────────────────────────────────────────
 
     /// Walk the substitution chain to find the most resolved type.
@@ -555,11 +565,309 @@ impl TypeChecker {
                 trait_name: *trait_name,
                 assoc_name: *assoc_name,
             },
+            // Anon records: apply through each field; if the row tail
+            // is a Var that resolved to another AnonRecord, merge its
+            // fields and propagate its tail.
+            Type::AnonRecord { fields, tail } => {
+                use std::collections::BTreeMap;
+                let mut new_fields: BTreeMap<Symbol, Type> = fields
+                    .iter()
+                    .map(|(n, t)| (*n, self.apply(t)))
+                    .collect();
+                let new_tail = match tail {
+                    RowTail::Closed => RowTail::Closed,
+                    RowTail::Var(v) => {
+                        if let Some(Some(resolved)) = self.subst.get(*v) {
+                            let resolved = self.apply(resolved);
+                            if let Type::AnonRecord {
+                                fields: rfields,
+                                tail: rtail,
+                            } = resolved
+                            {
+                                for (n, t) in rfields {
+                                    new_fields.entry(n).or_insert(t);
+                                }
+                                rtail
+                            } else {
+                                // Tail var resolved to something other than a
+                                // record — keep it, the unify caller will
+                                // already have errored if it's a real mismatch.
+                                RowTail::Var(*v)
+                            }
+                        } else {
+                            RowTail::Var(*v)
+                        }
+                    }
+                };
+                Type::AnonRecord {
+                    fields: new_fields,
+                    tail: new_tail,
+                }
+            }
             _ => ty.clone(),
         }
     }
 
     // ── Unification ─────────────────────────────────────────────────
+
+    /// Helper: substitute record param vars with the call-site type
+    /// args and return the field list. Used by anon×nominal-via-Generic
+    /// unification.
+    fn instantiate_record_fields_with_args(
+        &mut self,
+        name: Symbol,
+        args: &[Type],
+    ) -> Vec<(Symbol, Type)> {
+        if let Some(rec_info) = self.records.get(&name).cloned() {
+            if let Some(param_var_ids) = self.record_param_var_ids.get(&name).cloned() {
+                let mapping: HashMap<TyVar, Type> = if args.len() == param_var_ids.len() {
+                    param_var_ids
+                        .iter()
+                        .zip(args.iter())
+                        .map(|(&v, t)| (v, t.clone()))
+                        .collect()
+                } else {
+                    param_var_ids
+                        .iter()
+                        .map(|&v| (v, self.fresh_var()))
+                        .collect()
+                };
+                rec_info
+                    .fields
+                    .iter()
+                    .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                    .collect()
+            } else {
+                rec_info.fields
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Unify two anon records. See module-level row-poly notes.
+    fn unify_anon_anon(
+        &mut self,
+        f1: std::collections::BTreeMap<Symbol, Type>,
+        tail1: RowTail,
+        f2: std::collections::BTreeMap<Symbol, Type>,
+        tail2: RowTail,
+        span: Span,
+    ) {
+        use std::collections::BTreeMap;
+        // Skip work if both tails point to the same row var AND fields
+        // are identical — already unified.
+        if let (RowTail::Var(v1), RowTail::Var(v2)) = (&tail1, &tail2)
+            && v1 == v2
+            && f1 == f2
+        {
+            return;
+        }
+        // Pairwise unify overlapping fields.
+        let common_keys: Vec<Symbol> =
+            f1.keys().filter(|k| f2.contains_key(k)).copied().collect();
+        for k in &common_keys {
+            let a = f1.get(k).cloned().unwrap();
+            let b = f2.get(k).cloned().unwrap();
+            self.unify(&a, &b, span);
+        }
+        // Determine non-overlapping parts.
+        let only_in_1: BTreeMap<Symbol, Type> = f1
+            .iter()
+            .filter(|(k, _)| !f2.contains_key(*k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        let only_in_2: BTreeMap<Symbol, Type> = f2
+            .iter()
+            .filter(|(k, _)| !f1.contains_key(*k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        match (tail1, tail2) {
+            (RowTail::Closed, RowTail::Closed) => {
+                // Both must have the same field set.
+                if !only_in_1.is_empty() {
+                    let names: Vec<String> = only_in_1
+                        .keys()
+                        .map(|s| crate::intern::resolve(*s))
+                        .collect();
+                    self.error(
+                        format!(
+                            "record literal has unexpected field{} not declared in target type: {}",
+                            if names.len() == 1 { "" } else { "s" },
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                }
+                if !only_in_2.is_empty() {
+                    let names: Vec<String> = only_in_2
+                        .keys()
+                        .map(|s| crate::intern::resolve(*s))
+                        .collect();
+                    self.error(
+                        format!(
+                            "record literal is missing required field{}: {}",
+                            if names.len() == 1 { "" } else { "s" },
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                }
+            }
+            (RowTail::Var(v), RowTail::Closed) => {
+                // Open × Closed: open must be a subset of closed; bind
+                // v to a closed record carrying the leftover closed fields.
+                if !only_in_1.is_empty() {
+                    let names: Vec<String> = only_in_1
+                        .keys()
+                        .map(|s| crate::intern::resolve(*s))
+                        .collect();
+                    self.error(
+                        format!(
+                            "record open side has fields not present in closed target: {}",
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                    return;
+                }
+                let leftover = Type::AnonRecord {
+                    fields: only_in_2,
+                    tail: RowTail::Closed,
+                };
+                if !occurs_in(v, &leftover) {
+                    self.subst[v] = Some(leftover);
+                }
+            }
+            (RowTail::Closed, RowTail::Var(v)) => {
+                if !only_in_2.is_empty() {
+                    let names: Vec<String> = only_in_2
+                        .keys()
+                        .map(|s| crate::intern::resolve(*s))
+                        .collect();
+                    self.error(
+                        format!(
+                            "record open side has fields not present in closed target: {}",
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                    return;
+                }
+                let leftover = Type::AnonRecord {
+                    fields: only_in_1,
+                    tail: RowTail::Closed,
+                };
+                if !occurs_in(v, &leftover) {
+                    self.subst[v] = Some(leftover);
+                }
+            }
+            (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
+                // Same row var, but field disagreement: impossible to
+                // satisfy.
+                if !only_in_1.is_empty() || !only_in_2.is_empty() {
+                    self.error(
+                        "row variable shared between two records with mismatched field sets"
+                            .to_string(),
+                        span,
+                    );
+                }
+            }
+            (RowTail::Var(v1), RowTail::Var(v2)) => {
+                // Open × Open: bind v1 to a record carrying only_in_2 with
+                // a fresh shared row tail; bind v2 symmetrically.
+                let new_tail_id = self.fresh_tyvar_id();
+                let new_tail = RowTail::Var(new_tail_id);
+                let to_v1 = Type::AnonRecord {
+                    fields: only_in_2,
+                    tail: new_tail.clone(),
+                };
+                let to_v2 = Type::AnonRecord {
+                    fields: only_in_1,
+                    tail: new_tail,
+                };
+                if !occurs_in(v1, &to_v1) {
+                    self.subst[v1] = Some(to_v1);
+                }
+                if !occurs_in(v2, &to_v2) {
+                    self.subst[v2] = Some(to_v2);
+                }
+            }
+        }
+    }
+
+    /// Unify an anon record with a nominal record's field list.
+    /// `nominal_fields` is the resolved (instantiated) field list of the
+    /// nominal record. The nominal record is treated as a closed shape.
+    fn unify_anon_nominal(
+        &mut self,
+        anon_fields: std::collections::BTreeMap<Symbol, Type>,
+        anon_tail: RowTail,
+        nominal_fields: &[(Symbol, Type)],
+        span: Span,
+    ) {
+        use std::collections::BTreeMap;
+        let mut nf_map: BTreeMap<Symbol, Type> = BTreeMap::new();
+        for (n, t) in nominal_fields {
+            nf_map.insert(*n, t.clone());
+        }
+        // Unify pairwise on overlapping fields.
+        for (k, av) in anon_fields.iter() {
+            if let Some(nv) = nf_map.get(k) {
+                self.unify(av, nv, span);
+            }
+        }
+        let only_in_anon: BTreeMap<Symbol, Type> = anon_fields
+            .iter()
+            .filter(|(k, _)| !nf_map.contains_key(*k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        let only_in_nom: BTreeMap<Symbol, Type> = nf_map
+            .iter()
+            .filter(|(k, _)| !anon_fields.contains_key(*k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        if !only_in_anon.is_empty() {
+            let names: Vec<String> = only_in_anon
+                .keys()
+                .map(|s| crate::intern::resolve(*s))
+                .collect();
+            self.error(
+                format!(
+                    "anon record has fields not declared on the nominal record: {}",
+                    names.join(", ")
+                ),
+                span,
+            );
+            return;
+        }
+        match anon_tail {
+            RowTail::Closed => {
+                if !only_in_nom.is_empty() {
+                    let names: Vec<String> = only_in_nom
+                        .keys()
+                        .map(|s| crate::intern::resolve(*s))
+                        .collect();
+                    self.error(
+                        format!(
+                            "anon record is missing fields the nominal record requires: {}",
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                }
+            }
+            RowTail::Var(v) => {
+                let leftover = Type::AnonRecord {
+                    fields: only_in_nom,
+                    tail: RowTail::Closed,
+                };
+                if !occurs_in(v, &leftover) {
+                    self.subst[v] = Some(leftover);
+                }
+            }
+        }
+    }
 
     pub(super) fn unify(&mut self, t1: &Type, t2: &Type, span: Span) {
         let t1 = self.apply(t1);
@@ -836,6 +1144,40 @@ impl TypeChecker {
                         span,
                     );
                 }
+            }
+
+            // ── Anon record × Anon record ─────────────────────────────
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: tail1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: tail2,
+                },
+            ) => {
+                self.unify_anon_anon(f1.clone(), tail1.clone(), f2.clone(), tail2.clone(), span);
+            }
+
+            // ── Anon record × Nominal record (widening) ───────────────
+            (Type::AnonRecord { fields: af, tail: at }, Type::Record(_, nf)) => {
+                self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
+            }
+            (Type::Record(_, nf), Type::AnonRecord { fields: af, tail: at }) => {
+                self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
+            }
+            (Type::AnonRecord { fields: af, tail: at }, Type::Generic(name, args))
+                if self.records.contains_key(name) =>
+            {
+                let nf_inst = self.instantiate_record_fields_with_args(*name, args);
+                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
+            }
+            (Type::Generic(name, args), Type::AnonRecord { fields: af, tail: at })
+                if self.records.contains_key(name) =>
+            {
+                let nf_inst = self.instantiate_record_fields_with_args(*name, args);
+                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
             }
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
@@ -2560,6 +2902,14 @@ impl TypeChecker {
                 self.find_alias_cycle(ret, visiting)
             }
             Type::AssocProj { receiver, .. } => self.find_alias_cycle(receiver, visiting),
+            Type::AnonRecord { fields, .. } => {
+                for t in fields.values() {
+                    if let Some(c) = self.find_alias_cycle(t, visiting) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
             Type::Int
             | Type::Float
             | Type::ExtFloat
@@ -2884,6 +3234,46 @@ impl TypeChecker {
                     receiver: Box::new(recv_ty),
                     trait_name: declaring_trait,
                     assoc_name: *assoc_name,
+                }
+            }
+            TypeExprKind::AnonRecord { fields, tail } => {
+                use std::collections::BTreeMap;
+                let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
+                let mut seen: std::collections::HashSet<Symbol> =
+                    std::collections::HashSet::new();
+                for (n, t) in fields {
+                    if !seen.insert(*n) {
+                        self.error(
+                            format!("duplicate field '{}' in anon record type", n),
+                            te.span,
+                        );
+                        continue;
+                    }
+                    field_map.insert(*n, self.resolve_type_expr(t, param_vars));
+                }
+                let row_tail = match tail {
+                    None => RowTail::Closed,
+                    Some(rname) => {
+                        // Row-tail variable name: bind it through param_vars
+                        // so multiple annotations in the same scope sharing
+                        // a row name refer to the same row variable. The
+                        // entry in param_vars is `Type::Var(id)` for normal
+                        // type vars; for row tails we still use the same
+                        // map but carry the id directly.
+                        let key = intern(&format!("__row__{}", resolve(*rname)));
+                        let id = if let Some(Type::Var(v)) = param_vars.get(&key).cloned() {
+                            v
+                        } else {
+                            let id = self.fresh_tyvar_id();
+                            param_vars.insert(key, Type::Var(id));
+                            id
+                        };
+                        RowTail::Var(id)
+                    }
+                };
+                Type::AnonRecord {
+                    fields: field_map,
+                    tail: row_tail,
                 }
             }
         }
@@ -4495,7 +4885,11 @@ fn head_symbol_of(ty: &Type) -> Option<Symbol> {
         Type::Tuple(_) => Some(intern("Tuple")),
         Type::Fun(_, _) => Some(intern("Fn")),
         Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } => None,
+        Type::Var(_)
+        | Type::Error
+        | Type::Never
+        | Type::AssocProj { .. }
+        | Type::AnonRecord { .. } => None,
     }
 }
 
@@ -4586,6 +4980,20 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
             }
             vars
         }
+        PatternKind::AnonRecord { fields, rest } => {
+            let mut vars: Vec<Symbol> = Vec::new();
+            for (field_name, sub_pat) in fields {
+                if let Some(p) = sub_pat {
+                    vars.extend(collect_pattern_vars(p));
+                } else {
+                    vars.push(*field_name);
+                }
+            }
+            if let Some(r) = rest {
+                vars.push(*r);
+            }
+            vars
+        }
         PatternKind::Or(alts) => {
             // Return vars from first alt (they should all be the same after validation)
             alts.first().map(collect_pattern_vars).unwrap_or_default()
@@ -4619,6 +5027,10 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Set(inner) => occurs_in(var, inner),
         Type::Channel(inner) => occurs_in(var, inner),
         Type::AssocProj { receiver, .. } => occurs_in(var, receiver),
+        Type::AnonRecord { fields, tail } => {
+            fields.values().any(|t| occurs_in(var, t))
+                || matches!(tail, RowTail::Var(v) if *v == var)
+        }
         Type::Int
         | Type::Float
         | Type::ExtFloat
