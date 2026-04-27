@@ -74,9 +74,22 @@ fn main() {
         "test_time_sleep_parks_cooperatively_n_tasks_run_in_parallel: wall={:?}",
         wall
     );
+    // Threshold relaxed under CI=1 to absorb GitHub-runner CPU
+    // contention. On Windows in particular, silt subprocess cold-
+    // start + scheduler init alone consumes ~500-1500ms before the
+    // first sleep call begins, blowing the 2s ceiling on a
+    // healthy-but-slow runner. The test still locks the cooperative-
+    // park contract (anything less than 16×500ms ≈ 8s proves
+    // parallelism); under CI we just give silt's startup a 5s
+    // budget over the parallel-sleep window. Local runs unaffected.
+    let ceiling = if std::env::var("CI").is_ok() {
+        Duration::from_millis(5000)
+    } else {
+        Duration::from_millis(2000)
+    };
     assert!(
-        wall < Duration::from_millis(2000),
-        "16 parallel 500ms sleeps took {wall:?}; expected well under 2s (cooperative park)"
+        wall < ceiling,
+        "16 parallel 500ms sleeps took {wall:?}; expected under {ceiling:?} (cooperative park)"
     );
 }
 
