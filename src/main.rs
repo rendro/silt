@@ -26,9 +26,27 @@ mod cli;
 use crate::cli::help::usage_text;
 use crate::cli::watch::maybe_handle_watch;
 
+// Windows defaults to a 1 MiB main-thread stack which is too tight for
+// silt's recursive walks (type canonicalization, auto-derive synthesis,
+// row-polymorphic field unification, supertrait obligation chasing).
+// Linux/macOS default to 8 MiB and are unaffected. Spawn the entire
+// dispatcher on a worker thread with an explicit 8 MiB reserve so the
+// build behaves identically across platforms — same trick rustc uses.
+const SILT_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let join = std::thread::Builder::new()
+        .name("silt-main".into())
+        .stack_size(SILT_STACK_SIZE)
+        .spawn(move || run_main(args))
+        .expect("spawning silt main worker thread");
+    if let Err(payload) = join.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
 
+fn run_main(args: Vec<String>) {
     if args.len() < 2 {
         eprint!("{}", usage_text());
         process::exit(1);
