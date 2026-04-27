@@ -10,9 +10,9 @@ env:
 
 jobs:
   check:
-    name: Check & Test
+    name: Check & Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -30,29 +30,46 @@ jobs:
       - name: cargo check --benches
         run: cargo check --benches --all-features
 
-      # Hard wall-clock cap on cargo test. The silt runtime has a
-      # known intermittent "deadlock detector false-positive" in
-      # `test_channel_receive_blocks_scheduled_task` (tests/integration.rs)
-      # that, when it fires, panics the test and leaves the integration
-      # test binary's shared scheduler state poisoned, hanging every
-      # subsequent test. Without a wall-clock bound the GitHub Actions
-      # 6h hard ceiling fires instead and we get no diagnostic output.
-      # 20 minutes is ~10x the healthy local runtime; if the suite
-      # exceeds it, surface a clear failure with logs intact.
-      #
-      # `perl -e 'alarm; exec'` is portable: works on every GitHub
-      # runner image (Linux, macOS) without needing coreutils. macOS
-      # ships no `timeout` binary by default; this avoids the brew
-      # install detour.
-      - name: cargo test
-        run: |
-          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo test --all-features
-
       - name: cargo clippy
         run: cargo clippy --all-features -- -D warnings
 
       - name: cargo fmt
         run: cargo fmt -- --check
+
+  test-linux:
+    # Split Linux test runs across 3 parallel matrix partitions so total
+    # wall-clock approximates max(slowest partition) instead of the sum.
+    # Partitions are hand-curated for balance:
+    #   * heavy   : integration.rs (~180s) + integration_concurrency
+    #   * concurrency : scheduler / channel / concurrency_stress / docs_stdlib walker
+    #   * rest    : everything else (lib unit tests + 180+ small binaries)
+    # Adding a new test file → defaults to the `rest` partition. Move it
+    # into the `heavy` or `concurrency` list only when its wall-clock
+    # justifies the partition split.
+    name: Test Linux (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [heavy, concurrency, rest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Different test sets pull different code paths into the
+          # binaries — avoid the partitions stomping each other's caches.
+          shared-key: test-${{ matrix.partition }}
+
+      - name: cargo test (${{ matrix.partition }})
+        run: |
+          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' \
+            bash .github/scripts/run-test-partition.sh ${{ matrix.partition }}
 
   test-os:
     name: Test (${{ matrix.os }})
