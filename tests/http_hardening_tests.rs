@@ -89,6 +89,34 @@ fn wait_for_bind(port: u16, max_wait: Duration) -> bool {
     false
 }
 
+/// Connect to the silt subprocess with a retry loop. `wait_for_bind`
+/// confirms the listener is up via a probe-and-drop cycle, but the
+/// follow-up `TcpStream::connect` from a test can still race the silt
+/// subprocess's accept loop on slow CI runners (Linux occasionally
+/// returned `ECONNREFUSED` between the bind probe drop and the real
+/// connect — see ci flake against med1_handler_error_does_not_leak_vm_error_details).
+/// Retry up to ~2s before giving up, treating `ConnectionRefused` as
+/// transient. Any other error is surfaced immediately so we don't
+/// mask real bugs.
+fn connect_with_retry(port: u16) -> TcpStream {
+    let addr = format!("127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut backoff = Duration::from_millis(20);
+    loop {
+        match TcpStream::connect(&addr) {
+            Ok(s) => return s,
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                if Instant::now() >= deadline {
+                    panic!("connect to {addr}: exhausted retries; last error: {e}");
+                }
+                std::thread::sleep(backoff);
+                backoff = std::cmp::min(backoff * 2, Duration::from_millis(200));
+            }
+            Err(e) => panic!("connect to {addr}: {e}"),
+        }
+    }
+}
+
 /// Spawn `silt run <tmp>` with stdout/stderr piped.
 fn spawn_silt(tmp: &PathBuf) -> Child {
     Command::new(silt_bin())
@@ -151,7 +179,7 @@ fn high1_http_serve_rejects_oversized_body_with_413() {
     // start writing the body — the server should close the socket or
     // respond 413 quickly, long before we finish streaming 50 MiB.
     let body_len: usize = 50 * 1024 * 1024;
-    let mut sock = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    let mut sock = connect_with_retry(port);
     sock.set_write_timeout(Some(Duration::from_secs(10))).ok();
     sock.set_read_timeout(Some(Duration::from_secs(15))).ok();
 
@@ -228,7 +256,7 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
     );
 
     // Attacker: open a connection, send partial headers, then sit there.
-    let mut attacker = TcpStream::connect(("127.0.0.1", port)).expect("attacker connect");
+    let mut attacker = connect_with_retry(port);
     attacker
         .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n")
         .expect("attacker partial write");
@@ -236,7 +264,7 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
 
     // Legitimate client: full request on a new connection, expect 200 fast.
     let start = Instant::now();
-    let mut client = TcpStream::connect(("127.0.0.1", port)).expect("client connect");
+    let mut client = connect_with_retry(port);
     client.set_read_timeout(Some(Duration::from_secs(10))).ok();
     client
         .write_all(
@@ -358,7 +386,7 @@ fn main() {{
     );
 
     // Poke the server; read whatever 500 it returns.
-    let mut sock = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    let mut sock = connect_with_retry(port);
     sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
     sock.write_all(
         format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes(),
@@ -396,4 +424,50 @@ fn main() {{
         stderr.contains("secret-internal-info"),
         "expected VmError detail on stderr for operator debugging; got stderr:\n{stderr}"
     );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Source-grep lock: every test-side TCP connect against the silt
+// subprocess goes through `connect_with_retry`, never raw
+// `TcpStream::connect`. The bare connect is racy on Linux CI runners
+// (see ci flake against med1_handler_error_does_not_leak_vm_error_details).
+// The retry helper masks the brief window between `wait_for_bind` probe
+// teardown and the silt accept loop being ready for the real connect.
+// ────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn http_test_call_sites_use_connect_with_retry_not_bare_tcpstream_connect() {
+    let src = std::fs::read_to_string(file!()).expect("read own source");
+    // Strip line comments crudely so we only inspect executable Rust.
+    let mut code = String::new();
+    for line in src.lines() {
+        let stripped = match line.find("//") {
+            Some(i) => &line[..i],
+            None => line,
+        };
+        code.push_str(stripped);
+        code.push('\n');
+    }
+    // Build the forbidden pattern at runtime so this test's source
+    // doesn't itself match the literal it greps for.
+    let forbidden = format!("TcpStream{}connect(", "::");
+    // Whitelist: `connect_timeout` inside `wait_for_bind` (polled), and
+    // the `connect_with_retry` body which calls `TcpStream::connect(&addr)`
+    // intentionally. Everything else is a regression.
+    for (lineno, line) in code.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("connect_timeout") {
+            continue;
+        }
+        if trimmed.contains("connect(&addr)") {
+            continue;
+        }
+        assert!(
+            !trimmed.contains(&forbidden),
+            "line {} uses raw {} — must go through connect_with_retry: {}",
+            lineno + 1,
+            forbidden,
+            trimmed,
+        );
+    }
 }

@@ -6,12 +6,22 @@
 //!
 //! All tests drive Silt source through `InProcessRunner` so the full
 //! compile → VM → scheduler → TimerManager chain is exercised end-to-end.
-//! Wall-clock budgets are generous (2-10s) to tolerate CI jitter.
+//! Wall-clock budgets are generous (5-10s) to tolerate CI jitter.
 
 use std::time::Duration;
 
 use silt::scheduler::test_support::InProcessRunner;
 use silt::value::Value;
+
+/// Per-trial wall-clock budget for tests in this file that exercise quick
+/// recv_timeout shapes (zero-duration delivery, negative-duration rejection,
+/// try-receive miss). Locked at 10s because Windows GitHub-hosted runners
+/// can take long enough on the first in-process trial (compile + Scheduler
+/// bring-up + worker thread spawn + TimerManager init) that a 2-second
+/// budget produced consistent CI flakes — `TrialOutcome { stdout: "",
+/// timed_out: true, elapsed: ~2s }`. Applied uniformly across platforms so
+/// we do not accumulate cfg(windows) hacks.
+const TEST_HARNESS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Happy path: a sibling task sends a value well within the timeout budget.
 /// `recv_timeout` must return `Ok(v)` and the program completes under the
@@ -123,7 +133,7 @@ fn main() {
   }
 }
 "#;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(TEST_HARNESS_TIMEOUT);
     let outcome = runner.run_trial();
     assert!(outcome.ok(), "run should succeed: {outcome:?}");
     assert_eq!(outcome.result, Some(Value::Int(7)));
@@ -146,7 +156,7 @@ fn main() {
   }
 }
 "#;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(TEST_HARNESS_TIMEOUT);
     let outcome = runner.run_trial();
     assert!(outcome.ok(), "run should succeed: {outcome:?}");
     assert_eq!(outcome.result, Some(Value::String("timeout".into())));
@@ -265,7 +275,7 @@ fn main() {
   }
 }
 "#;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    let runner = InProcessRunner::new(src).with_budget(TEST_HARNESS_TIMEOUT);
     let outcome = runner.run_trial();
     assert!(
         outcome.error_message.is_some(),
@@ -275,5 +285,19 @@ fn main() {
     assert!(
         msg.contains("channel.recv_timeout: duration must be non-negative"),
         "expected exact negative-duration diagnostic from src/builtins/concurrency.rs:292; got: {msg}",
+    );
+}
+
+/// Lock the harness timeout above the Windows-runner safe floor.
+///
+/// Locked because Windows GitHub-hosted runners cold-start the silt
+/// subprocess + scheduler in ~2-4s, and the previous 2-second budget
+/// produced consistent CI flakes (`stdout: ""`, `timed_out: true`).
+/// If you tighten this back below 8s, expect Windows CI flakes.
+#[test]
+fn channel_timeout_test_harness_uses_at_least_8_seconds() {
+    assert!(
+        TEST_HARNESS_TIMEOUT >= Duration::from_secs(8),
+        "harness timeout regressed below the Windows-runner safe floor",
     );
 }
