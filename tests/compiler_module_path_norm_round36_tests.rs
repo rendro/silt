@@ -37,8 +37,7 @@ fn fresh_tempdir() -> PathBuf {
     // COUNTER at 0) cannot collide on the same tempdir name.
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let pid = std::process::id();
-    let dir =
-        std::env::temp_dir().join(format!("silt_r36_compiler_path_norm_{pid}_{n}"));
+    let dir = std::env::temp_dir().join(format!("silt_r36_compiler_path_norm_{pid}_{n}"));
     // Clean up any stale directory from a previous run.
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("failed to create tempdir");

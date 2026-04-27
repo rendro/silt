@@ -20,13 +20,37 @@ use silt::typechecker;
 
 /// Create a fresh tempdir holding the supplied module files plus a
 /// `main.silt` containing `main_source`. Returns the dir path.
+///
+/// On macOS, `std::env::temp_dir()` returns `/var/folders/...` but
+/// `/var` is a symlink to `/private/var`. The silt compiler may
+/// canonicalize one form and then read the other; without
+/// `.canonicalize()` here, sibling-module imports flake intermittently
+/// because path resolution sees a missing-or-stale `a.silt`. We also
+/// pre-clean any stale dir from a prior run (macOS `/var/folders/` is
+/// not auto-cleaned between CI runs) so we never inherit dangling
+/// content.
 fn setup_dir(files: &[(&str, &str)], main_source: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("silt_xmod_{}_{}", std::process::id(), rand_u64()));
-    fs::create_dir_all(&dir).expect("mkdir");
+    let raw_dir =
+        std::env::temp_dir().join(format!("silt_xmod_{}_{}", std::process::id(), rand_u64()));
+    // Defensive pre-clean against stale state from a prior run.
+    let _ = fs::remove_dir_all(&raw_dir);
+    fs::create_dir_all(&raw_dir).expect("mkdir");
+    // Canonicalize so the silt compiler's path resolution matches
+    // whatever it internally resolves to (matters on macOS symlinked
+    // /var -> /private/var).
+    let dir = raw_dir.canonicalize().expect("canonicalize tempdir");
     for (name, content) in files {
         fs::write(dir.join(name), content).expect("write module");
     }
     fs::write(dir.join("main.silt"), main_source).expect("write main");
+    // Best-effort fsync of the directory entry to reduce the
+    // visibility race against APFS / Spotlight on macOS. If the open
+    // fails (e.g. on Windows where directory open semantics differ),
+    // we silently fall through — the test still works on platforms
+    // that don't need this.
+    if let Ok(d) = fs::File::open(&dir) {
+        let _ = d.sync_all();
+    }
     dir
 }
 

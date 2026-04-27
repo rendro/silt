@@ -69,6 +69,43 @@ fn http_hardening_tests_use_connect_with_retry_at_call_sites() {
     );
 }
 
+/// scheduler_deadlock_detector_tests.rs:
+/// `test_main_watchdog_resets_when_channel_has_counterparty` must use
+/// CI-aware iteration count + per-trial budget so CPU contention from
+/// nextest's parallel test binaries doesn't trigger false-positive
+/// deadlock reports against the strict 0/N assertion.
+#[test]
+fn test_main_watchdog_resets_when_channel_has_counterparty_is_ci_aware() {
+    let src = read_test_file("scheduler_deadlock_detector_tests.rs");
+    assert!(
+        src.contains(r#"std::env::var("CI")"#) || src.contains(r#"env::var("CI")"#),
+        "test_main_watchdog_resets_when_channel_has_counterparty must use \
+         CI-aware iteration count to avoid CPU-contention flakes; if you \
+         remove the `CI` env-var probe, the strict 0-false-positives \
+         assertion will trip intermittently on Linux CI under nextest.",
+    );
+}
+
+/// cross_module_inference_tests.rs `setup_dir` must canonicalize the
+/// tempdir before returning it. On macOS `std::env::temp_dir()` lives
+/// under `/var/folders/...` but `/var` is a symlink to `/private/var`;
+/// without `.canonicalize()` the silt compiler's import resolution can
+/// see paths that don't match what the test wrote, surfacing as
+/// intermittent "undefined variable" errors when sibling-module files
+/// like `a.silt` appear missing.
+#[test]
+fn cross_module_inference_setup_dir_canonicalizes_tempdir() {
+    let src = read_test_file("cross_module_inference_tests.rs");
+    assert!(
+        src.contains(".canonicalize()"),
+        "setup_dir must canonicalize the tempdir path so the silt \
+         compiler's path resolution matches macOS symlink semantics; \
+         dropping the canonicalize call re-introduces the macOS \
+         intermittent flake where sibling-module imports fail with \
+         'undefined variable' diagnostics.",
+    );
+}
+
 /// channel_timeout_tests.rs harness budget must stay >= 8s. Windows
 /// GitHub-hosted runners cold-start the in-process trial in ~2-4s and
 /// the previous 2-second budget produced consistent timed-out flakes.

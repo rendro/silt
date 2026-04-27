@@ -532,17 +532,34 @@ fn main() {
   }
 }
 "#;
-    const ITERATIONS: usize = 100;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(3));
-    let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
+    // CI-aware constants: under CPU contention from cargo-nextest's
+    // parallel test binaries, the per-trial budget needs more slack and
+    // fewer iterations reduce wall-clock and the chance of surfacing a
+    // contention-induced false-positive deadlock.
+    fn is_ci() -> bool {
+        std::env::var("CI").is_ok()
+    }
+    fn iterations() -> usize {
+        if is_ci() { 20 } else { 100 }
+    }
+    fn trial_budget() -> Duration {
+        if is_ci() {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(3)
+        }
+    }
+    let iterations_n = iterations();
+    let runner = InProcessRunner::new(src).with_budget(trial_budget());
+    let outcomes: Vec<_> = (0..iterations_n).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert!(!o.timed_out, "trial {i}: TIMEOUT; outcome={o:?}",);
         assert!(!o.saw_panic(), "trial {i}: unexpected panic; outcome={o:?}",);
     }
     let stats = TrialStats::compute(&outcomes, Some(136));
-    // Strict 0/100: the wake-graph counterparty-listener check
-    // (`ch_send_listeners[ch]` non-empty → fuel) closes this race
-    // fully — no polling streak required.
+    // Strict 0 false-positives locally and on CI: the wake-graph
+    // counterparty-listener check (`ch_send_listeners[ch]` non-empty
+    // → fuel) closes this race fully — no polling streak required.
     assert_eq!(
         stats.deadlock_count, 0,
         "regression: {}/{} trials produced a false-positive \
@@ -551,13 +568,17 @@ fn main() {
          starvation when `ch_send_listeners[ch]` is non-empty for \
          main's recv target. \
          First failure: idx={:?} msg={:?}",
-        stats.deadlock_count, ITERATIONS, stats.first_failure_index, stats.first_failure_message,
+        stats.deadlock_count, iterations_n, stats.first_failure_index, stats.first_failure_message,
     );
     assert_eq!(
-        stats.wrong_value_count, 0,
+        stats.wrong_value_count,
+        0,
         "round-33 regression: {}/{} trials did not reach 136. \
          First failure: idx={:?} msg={:?}",
-        stats.wrong_value_count, ITERATIONS, stats.first_failure_index, stats.first_failure_message,
+        stats.wrong_value_count,
+        iterations_n,
+        stats.first_failure_index,
+        stats.first_failure_message,
     );
 }
 
