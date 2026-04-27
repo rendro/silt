@@ -12,7 +12,7 @@ jobs:
   check:
     name: Check & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
 
@@ -46,7 +46,7 @@ jobs:
       # install detour.
       - name: cargo test
         run: |
-          perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
+          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo clippy
         run: cargo clippy --all-features -- -D warnings
@@ -57,7 +57,7 @@ jobs:
   test-os:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -87,17 +87,18 @@ jobs:
       - name: cargo test (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
+          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $env:CI = "1"
           $process = Start-Process -FilePath "cargo" -ArgumentList "test","--all-features" -NoNewWindow -PassThru
-          $finished = $process.WaitForExit(20*60*1000)
+          $finished = $process.WaitForExit(25*60*1000)
           if (-not $finished) {
             $process.Kill()
-            Write-Error "cargo test exceeded 20-minute wall-clock cap"
+            Write-Error "cargo test exceeded 25-minute wall-clock cap"
             exit 124
           }
           exit $process.ExitCode

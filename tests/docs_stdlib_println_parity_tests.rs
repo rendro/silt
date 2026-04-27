@@ -53,6 +53,8 @@
 
 use std::collections::HashSet;
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Same deny list as `tests/examples_check.rs::all_doc_fn_main_blocks_run_if_safe`.
 const DENY_SUBSTRINGS: &[&str] = &[
@@ -237,9 +239,19 @@ fn docs_stdlib_println_annotations_match_silt_run_stdout() {
     ));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut checked_blocks = 0usize;
-    let mut checked_pairs = 0usize;
+    // Phase 1: walk every doc entry and collect the unique runnable
+    // blocks with annotated println pairs. Deduplication and unsafe
+    // filtering happen here so the parallel worker pool only sees real
+    // work. Sequential because the dedup HashSet is cheap and the
+    // per-block work is in phase 2.
+    struct Job {
+        name: String,
+        opener_line: usize,
+        src: String,
+        stem: String,
+        pairs: Vec<PrintlnPair>,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     let mut seen_blocks: HashSet<u64> = HashSet::new();
 
     for (name, body) in &entries {
@@ -269,91 +281,142 @@ fn docs_stdlib_println_annotations_match_silt_run_stdout() {
                 continue;
             }
 
-            checked_blocks += 1;
-
             // Sanitise binding name for use as a temp filename.
             let stem: String = name
                 .chars()
                 .map(|c| if c.is_alphanumeric() { c } else { '_' })
                 .collect();
-            let file = tmp_dir.join(format!("{stem}_line{opener_line}.silt"));
-            std::fs::write(&file, &src).expect("write temp silt file");
-
-            let output = silt_cmd()
-                .arg("run")
-                .arg(&file)
-                .output()
-                .expect("failed to spawn silt");
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-                failures.push(format!(
-                    "doc[{name}]:{opener_line} (```silt fence): `silt run` exited \
-                     non-zero while the walker was trying to verify println \
-                     annotations. exit={:?}\nstdout:\n{}\nstderr:\n{}",
-                    output.status.code(),
-                    stdout,
-                    stderr
-                ));
-                continue;
-            }
-
-            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stdout_lines: Vec<&str> = stdout.lines().collect();
-
-            let mut cursor = 0usize;
-            for pair in &pairs {
-                let Some(expected) = pair.expected.as_deref() else {
-                    continue;
-                };
-                let want = strip_trailing_commentary(expected.trim()).trim();
-                let illustrative = is_illustrative(expected);
-
-                let max_skip = 32usize;
-                let search_end = stdout_lines.len().min(cursor + max_skip);
-                let mut found_at: Option<usize> = None;
-                for idx in cursor..search_end {
-                    let got = stdout_lines[idx].trim_end();
-                    if illustrative {
-                        if !got.trim().is_empty() {
-                            found_at = Some(idx);
-                            break;
-                        }
-                    } else if got == want {
-                        found_at = Some(idx);
-                        break;
-                    }
-                }
-
-                match found_at {
-                    Some(idx) => {
-                        cursor = idx + 1;
-                        checked_pairs += 1;
-                    }
-                    None => {
-                        if illustrative {
-                            continue;
-                        }
-                        let preview = stdout_lines
-                            .get(cursor..search_end)
-                            .map(|lines| lines.join("\n"))
-                            .unwrap_or_default();
-                        failures.push(format!(
-                            "doc[{name}]:{opener_line} (```silt fence, block line {}): \
-                             println stdout parity mismatch — could not find annotated \
-                             value in remaining stdout.\n  expected: {:?}\n  searched: {:?}\n\
-                             full stdout:\n{}",
-                            pair.block_line,
-                            want,
-                            preview,
-                            stdout
-                        ));
-                    }
-                }
-            }
+            jobs.push(Job {
+                name: name.clone(),
+                opener_line,
+                src,
+                stem,
+                pairs,
+            });
         }
     }
+
+    let checked_blocks = jobs.len();
+
+    // Phase 2: parallel subprocess fan-out. Each subprocess spawn +
+    // silt cold-start is ~50–200ms and dominates the test runtime
+    // (~115s sequential). A worker pool drops the wall-clock to
+    // (jobs / num_workers) × per-job-cost. We size the pool to
+    // available CPUs but cap at 8 so we don't oversubscribe small
+    // CI runners and don't starve the silt scheduler workers spawned
+    // by each child process.
+    let pool_size = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(2, 8);
+
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let checked_pairs = AtomicUsize::new(0);
+    let next_job = AtomicUsize::new(0);
+    let jobs_ref = &jobs;
+    let tmp_dir_ref = &tmp_dir;
+    let failures_ref = &failures;
+    let checked_pairs_ref = &checked_pairs;
+    let next_job_ref = &next_job;
+
+    std::thread::scope(|scope| {
+        for _ in 0..pool_size {
+            scope.spawn(move || {
+                loop {
+                    let idx = next_job_ref.fetch_add(1, Ordering::SeqCst);
+                    if idx >= jobs_ref.len() {
+                        return;
+                    }
+                    let job = &jobs_ref[idx];
+                    let file = tmp_dir_ref
+                        .join(format!("{}_line{}.silt", job.stem, job.opener_line));
+                    std::fs::write(&file, &job.src).expect("write temp silt file");
+
+                    let output = silt_cmd()
+                        .arg("run")
+                        .arg(&file)
+                        .output()
+                        .expect("failed to spawn silt");
+
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                        failures_ref.lock().unwrap().push(format!(
+                            "doc[{}]:{} (```silt fence): `silt run` exited \
+                             non-zero while the walker was trying to verify println \
+                             annotations. exit={:?}\nstdout:\n{}\nstderr:\n{}",
+                            job.name,
+                            job.opener_line,
+                            output.status.code(),
+                            stdout,
+                            stderr
+                        ));
+                        continue;
+                    }
+
+                    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                    let stdout_lines: Vec<&str> = stdout.lines().collect();
+
+                    let mut cursor = 0usize;
+                    for pair in &job.pairs {
+                        let Some(expected) = pair.expected.as_deref() else {
+                            continue;
+                        };
+                        let want = strip_trailing_commentary(expected.trim()).trim();
+                        let illustrative = is_illustrative(expected);
+
+                        let max_skip = 32usize;
+                        let search_end = stdout_lines.len().min(cursor + max_skip);
+                        let mut found_at: Option<usize> = None;
+                        for idx in cursor..search_end {
+                            let got = stdout_lines[idx].trim_end();
+                            if illustrative {
+                                if !got.trim().is_empty() {
+                                    found_at = Some(idx);
+                                    break;
+                                }
+                            } else if got == want {
+                                found_at = Some(idx);
+                                break;
+                            }
+                        }
+
+                        match found_at {
+                            Some(idx) => {
+                                cursor = idx + 1;
+                                checked_pairs_ref.fetch_add(1, Ordering::SeqCst);
+                            }
+                            None => {
+                                if illustrative {
+                                    continue;
+                                }
+                                let preview = stdout_lines
+                                    .get(cursor..search_end)
+                                    .map(|lines| lines.join("\n"))
+                                    .unwrap_or_default();
+                                failures_ref.lock().unwrap().push(format!(
+                                    "doc[{}]:{} (```silt fence, block line {}): \
+                                     println stdout parity mismatch — could not find \
+                                     annotated value in remaining stdout.\n  \
+                                     expected: {:?}\n  searched: {:?}\n\
+                                     full stdout:\n{}",
+                                    job.name,
+                                    job.opener_line,
+                                    pair.block_line,
+                                    want,
+                                    preview,
+                                    stdout
+                                ));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let failures: Vec<String> = failures.into_inner().unwrap();
+    let checked_pairs = checked_pairs.load(Ordering::SeqCst);
 
     assert!(
         checked_blocks > 0,

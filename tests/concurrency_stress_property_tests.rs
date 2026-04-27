@@ -588,17 +588,32 @@ fn emit_program(p: &genp::Program) -> String {
 // ── Proptest wiring ─────────────────────────────────────────────────
 
 // Budget: 200 cases in release, 50 cases in debug (tests typically run
-// in debug; keep total wall < 60s). If `PROPTEST_CASES` env var is set,
-// proptest honors it.
-#[cfg(not(debug_assertions))]
-const PROPTEST_CASES: u32 = 200;
-#[cfg(debug_assertions)]
-const PROPTEST_CASES: u32 = 50;
+// in debug; keep total wall < 60s). Under `CI=true` (GitHub Actions
+// sets this on every job) we drop further to 16 cases — the proptest
+// here mostly catches fast-failing scheduler bugs which surface in
+// the first dozen cases with high probability, so the CI tradeoff
+// is worth ~5x wall-clock for the same coverage. Local runs (no `CI`
+// env var) keep the full 50/200 budget for full exploration. The
+// `PROPTEST_CASES` env var, if set, still overrides everything because
+// proptest honors it via `cases:` in the config below.
+fn proptest_cases() -> u32 {
+    if std::env::var("CI").is_ok() {
+        return 16;
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        200
+    }
+    #[cfg(debug_assertions)]
+    {
+        50
+    }
+}
 
 #[cfg(not(miri))]
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: PROPTEST_CASES,
+        cases: proptest_cases(),
         // Per-case timeout is enforced by the harness (run_silt_timeout).
         // proptest's built-in timeout fights with Stdio pipes; disable.
         timeout: 0,

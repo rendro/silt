@@ -8,6 +8,45 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Pool size for parallel subprocess fan-out inside individual tests.
+/// Cargo test already runs distinct tests in parallel, so we keep this
+/// modest (≤8) to avoid oversubscribing CI runners and starving the silt
+/// scheduler workers spawned by each child process. Subprocess spawn +
+/// silt cold-start dominates these walkers, so even 4 workers gives a
+/// large wall-clock reduction.
+fn pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(2, 8)
+}
+
+/// Run `task` for each item in `items` across a small thread pool, in
+/// parallel. The task is `Sync`-bound so it can borrow shared state by
+/// reference; failures should be pushed into shared `Mutex`-protected
+/// vecs from inside the closure.
+fn par_for_each<T: Sync>(items: &[T], task: impl Fn(&T) + Sync) {
+    let next = AtomicUsize::new(0);
+    let task_ref = &task;
+    let next_ref = &next;
+    let n = items.len();
+    std::thread::scope(|scope| {
+        for _ in 0..pool_size() {
+            scope.spawn(move || {
+                loop {
+                    let idx = next_ref.fetch_add(1, Ordering::SeqCst);
+                    if idx >= n {
+                        return;
+                    }
+                    task_ref(&items[idx]);
+                }
+            });
+        }
+    });
+}
 
 /// Files that are intentionally skipped. Keep this list empty unless a
 /// concrete reason is documented inline.
@@ -91,16 +130,16 @@ fn every_example_type_checks_and_has_no_warnings() {
         examples_dir.display()
     );
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut warn_failures: Vec<String> = Vec::new();
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let warn_failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-    for file in &files {
+    par_for_each(&files, |file| {
         let name = file
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default();
         if SKIP.contains(&name) {
-            continue;
+            return;
         }
 
         let output = silt_cmd()
@@ -113,14 +152,14 @@ fn every_example_type_checks_and_has_no_warnings() {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         if !output.status.success() {
-            failures.push(format!(
+            failures.lock().unwrap().push(format!(
                 "{}: exit={:?}\nstdout:\n{}\nstderr:\n{}",
                 file.display(),
                 output.status.code(),
                 stdout,
                 stderr
             ));
-            continue;
+            return;
         }
 
         // Round-16 GAP G6 lock: every example must also be
@@ -128,18 +167,21 @@ fn every_example_type_checks_and_has_no_warnings() {
         // `test_doc_fn_main_blocks_emit_no_compile_warnings` so a new
         // `warning[...]` on any example cannot ship silently.
         if WARN_ALLOWLIST.contains(&name) {
-            continue;
+            return;
         }
         let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("warning[")).collect();
         if !warn_lines.is_empty() {
-            warn_failures.push(format!(
+            warn_failures.lock().unwrap().push(format!(
                 "{}: emitted {} warning line(s):\n{}",
                 file.display(),
                 warn_lines.len(),
                 warn_lines.join("\n")
             ));
         }
-    }
+    });
+
+    let failures = failures.into_inner().unwrap();
+    let warn_failures = warn_failures.into_inner().unwrap();
 
     assert!(
         failures.is_empty(),
@@ -422,48 +464,64 @@ fn all_doc_fn_main_blocks_type_check() {
     let tmp_dir = std::env::temp_dir().join(format!("silt_all_doc_check_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut runnable_block_count = 0usize;
-
+    // Phase 1: collect every (doc, opener_line, src, file_stem) job
+    // sequentially so the parallel pool only handles per-block work.
+    struct Job {
+        doc_path: PathBuf,
+        opener_line: usize,
+        src: String,
+        file_stem: String,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     for doc_path in &targets {
         let body = std::fs::read_to_string(doc_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
-
         for (opener_line, src) in blocks {
-            // Only full programs (containing `fn main`) are expected to
-            // type-check standalone. Snippet blocks are skipped.
             if !src.contains("fn main") {
                 continue;
             }
-            runnable_block_count += 1;
-
             let file_stem = doc_path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("doc");
-            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
-            std::fs::write(&file, &src).expect("write temp silt file");
-
-            let output = silt_cmd()
-                .arg("check")
-                .arg(&file)
-                .output()
-                .expect("failed to spawn silt");
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                failures.push(format!(
-                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    output.status.code(),
-                    stdout,
-                    stderr
-                ));
-            }
+                .unwrap_or("doc")
+                .to_string();
+            jobs.push(Job {
+                doc_path: doc_path.clone(),
+                opener_line,
+                src,
+                file_stem,
+            });
         }
     }
+    let runnable_block_count = jobs.len();
+
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    par_for_each(&jobs, |job| {
+        let file = tmp_dir.join(format!("{}_line{}.silt", job.file_stem, job.opener_line));
+        std::fs::write(&file, &job.src).expect("write temp silt file");
+
+        let output = silt_cmd()
+            .arg("check")
+            .arg(&file)
+            .output()
+            .expect("failed to spawn silt");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                output.status.code(),
+                stdout,
+                stderr
+            ));
+        }
+    });
+
+    let failures = failures.into_inner().unwrap();
 
     assert!(
         runnable_block_count > 0,
@@ -875,51 +933,69 @@ fn all_doc_fn_test_blocks_compile() {
         std::env::temp_dir().join(format!("silt_all_doc_test_blocks_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut testable_block_count = 0usize;
-
+    // Phase 1: collect every (doc, opener_line, src, file_stem) job
+    // sequentially so the parallel pool only handles per-block work.
+    struct Job {
+        doc_path: PathBuf,
+        opener_line: usize,
+        src: String,
+        file_stem: String,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     for doc_path in &targets {
         let body = std::fs::read_to_string(doc_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
-
         for (opener_line, src) in blocks {
             if !block_has_test_fn(&src) {
                 continue;
             }
-            testable_block_count += 1;
-
-            // `silt test`'s auto-discovery path only picks up files that end
-            // in `_test.silt` or `.test.silt`. Writing the temp file with
-            // the `.test.silt` suffix keeps things consistent even when we
-            // pass the filename explicitly, and makes the temp artifact
-            // self-describing for any debugging on failure.
             let file_stem = doc_path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("doc");
-            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.test.silt"));
-            std::fs::write(&file, &src).expect("write temp silt test file");
-
-            let output = silt_cmd()
-                .arg("test")
-                .arg(&file)
-                .output()
-                .expect("failed to spawn silt");
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                failures.push(format!(
-                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    output.status.code(),
-                    stdout,
-                    stderr
-                ));
-            }
+                .unwrap_or("doc")
+                .to_string();
+            jobs.push(Job {
+                doc_path: doc_path.clone(),
+                opener_line,
+                src,
+                file_stem,
+            });
         }
     }
+    let testable_block_count = jobs.len();
+
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    par_for_each(&jobs, |job| {
+        // `silt test`'s auto-discovery path only picks up files that end
+        // in `_test.silt` or `.test.silt`. Writing the temp file with
+        // the `.test.silt` suffix keeps things consistent even when we
+        // pass the filename explicitly, and makes the temp artifact
+        // self-describing for any debugging on failure.
+        let file = tmp_dir.join(format!("{}_line{}.test.silt", job.file_stem, job.opener_line));
+        std::fs::write(&file, &job.src).expect("write temp silt test file");
+
+        let output = silt_cmd()
+            .arg("test")
+            .arg(&file)
+            .output()
+            .expect("failed to spawn silt");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                output.status.code(),
+                stdout,
+                stderr
+            ));
+        }
+    });
+
+    let failures = failures.into_inner().unwrap();
 
     assert!(
         testable_block_count > 0,
@@ -1075,46 +1151,62 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
         std::env::temp_dir().join(format!("silt_doc_warnings_walker_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut checked = 0usize;
-
+    // Phase 1: collect every (doc, opener_line, src, file_stem) job
+    // sequentially so the parallel pool only handles per-block work.
+    struct Job {
+        doc_path: PathBuf,
+        opener_line: usize,
+        src: String,
+        file_stem: String,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     for doc_path in &targets {
         let body = std::fs::read_to_string(doc_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
-
         for (opener_line, src) in blocks {
             if !src.contains("fn main") {
                 continue;
             }
-            checked += 1;
-
             let file_stem = doc_path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("doc");
-            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
-            std::fs::write(&file, &src).expect("write temp silt file");
-
-            let output = silt_cmd()
-                .arg("check")
-                .arg(&file)
-                .output()
-                .expect("failed to spawn silt");
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Look for any `warning[` line — the compiler emits
-            // `warning[compile]: ...` / `warning[type]: ...` etc.
-            let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("warning[")).collect();
-            if !warn_lines.is_empty() {
-                failures.push(format!(
-                    "{}:{} (```silt fence): emitted compile warning(s):\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    warn_lines.join("\n")
-                ));
-            }
+                .unwrap_or("doc")
+                .to_string();
+            jobs.push(Job {
+                doc_path: doc_path.clone(),
+                opener_line,
+                src,
+                file_stem,
+            });
         }
     }
+    let checked = jobs.len();
+
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    par_for_each(&jobs, |job| {
+        let file = tmp_dir.join(format!("{}_line{}.silt", job.file_stem, job.opener_line));
+        std::fs::write(&file, &job.src).expect("write temp silt file");
+
+        let output = silt_cmd()
+            .arg("check")
+            .arg(&file)
+            .output()
+            .expect("failed to spawn silt");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("warning[")).collect();
+        if !warn_lines.is_empty() {
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): emitted compile warning(s):\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                warn_lines.join("\n")
+            ));
+        }
+    });
+
+    let failures = failures.into_inner().unwrap();
 
     assert!(
         checked > 0,
@@ -1420,10 +1512,17 @@ fn all_doc_fn_main_blocks_run_if_safe() {
     let tmp_dir = std::env::temp_dir().join(format!("silt_doc_run_walker_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let mut ran = 0usize;
-    let mut skipped = 0usize;
+    // Phase 1: collect every job sequentially. Skipped blocks count
+    // toward `skipped` but produce no parallel work.
+    struct Job {
+        doc_path: PathBuf,
+        opener_line: usize,
+        src: String,
+        file_stem: String,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     let mut total_fn_main_blocks = 0usize;
-    let mut failures: Vec<String> = Vec::new();
+    let mut skipped = 0usize;
 
     for doc_path in &targets {
         let body = std::fs::read_to_string(doc_path)
@@ -1436,7 +1535,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
             }
             total_fn_main_blocks += 1;
 
-            if let Some(_reason) = skip_reason(&src) {
+            if skip_reason(&src).is_some() {
                 skipped += 1;
                 continue;
             }
@@ -1444,64 +1543,72 @@ fn all_doc_fn_main_blocks_run_if_safe() {
             let file_stem = doc_path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("doc");
-            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
-            std::fs::write(&file, &src).expect("write temp silt file");
-
-            let output = silt_cmd()
-                .arg("run")
-                .arg(&file)
-                .output()
-                .expect("failed to spawn silt");
-            ran += 1;
-
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            // Panic detection: a Rust panic on the worker subprocess
-            // would surface `panicked at` in stderr. Any panic is a
-            // hard BROKEN finding.
-            if stderr.contains("panicked at") {
-                failures.push(format!(
-                    "{}:{} (```silt fence): silt panicked while running \
-                     the block.\nstderr:\n{}\nstdout:\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    stderr,
-                    stdout
-                ));
-                continue;
-            }
-
-            // An `error[` line on stderr is a runtime or late
-            // compile error that the compile-only walker missed.
-            let error_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("error[")).collect();
-            if !error_lines.is_empty() {
-                failures.push(format!(
-                    "{}:{} (```silt fence): runtime error(s):\n{}\n\
-                     stderr:\n{}\nstdout:\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    error_lines.join("\n"),
-                    stderr,
-                    stdout
-                ));
-                continue;
-            }
-
-            if !output.status.success() {
-                failures.push(format!(
-                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\n\
-                     stderr:\n{}",
-                    doc_path.display(),
-                    opener_line,
-                    output.status.code(),
-                    stdout,
-                    stderr
-                ));
-            }
+                .unwrap_or("doc")
+                .to_string();
+            jobs.push(Job {
+                doc_path: doc_path.clone(),
+                opener_line,
+                src,
+                file_stem,
+            });
         }
     }
+    let ran = jobs.len();
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    par_for_each(&jobs, |job| {
+        let file = tmp_dir.join(format!("{}_line{}.silt", job.file_stem, job.opener_line));
+        std::fs::write(&file, &job.src).expect("write temp silt file");
+
+        let output = silt_cmd()
+            .arg("run")
+            .arg(&file)
+            .output()
+            .expect("failed to spawn silt");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if stderr.contains("panicked at") {
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): silt panicked while running \
+                 the block.\nstderr:\n{}\nstdout:\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                stderr,
+                stdout
+            ));
+            return;
+        }
+
+        let error_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("error[")).collect();
+        if !error_lines.is_empty() {
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): runtime error(s):\n{}\n\
+                 stderr:\n{}\nstdout:\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                error_lines.join("\n"),
+                stderr,
+                stdout
+            ));
+            return;
+        }
+
+        if !output.status.success() {
+            failures.lock().unwrap().push(format!(
+                "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\n\
+                 stderr:\n{}",
+                job.doc_path.display(),
+                job.opener_line,
+                output.status.code(),
+                stdout,
+                stderr
+            ));
+        }
+    });
+
+    let failures = failures.into_inner().unwrap();
 
     // Sanity check: the universe should have at least some `fn main`
     // blocks (the compile walker already asserts this), and the
