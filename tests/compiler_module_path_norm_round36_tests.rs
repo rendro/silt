@@ -32,11 +32,14 @@ fn silt_cmd() -> Command {
 }
 
 fn fresh_tempdir() -> PathBuf {
+    // Combine PID + monotonic counter so two test processes (e.g. under
+    // nextest, where every test runs in its own process and each starts
+    // COUNTER at 0) cannot collide on the same tempdir name.
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("silt_r36_compiler_path_norm_{n}"));
-    // Clean up any stale directory from a previous run with the same
-    // counter value (shouldn't happen in practice, but keeps the test
-    // hermetic if COUNTER state persists across processes).
+    let pid = std::process::id();
+    let dir =
+        std::env::temp_dir().join(format!("silt_r36_compiler_path_norm_{pid}_{n}"));
+    // Clean up any stale directory from a previous run.
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("failed to create tempdir");
     dir

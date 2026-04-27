@@ -102,26 +102,33 @@ jobs:
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-os-${{ matrix.os }}
 
-      # See `check.cargo test` for rationale on the wall-clock bound.
-      # macOS uses the same perl alarm trick as Linux. Windows lacks a
-      # `perl` binary but ships PowerShell; use Start-Process+
-      # WaitForExit for the same semantics.
-      - name: cargo test (Linux/macOS)
-        if: runner.os != 'Windows'
+      # nextest runs test BINARIES in parallel (cargo test serializes them).
+      # macOS Apple-Silicon runner cuts from ~7.5 min to ~3 min; Windows
+      # cuts from >25 min (timed out) to ~8 min.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # macOS path: perl alarm + nextest run.
+      - name: cargo nextest (macOS)
+        if: runner.os == 'macOS'
         run: |
-          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo test --all-features
+          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo nextest run --all-features
 
-      - name: cargo test (Windows)
+      # Windows path: PowerShell wraps the wall-clock cap (no `perl`
+      # binary installed by default on Windows runners).
+      - name: cargo nextest (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:CI = "1"
-          $process = Start-Process -FilePath "cargo" -ArgumentList "test","--all-features" -NoNewWindow -PassThru
+          $process = Start-Process -FilePath "cargo" -ArgumentList "nextest","run","--all-features" -NoNewWindow -PassThru
           $finished = $process.WaitForExit(25*60*1000)
           if (-not $finished) {
             $process.Kill()
-            Write-Error "cargo test exceeded 25-minute wall-clock cap"
+            Write-Error "cargo nextest exceeded 25-minute wall-clock cap"
             exit 124
           }
           exit $process.ExitCode
