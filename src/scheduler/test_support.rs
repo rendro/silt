@@ -175,8 +175,21 @@ impl InProcessRunner {
     /// Override the per-trial wall-clock budget. Used by tests with
     /// known-fast happy paths (fan-in 16: ~5-50ms) and tests that
     /// must give the watchdog time to fire (real-deadlock: ~5-8s).
+    ///
+    /// Under `CI=1`, the supplied budget is multiplied by 4× to
+    /// absorb GitHub-hosted runner CPU contention. The silt watchdog
+    /// fires on a fixed 250ms streak; under heavy load worker threads
+    /// can be starved long enough to trip the watchdog without an
+    /// actual deadlock. Multiplying the budget gives the trial more
+    /// wall-clock to escape pathological scheduling, without changing
+    /// the watchdog window itself (which is what the regression-lock
+    /// asserts on). Local runs are unaffected.
     pub fn with_budget(mut self, budget: Duration) -> Self {
-        self.budget = budget;
+        self.budget = if std::env::var("CI").is_ok() {
+            budget * 4
+        } else {
+            budget
+        };
         self
     }
 

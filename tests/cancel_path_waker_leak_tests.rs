@@ -97,6 +97,13 @@ fn run_silt(stem: &str, src: &str, max_wall: Duration) -> (String, String, Durat
 /// `BUG:phantom_send_after_cancel`. After the fix: `ok`.
 #[test]
 fn test_b1_phantom_send_after_receiver_cancelled() {
+    // Sleep durations bumped from 50ms → 200ms because Windows GitHub
+    // runners have ~15.6ms timer granularity by default, so a 50ms
+    // sleep often expires after one tick (~16ms) and cancel hasn't
+    // had time to deregister the receiver before the probing
+    // try_send fires. 200ms is safely past Windows' worst-case
+    // tick boundary and the cancel waker-deregister path. Fast on
+    // Linux/macOS; healthy headroom on Windows.
     let src = r#"
 import channel
 import task
@@ -105,9 +112,9 @@ import time
 fn main() {
   let ch = channel.new(0)
   let h = task.spawn(fn() { channel.receive(ch) })
-  time.sleep(time.ms(50))
+  time.sleep(time.ms(200))
   task.cancel(h)
-  time.sleep(time.ms(50))
+  time.sleep(time.ms(200))
   -- No real receiver is parked on `ch`. A rendezvous `try_send` must
   -- return false. Before the fix, the cancelled receiver's leaked
   -- recv-waker keeps `waiting_receivers == 1`, and `try_send`
