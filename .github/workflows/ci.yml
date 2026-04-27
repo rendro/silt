@@ -45,7 +45,8 @@ jobs:
       # ships no `timeout` binary by default; this avoids the brew
       # install detour.
       - name: cargo test
-        run: perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
+        run: |
+          perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo clippy
         run: cargo clippy --all-features -- -D warnings
@@ -85,7 +86,8 @@ jobs:
       # WaitForExit for the same semantics.
       - name: cargo test (Linux/macOS)
         if: runner.os != 'Windows'
-        run: perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
+        run: |
+          perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo test (Windows)
         if: runner.os == 'Windows'
