@@ -117,12 +117,11 @@ pub(crate) fn run_compile_pipeline(
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
     let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
-        let (raw_type_errors, _entry_exports) =
-            typechecker::check_with_package_and_imports(
-                &mut program,
-                Some(local_pkg),
-                module_exports,
-            );
+        let (raw_type_errors, _entry_exports) = typechecker::check_with_package_and_imports(
+            &mut program,
+            Some(local_pkg),
+            module_exports,
+        );
         raw_type_errors
             .iter()
             .map(|e| SourceError::from_type_error(e, &source, path))

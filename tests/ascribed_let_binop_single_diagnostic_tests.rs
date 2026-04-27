@@ -43,8 +43,10 @@ fn main() {
     );
     let mismatch_count = errs
         .iter()
-        .filter(|e| e.contains("type mismatch: expected Int, got String")
-            || e.contains("expected Int") && e.contains("got String"))
+        .filter(|e| {
+            e.contains("type mismatch: expected Int, got String")
+                || e.contains("expected Int") && e.contains("got String")
+        })
         .count();
     assert_eq!(
         mismatch_count, 1,

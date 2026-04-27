@@ -38,7 +38,10 @@ fn parse_err(input: &str) -> String {
 fn parse_ok(input: &str) {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     if let Err(e) = Parser::new(tokens).parse_program() {
-        panic!("expected clean parse, got error: {} at {}", e.message, e.span);
+        panic!(
+            "expected clean parse, got error: {} at {}",
+            e.message, e.span
+        );
     }
 }
 

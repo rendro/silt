@@ -54,8 +54,7 @@ fn tempdir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir()
-        .join(format!("silt_multierr_{}_{}", std::process::id(), nanos));
+    let dir = std::env::temp_dir().join(format!("silt_multierr_{}_{}", std::process::id(), nanos));
     fs::create_dir_all(&dir).expect("failed to create temp dir");
     dir
 }
@@ -154,9 +153,7 @@ fn test_imported_module_reports_all_parse_errors() {
     // pipeline uses so this is a full end-to-end check.
     let source_errors: Vec<SourceError> = all_errors
         .iter()
-        .map(|e| {
-            SourceError::from_compile_error(e, MAIN_USING_BROKEN_MODULE, "main.silt")
-        })
+        .map(|e| SourceError::from_compile_error(e, MAIN_USING_BROKEN_MODULE, "main.silt"))
         .collect();
 
     // At least three diagnostics must have meaningful spans (col > 0).

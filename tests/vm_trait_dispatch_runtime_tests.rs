@@ -102,15 +102,11 @@ fn main() {
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(
-        lines.len(),
-        4,
-        "expected 4 lines of output, got: {out:?}"
-    );
+    assert_eq!(lines.len(), 4, "expected 4 lines of output, got: {out:?}");
     for (i, line) in lines.iter().enumerate() {
-        line.trim().parse::<i64>().unwrap_or_else(|e| {
-            panic!("line {i} {line:?} is not a parseable Int hash: {e}")
-        });
+        line.trim()
+            .parse::<i64>()
+            .unwrap_or_else(|e| panic!("line {i} {line:?} is not a parseable Int hash: {e}"));
     }
 }
 
@@ -177,7 +173,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "-1", "r1 < r2 should compare to -1; got {out:?}");
+    assert_eq!(
+        out.trim(),
+        "-1",
+        "r1 < r2 should compare to -1; got {out:?}"
+    );
 }
 
 // ── Regression guard: user-defined Hash still routes correctly ──────
@@ -230,7 +230,11 @@ fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() { println(cmp_gen((), ())) }
 "#,
     );
-    assert_eq!(out.trim(), "0", "unit-vs-unit must compare to 0; got {out:?}");
+    assert_eq!(
+        out.trim(),
+        "0",
+        "unit-vs-unit must compare to 0; got {out:?}"
+    );
 }
 
 // ── Round 60 B7: Variant.hash via trait bound ───────────────────────
@@ -252,9 +256,9 @@ fn h(v: a) -> Int where a: Hash { v.hash() }
 fn main() { println(h(Some(1))) }
 "#,
     );
-    out.trim().parse::<i64>().unwrap_or_else(|e| {
-        panic!("expected Int hash for Some(1), got {out:?}: {e}")
-    });
+    out.trim()
+        .parse::<i64>()
+        .unwrap_or_else(|e| panic!("expected Int hash for Some(1), got {out:?}: {e}"));
 }
 
 #[test]
@@ -266,9 +270,9 @@ fn h(v: a) -> Int where a: Hash { v.hash() }
 fn main() { println(h(Err("boom"))) }
 "#,
     );
-    out.trim().parse::<i64>().unwrap_or_else(|e| {
-        panic!("expected Int hash for Err(\"boom\"), got {out:?}: {e}")
-    });
+    out.trim()
+        .parse::<i64>()
+        .unwrap_or_else(|e| panic!("expected Int hash for Err(\"boom\"), got {out:?}: {e}"));
 }
 
 // ── Round 60 L1: Range.hash via trait bound ─────────────────────────
@@ -290,9 +294,9 @@ fn main() {
 }
 "#,
     );
-    out.trim().parse::<i64>().unwrap_or_else(|e| {
-        panic!("expected Int hash for 1..5, got {out:?}: {e}")
-    });
+    out.trim()
+        .parse::<i64>()
+        .unwrap_or_else(|e| panic!("expected Int hash for 1..5, got {out:?}: {e}"));
 }
 
 /// User-defined `trait Hash for Foo` impls register as qualified

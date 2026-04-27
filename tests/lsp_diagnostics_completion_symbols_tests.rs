@@ -204,10 +204,7 @@ impl LspClient {
             match self.rx.recv_timeout(remaining) {
                 Ok(msg) => {
                     if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg
-                            .get("result")
-                            .cloned()
-                            .unwrap_or(Value::Null);
+                        return msg.get("result").cloned().unwrap_or(Value::Null);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -298,7 +295,11 @@ fn diagnostic_messages(notif: &Value) -> Vec<String> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                .filter_map(|d| {
+                    d.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()

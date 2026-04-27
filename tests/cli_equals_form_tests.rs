@@ -157,10 +157,7 @@ fn silt_check_format_equals_bad_value_rejected() {
 fn silt_test_accepts_filter_equals_pattern() {
     // `*_test.silt` so auto-discovery would find it too, though here we
     // invoke with an explicit path for reproducibility.
-    let path = temp_silt_file(
-        "filter_equals",
-        "fn test_alpha() {}\nfn test_beta() {}\n",
-    );
+    let path = temp_silt_file("filter_equals", "fn test_alpha() {}\nfn test_beta() {}\n");
     // Rename extension so the path ends with `_test.silt` — keeps
     // discovery-layer behavior consistent with the filter's contract.
     let renamed = path.with_file_name(format!(
@@ -209,10 +206,7 @@ fn silt_test_accepts_filter_equals_pattern() {
 /// work. Same fixture, same assertions, different flag shape.
 #[test]
 fn silt_test_still_accepts_filter_space_pattern() {
-    let path = temp_silt_file(
-        "filter_space",
-        "fn test_alpha() {}\nfn test_beta() {}\n",
-    );
+    let path = temp_silt_file("filter_space", "fn test_alpha() {}\nfn test_beta() {}\n");
     let renamed = path.with_file_name(format!(
         "{}_test.silt",
         path.file_stem().unwrap().to_string_lossy()

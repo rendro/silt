@@ -59,6 +59,8 @@ CONCURRENCY_TESTS=(
   http_hardening_tests
 )
 
+runner="${SILT_TEST_RUNNER:-nextest}"
+
 case "$partition" in
   heavy)
     args=()
@@ -66,7 +68,11 @@ case "$partition" in
       args+=("--test" "$t")
     done
     set -x
-    exec cargo test --all-features "${args[@]}"
+    if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; then
+      exec cargo nextest run --all-features "${args[@]}"
+    else
+      exec cargo test --all-features "${args[@]}"
+    fi
     ;;
   concurrency)
     args=()
@@ -74,7 +80,11 @@ case "$partition" in
       args+=("--test" "$t")
     done
     set -x
-    exec cargo test --all-features "${args[@]}"
+    if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; then
+      exec cargo nextest run --all-features "${args[@]}"
+    else
+      exec cargo test --all-features "${args[@]}"
+    fi
     ;;
   rest)
     # Discover every tests/*.rs basename; exclude HEAVY + CONCURRENCY.
@@ -87,8 +97,13 @@ case "$partition" in
       fi
     done < <(find tests -maxdepth 1 -name '*.rs' -type f | sort)
     set -x
-    # `--lib` runs unit tests in src/; `--bins` runs unit tests in src/main.rs.
-    exec cargo test --all-features --lib --bins "${rest_tests[@]}"
+    # `--lib` runs unit tests in src/; `--bin silt` runs unit tests in src/main.rs.
+    if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; then
+      # nextest spelling: --lib + --bin <name> (not --bins).
+      exec cargo nextest run --all-features --lib --bin silt "${rest_tests[@]}"
+    else
+      exec cargo test --all-features --lib --bins "${rest_tests[@]}"
+    fi
     ;;
   *)
     echo "unknown partition: $partition (expected: heavy|concurrency|rest)" >&2

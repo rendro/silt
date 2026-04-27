@@ -90,3 +90,15 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 proptest = "1.4"
 rcgen = "0.13"
+
+[lints.clippy]
+# Newer clippy (1.95+) flags long compound types like `OnceLock<RwLock<HashMap<...>>>`
+# in our trait registries and a 9-tuple in test diagnostics. Refactoring to type
+# aliases is mostly noise — the tuple has structural meaning at the call site,
+# and the registry types are concrete. Allow.
+type_complexity = "allow"
+
+# Newer clippy (1.95+) flags doc-comment line continuations that aren't indented
+# inside a list. Most of our doc comments are continuous prose, not lists — the
+# warning misfires. Allow until we can either reformat or upstream a fix.
+doc_lazy_continuation = "allow"

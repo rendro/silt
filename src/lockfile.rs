@@ -361,7 +361,10 @@ impl Lockfile {
     ///
     /// Mirrors the BFS in `resolve` exactly, substituting
     /// `resolve_dep_path_offline` for the network-bound `resolve_dep_path`.
-    fn resolve_offline(manifest: &Manifest, existing: &Lockfile) -> Result<Lockfile, LockfileError> {
+    fn resolve_offline(
+        manifest: &Manifest,
+        existing: &Lockfile,
+    ) -> Result<Lockfile, LockfileError> {
         let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
         let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
 
@@ -381,7 +384,9 @@ impl Lockfile {
         let mut queue: Vec<ResolvedDep> = Vec::new();
         for (name, dep) in &manifest.dependencies {
             let dep_name = intern::resolve(*name);
-            queue.push(resolve_dep_path_offline(&dep_name, dep, &root_dir, existing)?);
+            queue.push(resolve_dep_path_offline(
+                &dep_name, dep, &root_dir, existing,
+            )?);
         }
 
         while let Some(resolved) = queue.pop() {

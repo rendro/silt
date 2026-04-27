@@ -41,7 +41,7 @@ fn type_errors(input: &str) -> Vec<String> {
         .filter(|e| e.severity == Severity::Error)
         .map(|e| e.message)
         .collect()
-    }
+}
 
 /// The pre-fix failure mode: the typechecker rejects the trait bound
 /// with a diagnostic that mentions both `ExtFloat` and the trait name.

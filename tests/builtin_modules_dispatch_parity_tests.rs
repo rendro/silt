@@ -136,9 +136,7 @@ fn no_orphan_dispatch_arms() {
                     // skip stray match arms like `"a"` etc. that would
                     // never be a module.
                     if !name.is_empty()
-                        && name
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                     {
                         found.push(name.to_string());
                     }

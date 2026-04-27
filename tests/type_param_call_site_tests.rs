@@ -57,7 +57,8 @@ fn json_parse_old_order_rejected() {
     // fixture). Locking on the unify substring pins the arg-order
     // rejection specifically.
     assert!(
-        errs.iter().any(|m| m.contains("type mismatch: expected String")),
+        errs.iter()
+            .any(|m| m.contains("type mismatch: expected String")),
         "old `json.parse(Todo, body)` should produce `type mismatch: expected String, got ...`; got: {errs:?}"
     );
 }

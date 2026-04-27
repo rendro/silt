@@ -42,29 +42,31 @@ fn encode_type_expr(te: &TypeExpr) -> String {
                 _ => "String".to_string(),
             }
         }
-        TypeExprKind::Generic(name, args) => match resolve(canonicalize_type_name(*name)).as_str() {
-            // Range collapses to List via canonicalize_type_name (see
-            // src/types/canonical.rs), so this arm matches both the
-            // user-typed `List(T)` and `Range(T)` shapes; the runtime
-            // representation is shared, and emitting a `List:<inner>`
-            // descriptor for both keeps record-field metadata in lockstep
-            // with the canonical type name.
-            "List" => {
-                let inner = args
-                    .first()
-                    .map(encode_type_expr)
-                    .unwrap_or_else(|| "String".into());
-                format!("List:{inner}")
+        TypeExprKind::Generic(name, args) => {
+            match resolve(canonicalize_type_name(*name)).as_str() {
+                // Range collapses to List via canonicalize_type_name (see
+                // src/types/canonical.rs), so this arm matches both the
+                // user-typed `List(T)` and `Range(T)` shapes; the runtime
+                // representation is shared, and emitting a `List:<inner>`
+                // descriptor for both keeps record-field metadata in lockstep
+                // with the canonical type name.
+                "List" => {
+                    let inner = args
+                        .first()
+                        .map(encode_type_expr)
+                        .unwrap_or_else(|| "String".into());
+                    format!("List:{inner}")
+                }
+                "Option" => {
+                    let inner = args
+                        .first()
+                        .map(encode_type_expr)
+                        .unwrap_or_else(|| "String".into());
+                    format!("Option:{inner}")
+                }
+                _ => "String".to_string(),
             }
-            "Option" => {
-                let inner = args
-                    .first()
-                    .map(encode_type_expr)
-                    .unwrap_or_else(|| "String".into());
-                format!("Option:{inner}")
-            }
-            _ => "String".to_string(),
-        },
+        }
         TypeExprKind::SelfType => "Self".to_string(),
         _ => "String".to_string(),
     }
@@ -953,8 +955,7 @@ impl Compiler {
                             });
                         }
                         let arity = method.params.len() as u8;
-                        let qualified_name =
-                            format!("{}.{}", canonical_target, method.name);
+                        let qualified_name = format!("{}.{}", canonical_target, method.name);
 
                         self.contexts
                             .push(CompileContext::new(qualified_name.clone(), arity));
@@ -967,8 +968,7 @@ impl Compiler {
                                     self.add_local(*name);
                                 }
                                 _ => {
-                                    let slot =
-                                        self.add_local(intern(&format!("__param_{i}__")));
+                                    let slot = self.add_local(intern(&format!("__param_{i}__")));
                                     self.current_chunk().emit_op(Op::GetLocal, span);
                                     self.current_chunk().emit_u16(slot, span);
                                     let _hidden = self.add_local(intern("__param_copy__"));
@@ -996,8 +996,7 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::Constant, span);
                         self.current_chunk().emit_u16(fi, span);
 
-                        let name_idx =
-                            self.add_constant(Value::String(qualified_name), span)?;
+                        let name_idx = self.add_constant(Value::String(qualified_name), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -1322,9 +1321,7 @@ impl Compiler {
     /// Borrow the current cross-module exports snapshot. Cloned by
     /// the CLI pipeline so the entrypoint typecheck can consult it
     /// without holding a `&self` on the compiler.
-    pub fn module_exports_snapshot(
-        &self,
-    ) -> HashMap<Symbol, typechecker::ModuleExports> {
+    pub fn module_exports_snapshot(&self) -> HashMap<Symbol, typechecker::ModuleExports> {
         self.module_exports.clone()
     }
 
@@ -1385,12 +1382,11 @@ impl Compiler {
         self.compiling_package_stack.push(resolved.package);
 
         let result = (|| -> Result<(), CompileError> {
-            let source = std::fs::read_to_string(&resolved.file_path).map_err(|e| {
-                CompileError {
+            let source =
+                std::fs::read_to_string(&resolved.file_path).map_err(|e| CompileError {
                     message: format!("cannot load module '{module_name}': {e}"),
                     span,
-                }
-            })?;
+                })?;
 
             let tokens = Lexer::new(&source).tokenize().map_err(|_| CompileError {
                 message: format!("lex error in '{module_name}'"),
@@ -2663,8 +2659,7 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::RecordUpdate, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
                     for fname in &field_names {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*fname)), span)?;
+                        let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
                         self.current_chunk().emit_u16(field_idx, span);
                     }
                 } else {
@@ -2680,8 +2675,7 @@ impl Compiler {
                     self.current_chunk().emit_u16(type_name_idx, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
                     for fname in &field_names {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*fname)), span)?;
+                        let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
                         self.current_chunk().emit_u16(field_idx, span);
                     }
                 }
@@ -3049,8 +3043,7 @@ impl Compiler {
         {
             // Check if it's a local or upvalue first
             let mod_str = resolve(*module);
-            if self.resolve_local(*module).is_none()
-                && self.resolve_upvalue_peek(*module).is_none()
+            if self.resolve_local(*module).is_none() && self.resolve_upvalue_peek(*module).is_none()
             {
                 if module::is_builtin_module(&mod_str) {
                     if !self.imported_builtin_modules.contains(&mod_str) {

@@ -228,7 +228,9 @@ fn main() {
     assert!(
         any_hint,
         "expected the polymorphic-recursion-hint warning on unannotated mismatch, got: {:?}",
-        errs.iter().map(|e| (&e.severity, &e.message)).collect::<Vec<_>>()
+        errs.iter()
+            .map(|e| (&e.severity, &e.message))
+            .collect::<Vec<_>>()
     );
     // The hint is a Warning severity, not an Error — it accompanies
     // the real type-mismatch error rather than replacing it.

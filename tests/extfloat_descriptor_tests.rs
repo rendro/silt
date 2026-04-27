@@ -97,14 +97,12 @@ fn extfloat_descriptor_exists_at_runtime() {
     // `ExtFloat` were missing from globals the VM would fail with a
     // runtime error before we could evaluate it. Running the program
     // below without a VmError proves the descriptor is registered.
-    let result = run(
-        r#"
+    let result = run(r#"
         fn main() {
             let _d = ExtFloat
             "ok"
         }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("ok".into()));
 }
 
@@ -115,8 +113,7 @@ fn extfloat_descriptor_exists_at_runtime() {
 /// value-type for map parsing: JSON numbers decode into `Value::ExtFloat`.
 #[test]
 fn json_parse_map_with_extfloat_value_type() {
-    let result = run(
-        r#"
+    let result = run(r#"
         import json
         fn main() {
             match json.parse_map("\{\"a\": 3.5\}", ExtFloat) {
@@ -124,15 +121,12 @@ fn json_parse_map_with_extfloat_value_type() {
                 Err(_) -> #{}
             }
         }
-        "#,
-    );
+        "#);
     // The returned map must contain a single entry "a" -> ExtFloat(3.5).
     match &result {
         Value::Map(m) => {
             assert_eq!(m.len(), 1, "expected single-entry map, got {result:?}");
-            let v = m
-                .get(&Value::String("a".into()))
-                .expect("key 'a' missing");
+            let v = m.get(&Value::String("a".into())).expect("key 'a' missing");
             assert_eq!(v, &Value::ExtFloat(3.5));
         }
         other => panic!("expected Map, got {other:?}"),
@@ -159,8 +153,7 @@ fn json_parse_map_with_extfloat_value_type() {
 #[test]
 fn json_parse_accepts_extfloat_descriptor() {
     // (a) Happy path: exact value.
-    let ok_result = run(
-        r#"
+    let ok_result = run(r#"
         import json
         fn main() {
             match json.parse("3.5", ExtFloat) {
@@ -168,8 +161,7 @@ fn json_parse_accepts_extfloat_descriptor() {
                 Err(e) -> "got err: {e.message()}"
             }
         }
-        "#,
-    );
+        "#);
     assert_eq!(
         ok_result,
         Value::ExtFloat(3.5),
@@ -182,8 +174,7 @@ fn json_parse_accepts_extfloat_descriptor() {
     //     This demonstrates that the ExtFloat descriptor routes through
     //     the shared JSON parser — JSON literals cannot express infinity,
     //     so both `Float` and `ExtFloat` reject `1e400` identically.
-    let overflow_msg = run(
-        r#"
+    let overflow_msg = run(r#"
         import json
         fn main() {
             match json.parse("1e400", ExtFloat) {
@@ -191,8 +182,7 @@ fn json_parse_accepts_extfloat_descriptor() {
                 Err(e) -> e.message()
             }
         }
-        "#,
-    );
+        "#);
     match &overflow_msg {
         Value::String(s) => assert!(
             s.contains("number out of range"),
@@ -205,8 +195,7 @@ fn json_parse_accepts_extfloat_descriptor() {
     //     Pin the exact serde_json error substring ("expected ident"),
     //     which is what the underlying parser emits for "not a number".
     //     Exact match only — no OR-chains.
-    let bad_result = run(
-        r#"
+    let bad_result = run(r#"
         import json
         fn main() {
             match json.parse("not a number", ExtFloat) {
@@ -215,8 +204,7 @@ fn json_parse_accepts_extfloat_descriptor() {
                 Err(e) -> e.message()
             }
         }
-        "#,
-    );
+        "#);
     match &bad_result {
         Value::String(s) => assert!(
             s.contains("expected ident"),

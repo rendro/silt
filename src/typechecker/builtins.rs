@@ -860,9 +860,8 @@ impl TypeChecker {
         // — the LSP renders the markdown as a single document and
         // the user scrolls to the relevant section.
         for name in &[
-            "print", "println", "panic", "Ok", "Err", "Some", "None",
-            "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
-            "Recv", "Send",
+            "print", "println", "panic", "Ok", "Err", "Some", "None", "Stop", "Continue",
+            "Message", "Closed", "Empty", "Sent", "Recv", "Send",
         ] {
             let sym = intern(name);
             if env.bindings.contains_key(&sym) {

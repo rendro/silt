@@ -75,8 +75,8 @@ impl DocIndex {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum Mode {
             Code,
-            InRegular,        // inside a "..." string (escape-aware)
-            InTriple,         // inside a """...""" string
+            InRegular, // inside a "..." string (escape-aware)
+            InTriple,  // inside a """...""" string
         }
         let mut stack: Vec<Mode> = vec![Mode::Code];
         // For `{...}` interp inside a regular string: when we open a
@@ -125,10 +125,7 @@ impl DocIndex {
                         } else {
                             raw.to_string()
                         };
-                        segments.push(Segment::LineComment {
-                            line,
-                            content,
-                        });
+                        segments.push(Segment::LineComment { line, content });
                         i = end;
                         continue;
                     }
@@ -149,10 +146,8 @@ impl DocIndex {
                                     let raw = &source[content_start..i];
                                     let end_line = line;
                                     i += 2; // consume -}
-                                    let content_lines: Vec<String> = raw
-                                        .split('\n')
-                                        .map(|s| s.to_string())
-                                        .collect();
+                                    let content_lines: Vec<String> =
+                                        raw.split('\n').map(|s| s.to_string()).collect();
                                     segments.push(Segment::BlockComment {
                                         start_line,
                                         end_line,
@@ -258,7 +253,10 @@ impl DocIndex {
                     // convention has no code before it.
                     if let Some(idx) = src_line.find("--") {
                         let prefix = &src_line[..idx];
-                        if prefix.bytes().all(|b| b == b' ' || b == b'\t' || b == b'\r') {
+                        if prefix
+                            .bytes()
+                            .all(|b| b == b' ' || b == b'\t' || b == b'\r')
+                        {
                             comment_only_line.insert(l);
                         }
                     }
@@ -3138,7 +3136,8 @@ impl Parser {
                 self.skip_nl();
             } else if !self.at(&Token::RBrace) {
                 return Err(ParseError {
-                    message: "expected ',' or '}' after spread expression in anon record literal".into(),
+                    message: "expected ',' or '}' after spread expression in anon record literal"
+                        .into(),
                     span: self.span(),
                 });
             }
@@ -3149,7 +3148,9 @@ impl Parser {
             self.skip_nl();
             if self.at(&Token::DotDotDot) {
                 return Err(ParseError {
-                    message: "v1 row polymorphism allows only one spread head per anon record literal".into(),
+                    message:
+                        "v1 row polymorphism allows only one spread head per anon record literal"
+                            .into(),
                     span: self.span(),
                 });
             }

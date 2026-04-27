@@ -3,9 +3,7 @@
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use super::Server;
-use super::ast_walk::{
-    find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars,
-};
+use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars};
 use super::conversions::position_to_offset;
 use super::fields::find_field_type_at_offset;
 use super::local_bindings::find_local_binding_at_offset;
@@ -47,7 +45,10 @@ impl Server {
             // surface the doc alongside the type. Per-param doc is
             // phase-2; phase-1 only the top-level decl binding
             // inherits docs.
-            let doc_text = doc.definitions.get(&binding.name).and_then(|d| d.doc.clone());
+            let doc_text = doc
+                .definitions
+                .get(&binding.name)
+                .and_then(|d| d.doc.clone());
             let mut value = format!("```silt\n{ty}\n```");
             if let Some(d) = doc_text {
                 value.push_str("\n\n---\n\n");
@@ -69,8 +70,7 @@ impl Server {
         // type so hover on `fn foo` shows `foo`'s signature. Otherwise use
         // the expression-walk result, falling back to the definition type
         // when the expression type still has unresolved variables.
-        let ident_at_cursor =
-            find_ident_at_offset_with_source(program, cursor, Some(&doc.source));
+        let ident_at_cursor = find_ident_at_offset_with_source(program, cursor, Some(&doc.source));
         let def_entry = ident_at_cursor.and_then(|name| doc.definitions.get(&name));
 
         let ty = {
@@ -96,52 +96,56 @@ impl Server {
         // names (`list.map`, `math.cos`, `Result`, …) surface the
         // markdown registered at their per-module typechecker
         // registration site.
-        let doc_text = def_entry.and_then(|def| def.doc.clone()).or_else(|| {
-            // Cross-module fallback: iterate open documents and look
-            // for a matching top-level definition with a doc string.
-            ident_at_cursor.and_then(|name| {
-                for (other_uri, other_doc) in &self.documents {
-                    if other_uri == uri {
-                        continue;
+        let doc_text = def_entry
+            .and_then(|def| def.doc.clone())
+            .or_else(|| {
+                // Cross-module fallback: iterate open documents and look
+                // for a matching top-level definition with a doc string.
+                ident_at_cursor.and_then(|name| {
+                    for (other_uri, other_doc) in &self.documents {
+                        if other_uri == uri {
+                            continue;
+                        }
+                        if let Some(d) = other_doc.definitions.get(&name)
+                            && let Some(ref s) = d.doc
+                        {
+                            return Some(s.clone());
+                        }
                     }
-                    if let Some(d) = other_doc.definitions.get(&name)
-                        && let Some(ref s) = d.doc
-                    {
-                        return Some(s.clone());
-                    }
-                }
-                None
+                    None
+                })
             })
-        }).or_else(|| {
-            // Built-in doc fallback. The cursor word might be:
-            //
-            //   - An unqualified identifier (`println`, `Some`) — the
-            //     AST walker returns its `Symbol` directly.
-            //   - A trailing identifier in a qualified module access
-            //     (`list.map`, `math.cos`). The AST walker stores the
-            //     module side as an `Ident` expr but the `.field` is a
-            //     bare string on `FieldAccess`, so `find_ident_at_offset`
-            //     returns `None` when the cursor is on the field name.
-            //     We recover by scanning the source for the qualified
-            //     identifier under the cursor and looking it up in
-            //     `builtin_docs` directly.
-            if let Some(name) = ident_at_cursor {
-                let bare = crate::intern::resolve(name);
-                if let Some(d) = self.builtin_docs.get(&bare) {
-                    return Some(d.clone());
+            .or_else(|| {
+                // Built-in doc fallback. The cursor word might be:
+                //
+                //   - An unqualified identifier (`println`, `Some`) — the
+                //     AST walker returns its `Symbol` directly.
+                //   - A trailing identifier in a qualified module access
+                //     (`list.map`, `math.cos`). The AST walker stores the
+                //     module side as an `Ident` expr but the `.field` is a
+                //     bare string on `FieldAccess`, so `find_ident_at_offset`
+                //     returns `None` when the cursor is on the field name.
+                //     We recover by scanning the source for the qualified
+                //     identifier under the cursor and looking it up in
+                //     `builtin_docs` directly.
+                if let Some(name) = ident_at_cursor {
+                    let bare = crate::intern::resolve(name);
+                    if let Some(d) = self.builtin_docs.get(&bare) {
+                        return Some(d.clone());
+                    }
+                    if let Some(qualified) = qualified_name_at(&doc.source, cursor, &bare)
+                        && let Some(d) = self.builtin_docs.get(&qualified)
+                    {
+                        return Some(d.clone());
+                    }
                 }
-                if let Some(qualified) = qualified_name_at(&doc.source, cursor, &bare)
-                    && let Some(d) = self.builtin_docs.get(&qualified) {
-                    return Some(d.clone());
-                }
-            }
-            // Source-only fallback: extract the qualified identifier
-            // sitting at the cursor and look it up. Handles the
-            // FieldAccess-on-builtin-module case (`math.cos`) where
-            // the AST walker bails because `cos` isn't an Ident expr.
-            qualified_token_at(&doc.source, cursor)
-                .and_then(|tok| self.builtin_docs.get(&tok).cloned())
-        });
+                // Source-only fallback: extract the qualified identifier
+                // sitting at the cursor and look it up. Handles the
+                // FieldAccess-on-builtin-module case (`math.cos`) where
+                // the AST walker bails because `cos` isn't an Ident expr.
+                qualified_token_at(&doc.source, cursor)
+                    .and_then(|tok| self.builtin_docs.get(&tok).cloned())
+            });
 
         // If neither a type nor a doc is available, no hover.
         if ty.is_none() && doc_text.is_none() {
@@ -198,7 +202,9 @@ pub(super) fn qualified_name_at(source: &str, cursor: usize, bare: &str) -> Opti
     }
     // Verify `bare` matches at `start`.
     let bare_bytes = bare.as_bytes();
-    if start + bare_bytes.len() > bytes.len() || &bytes[start..start + bare_bytes.len()] != bare_bytes {
+    if start + bare_bytes.len() > bytes.len()
+        || &bytes[start..start + bare_bytes.len()] != bare_bytes
+    {
         // The cursor's bare ident might be shorter than the full
         // identifier (cursor at the very start). Try matching the
         // full identifier at `start` against `bare`.

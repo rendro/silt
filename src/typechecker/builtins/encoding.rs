@@ -7,8 +7,8 @@
 //! phase-2 inlined the former `docs/stdlib/encoding.md`).
 
 use super::super::*;
-use super::docs::attach_module_docs_filtered;
 use super::docs::attach_module_docs;
+use super::docs::attach_module_docs_filtered;
 use super::docs::attach_module_overview;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {

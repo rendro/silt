@@ -243,7 +243,11 @@ fn diagnostic_messages(notif: &Value) -> Vec<String> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                .filter_map(|d| {
+                    d.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -307,7 +311,9 @@ fn test_lsp_still_reports_real_type_errors_with_user_import() {
     }
 
     // The real arity error must still be present.
-    let has_arity_error = messages.iter().any(|m| m.contains("expects 2 arguments, got 1"));
+    let has_arity_error = messages
+        .iter()
+        .any(|m| m.contains("expects 2 arguments, got 1"));
     assert!(
         has_arity_error,
         "LSP must still surface real type errors alongside a user import; got diagnostics: {messages:?}"

@@ -81,9 +81,7 @@ fn run_silt_inproc(src: &str) {
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile error");
+    let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let _ = vm.run(script);

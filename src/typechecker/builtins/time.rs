@@ -8,11 +8,8 @@ use super::docs::attach_module_docs;
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ── Time module type definitions ──────────────────────────────
 
-    let instant_ty = super::record_with_fields(
-        checker,
-        "Instant",
-        vec![(intern("epoch_ns"), Type::Int)],
-    );
+    let instant_ty =
+        super::record_with_fields(checker, "Instant", vec![(intern("epoch_ns"), Type::Int)]);
     let date_ty = super::record_with_fields(
         checker,
         "Date",
@@ -40,11 +37,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             (intern("time"), time_of_day_ty.clone()),
         ],
     );
-    let duration_ty = super::record_with_fields(
-        checker,
-        "Duration",
-        vec![(intern("ns"), Type::Int)],
-    );
+    let duration_ty =
+        super::record_with_fields(checker, "Duration", vec![(intern("ns"), Type::Int)]);
     let weekday_ty = Type::Generic(intern("Weekday"), vec![]);
 
     // Register Weekday enum

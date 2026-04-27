@@ -175,10 +175,7 @@ fn range_annotation_rejects_element_type_mismatch() {
         }
         "#,
     );
-    assert!(
-        !errs.is_empty(),
-        "expected an element-type error, got none"
-    );
+    assert!(!errs.is_empty(), "expected an element-type error, got none");
     // The error comes from unifying Int against String at the
     // Range(_)~List(_) level — the element types are what mismatch.
     let joined = errs.join("\n");

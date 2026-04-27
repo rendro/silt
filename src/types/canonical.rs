@@ -59,7 +59,7 @@
 //!   registration time so the substitution is straightforward.
 
 use crate::intern::{Symbol, intern, resolve};
-use crate::types::{Type, TyVar};
+use crate::types::{TyVar, Type};
 use crate::value::Value;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
@@ -154,8 +154,7 @@ pub struct AssocBinding {
 }
 
 fn assoc_registry() -> &'static RwLock<HashMap<(String, String, String), AssocBinding>> {
-    static REG: OnceLock<RwLock<HashMap<(String, String, String), AssocBinding>>> =
-        OnceLock::new();
+    static REG: OnceLock<RwLock<HashMap<(String, String, String), AssocBinding>>> = OnceLock::new();
     REG.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -177,7 +176,11 @@ pub fn register_assoc_binding(
     let head_canon = canonicalize_type_name(target_head);
     let mut guard = assoc_registry().write().unwrap();
     guard.insert(
-        (resolve(trait_name), resolve(head_canon), resolve(assoc_name)),
+        (
+            resolve(trait_name),
+            resolve(head_canon),
+            resolve(assoc_name),
+        ),
         AssocBinding {
             ty: canonicalize(&ty),
         },
@@ -194,7 +197,11 @@ pub fn lookup_assoc_binding(
     let head_canon = canonicalize_type_name(target_head);
     let guard = assoc_registry().read().unwrap();
     guard
-        .get(&(resolve(trait_name), resolve(head_canon), resolve(assoc_name)))
+        .get(&(
+            resolve(trait_name),
+            resolve(head_canon),
+            resolve(assoc_name),
+        ))
         .cloned()
 }
 
@@ -257,14 +264,9 @@ pub fn canonicalize(ty: &Type) -> Type {
         Type::Tuple(elems) => Type::Tuple(elems.iter().map(canonicalize).collect()),
         Type::Record(name, fields) => Type::Record(
             *name,
-            fields
-                .iter()
-                .map(|(n, t)| (*n, canonicalize(t)))
-                .collect(),
+            fields.iter().map(|(n, t)| (*n, canonicalize(t))).collect(),
         ),
-        Type::Generic(name, args) => {
-            Type::Generic(*name, args.iter().map(canonicalize).collect())
-        }
+        Type::Generic(name, args) => Type::Generic(*name, args.iter().map(canonicalize).collect()),
 
         // ── Anonymous structural records ───────────────────────────
         // Recurse on each field. Tail is preserved as-is — row variables
@@ -294,16 +296,16 @@ pub fn canonicalize(ty: &Type) -> Type {
             let canon_recv = canonicalize(receiver);
             // Try to find a head symbol on the canonicalised receiver.
             // Concrete heads -> impl-table lookup. None -> abstract.
-            if let Some(head) = head_symbol_of_canon(&canon_recv) {
-                if let Some(binding) = lookup_assoc_binding(*trait_name, head, *assoc_name) {
-                    // The stored binding was canonicalised at registration
-                    // time. Canonicalise again here so any nested alias /
-                    // assoc-projection inside the binding (registered
-                    // before another alias became known) reduces too. The
-                    // recursion terminates because the binding's head is
-                    // not the same as the AssocProj's input head.
-                    return canonicalize(&binding.ty);
-                }
+            if let Some(head) = head_symbol_of_canon(&canon_recv)
+                && let Some(binding) = lookup_assoc_binding(*trait_name, head, *assoc_name)
+            {
+                // The stored binding was canonicalised at registration
+                // time. Canonicalise again here so any nested alias /
+                // assoc-projection inside the binding (registered
+                // before another alias became known) reduces too. The
+                // recursion terminates because the binding's head is
+                // not the same as the AssocProj's input head.
+                return canonicalize(&binding.ty);
             }
             // No binding (or abstract receiver): keep as canonical
             // AssocProj. The typechecker emits a "type does not
@@ -432,7 +434,6 @@ pub fn canonical_name(ty: &Type) -> String {
     }
 }
 
-
 /// Canonicalise a type-name [`Symbol`] for dispatch-table keys.
 ///
 /// Mirror of [`canonical_name`] for the case where only the head
@@ -493,7 +494,11 @@ fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
         Type::Tuple(_) => Some(intern("Tuple")),
         Type::Fun(_, _) => Some(intern("Fn")),
         Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_) | Type::Error | Type::Never | Type::AssocProj { .. } | Type::AnonRecord { .. } => None,
+        Type::Var(_)
+        | Type::Error
+        | Type::Never
+        | Type::AssocProj { .. }
+        | Type::AnonRecord { .. } => None,
     }
 }
 
@@ -569,7 +574,7 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use crate::intern;
-    use crate::types::builtins::{BuiltinKind, BUILTIN_TYPES};
+    use crate::types::builtins::{BUILTIN_TYPES, BuiltinKind};
 
     // Helper: build the smallest Type instance whose head constructor
     // matches a given builtin surface name. Used to parity-lock
@@ -680,8 +685,7 @@ mod tests {
     fn canonicalize_range_in_generic_args() {
         let name = intern::intern("Result");
         let g = Type::Generic(name, vec![Type::Range(Box::new(Type::Int)), Type::String]);
-        let expected =
-            Type::Generic(name, vec![Type::List(Box::new(Type::Int)), Type::String]);
+        let expected = Type::Generic(name, vec![Type::List(Box::new(Type::Int)), Type::String]);
         assert_eq!(canonicalize(&g), expected);
     }
 
@@ -955,7 +959,10 @@ mod tests {
         // Every BUILTIN_TYPES entry tagged as Primitive that maps
         // onto a Type variant produces a canonical_name equal to
         // its surface name (modulo the `()`/`Unit` alias).
-        for b in BUILTIN_TYPES.iter().filter(|b| b.kind == BuiltinKind::Primitive) {
+        for b in BUILTIN_TYPES
+            .iter()
+            .filter(|b| b.kind == BuiltinKind::Primitive)
+        {
             let Some(t) = type_for_builtin(b.name) else {
                 continue;
             };
@@ -1121,7 +1128,6 @@ mod tests {
         let ty = Type::Generic(b, vec![]);
         assert_eq!(canonicalize(&ty), Type::List(Box::new(Type::Int)));
     }
-
 
     /// `canonicalize_type_name` follows alias chains to the head
     /// constructor — `Bytes -> List(Int) -> "List"` registers and

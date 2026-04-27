@@ -82,8 +82,12 @@ fn test_module_not_imported_message_printed_once() {
     // Additionally assert the `error[type]` / `error[compile]`
     // distinction: the typechecker's `[type]` version should have been
     // dropped, leaving only the compiler's `[compile]` version.
-    let type_err_count = combined.matches("error[type]: module 'math' is not imported").count();
-    let compile_err_count = combined.matches("error[compile]: module 'math' is not imported").count();
+    let type_err_count = combined
+        .matches("error[type]: module 'math' is not imported")
+        .count();
+    let compile_err_count = combined
+        .matches("error[compile]: module 'math' is not imported")
+        .count();
     assert_eq!(
         type_err_count, 0,
         "typechecker's [type] version should be filtered out, got:\n{combined}"

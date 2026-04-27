@@ -3797,8 +3797,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             let trailing = take_trailing_for_line(p_line)
                 .map(|c| format!(" {c}"))
                 .unwrap_or_default();
-            let needs_comma =
-                i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+            let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
             let comma = if needs_comma { "," } else { "" };
             lines.push(format!("{}{p_str}{comma}{trailing}", indent(depth + 1)));
             prev_line = p_line;
@@ -3828,13 +3827,12 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         // Round-52 trailing-comma preservation for single-line fn
         // params. Byte-offset anchored so a `fn foo(x) = Some(x,)`
         // body's trailing comma does not leak into the param check.
-        let trailing = if !f.params.is_empty()
-            && source_has_trailing_comma_at_offset(f.span, '(', ')')
-        {
-            ","
-        } else {
-            ""
-        };
+        let trailing =
+            if !f.params.is_empty() && source_has_trailing_comma_at_offset(f.span, '(', ')') {
+                ","
+            } else {
+                ""
+            };
         format!("{joined}{trailing}")
     };
     let ret = if let Some(ty) = &f.return_type {
@@ -4238,9 +4236,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
                 // a separator comma. A trailing `-- comment` always
                 // forces a comma before it so the `,-- c` split is
                 // well-formed at re-parse.
-                let needs_comma = i < last_idx
-                    || trailing.is_some()
-                    || source_has_trailing_comma;
+                let needs_comma = i < last_idx || trailing.is_some() || source_has_trailing_comma;
                 let comma = if needs_comma { "," } else { "" };
                 let tail = match trailing {
                     Some(tc) => format!("{head}{comma} {tc}"),
@@ -4361,7 +4357,14 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
         let inner = indent(depth + 1);
         t.assoc_type_bindings
             .iter()
-            .map(|b| format!("{}type {} = {}\n", inner, resolve(b.name), format_type_expr(&b.ty)))
+            .map(|b| {
+                format!(
+                    "{}type {} = {}\n",
+                    inner,
+                    resolve(b.name),
+                    format_type_expr(&b.ty)
+                )
+            })
             .collect::<String>()
     };
     if assoc_lines.is_empty() {
@@ -4599,8 +4602,7 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         // element only takes one iff the source wrote one (or carries
         // an attached trailing `-- comment`, which needs a `,` before
         // it so the split is well-formed at re-parse).
-        let needs_comma =
-            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
         let comma = if needs_comma { "," } else { "" };
         lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
         prev_line = elem_line;
@@ -4709,8 +4711,7 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         let trailing = take_trailing_for_line(arg_line)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        let needs_comma =
-            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
         let comma = if needs_comma { "," } else { "" };
         lines.push(format!("{}{arg_str}{comma}{trailing}", indent(depth + 1)));
         prev_line = arg_line;
@@ -4756,8 +4757,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         let trailing = take_trailing_for_line(fline)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        let needs_comma =
-            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
         let comma = if needs_comma { "," } else { "" };
         lines.push(format!(
             "{}{fname}: {val}{comma}{trailing}",
@@ -4882,8 +4882,8 @@ fn compute_match_arm_trailing_commas(
         return out;
     }
     let comma_count = count_toplevel_commas_in_match_body(match_span, match_close_line);
-    for i in 0..arms.len().min(comma_count) {
-        out[i] = true;
+    for slot in out.iter_mut().take(arms.len().min(comma_count)) {
+        *slot = true;
     }
     out
 }

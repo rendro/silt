@@ -12,8 +12,7 @@ use std::fs;
 #[test]
 fn docs_ffi_does_not_reference_deleted_register_fn3() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/ffi.md");
-    let contents = fs::read_to_string(path)
-        .expect("docs/ffi.md must exist and be readable");
+    let contents = fs::read_to_string(path).expect("docs/ffi.md must exist and be readable");
 
     assert!(
         !contents.contains("register_fn3"),

@@ -74,14 +74,15 @@ fn main() {
     // Must report that the callee expects 2 args and got 3 (i.e. the
     // user passed a 3-arg lambda where 2 was required).
     assert!(
-        errs.iter().any(|e| e.contains("function expects 2")
-            && e.contains("got 3")),
+        errs.iter()
+            .any(|e| e.contains("function expects 2") && e.contains("got 3")),
         "expected 'function expects 2 arguments, got 3', got: {errs:?}"
     );
     // Must NOT contain the reversed wording.
     assert!(
-        !errs.iter().any(|e| e.contains("function expects 3")
-            && e.contains("got 2")),
+        !errs
+            .iter()
+            .any(|e| e.contains("function expects 3") && e.contains("got 2")),
         "directional regression: reversed wording still present in: {errs:?}"
     );
 }
@@ -117,15 +118,18 @@ fn main() { println(consume(mk())) }
     // So instead the target diagnostic here must be the arity error
     // on the annotation itself — expected 2, got 3.
     assert!(
-        errs.iter().any(|e| e.contains("type argument count mismatch")
-            && e.contains("expected 2")
-            && e.contains("got 3")),
+        errs.iter()
+            .any(|e| e.contains("type argument count mismatch")
+                && e.contains("expected 2")
+                && e.contains("got 3")),
         "expected 'type argument count mismatch ... expected 2, got 3', got: {errs:?}"
     );
     assert!(
-        !errs.iter().any(|e| e.contains("type argument count mismatch")
-            && e.contains("expected 3")
-            && e.contains("got 2")),
+        !errs
+            .iter()
+            .any(|e| e.contains("type argument count mismatch")
+                && e.contains("expected 3")
+                && e.contains("got 2")),
         "directional regression: reversed wording still present in: {errs:?}"
     );
 }

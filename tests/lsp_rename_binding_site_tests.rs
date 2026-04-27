@@ -225,10 +225,7 @@ fn rename_from_let_binding_site() {
     //   line 3: `}`
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_rn_let_binder.silt";
-    client.did_open_and_wait(
-        uri,
-        "fn main() {\n  let xvar = 42\n  println(xvar)\n}\n",
-    );
+    client.did_open_and_wait(uri, "fn main() {\n  let xvar = 42\n  println(xvar)\n}\n");
 
     let resp = client.request(
         "textDocument/rename",
@@ -247,7 +244,10 @@ fn rename_from_let_binding_site() {
         .get("changes")
         .and_then(|c| c.as_object())
         .expect("rename result has changes");
-    let edits = changes.get(uri).and_then(|v| v.as_array()).expect("file edits");
+    let edits = changes
+        .get(uri)
+        .and_then(|v| v.as_array())
+        .expect("file edits");
     assert!(
         edits.len() >= 2,
         "expected at least 2 edits (binder + use); got {}: {edits:?}",
@@ -260,10 +260,7 @@ fn rename_from_let_binding_site() {
 fn prepare_rename_from_let_binding_site() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_pr_let_binder.silt";
-    client.did_open_and_wait(
-        uri,
-        "fn main() {\n  let xvar = 42\n  println(xvar)\n}\n",
-    );
+    client.did_open_and_wait(uri, "fn main() {\n  let xvar = 42\n  println(xvar)\n}\n");
 
     let resp = client.request(
         "textDocument/prepareRename",
@@ -307,7 +304,10 @@ fn rename_from_fn_param_binding_site() {
         .get("changes")
         .and_then(|c| c.as_object())
         .expect("rename result has changes");
-    let edits = changes.get(uri).and_then(|v| v.as_array()).expect("file edits");
+    let edits = changes
+        .get(uri)
+        .and_then(|v| v.as_array())
+        .expect("file edits");
     assert!(
         edits.len() >= 2,
         "expected at least 2 edits (binder + use); got {}: {edits:?}",
@@ -343,7 +343,10 @@ fn rename_from_fn_decl_name() {
         .get("changes")
         .and_then(|c| c.as_object())
         .expect("rename result has changes");
-    let edits = changes.get(uri).and_then(|v| v.as_array()).expect("file edits");
+    let edits = changes
+        .get(uri)
+        .and_then(|v| v.as_array())
+        .expect("file edits");
     assert!(
         edits.len() >= 2,
         "expected at least 2 edits (decl + call); got {}: {edits:?}",

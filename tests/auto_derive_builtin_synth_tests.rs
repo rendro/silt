@@ -313,10 +313,7 @@ fn every_builtin_record_has_stamps_for_policy_permitted_traits() {
     // FileStat — same (via `fs.rs::register_fs_builtins`).
     for trait_name in ["Equal", "Compare", "Hash", "Display"] {
         let key = format!("{trait_name}:FileStat");
-        assert!(
-            impls.contains(&key),
-            "expected built-in record stamp {key}",
-        );
+        assert!(impls.contains(&key), "expected built-in record stamp {key}",);
     }
     // Response/Request — Equal/Hash/Display only (Map field blocks
     // Compare). Stamped via `register_builtin_trait_impls`.

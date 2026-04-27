@@ -101,8 +101,7 @@ fn every_example_round_trips_through_formatter_and_typechecks() {
         let src = match std::fs::read_to_string(file) {
             Ok(s) => s,
             Err(e) => {
-                idempotency_failures
-                    .push(format!("{}: failed to read: {}", file.display(), e));
+                idempotency_failures.push(format!("{}: failed to read: {}", file.display(), e));
                 continue;
             }
         };

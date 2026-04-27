@@ -39,8 +39,7 @@ fn repo_root() -> PathBuf {
 
 fn read_grammar(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// Whole-word membership check matching the helper in
@@ -93,7 +92,9 @@ fn vscode_primitives_block(vscode: &str) -> String {
 /// the form `"\\b(A|B|C|...)\\b"`, so a naive split on `|` between the
 /// first `(` and last `)` recovers the token set.
 fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
-    let match_pos = block.find("\"match\"").expect("primitives block has \"match\"");
+    let match_pos = block
+        .find("\"match\"")
+        .expect("primitives block has \"match\"");
     let after_match = &block[match_pos..];
     let open = after_match.find('(').expect("match regex has open paren");
     let close = after_match[open..]

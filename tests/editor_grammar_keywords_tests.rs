@@ -45,8 +45,7 @@ fn repo_root() -> PathBuf {
 
 fn read_grammar(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// Returns every line from the vim grammar that declares a
@@ -135,13 +134,13 @@ fn vim_keyword_tokens(vim_scope: &str) -> Vec<String> {
 fn vscode_keyword_tokens(vscode_scope: &str) -> Vec<String> {
     let open_anchor = "\\\\b(";
     let close_anchor = ")\\\\b";
-    let open = vscode_scope.find(open_anchor).expect(
-        "VS Code \"keywords\" block missing `\\\\b(` opening anchor in JSON source",
-    );
+    let open = vscode_scope
+        .find(open_anchor)
+        .expect("VS Code \"keywords\" block missing `\\\\b(` opening anchor in JSON source");
     let rest = &vscode_scope[open + open_anchor.len()..];
-    let close = rest.find(close_anchor).expect(
-        "VS Code \"keywords\" block missing `)\\\\b` closing anchor in JSON source",
-    );
+    let close = rest
+        .find(close_anchor)
+        .expect("VS Code \"keywords\" block missing `)\\\\b` closing anchor in JSON source");
     rest[..close]
         .split('|')
         .map(|t| t.trim().to_string())

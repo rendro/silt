@@ -34,13 +34,11 @@ fn run(input: &str) -> Value {
 /// `Value::Float`.
 #[test]
 fn list_sum_float_widens_to_extfloat_on_overflow() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 import float
 fn main() { list.sum_float([float.max_value, float.max_value]) }
-"#,
-    );
+"#);
     assert_eq!(result, Value::ExtFloat(f64::INFINITY));
     // Defensive: pre-fix behavior would produce `Value::Float(inf)`. This
     // assertion locks against that regression.
@@ -55,13 +53,11 @@ fn main() { list.sum_float([float.max_value, float.max_value]) }
 /// multiplication. The fix must widen this to `Value::ExtFloat(inf)`.
 #[test]
 fn list_product_float_widens_to_extfloat_on_overflow() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 import float
 fn main() { list.product_float([float.max_value, 2.0]) }
-"#,
-    );
+"#);
     assert_eq!(result, Value::ExtFloat(f64::INFINITY));
     assert!(
         !matches!(result, Value::Float(_)),
@@ -74,23 +70,19 @@ fn main() { list.product_float([float.max_value, 2.0]) }
 /// fix didn't over-widen (i.e. always return `ExtFloat`).
 #[test]
 fn sum_float_finite_stays_float() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() { list.sum_float([1.0, 2.0, 3.0]) }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Float(6.0));
 }
 
 /// Same sanity check for `product_float`.
 #[test]
 fn product_float_finite_stays_float() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() { list.product_float([2.0, 3.0, 4.0]) }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Float(24.0));
 }

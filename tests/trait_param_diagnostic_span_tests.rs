@@ -33,9 +33,9 @@ fn first_parse_error(src: &str) -> ParseError {
 /// surfaces immediately.
 fn col_of(src: &str, needle: &str) -> usize {
     let line = src.lines().next().expect("empty source");
-    let idx = line.find(needle).unwrap_or_else(|| {
-        panic!("fixture missing needle {needle:?} on first line: {line:?}")
-    });
+    let idx = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("fixture missing needle {needle:?} on first line: {line:?}"));
     idx + 1
 }
 

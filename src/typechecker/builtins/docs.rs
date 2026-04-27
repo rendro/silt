@@ -98,11 +98,7 @@ pub(super) fn attach_module_docs_filtered(env: &mut TypeEnv, md: &str, prefix: &
 /// variant docs are not authored separately (the table groups them
 /// already), so the enum-level body is the right hover content.
 #[allow(dead_code)]
-pub(super) fn attach_enum_variant_docs(
-    env: &mut TypeEnv,
-    md: &str,
-    enums: &[(&str, &[&str])],
-) {
+pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&str, &[&str])]) {
     let sections = iter_sections(md);
     for (enum_name, variants) in enums {
         let body = sections
@@ -159,8 +155,8 @@ fn iter_sections(md: &str) -> Vec<(Vec<String>, String)> {
         if let Some(keys) = parse_heading_keys(line) {
             let start = i + 1;
             let mut end = lines.len();
-            for j in start..lines.len() {
-                if is_section_break(lines[j]) {
+            for (j, line) in lines.iter().enumerate().skip(start) {
+                if is_section_break(line) {
                     end = j;
                     break;
                 }
@@ -189,10 +185,8 @@ fn parse_heading_keys(line: &str) -> Option<Vec<String>> {
     let trimmed = line.trim_start();
     let after_hash = if let Some(rest) = trimmed.strip_prefix("### ") {
         rest
-    } else if let Some(rest) = trimmed.strip_prefix("## ") {
-        rest
     } else {
-        return None;
+        trimmed.strip_prefix("## ")?
     };
     let stripped = after_hash.trim();
 
@@ -208,8 +202,8 @@ fn parse_heading_keys(line: &str) -> Option<Vec<String>> {
                 None => break,
             };
             let candidate = &after[..close];
-            let key = candidate
-                .trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
+            let key =
+                candidate.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
             if !key.is_empty() && looks_like_identifier(key) {
                 keys.push(key.to_string());
             }
@@ -245,9 +239,7 @@ fn looks_like_identifier(s: &str) -> bool {
 /// heading is treated as in-section content.
 fn is_section_break(line: &str) -> bool {
     let trimmed = line.trim_start();
-    trimmed.starts_with("# ")
-        || trimmed.starts_with("## ")
-        || trimmed.starts_with("### ")
+    trimmed.starts_with("# ") || trimmed.starts_with("## ") || trimmed.starts_with("### ")
 }
 
 /// Slice the leading and trailing blank lines off `lines` and re-join

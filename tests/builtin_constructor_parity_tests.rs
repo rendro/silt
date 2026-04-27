@@ -35,8 +35,7 @@ fn repo_root() -> PathBuf {
 
 fn read_source(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// Does `source` mention `name` as a whole identifier (flanked by

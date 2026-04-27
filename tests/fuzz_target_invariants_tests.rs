@@ -202,8 +202,8 @@ fn formatter_invariants_reject_unparseable_output_when_original_parsed() {
     // Same token count, same balance, same comment markers — but
     // rearranged into a syntactically invalid form.
     let corrupted = "= let x 1\n";
-    let err = check_formatter_invariants(original, corrupted)
-        .expect_err("expected invariant failure");
+    let err =
+        check_formatter_invariants(original, corrupted).expect_err("expected invariant failure");
     // Either the significant-token-count check or the parse-preservation
     // check must fire — anything else (e.g. a generic lex error) would
     // mean the invariants we care about aren't actually being exercised.
@@ -264,8 +264,7 @@ fn parser_invariants_accept_empty_source() {
     let src = "";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let program = Parser::new(tokens.clone()).parse_program().unwrap();
-    check_parser_invariants(src, &tokens, &program)
-        .expect("empty source must satisfy invariants");
+    check_parser_invariants(src, &tokens, &program).expect("empty source must satisfy invariants");
 }
 
 #[test]
@@ -306,10 +305,7 @@ fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
     let tokens = Lexer::new(src).tokenize().unwrap();
     let empty_program = Program { decls: vec![] };
     let err = check_parser_invariants(src, &tokens, &empty_program).unwrap_err();
-    assert!(
-        err.contains("zero decls"),
-        "unexpected error: {err}"
-    );
+    assert!(err.contains("zero decls"), "unexpected error: {err}");
 }
 
 #[test]
@@ -324,10 +320,7 @@ fn parser_invariants_reject_decls_from_empty_source() {
         )],
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
-    assert!(
-        err.contains("empty-of-tokens"),
-        "unexpected error: {err}"
-    );
+    assert!(err.contains("empty-of-tokens"), "unexpected error: {err}");
 }
 
 // --------------------------------------------------------------------

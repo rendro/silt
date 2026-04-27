@@ -223,11 +223,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
         compiler.pre_typecheck_imports(&program);
         let exports = compiler.module_exports_snapshot();
-        let (type_errors, _entry_exports) = typechecker::check_with_package_and_imports(
-            &mut program,
-            Some(local_pkg),
-            exports,
-        );
+        let (type_errors, _entry_exports) =
+            typechecker::check_with_package_and_imports(&mut program, Some(local_pkg), exports);
         let mut has_type_error = false;
         let mut printed_type_errors: usize = 0;
         for te in &type_errors {

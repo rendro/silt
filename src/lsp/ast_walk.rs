@@ -211,12 +211,7 @@ pub(super) fn find_ident_at_offset_with_source(
     best
 }
 
-fn find_ident_in_decl(
-    decl: &Decl,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
+fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &mut Option<Symbol>) {
     match decl {
         Decl::Fn(f) => {
             check_fn_decl_name(f, cursor, source, best);
@@ -332,8 +327,7 @@ fn check_fn_decl_name(
         .or_else(|| after.find('\n'))
         .map(|p| fn_start + p)
         .unwrap_or(source.len());
-    if let Some(off) =
-        super::text_utils::find_ident_in_range(source, fn_start, scan_end, &name_str)
+    if let Some(off) = super::text_utils::find_ident_in_range(source, fn_start, scan_end, &name_str)
         && cursor >= off
         && cursor < off + name_str.len()
     {

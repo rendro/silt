@@ -2612,7 +2612,10 @@ mod tests {
             .unwrap()
             .join()
             .expect_err("poison thread must have panicked");
-        assert!(cursor_reg.is_poisoned(), "cursor registry should be poisoned");
+        assert!(
+            cursor_reg.is_poisoned(),
+            "cursor registry should be poisoned"
+        );
         assert!(lookup_cursor(u64::MAX).is_none());
         assert!(remove_cursor(u64::MAX).is_none());
         // drain_cursors_for_tx returns (); just verify it doesn't

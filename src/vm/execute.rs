@@ -1469,7 +1469,8 @@ impl Vm {
                     self.push(Value::VmClosure(closure));
                 } else {
                     return Err(VmError::new(
-                        "internal VM error: closure construction constant is not a closure".to_string(),
+                        "internal VM error: closure construction constant is not a closure"
+                            .to_string(),
                     ));
                 }
             }

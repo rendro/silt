@@ -400,7 +400,7 @@ pub(super) fn remap_scheme(
 /// `RecordInfo`, `TraitInfo`, and `TraitImpl` are all `Clone`, so the
 /// exports map carries owned snapshots that survive the producer
 /// `TypeChecker` being dropped.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModuleExports {
     /// `pub fn` and `pub let` schemes, keyed by the bare name as
     /// declared. The importer rewrites the key to `module.name` when
@@ -452,24 +452,6 @@ pub(super) struct TraitImplExport {
     pub(super) impl_trait_args: Vec<Type>,
     /// Method entries keyed by method name.
     pub(super) methods: Vec<(Symbol, MethodEntry)>,
-}
-
-impl Default for ModuleExports {
-    fn default() -> Self {
-        Self {
-            schemes: Vec::new(),
-            enums: Vec::new(),
-            records: Vec::new(),
-            aliases: Vec::new(),
-            alias_arity: Vec::new(),
-            traits: Vec::new(),
-            variant_to_enum: Vec::new(),
-            trait_impl_entries: Vec::new(),
-            record_param_var_ids: Vec::new(),
-            variant_schemes: Vec::new(),
-            type_name_schemes: Vec::new(),
-        }
-    }
 }
 
 impl ModuleExports {
@@ -827,10 +809,8 @@ impl TypeChecker {
             // fields and propagate its tail.
             Type::AnonRecord { fields, tail } => {
                 use std::collections::BTreeMap;
-                let mut new_fields: BTreeMap<Symbol, Type> = fields
-                    .iter()
-                    .map(|(n, t)| (*n, self.apply(t)))
-                    .collect();
+                let mut new_fields: BTreeMap<Symbol, Type> =
+                    fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
                 let new_tail = match tail {
                     RowTail::Closed => RowTail::Closed,
                     RowTail::Var(v) => {
@@ -921,8 +901,7 @@ impl TypeChecker {
             return;
         }
         // Pairwise unify overlapping fields.
-        let common_keys: Vec<Symbol> =
-            f1.keys().filter(|k| f2.contains_key(k)).copied().collect();
+        let common_keys: Vec<Symbol> = f1.keys().filter(|k| f2.contains_key(k)).copied().collect();
         for k in &common_keys {
             let a = f1.get(k).cloned().unwrap();
             let b = f2.get(k).cloned().unwrap();
@@ -1312,9 +1291,7 @@ impl TypeChecker {
                 // `type Point { ... }` with no params — `record_param_var_ids`
                 // is absent for parameterless records, so the silent no-op
                 // path swallowed the arity violation. Reject explicitly.
-                if !self.record_param_var_ids.contains_key(n1)
-                    && self.records.contains_key(n1)
-                {
+                if !self.record_param_var_ids.contains_key(n1) && self.records.contains_key(n1) {
                     self.error(
                         format!(
                             "type argument count mismatch for {n1}: expected 0, got {}",
@@ -1360,9 +1337,7 @@ impl TypeChecker {
             }
             (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
                 // B2 (round 60) mirror: parameterless record with Generic args.
-                if !self.record_param_var_ids.contains_key(n2)
-                    && self.records.contains_key(n2)
-                {
+                if !self.record_param_var_ids.contains_key(n2) && self.records.contains_key(n2) {
                     self.error(
                         format!(
                             "type argument count mismatch for {n2}: expected 0, got {}",
@@ -1418,21 +1393,41 @@ impl TypeChecker {
             }
 
             // ── Anon record × Nominal record (widening) ───────────────
-            (Type::AnonRecord { fields: af, tail: at }, Type::Record(_, nf)) => {
+            (
+                Type::AnonRecord {
+                    fields: af,
+                    tail: at,
+                },
+                Type::Record(_, nf),
+            ) => {
                 self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
             }
-            (Type::Record(_, nf), Type::AnonRecord { fields: af, tail: at }) => {
+            (
+                Type::Record(_, nf),
+                Type::AnonRecord {
+                    fields: af,
+                    tail: at,
+                },
+            ) => {
                 self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
             }
-            (Type::AnonRecord { fields: af, tail: at }, Type::Generic(name, args))
-                if self.records.contains_key(name) =>
-            {
+            (
+                Type::AnonRecord {
+                    fields: af,
+                    tail: at,
+                },
+                Type::Generic(name, args),
+            ) if self.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
                 self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
             }
-            (Type::Generic(name, args), Type::AnonRecord { fields: af, tail: at })
-                if self.records.contains_key(name) =>
-            {
+            (
+                Type::Generic(name, args),
+                Type::AnonRecord {
+                    fields: af,
+                    tail: at,
+                },
+            ) if self.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
                 self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
             }
@@ -1855,8 +1850,7 @@ impl TypeChecker {
             | (Type::Set(x), Type::Set(y))
             | (Type::Channel(x), Type::Channel(y)) => Self::trait_arg_compatible_canon(x, y),
             (Type::Map(k1, v1), Type::Map(k2, v2)) => {
-                Self::trait_arg_compatible_canon(k1, k2)
-                    && Self::trait_arg_compatible_canon(v1, v2)
+                Self::trait_arg_compatible_canon(k1, k2) && Self::trait_arg_compatible_canon(v1, v2)
             }
             (Type::Tuple(xs), Type::Tuple(ys)) => {
                 xs.len() == ys.len()
@@ -2124,8 +2118,7 @@ impl TypeChecker {
 
         // Merge record_param_var_ids.
         for (name, ids) in &exports.record_param_var_ids {
-            let remapped: Vec<TyVar> =
-                ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
+            let remapped: Vec<TyVar> = ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
             self.record_param_var_ids.entry(*name).or_insert(remapped);
         }
 
@@ -2208,13 +2201,14 @@ impl TypeChecker {
                 // `MyType::method` style calls and explicit
                 // `MyType.method(value)` resolve through env lookup
                 // (matching the producer's bind in register_trait_impl).
-                let bind_key =
-                    intern(&format!("{}.{}", resolve(entry.target_type), resolve(*mname)));
+                let bind_key = intern(&format!(
+                    "{}.{}",
+                    resolve(entry.target_type),
+                    resolve(*mname)
+                ));
                 if env.lookup(bind_key).is_none() {
-                    let scheme = self.generalize_method_template(&substitute_vars(
-                        &m.method_type,
-                        &ty_remap,
-                    ));
+                    let scheme = self
+                        .generalize_method_template(&substitute_vars(&m.method_type, &ty_remap));
                     env.define(bind_key, scheme);
                 }
             }
@@ -2238,11 +2232,7 @@ impl TypeChecker {
     /// Walk this TypeChecker's state at the end of `check_program` and
     /// build a `ModuleExports` snapshot of every `pub` declaration in
     /// `program`. Round 64 item 6A.
-    pub(super) fn collect_module_exports(
-        &self,
-        program: &Program,
-        env: &TypeEnv,
-    ) -> ModuleExports {
+    pub(super) fn collect_module_exports(&self, program: &Program, env: &TypeEnv) -> ModuleExports {
         let mut exports = ModuleExports::new();
         let mut pub_type_names: std::collections::HashSet<Symbol> =
             std::collections::HashSet::new();
@@ -2276,9 +2266,7 @@ impl TypeChecker {
                                 exports.enums.push((td.name, info.clone()));
                                 // Variant schemes + variant_to_enum.
                                 for variant in &info.variants {
-                                    exports
-                                        .variant_to_enum
-                                        .push((variant.name, td.name));
+                                    exports.variant_to_enum.push((variant.name, td.name));
                                     if let Some(scheme) = env.lookup(variant.name) {
                                         exports
                                             .variant_schemes
@@ -2296,9 +2284,7 @@ impl TypeChecker {
                                 exports.records.push((td.name, info.clone()));
                             }
                             if let Some(ids) = self.record_param_var_ids.get(&td.name) {
-                                exports
-                                    .record_param_var_ids
-                                    .push((td.name, ids.clone()));
+                                exports.record_param_var_ids.push((td.name, ids.clone()));
                             }
                             if let Some(scheme) = env.lookup(td.name) {
                                 exports.type_name_schemes.push((td.name, scheme.clone()));
@@ -2338,11 +2324,7 @@ impl TypeChecker {
                 .enums
                 .get(&key.1)
                 .map(|e| e.defined_in == local_pkg)
-                .or_else(|| {
-                    self.records
-                        .get(&key.1)
-                        .map(|r| r.defined_in == local_pkg)
-                })
+                .or_else(|| self.records.get(&key.1).map(|r| r.defined_in == local_pkg))
                 .unwrap_or(false);
             if !trait_local && !type_local {
                 continue;
@@ -2369,11 +2351,7 @@ impl TypeChecker {
                 trait_name: key.0,
                 target_type: key.1,
                 span: *span,
-                impl_constraints: self
-                    .impl_constraints
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_default(),
+                impl_constraints: self.impl_constraints.get(key).cloned().unwrap_or_default(),
                 impl_trait_args: self.impl_trait_args.get(key).cloned().unwrap_or_default(),
                 methods,
             };
@@ -2481,9 +2459,9 @@ impl TypeChecker {
                         .iter()
                         .filter_map(|(k, scheme)| {
                             let k_str = resolve(*k);
-                            k_str
-                                .strip_prefix(&prefix)
-                                .map(|suffix| (intern(&format!("{alias_str}.{suffix}")), scheme.clone()))
+                            k_str.strip_prefix(&prefix).map(|suffix| {
+                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
+                            })
                         })
                         .collect();
                     for (aliased, scheme) in to_alias {
@@ -3164,9 +3142,7 @@ impl TypeChecker {
         let td_name_str = resolve(td.name);
         if td_name_str == "TypeOf" {
             self.error(
-                format!(
-                    "'{td_name_str}' is a reserved type name used by the type system"
-                ),
+                format!("'{td_name_str}' is a reserved type name used by the type system"),
                 td.span,
             );
             return;
@@ -3265,10 +3241,7 @@ impl TypeChecker {
                     // cross-enum-shadow warning below ensure this), so
                     // a flat name → ordinal map is sufficient — no
                     // need to key on the parent enum.
-                    crate::value::register_variant_ordinal(
-                        &resolve(variant.name),
-                        decl_idx as u32,
-                    );
+                    crate::value::register_variant_ordinal(&resolve(variant.name), decl_idx as u32);
 
                     // Register the constructor in the type environment
                     let type_params: Vec<Type> =
@@ -3612,10 +3585,7 @@ impl TypeChecker {
             // Format the cycle as `A -> B -> A` for clarity. `cycle` is
             // the Vec of names from the original `td.name` through
             // each alias in the chain that closes the loop.
-            let chain: Vec<String> = cycle
-                .iter()
-                .map(|s| crate::intern::resolve(*s))
-                .collect();
+            let chain: Vec<String> = cycle.iter().map(|s| crate::intern::resolve(*s)).collect();
             self.error(
                 format!(
                     "type alias '{}' forms a cycle: {}",
@@ -3658,11 +3628,7 @@ impl TypeChecker {
     /// closes a cycle, or `None` if no cycle is reachable. The
     /// `visiting` Vec carries the alias names seen so far on this
     /// walk; the head is the alias being declared.
-    fn find_alias_cycle(
-        &self,
-        ty: &Type,
-        visiting: &mut Vec<Symbol>,
-    ) -> Option<Vec<Symbol>> {
+    fn find_alias_cycle(&self, ty: &Type, visiting: &mut Vec<Symbol>) -> Option<Vec<Symbol>> {
         match ty {
             Type::Generic(name, args) => {
                 if visiting.contains(name) {
@@ -3701,10 +3667,9 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::List(inner)
-            | Type::Range(inner)
-            | Type::Set(inner)
-            | Type::Channel(inner) => self.find_alias_cycle(inner, visiting),
+            Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+                self.find_alias_cycle(inner, visiting)
+            }
             Type::Map(k, v) => self
                 .find_alias_cycle(k, visiting)
                 .or_else(|| self.find_alias_cycle(v, visiting)),
@@ -3853,10 +3818,7 @@ impl TypeChecker {
                             // record / enum bare-name path).
                             let is_user_alias = self.type_aliases.contains(name);
                             if !is_user_record && !is_user_enum && !is_user_alias {
-                                self.error(
-                                    format!("unknown type '{name_str}'"),
-                                    te.span,
-                                );
+                                self.error(format!("unknown type '{name_str}'"), te.span);
                                 return Type::Error;
                             }
                             let arity = self
@@ -3888,9 +3850,7 @@ impl TypeChecker {
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
-                    "Range" if resolved_args.is_empty() => {
-                        Type::Range(Box::new(self.fresh_var()))
-                    }
+                    "Range" if resolved_args.is_empty() => Type::Range(Box::new(self.fresh_var())),
                     "Range" if resolved_args.len() == 1 => {
                         Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
@@ -3950,10 +3910,7 @@ impl TypeChecker {
                         // ghost `Type::Generic("Frobnitz", [Int])` cascaded
                         // into Display / type-mismatch noise.
                         if expected_arity.is_none() {
-                            self.error(
-                                format!("unknown type '{name_str}'"),
-                                te.span,
-                            );
+                            self.error(format!("unknown type '{name_str}'"), te.span);
                             return Type::Error;
                         }
                         if let Some(expected) = expected_arity
@@ -4062,8 +4019,7 @@ impl TypeChecker {
             TypeExprKind::AnonRecord { fields, tail } => {
                 use std::collections::BTreeMap;
                 let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
-                let mut seen: std::collections::HashSet<Symbol> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
                 for (n, t) in fields {
                     if !seen.insert(*n) {
                         self.error(
@@ -4114,8 +4070,7 @@ impl TypeChecker {
         assoc_name: Symbol,
     ) -> Option<Symbol> {
         let mut frontier: Vec<Symbol> = vec![trait_name];
-        let mut seen: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         while let Some(t) = frontier.pop() {
             if !seen.insert(t) {
                 continue;
@@ -4240,9 +4195,10 @@ impl TypeChecker {
         // skip this fn — keeping its scheme polymorphic across all
         // recursive call sites in its own body.
         if !f.is_recovery_stub {
-            let all_params_annotated = f.params.iter().all(|p| {
-                matches!(p.kind, ParamKind::Type) || p.ty.is_some()
-            });
+            let all_params_annotated = f
+                .params
+                .iter()
+                .all(|p| matches!(p.kind, ParamKind::Type) || p.ty.is_some());
             if all_params_annotated && f.return_type.is_some() {
                 self.fully_annotated_fn_names.insert(f.name);
             }
@@ -4480,8 +4436,7 @@ impl TypeChecker {
 
         // Reject duplicate assoc-type names within the same trait.
         // Mirrors the duplicate-method check above.
-        let mut seen_assoc: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
+        let mut seen_assoc: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         for a in &t.assoc_types {
             if !seen_assoc.insert(a.name) {
                 self.error(
@@ -4707,11 +4662,7 @@ impl TypeChecker {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                tasks.push((
-                    type_name,
-                    params,
-                    TypeBodyKind::Record(info.fields.clone()),
-                ));
+                tasks.push((type_name, params, TypeBodyKind::Record(info.fields.clone())));
             }
         }
 
@@ -4811,9 +4762,8 @@ impl TypeChecker {
             // and the gate honours that exclusion — synth would
             // otherwise produce a `Compare:Option` impl that breaks
             // `tests/trait_init_parity_tests.rs`.
-            let policy_allows = |trait_sym: Symbol| -> bool {
-                self.trait_impl_set.contains(&(trait_sym, key))
-            };
+            let policy_allows =
+                |trait_sym: Symbol| -> bool { self.trait_impl_set.contains(&(trait_sym, key)) };
 
             match body {
                 TypeBodyKind::Enum(variants) => {
@@ -4833,14 +4783,16 @@ impl TypeChecker {
                             fields: v
                                 .field_types
                                 .iter()
-                                .map(|_| TypeExpr::new(
-                                    TypeExprKind::Named(intern("__synth_placeholder__")),
-                                    Span {
-                                        line: 0,
-                                        col: 0,
-                                        offset: 0,
-                                    },
-                                ))
+                                .map(|_| {
+                                    TypeExpr::new(
+                                        TypeExprKind::Named(intern("__synth_placeholder__")),
+                                        Span {
+                                            line: 0,
+                                            col: 0,
+                                            offset: 0,
+                                        },
+                                    )
+                                })
                                 .collect(),
                         })
                         .collect();
@@ -4872,25 +4824,19 @@ impl TypeChecker {
                         && policy_allows(equal_sym)
                         && !user_impls.contains(&(equal_sym, key))
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_equal_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(auto_derive::synth_equal_impl_for_enum(
+                            type_name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
-                    if hash_ok
-                        && policy_allows(hash_sym)
-                        && !user_impls.contains(&(hash_sym, key))
+                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_hash_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_enum(
+                            type_name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
                 }
                 TypeBodyKind::Record(fields) => {
@@ -4944,17 +4890,13 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if hash_ok
-                        && policy_allows(hash_sym)
-                        && !user_impls.contains(&(hash_sym, key))
+                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_hash_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_record(
+                            type_name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                 }
             }
@@ -5261,8 +5203,7 @@ impl TypeChecker {
                 for &var_id in &info.param_var_ids {
                     mapping.insert(var_id, self.fresh_var());
                 }
-                let substituted =
-                    crate::types::substitute_vars(&info.target, &mapping);
+                let substituted = crate::types::substitute_vars(&info.target, &mapping);
                 crate::types::canonical::canonicalize(&substituted)
             } else {
                 let user_arity = self
@@ -5290,11 +5231,10 @@ impl TypeChecker {
             // table. Variadic shapes (`Tuple`, `Fn`, `Fun`, `Handle`)
             // carry `arity: None` and are intentionally skipped — they
             // do not participate in this trait-impl arity check.
-            let builtin_arity: Option<(usize, &'static str)> = crate::types::builtins::lookup(
-                name_str_for_arity.as_str(),
-            )
-            .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
-            .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+            let builtin_arity: Option<(usize, &'static str)> =
+                crate::types::builtins::lookup(name_str_for_arity.as_str())
+                    .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
+                    .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
             let expected_arity = self
                 .record_param_var_ids
                 .get(&ti.target_type)
@@ -5475,12 +5415,7 @@ impl TypeChecker {
                             _ => {
                                 // Parameterless sub-bound: `trait Foo(a) where a: Display`
                                 // — no args to thread.
-                                self.verify_trait_obligation(
-                                    *bound_trait,
-                                    &[],
-                                    &applied,
-                                    ti.span,
-                                );
+                                self.verify_trait_obligation(*bound_trait, &[], &applied, ti.span);
                             }
                         }
                     }
@@ -5507,8 +5442,7 @@ impl TypeChecker {
             .unwrap_or_default();
         // Index the impl's bindings by name for lookup + duplicate check.
         let mut impl_binding_map: HashMap<Symbol, Type> = HashMap::new();
-        let mut seen_binding: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
+        let mut seen_binding: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         for binding in &ti.assoc_type_bindings {
             if !seen_binding.insert(binding.name) {
                 self.error(
@@ -5527,18 +5461,19 @@ impl TypeChecker {
             // unknown — in that case the per-impl unknown-trait error
             // already fired and we silently skip the binding.)
             let known = trait_assoc_types.iter().any(|a| a.name == binding.name);
-            if !trait_assoc_types.is_empty() || self.traits.contains_key(&ti.trait_name) {
-                if self.traits.contains_key(&ti.trait_name) && !known {
-                    self.error(
-                        format!(
-                            "associated type '{}' is not declared in trait '{}'",
-                            resolve(binding.name),
-                            resolve(ti.trait_name),
-                        ),
-                        binding.span,
-                    );
-                    continue;
-                }
+            if (!trait_assoc_types.is_empty() || self.traits.contains_key(&ti.trait_name))
+                && self.traits.contains_key(&ti.trait_name)
+                && !known
+            {
+                self.error(
+                    format!(
+                        "associated type '{}' is not declared in trait '{}'",
+                        resolve(binding.name),
+                        resolve(ti.trait_name),
+                    ),
+                    binding.span,
+                );
+                continue;
             }
             let resolved = self.resolve_type_expr(&binding.ty, &mut impl_param_map);
             impl_binding_map.insert(binding.name, resolved.clone());
@@ -6578,7 +6513,8 @@ impl ReplTypeContext {
 
         // Auto-derive Display/Compare/Equal/Hash for user types without
         // a manual impl. See `check_program` for the rationale.
-        self.checker.synthesize_auto_derive_impls(&mut program.decls);
+        self.checker
+            .synthesize_auto_derive_impls(&mut program.decls);
 
         // Register fn signatures and trait impls.
         for decl in &program.decls {
@@ -6825,8 +6761,17 @@ pub fn __trait_init_fingerprint_repl() -> (
 /// single parameterised helper, and this fingerprint proves the
 /// before/after shapes are identical.
 #[doc(hidden)]
-pub fn __builtin_trait_registration_fingerprint()
--> Vec<(String, String, usize, String, usize, usize, usize, usize, usize)> {
+pub fn __builtin_trait_registration_fingerprint() -> Vec<(
+    String,
+    String,
+    usize,
+    String,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+)> {
     let mut checker = TypeChecker::new();
     register_builtin_trait_impls(&mut checker);
     let names = ["Display", "Compare", "Equal", "Hash"];

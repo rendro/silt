@@ -76,7 +76,8 @@ fn path_to_file_uri_encodes_spaces() {
 /// the round-trip is clean.
 #[test]
 fn round_trip_uri_path_with_spaces_and_unicode() {
-    let original = PathBuf::from("/nonexistent-sentinel/My Project/\u{0442}\u{0435}\u{0441}\u{0442}.silt");
+    let original =
+        PathBuf::from("/nonexistent-sentinel/My Project/\u{0442}\u{0435}\u{0441}\u{0442}.silt");
     let uri = path_to_file_uri(&original).expect("encode must succeed");
     let rendered = uri.as_str();
     let decoded = file_uri_to_path(rendered).expect("decode must succeed");

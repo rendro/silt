@@ -75,10 +75,16 @@ fn no_range_string_in_vm_mod() {
 
 #[test]
 fn strip_comment_removes_line_comments() {
-    assert_eq!(strip_comment(r#"let x = "Range"; // and a comment"#), r#"let x = "Range"; "#);
+    assert_eq!(
+        strip_comment(r#"let x = "Range"; // and a comment"#),
+        r#"let x = "Range"; "#
+    );
     assert_eq!(strip_comment(r#"// only a comment with "Range""#), "");
     assert_eq!(strip_comment(r#"/// doc-comment with "Range""#), "");
-    assert_eq!(strip_comment(r#"no comment at all"#), r#"no comment at all"#);
+    assert_eq!(
+        strip_comment(r#"no comment at all"#),
+        r#"no comment at all"#
+    );
 }
 
 #[test]

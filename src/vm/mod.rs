@@ -445,25 +445,19 @@ impl Vm {
     // ── Bytecode reading ──────────────────────────────────────────
 
     fn read_byte(&mut self) -> Result<u8, VmError> {
-        let frame = self
-            .frames
-            .last()
-            .ok_or_else(|| {
-                VmError::new(
-                    "internal VM error: no call frame while reading bytecode".to_string(),
-                )
-            })?;
+        let frame = self.frames.last().ok_or_else(|| {
+            VmError::new("internal VM error: no call frame while reading bytecode".to_string())
+        })?;
         let ip = frame.ip;
-        let byte =
-            *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
-                VmError::new(format!("internal VM error: bytecode out of bounds at ip={ip}"))
-            })?;
+        let byte = *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
+            VmError::new(format!(
+                "internal VM error: bytecode out of bounds at ip={ip}"
+            ))
+        })?;
         self.frames
             .last_mut()
             .ok_or_else(|| {
-                VmError::new(
-                    "internal VM error: no call frame while reading bytecode".to_string(),
-                )
+                VmError::new("internal VM error: no call frame while reading bytecode".to_string())
             })?
             .ip = ip + 1;
         Ok(byte)

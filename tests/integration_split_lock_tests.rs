@@ -24,8 +24,7 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
 
 fn read_test_file(rel: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 #[test]

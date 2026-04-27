@@ -49,8 +49,8 @@ fn main() {}
     // phrase emitted by the reserved-name guard. If the guard is removed
     // or the message is changed, this test breaks loudly.
     assert!(
-        errs.iter().any(|e| e
-            .contains("'TypeOf' is a reserved type name used by the type system")),
+        errs.iter()
+            .any(|e| e.contains("'TypeOf' is a reserved type name used by the type system")),
         "expected reserved-name diagnostic for `type TypeOf(..)`, got: {errs:?}"
     );
 }

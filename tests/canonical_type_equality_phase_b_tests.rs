@@ -34,8 +34,8 @@
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::{Severity, Type};
 use silt::types::canonical::{canonicalize, types_equal};
+use silt::types::{Severity, Type};
 
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = Lexer::new(input).tokenize().expect("lexer");

@@ -205,7 +205,11 @@ fn matches_manifest_accepts_path_deps_offline() {
         "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(dep.join("src").join("lib.silt"), "pub fn add(a, b) = a + b\n").unwrap();
+    fs::write(
+        dep.join("src").join("lib.silt"),
+        "pub fn add(a, b) = a + b\n",
+    )
+    .unwrap();
 
     // App package.
     fs::create_dir_all(app.join("src")).unwrap();

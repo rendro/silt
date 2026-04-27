@@ -88,9 +88,7 @@ impl Server {
         // those at link time — if the name truly is missing a hard error
         // will surface there — so we suppress them here the same way the
         // CLI does.
-        let has_user_import_warning = type_errors
-            .iter()
-            .any(is_unknown_module_warning_te);
+        let has_user_import_warning = type_errors.iter().any(is_unknown_module_warning_te);
         for e in &type_errors {
             if is_unknown_module_warning_te(e) {
                 continue;

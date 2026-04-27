@@ -27,8 +27,7 @@ fn repo_root() -> PathBuf {
 
 fn read_grammar(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// Returns every line from the vim grammar that defines a

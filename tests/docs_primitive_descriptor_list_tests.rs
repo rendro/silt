@@ -27,27 +27,24 @@ use std::fs;
 /// the code is refactored to a different shape, this test's fragile-
 /// scraper error is clearer than a silent pass.
 fn primitive_descriptor_names() -> Vec<String> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/typechecker/builtins.rs"
-    );
-    let src = fs::read_to_string(path)
-        .expect("src/typechecker/builtins.rs must exist and be readable");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/typechecker/builtins.rs");
+    let src =
+        fs::read_to_string(path).expect("src/typechecker/builtins.rs must exist and be readable");
 
     // Find the slice literal: `&["Int", "Float", "ExtFloat", "String",
     // "Bool"]` (single-line). Round 58 wrote it exactly this way; if it
     // moves to multi-line or different form we'll need to update this
     // scraper.
     let marker_start = "for name in &[";
-    let idx = src
-        .find(marker_start)
-        .expect("expected a `for name in &[...]` loop registering primitive descriptors in \
-                 src/typechecker/builtins.rs. The scraper for this test needs updating.");
+    let idx = src.find(marker_start).expect(
+        "expected a `for name in &[...]` loop registering primitive descriptors in \
+                 src/typechecker/builtins.rs. The scraper for this test needs updating.",
+    );
     let after = &src[idx + marker_start.len()..];
-    let end = after
-        .find(']')
-        .expect("expected closing `]` after primitive-descriptor slice literal in \
-                 src/typechecker/builtins.rs");
+    let end = after.find(']').expect(
+        "expected closing `]` after primitive-descriptor slice literal in \
+                 src/typechecker/builtins.rs",
+    );
     let slice_body = &after[..end];
 
     let mut names = Vec::new();
@@ -79,13 +76,12 @@ fn read_doc(rel: &str) -> String {
 fn globals_md_lists_every_primitive_descriptor() {
     let names = primitive_descriptor_names();
     let docs = silt::typechecker::builtin_docs();
-    let doc = docs
-        .get("println")
-        .cloned()
-        .expect("globals.md prose is attached to `println` (and the rest of \
+    let doc = docs.get("println").cloned().expect(
+        "globals.md prose is attached to `println` (and the rest of \
                  the unqualified globals); round 62 phase-2 inlined it via \
                  `attach_module_docs(env, GLOBALS_MD)` in \
-                 src/typechecker/builtins.rs");
+                 src/typechecker/builtins.rs",
+    );
     for name in &names {
         let token = format!("`{name}`");
         assert!(

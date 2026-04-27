@@ -66,7 +66,13 @@ jobs:
           # binaries — avoid the partitions stomping each other's caches.
           shared-key: test-${{ matrix.partition }}
 
-      - name: cargo test (${{ matrix.partition }})
+      # cargo-nextest runs test binaries in PARALLEL (cargo test serializes them).
+      # On the `rest` partition with 215 binaries, this is the difference between
+      # 16-min wall clock (cargo test) and ~3-min wall clock (nextest).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: cargo nextest (${{ matrix.partition }})
         run: |
           CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' \
             bash .github/scripts/run-test-partition.sh ${{ matrix.partition }}

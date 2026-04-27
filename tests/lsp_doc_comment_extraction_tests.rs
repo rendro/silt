@@ -296,7 +296,8 @@ fn signature_help_doc(client: &mut LspClient, uri: &str, line: u32, col: u32) ->
 fn single_line_doc_comment_on_fn() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_doc_single_line.silt";
-    let source = "-- adds two ints\nfn add(x: Int, y: Int) -> Int { x + y }\nfn main() { add(1, 2) }\n";
+    let source =
+        "-- adds two ints\nfn add(x: Int, y: Int) -> Int { x + y }\nfn main() { add(1, 2) }\n";
     client.did_open_and_wait(uri, source);
 
     // Hover on `add` in the decl (line 1, char 3 inside the name).
@@ -370,8 +371,7 @@ fn no_doc_with_blank_line_gap() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_doc_gap.silt";
     // Blank line between comment and decl — comment is NOT a doc.
-    let source =
-        "-- note\n\nfn add(x: Int, y: Int) -> Int { x + y }\nfn main() { 0 }\n";
+    let source = "-- note\n\nfn add(x: Int, y: Int) -> Int { x + y }\nfn main() { 0 }\n";
     client.did_open_and_wait(uri, source);
 
     // Hover on `add` at line 2.

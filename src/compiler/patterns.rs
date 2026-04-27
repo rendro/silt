@@ -938,13 +938,13 @@ impl Compiler {
                     // remainder, bind to rest_name. Done via a sequence
                     // of opcodes — for v1 we emit a dedicated runtime
                     // helper through DestructRecordRest.
-                    let names: Vec<Symbol> =
-                        fields.iter().map(|(n, _)| *n).collect();
+                    let names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.current_chunk().emit_op(Op::Dup, span);
                     // Encode: count u8, then count name indices u16 each.
                     if names.len() > u8::MAX as usize {
                         return Err(CompileError {
-                            message: "anon record pattern cannot exclude more than 255 fields".into(),
+                            message: "anon record pattern cannot exclude more than 255 fields"
+                                .into(),
                             span,
                         });
                     }

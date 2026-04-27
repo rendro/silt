@@ -237,32 +237,12 @@ pub fn builtin_names() -> Vec<String> {
         // `src/lsp/completion.rs::KEYWORDS` — they feed the same user-
         // facing "things I can type here" expectation, just in two
         // different UIs.
-        ":quit",
-        ":q",
-        ":help",
-        ":h",
-        "as",
-        "else",
-        "fn",
-        "import",
-        "let",
-        "loop",
-        "match",
-        "mod",
-        "pub",
-        "return",
-        "trait",
-        "type",
-        "when",
-        "where",
-        "true",
-        "false",
+        ":quit", ":q", ":help", ":h", "as", "else", "fn", "import", "let", "loop", "match", "mod",
+        "pub", "return", "trait", "type", "when", "where", "true", "false",
         // Globals (non-constructor). Constructor variants come from
         // `module::all_builtin_constructor_names` below so gated ones
         // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
-        "print",
-        "println",
-        "panic",
+        "print", "println", "panic",
     ]
     .into_iter()
     .map(String::from)
@@ -845,7 +825,10 @@ fn span_fits_input(span: Span, input: &str) -> bool {
 /// Public so `tests/repl_error_render_and_keywords_tests.rs` can lock
 /// the output shape directly rather than round-tripping through a
 /// subprocess.
-pub fn render_runtime_error_without_source(message: &str, show_declaration_locator: bool) -> String {
+pub fn render_runtime_error_without_source(
+    message: &str,
+    show_declaration_locator: bool,
+) -> String {
     let (header_msg, note_body): (&str, Option<&str>) = match message.split_once('\n') {
         Some((head, rest)) => (head, Some(rest)),
         None => (message, None),

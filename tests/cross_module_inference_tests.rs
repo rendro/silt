@@ -21,11 +21,7 @@ use silt::typechecker;
 /// Create a fresh tempdir holding the supplied module files plus a
 /// `main.silt` containing `main_source`. Returns the dir path.
 fn setup_dir(files: &[(&str, &str)], main_source: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "silt_xmod_{}_{}",
-        std::process::id(),
-        rand_u64()
-    ));
+    let dir = std::env::temp_dir().join(format!("silt_xmod_{}_{}", std::process::id(), rand_u64()));
     fs::create_dir_all(&dir).expect("mkdir");
     for (name, content) in files {
         fs::write(dir.join(name), content).expect("write module");
@@ -60,11 +56,8 @@ fn typecheck_main_in(dir: &PathBuf) -> Vec<typechecker::TypeError> {
     let mut compiler = Compiler::with_package_roots(local_pkg, roots);
     compiler.pre_typecheck_imports(&program);
     let exports = compiler.module_exports_snapshot();
-    let (errors, _) = typechecker::check_with_package_and_imports(
-        &mut program,
-        Some(local_pkg),
-        exports,
-    );
+    let (errors, _) =
+        typechecker::check_with_package_and_imports(&mut program, Some(local_pkg), exports);
     errors
 }
 

@@ -20,8 +20,7 @@ use std::path::Path;
 
 fn read_doc(relative: &str) -> String {
     let path = Path::new(relative);
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("{relative} must be readable: {e}"))
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{relative} must be readable: {e}"))
 }
 
 /// `docs/concurrency.md` must not name a nonexistent `task.sleep`
@@ -41,7 +40,8 @@ fn docs_concurrency_uses_time_sleep_not_task_sleep() {
     let needle = "task.sleep";
     for (idx, _) in doc.match_indices(needle) {
         let after = doc[idx + needle.len()..].chars().next();
-        let is_ident_continuation = matches!(after, Some(c) if c.is_ascii_alphanumeric() || c == '_');
+        let is_ident_continuation =
+            matches!(after, Some(c) if c.is_ascii_alphanumeric() || c == '_');
         assert!(
             is_ident_continuation,
             "docs/concurrency.md still contains a bare `task.sleep` reference at byte offset \

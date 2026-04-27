@@ -973,7 +973,10 @@ fn all_doc_fn_test_blocks_compile() {
         // the `.test.silt` suffix keeps things consistent even when we
         // pass the filename explicitly, and makes the temp artifact
         // self-describing for any debugging on failure.
-        let file = tmp_dir.join(format!("{}_line{}.test.silt", job.file_stem, job.opener_line));
+        let file = tmp_dir.join(format!(
+            "{}_line{}.test.silt",
+            job.file_stem, job.opener_line
+        ));
         std::fs::write(&file, &job.src).expect("write temp silt test file");
 
         let output = silt_cmd()

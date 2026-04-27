@@ -65,23 +65,87 @@ pub struct BuiltinType {
 /// surface form a user might write.
 pub static BUILTIN_TYPES: &[BuiltinType] = &[
     // ── Primitives ─────────────────────────────────────────────────
-    BuiltinType { name: "Int",      arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "Float",    arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "ExtFloat", arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "Bool",     arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "String",   arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "Unit",     arity: Some(0), kind: BuiltinKind::Primitive },
-    BuiltinType { name: "()",       arity: Some(0), kind: BuiltinKind::Primitive },
+    BuiltinType {
+        name: "Int",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "Float",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "ExtFloat",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "Bool",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "String",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "Unit",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
+    BuiltinType {
+        name: "()",
+        arity: Some(0),
+        kind: BuiltinKind::Primitive,
+    },
     // ── Containers / callables / resources ─────────────────────────
-    BuiltinType { name: "List",    arity: Some(1), kind: BuiltinKind::Container },
-    BuiltinType { name: "Range",   arity: Some(1), kind: BuiltinKind::Container },
-    BuiltinType { name: "Map",     arity: Some(2), kind: BuiltinKind::Container },
-    BuiltinType { name: "Set",     arity: Some(1), kind: BuiltinKind::Container },
-    BuiltinType { name: "Channel", arity: Some(1), kind: BuiltinKind::Container },
-    BuiltinType { name: "Tuple",   arity: None,    kind: BuiltinKind::Container },
-    BuiltinType { name: "Fn",      arity: None,    kind: BuiltinKind::Container },
-    BuiltinType { name: "Fun",     arity: None,    kind: BuiltinKind::Container },
-    BuiltinType { name: "Handle",  arity: None,    kind: BuiltinKind::Container },
+    BuiltinType {
+        name: "List",
+        arity: Some(1),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Range",
+        arity: Some(1),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Map",
+        arity: Some(2),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Set",
+        arity: Some(1),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Channel",
+        arity: Some(1),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Tuple",
+        arity: None,
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Fn",
+        arity: None,
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Fun",
+        arity: None,
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "Handle",
+        arity: None,
+        kind: BuiltinKind::Container,
+    },
 ];
 
 /// Look up a built-in type entry by surface name. Returns `None` for
@@ -94,13 +158,17 @@ pub fn lookup(name: &str) -> Option<&'static BuiltinType> {
 /// Iterate every primitive entry in [`BUILTIN_TYPES`] (preserves the
 /// authoritative order).
 pub fn iter_primitives() -> impl Iterator<Item = &'static BuiltinType> {
-    BUILTIN_TYPES.iter().filter(|b| b.kind == BuiltinKind::Primitive)
+    BUILTIN_TYPES
+        .iter()
+        .filter(|b| b.kind == BuiltinKind::Primitive)
 }
 
 /// Iterate every container entry in [`BUILTIN_TYPES`] (preserves the
 /// authoritative order).
 pub fn iter_containers() -> impl Iterator<Item = &'static BuiltinType> {
-    BUILTIN_TYPES.iter().filter(|b| b.kind == BuiltinKind::Container)
+    BUILTIN_TYPES
+        .iter()
+        .filter(|b| b.kind == BuiltinKind::Container)
 }
 
 /// Iterate every authoritative entry, primitives then containers, in

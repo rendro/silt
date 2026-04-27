@@ -46,8 +46,8 @@ fn postgres_source_has_no_bare_lock_unwrap() {
         .join("src")
         .join("builtins")
         .join("postgres.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
 
     // Scan line-by-line so the failure message points at the offender.
     let mut offenders: Vec<(usize, String)> = Vec::new();
@@ -84,10 +84,12 @@ fn postgres_source_uses_poison_recovery_pattern() {
         .join("src")
         .join("builtins")
         .join("postgres.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
 
-    let hits = src.matches(".lock().unwrap_or_else(|e| e.into_inner())").count();
+    let hits = src
+        .matches(".lock().unwrap_or_else(|e| e.into_inner())")
+        .count();
     assert!(
         hits >= 15,
         "expected the poison-recovery lock pattern to appear many \

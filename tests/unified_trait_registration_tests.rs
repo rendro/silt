@@ -83,10 +83,7 @@ fn builtin_traits_registered_via_user_path() {
             param_where_clauses_count,
         ) = entry;
         assert_eq!(*params_count, 0, "{name}: params should be empty");
-        assert_eq!(
-            *supertraits_count, 0,
-            "{name}: supertraits should be empty"
-        );
+        assert_eq!(*supertraits_count, 0, "{name}: supertraits should be empty");
         assert_eq!(
             *supertrait_args_count, 0,
             "{name}: supertrait_args should be empty"
@@ -150,9 +147,7 @@ fn builtin_trait_decl_uses_inner_path_not_legacy_helper() {
 /// skips it.
 #[test]
 fn user_redefinition_of_display_still_rejected() {
-    let errs = type_errors(
-        "trait Display { fn show(self) -> String }\nfn main() { println(1) }\n",
-    );
+    let errs = type_errors("trait Display { fn show(self) -> String }\nfn main() { println(1) }\n");
     assert_eq!(
         errs.len(),
         1,

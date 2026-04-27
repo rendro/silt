@@ -1,8 +1,8 @@
 //! `textDocument/signatureHelp` handler and its call-site scanner.
 
 use lsp_types::{
-    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel,
-    SignatureHelp, SignatureInformation,
+    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, SignatureHelp,
+    SignatureInformation,
 };
 
 use crate::intern::intern;
@@ -48,20 +48,19 @@ impl Server {
 
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);
-        let (label, params_info, doc_text) =
-            if let Some(def) = doc.definitions.get(&fn_sym) {
-                let (label, params_info) = build_signature_from_def(&fn_name, def);
-                (label, params_info, def.doc.clone())
-            } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
-                // Show builtin type signature (no individual param info).
-                // Phase-2 builtin docs: surface stdlib markdown
-                // alongside the signature so signature-help is a real
-                // documentation surface for builtins, not just a type.
-                let doc_text = self.builtin_docs.get(&fn_name).cloned();
-                (format!("{fn_name}: {sig}"), vec![], doc_text)
-            } else {
-                return None;
-            };
+        let (label, params_info, doc_text) = if let Some(def) = doc.definitions.get(&fn_sym) {
+            let (label, params_info) = build_signature_from_def(&fn_name, def);
+            (label, params_info, def.doc.clone())
+        } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
+            // Show builtin type signature (no individual param info).
+            // Phase-2 builtin docs: surface stdlib markdown
+            // alongside the signature so signature-help is a real
+            // documentation surface for builtins, not just a type.
+            let doc_text = self.builtin_docs.get(&fn_name).cloned();
+            (format!("{fn_name}: {sig}"), vec![], doc_text)
+        } else {
+            return None;
+        };
 
         let documentation = doc_text.map(|d| {
             Documentation::MarkupContent(MarkupContent {

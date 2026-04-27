@@ -95,8 +95,7 @@ fn dispatch_shared_adt_op(
         }
         return match &args[0] {
             Value::Variant(tag, fields) if tag == ok_tag && fields.len() == 1 => {
-                let new_val =
-                    vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
+                let new_val = vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
                 Ok(Some(Value::Variant(ok_tag.into(), vec![new_val])))
             }
             other @ Value::Variant(tag, _) if tag == err_tag => Ok(Some(other.clone())),
@@ -108,9 +107,7 @@ fn dispatch_shared_adt_op(
     }
     if name == "flat_map" {
         if args.len() != 2 {
-            return Err(VmError::new(format!(
-                "{module}.flat_map takes 2 arguments"
-            )));
+            return Err(VmError::new(format!("{module}.flat_map takes 2 arguments")));
         }
         return match &args[0] {
             Value::Variant(tag, fields) if tag == ok_tag && fields.len() == 1 => {

@@ -328,8 +328,8 @@ fn docs_stdlib_println_annotations_match_silt_run_stdout() {
                         return;
                     }
                     let job = &jobs_ref[idx];
-                    let file = tmp_dir_ref
-                        .join(format!("{}_line{}.silt", job.stem, job.opener_line));
+                    let file =
+                        tmp_dir_ref.join(format!("{}_line{}.silt", job.stem, job.opener_line));
                     std::fs::write(&file, &job.src).expect("write temp silt file");
 
                     let output = silt_cmd()

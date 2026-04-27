@@ -843,9 +843,7 @@ fn json_to_typed_value(
                 if let Some(f) = n.as_f64() {
                     Ok(Value::ExtFloat(f))
                 } else {
-                    Err(unknown(
-                        "expected ExtFloat, got non-numeric number".into(),
-                    ))
+                    Err(unknown("expected ExtFloat, got non-numeric number".into()))
                 }
             }
             _ => Err(mismatch("ExtFloat", json_type_name(json))),
@@ -1050,7 +1048,8 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                 vm.iterate_builtin(BuiltinIterKind::ListMap, items, args[2].clone(), args)?;
             let Value::List(replacements) = replacements_val else {
                 return Err(VmError::new(
-                    "internal VM error: regex.replace_all_with builtin iteration returned non-list".into(),
+                    "internal VM error: regex.replace_all_with builtin iteration returned non-list"
+                        .into(),
                 ));
             };
             // Validate that all callback results are strings.

@@ -123,27 +123,18 @@ fn tuple_expr(elems: Vec<Expr>) -> Expr {
 /// because that is what the parser produces for surface-syntax method
 /// calls.
 fn method_call(recv: Expr, method: Symbol, args: Vec<Expr>) -> Expr {
-    let fa = Expr::new(
-        ExprKind::FieldAccess(Box::new(recv), method),
-        synth_span(),
-    );
+    let fa = Expr::new(ExprKind::FieldAccess(Box::new(recv), method), synth_span());
     Expr::new(ExprKind::Call(Box::new(fa), args), synth_span())
 }
 
 /// `recv.field` — record field access.
 fn field_access(recv: Expr, field: Symbol) -> Expr {
-    Expr::new(
-        ExprKind::FieldAccess(Box::new(recv), field),
-        synth_span(),
-    )
+    Expr::new(ExprKind::FieldAccess(Box::new(recv), field), synth_span())
 }
 
 /// `a + b` — used to combine display strings.
 fn bin(a: Expr, op: BinOp, b: Expr) -> Expr {
-    Expr::new(
-        ExprKind::Binary(Box::new(a), op, Box::new(b)),
-        synth_span(),
-    )
+    Expr::new(ExprKind::Binary(Box::new(a), op, Box::new(b)), synth_span())
 }
 
 fn match_expr(scrut: Expr, arms: Vec<MatchArm>) -> Expr {
@@ -203,12 +194,7 @@ fn param(name: Symbol, ty: TypeExpr) -> Param {
 
 /// Wrap a single expression in an FnDecl with the given name, params,
 /// return type and body. All other fields are defaults.
-fn fn_decl(
-    name: Symbol,
-    params: Vec<Param>,
-    return_type: Option<TypeExpr>,
-    body: Expr,
-) -> FnDecl {
+fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body: Expr) -> FnDecl {
     FnDecl {
         name,
         params,
@@ -292,10 +278,7 @@ pub(super) fn synth_compare_impl_for_enum(
         );
         let method = fn_decl(
             intern("compare"),
-            vec![
-                param(self_sym, self_te.clone()),
-                param(other_sym, self_te),
-            ],
+            vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
             Some(named_te(intern("Int"))),
             body,
         );
@@ -316,12 +299,8 @@ pub(super) fn synth_compare_impl_for_enum(
             arms.push(arm(pat, int_expr(0)));
         } else {
             // (V(a1, a2, ..), V(b1, b2, ..)) -> lex compare
-            let a_names: Vec<Symbol> = (0..arity)
-                .map(|i| intern(&format!("__d_a{i}__")))
-                .collect();
-            let b_names: Vec<Symbol> = (0..arity)
-                .map(|i| intern(&format!("__d_b{i}__")))
-                .collect();
+            let a_names: Vec<Symbol> = (0..arity).map(|i| intern(&format!("__d_a{i}__"))).collect();
+            let b_names: Vec<Symbol> = (0..arity).map(|i| intern(&format!("__d_b{i}__"))).collect();
             let a_pat = ctor_pat(variant.name, a_names.iter().map(|n| id_pat(*n)).collect());
             let b_pat = ctor_pat(variant.name, b_names.iter().map(|n| id_pat(*n)).collect());
             let pat = tuple_pat(vec![a_pat, b_pat]);
@@ -352,10 +331,7 @@ pub(super) fn synth_compare_impl_for_enum(
     let body = match_expr(scrut, arms);
     let method = fn_decl(
         intern("compare"),
-        vec![
-            param(self_sym, self_te.clone()),
-            param(other_sym, self_te),
-        ],
+        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
         Some(named_te(intern("Int"))),
         body,
     );
@@ -378,10 +354,7 @@ fn build_lex_compare_chain(a_names: &[Symbol], b_names: &[Symbol]) -> Expr {
         let c_sym = intern(&format!("__d_c{i}__"));
         let inner = chain(a_names, b_names, i + 1);
         let arms = vec![
-            arm(
-                Pattern::new(PatternKind::Int(0), synth_span()),
-                inner,
-            ),
+            arm(Pattern::new(PatternKind::Int(0), synth_span()), inner),
             arm(wildcard_pat(), ident_expr(c_sym)),
         ];
         block_expr(vec![
@@ -427,10 +400,7 @@ pub(super) fn synth_equal_impl_for_enum(
         );
         let method = fn_decl(
             intern("equal"),
-            vec![
-                param(self_sym, self_te.clone()),
-                param(other_sym, self_te),
-            ],
+            vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
             Some(named_te(intern("Bool"))),
             body,
         );
@@ -489,10 +459,7 @@ pub(super) fn synth_equal_impl_for_enum(
     let body = match_expr(scrut, arms);
     let method = fn_decl(
         intern("equal"),
-        vec![
-            param(self_sym, self_te.clone()),
-            param(other_sym, self_te),
-        ],
+        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
         Some(named_te(intern("Bool"))),
         body,
     );
@@ -550,20 +517,18 @@ pub(super) fn synth_hash_impl_for_enum(
             let arity = v.fields.len();
             if arity == 0 {
                 // Just the tag hash — `i.hash()` for ordinal i.
-                arm(ctor_pat(v.name, vec![]), method_call(int_expr(i as i64), intern("hash"), vec![]))
+                arm(
+                    ctor_pat(v.name, vec![]),
+                    method_call(int_expr(i as i64), intern("hash"), vec![]),
+                )
             } else {
-                let arg_names: Vec<Symbol> = (0..arity)
-                    .map(|j| intern(&format!("__d_h{j}__")))
-                    .collect();
+                let arg_names: Vec<Symbol> =
+                    (0..arity).map(|j| intern(&format!("__d_h{j}__"))).collect();
                 let pat = ctor_pat(v.name, arg_names.iter().map(|n| id_pat(*n)).collect());
                 // tag = i; combine = tag.hash(); for each arg: combine = combine_hash(combine, arg.hash())
                 let mut combine: Expr = method_call(int_expr(i as i64), intern("hash"), vec![]);
                 for arg_name in &arg_names {
-                    let arg_hash = method_call(
-                        ident_expr(*arg_name),
-                        intern("hash"),
-                        vec![],
-                    );
+                    let arg_hash = method_call(ident_expr(*arg_name), intern("hash"), vec![]);
                     combine = combine_hash_expr(combine, arg_hash);
                 }
                 arm(pat, combine)
@@ -645,9 +610,8 @@ pub(super) fn synth_display_impl_for_enum(
             if arity == 0 {
                 arm(ctor_pat(v.name, vec![]), string_expr(&tag_name))
             } else {
-                let arg_names: Vec<Symbol> = (0..arity)
-                    .map(|j| intern(&format!("__d_d{j}__")))
-                    .collect();
+                let arg_names: Vec<Symbol> =
+                    (0..arity).map(|j| intern(&format!("__d_d{j}__"))).collect();
                 let pat = ctor_pat(v.name, arg_names.iter().map(|n| id_pat(*n)).collect());
                 // "Tag(" + a0.display() + ", " + a1.display() + ... + ")"
                 let mut acc = bin(string_expr(&tag_name), BinOp::Add, string_expr("("));
@@ -694,10 +658,7 @@ pub(super) fn synth_compare_impl_for_record(
     };
     let method = fn_decl(
         intern("compare"),
-        vec![
-            param(self_sym, self_te.clone()),
-            param(other_sym, self_te),
-        ],
+        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
         Some(named_te(intern("Int"))),
         body,
     );
@@ -761,10 +722,7 @@ pub(super) fn synth_equal_impl_for_record(
     };
     let method = fn_decl(
         intern("equal"),
-        vec![
-            param(self_sym, self_te.clone()),
-            param(other_sym, self_te),
-        ],
+        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
         Some(named_te(intern("Bool"))),
         body,
     );

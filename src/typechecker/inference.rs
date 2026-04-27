@@ -681,10 +681,7 @@ impl TypeChecker {
                         let ft = field_ty.clone();
                         self.unify(&result_ty, &ft, span);
                     } else {
-                        self.error(
-                            format!("anon record has no field '{field}'"),
-                            span,
-                        );
+                        self.error(format!("anon record has no field '{field}'"), span);
                     }
                 }
                 Type::Generic(type_name, type_args) => {
@@ -1786,15 +1783,12 @@ impl TypeChecker {
                 self.unify(ty, &anon_ty, span);
                 // Resolve to get post-unification field types.
                 let resolved = self.apply(&anon_ty);
-                let resolved_fields: BTreeMap<Symbol, Type> = if let Type::AnonRecord {
-                    fields: rf,
-                    ..
-                } = &resolved
-                {
-                    rf.clone()
-                } else {
-                    field_tys.clone()
-                };
+                let resolved_fields: BTreeMap<Symbol, Type> =
+                    if let Type::AnonRecord { fields: rf, .. } = &resolved {
+                        rf.clone()
+                    } else {
+                        field_tys.clone()
+                    };
                 for (fname, sub) in fields.iter() {
                     let ft = resolved_fields
                         .get(fname)
@@ -2191,10 +2185,7 @@ impl TypeChecker {
                             self.unify(&obj_ty, &extended, span);
                             result_ty
                         } else {
-                            self.error(
-                                format!("anon record has no field '{field}'"),
-                                span,
-                            );
+                            self.error(format!("anon record has no field '{field}'"), span);
                             Type::Error
                         }
                     }
@@ -2486,10 +2477,8 @@ impl TypeChecker {
                             // deferred-check path so trait dispatch keeps
                             // working unchanged.
                             let result_ty = self.fresh_var();
-                            let is_known_impl_method = self
-                                .method_table
-                                .keys()
-                                .any(|(_, m)| *m == field);
+                            let is_known_impl_method =
+                                self.method_table.keys().any(|(_, m)| *m == field);
                             let is_declared_trait_method = self
                                 .traits
                                 .values()
@@ -2594,11 +2583,7 @@ impl TypeChecker {
                                     }
                                     _ => {}
                                 }
-                                if unify_errored {
-                                    Type::Error
-                                } else {
-                                    lt
-                                }
+                                if unify_errored { Type::Error } else { lt }
                             }
                         }
                     }
@@ -3143,9 +3128,7 @@ impl TypeChecker {
                     (Some(c), Some(cur)) => c == cur,
                     _ => false,
                 };
-                if is_recursive_call
-                    && let Some(cur) = self.current_fn_name
-                {
+                if is_recursive_call && let Some(cur) = self.current_fn_name {
                     self.recursive_fn_names.insert(cur);
                 }
                 let recursion_hint_span = span;
@@ -3233,12 +3216,7 @@ impl TypeChecker {
                     if self.type_name_for_impl(&resolved).is_some() {
                         // Recursively walk the matched impl's where clauses
                         // against the resolved type's arguments.
-                        self.verify_trait_obligation(
-                            *trait_name,
-                            &bound_args,
-                            &resolved,
-                            span,
-                        );
+                        self.verify_trait_obligation(*trait_name, &bound_args, &resolved, span);
                     } else if matches!(&resolved, Type::Var(_))
                         && !self.covered_by_active_constraint(&resolved, *trait_name)
                     {
@@ -3298,8 +3276,7 @@ impl TypeChecker {
                         let ty = if let Some(te) = &p.ty {
                             // B2: annotation arity errors carry the
                             // annotation's own span.
-                            let prev_type_span =
-                                self.current_type_anno_span.replace(te.span);
+                            let prev_type_span = self.current_type_anno_span.replace(te.span);
                             let resolved = self.resolve_type_expr(te, &mut HashMap::new());
                             self.current_type_anno_span = prev_type_span;
                             resolved
@@ -3485,9 +3462,7 @@ impl TypeChecker {
                             self.unify(&resolved, &extended, span);
                         } else {
                             self.error(
-                                format!(
-                                    "unknown field '{field_name}' in closed anon record"
-                                ),
+                                format!("unknown field '{field_name}' in closed anon record"),
                                 span,
                             );
                         }
@@ -3643,10 +3618,7 @@ impl TypeChecker {
                     for (fn_name, _) in fields.iter() {
                         if !seen.insert(*fn_name) {
                             self.error(
-                                format!(
-                                    "duplicate field '{}' in anon record literal",
-                                    fn_name
-                                ),
+                                format!("duplicate field '{}' in anon record literal", fn_name),
                                 span,
                             );
                         }
@@ -3668,9 +3640,7 @@ impl TypeChecker {
                     // Determine base's known fields and tail.
                     let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
                         match &base_canon {
-                            Type::AnonRecord { fields, tail } => {
-                                (fields.clone(), tail.clone())
-                            }
+                            Type::AnonRecord { fields, tail } => (fields.clone(), tail.clone()),
                             Type::Record(_, fs) => {
                                 let mut m = BTreeMap::new();
                                 for (n, t) in fs {
@@ -3678,14 +3648,9 @@ impl TypeChecker {
                                 }
                                 (m, RowTail::Closed)
                             }
-                            Type::Generic(name, args)
-                                if self.records.contains_key(name) =>
-                            {
-                                let rec_info =
-                                    self.records.get(name).cloned().unwrap();
-                                let inst: Vec<(Symbol, Type)> = if let Some(
-                                    param_var_ids,
-                                ) =
+                            Type::Generic(name, args) if self.records.contains_key(name) => {
+                                let rec_info = self.records.get(name).cloned().unwrap();
+                                let inst: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
                                     self.record_param_var_ids.get(name).cloned()
                                 {
                                     let mapping: HashMap<TyVar, Type> =
@@ -3704,9 +3669,7 @@ impl TypeChecker {
                                     rec_info
                                         .fields
                                         .iter()
-                                        .map(|(n, t)| {
-                                            (*n, substitute_vars(t, &mapping))
-                                        })
+                                        .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
                                         .collect()
                                 } else {
                                     rec_info.fields.clone()
@@ -3718,10 +3681,7 @@ impl TypeChecker {
                                 (m, RowTail::Closed)
                             }
                             _ => {
-                                if !matches!(
-                                    base_canon,
-                                    Type::Error | Type::Var(_) | Type::Never
-                                ) {
+                                if !matches!(base_canon, Type::Error | Type::Var(_) | Type::Never) {
                                     self.error(
                                         format!(
                                             "spread requires a record base, but '{base_canon}' is not a record type"
@@ -4380,15 +4340,12 @@ impl TypeChecker {
                 };
                 self.unify(expected, &anon_ty, span);
                 let resolved = self.apply(&anon_ty);
-                let resolved_fields: BTreeMap<Symbol, Type> = if let Type::AnonRecord {
-                    fields: rf,
-                    ..
-                } = &resolved
-                {
-                    rf.clone()
-                } else {
-                    field_tys.clone()
-                };
+                let resolved_fields: BTreeMap<Symbol, Type> =
+                    if let Type::AnonRecord { fields: rf, .. } = &resolved {
+                        rf.clone()
+                    } else {
+                        field_tys.clone()
+                    };
                 for (fname, sub) in fields.iter() {
                     let ft = resolved_fields
                         .get(fname)
