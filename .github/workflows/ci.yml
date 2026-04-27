@@ -12,6 +12,7 @@ jobs:
   check:
     name: Check & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -29,8 +30,17 @@ jobs:
       - name: cargo check --benches
         run: cargo check --benches --all-features
 
+      # Hard wall-clock cap on cargo test. The silt runtime has a
+      # known intermittent "deadlock detector false-positive" in
+      # `test_channel_receive_blocks_scheduled_task` (tests/integration.rs)
+      # that, when it fires, panics the test and leaves the integration
+      # test binary's shared scheduler state poisoned, hanging every
+      # subsequent test. Without a wall-clock bound the GitHub Actions
+      # 6h hard ceiling fires instead and we get no diagnostic output.
+      # 20 minutes is ~10x the healthy local runtime; if the suite
+      # exceeds it, surface a clear failure with logs intact.
       - name: cargo test
-        run: cargo test --all-features
+        run: timeout --foreground 20m cargo test --all-features
 
       - name: cargo clippy
         run: cargo clippy --all-features -- -D warnings
@@ -41,11 +51,21 @@ jobs:
   test-os:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     steps:
+      # Force LF line endings on Windows so the formatter parity
+      # check (`every_example_is_canonical_formatted`) does not
+      # trip on CRLF-rewritten example files.
+      - name: Configure git for LF on Windows
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
@@ -54,8 +74,25 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: cargo test
-        run: cargo test --all-features
+      # See `check.cargo test` for rationale on the wall-clock bound.
+      # The shell `timeout` binary is unavailable on Windows; use a
+      # PowerShell job-cancellation pattern there.
+      - name: cargo test (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: timeout --foreground 20m cargo test --all-features
+
+      - name: cargo test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "cargo" -ArgumentList "test","--all-features" -NoNewWindow -PassThru
+          $finished = $process.WaitForExit(20*60*1000)
+          if (-not $finished) {
+            $process.Kill()
+            Write-Error "cargo test exceeded 20-minute wall-clock cap"
+            exit 124
+          }
+          exit $process.ExitCode
 
   fuzz-corpus:
     name: Fuzz corpus replay
