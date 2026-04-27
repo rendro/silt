@@ -39,8 +39,13 @@ jobs:
       # 6h hard ceiling fires instead and we get no diagnostic output.
       # 20 minutes is ~10x the healthy local runtime; if the suite
       # exceeds it, surface a clear failure with logs intact.
+      #
+      # `perl -e 'alarm; exec'` is portable: works on every GitHub
+      # runner image (Linux, macOS) without needing coreutils. macOS
+      # ships no `timeout` binary by default; this avoids the brew
+      # install detour.
       - name: cargo test
-        run: timeout --foreground 20m cargo test --all-features
+        run: perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo clippy
         run: cargo clippy --all-features -- -D warnings
@@ -75,11 +80,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # See `check.cargo test` for rationale on the wall-clock bound.
-      # The shell `timeout` binary is unavailable on Windows; use a
-      # PowerShell job-cancellation pattern there.
+      # macOS uses the same perl alarm trick as Linux. Windows lacks a
+      # `perl` binary but ships PowerShell; use Start-Process+
+      # WaitForExit for the same semantics.
       - name: cargo test (Linux/macOS)
         if: runner.os != 'Windows'
-        run: timeout --foreground 20m cargo test --all-features
+        run: perl -e 'alarm 1200; exec @ARGV or die "exec: $!"' cargo test --all-features
 
       - name: cargo test (Windows)
         if: runner.os == 'Windows'
