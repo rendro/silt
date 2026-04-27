@@ -77,20 +77,38 @@ jobs:
           CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' \
             bash .github/scripts/run-test-partition.sh ${{ matrix.partition }}
 
-  test-os:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+  test-macos:
+    name: Test macOS
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-os-macos
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: cargo nextest
+        run: |
+          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo nextest run --all-features
+
+  # Windows runners are 3-5× slower than Linux/macOS at file I/O and
+  # process spawning, so a single-job sweep of 3800+ tests pushes past
+  # the 25-min cap. Partition the same way Linux does so total wall-
+  # clock is max(slowest partition) ~10 min instead of >25 min.
+  test-windows:
+    name: Test Windows (${{ matrix.partition }})
+    runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        partition: [heavy, concurrency, rest]
     steps:
-      # Force LF line endings on Windows so the formatter parity
-      # check (`every_example_is_canonical_formatted`) does not
-      # trip on CRLF-rewritten example files.
       - name: Configure git for LF on Windows
-        if: runner.os == 'Windows'
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
@@ -103,28 +121,18 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: test-os-${{ matrix.os }}
+          shared-key: test-windows-${{ matrix.partition }}
 
-      # nextest runs test BINARIES in parallel (cargo test serializes them).
-      # macOS Apple-Silicon runner cuts from ~7.5 min to ~3 min; Windows
-      # cuts from >25 min (timed out) to ~8 min.
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # macOS path: perl alarm + nextest run.
-      - name: cargo nextest (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo nextest run --all-features
-
-      # Windows path: PowerShell wraps the wall-clock cap (no `perl`
-      # binary installed by default on Windows runners).
-      - name: cargo nextest (Windows)
-        if: runner.os == 'Windows'
+      - name: cargo nextest (${{ matrix.partition }})
         shell: pwsh
         run: |
           $env:CI = "1"
-          $process = Start-Process -FilePath "cargo" -ArgumentList "nextest","run","--all-features" -NoNewWindow -PassThru
+          $process = Start-Process -FilePath "bash" `
+            -ArgumentList ".github/scripts/run-test-partition.sh","${{ matrix.partition }}" `
+            -NoNewWindow -PassThru
           $finished = $process.WaitForExit(25*60*1000)
           if (-not $finished) {
             $process.Kill()

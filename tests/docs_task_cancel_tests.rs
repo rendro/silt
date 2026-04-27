@@ -401,10 +401,24 @@ fn main() {
 /// "joined task failed: <msg>" on both doc pages.
 #[test]
 fn task_cancel_join_snippet_surfaces_runtime_error() {
+    // The task body MUST keep the task alive until cancel fires.
+    // Earlier shape `task.spawn(fn() { 42 })` returns immediately —
+    // on a fast scheduler (macOS Apple-Silicon CI) the body finishes
+    // before `task.cancel(h)` runs, so cancel becomes a no-op and
+    // join returns 42 cleanly. Block the task on an unread channel
+    // so it is guaranteed to be alive at cancel time.
     let src = r#"
+import channel
 import task
 fn main() {
-  let h = task.spawn(fn() { 42 })
+  let unread = channel.new(0)
+  let h = task.spawn(fn() {
+    -- block on a channel that never receives so the task stays
+    -- alive until task.cancel fires.
+    match channel.receive(unread) {
+      _ -> 42
+    }
+  })
   task.cancel(h)
   let _ = task.join(h)
 }
