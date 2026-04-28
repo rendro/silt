@@ -82,7 +82,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::io(),
                 },
             );
         }
@@ -94,12 +94,13 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::io(),
                 },
             );
         }
 
         // ── panic: a -> Never where a: Display (never returns) ─────────
+        // Writes to stderr before aborting — `!{io}`.
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -108,7 +109,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::Never)),
                     constraints: vec![(av, intern("Display"))],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::io(),
                 },
             );
         }
@@ -128,7 +129,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -145,7 +146,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -161,7 +162,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -174,7 +175,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("Option"), vec![a]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -277,7 +278,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -292,7 +293,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -348,7 +349,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -360,7 +361,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -372,7 +373,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -384,7 +385,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -431,7 +432,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -446,7 +447,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -465,7 +466,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Handle"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -482,7 +483,7 @@ impl TypeChecker {
                         Box::new(a),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -499,7 +500,7 @@ impl TypeChecker {
                         Box::new(Type::Unit),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -522,7 +523,7 @@ impl TypeChecker {
                         Box::new(a),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -543,7 +544,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Handle"), vec![a])),
                     ),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -553,7 +554,7 @@ impl TypeChecker {
         // regex.is_match: (String, String) -> Bool
         env.define(
             intern("regex.is_match"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Bool),
             )),
@@ -562,7 +563,7 @@ impl TypeChecker {
         // regex.find: (String, String) -> Option(String)
         env.define(
             intern("regex.find"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(intern("Option"), vec![Type::String])),
             )),
@@ -571,7 +572,7 @@ impl TypeChecker {
         // regex.find_all: (String, String) -> List(String)
         env.define(
             intern("regex.find_all"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
             )),
@@ -580,7 +581,7 @@ impl TypeChecker {
         // regex.split: (String, String) -> List(String)
         env.define(
             intern("regex.split"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
             )),
@@ -589,7 +590,7 @@ impl TypeChecker {
         // regex.replace: (String, String, String) -> String
         env.define(
             intern("regex.replace"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String, Type::String],
                 Box::new(Type::String),
             )),
@@ -598,7 +599,7 @@ impl TypeChecker {
         // regex.replace_all: (String, String, String) -> String
         env.define(
             intern("regex.replace_all"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String, Type::String],
                 Box::new(Type::String),
             )),
@@ -607,7 +608,7 @@ impl TypeChecker {
         // regex.replace_all_with: (String, String, (String) -> String) -> String
         env.define(
             intern("regex.replace_all_with"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![
                     Type::String,
                     Type::String,
@@ -620,7 +621,7 @@ impl TypeChecker {
         // regex.captures: (String, String) -> Option(List(String))
         env.define(
             intern("regex.captures"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
                     intern("Option"),
@@ -632,7 +633,7 @@ impl TypeChecker {
         // regex.captures_all: (String, String) -> List(List(String))
         env.define(
             intern("regex.captures_all"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::List(Box::new(Type::String))))),
             )),
@@ -646,7 +647,7 @@ impl TypeChecker {
         // the map (rather than being mapped to `""`).
         env.define(
             intern("regex.captures_named"),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
                     intern("Option"),
@@ -679,7 +680,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -698,7 +699,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -720,7 +721,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -734,7 +735,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -748,7 +749,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -775,7 +776,7 @@ impl TypeChecker {
                     vars: vec![],
                     ty: Type::Generic(intern("TypeOf"), vec![inner]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -797,7 +798,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -810,7 +811,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -823,7 +824,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }
@@ -837,7 +838,7 @@ impl TypeChecker {
                     vars: vec![kv, vv],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
                     constraints: vec![],
-                    effects: EffectSet::TOP,
+                    effects: EffectSet::pure(),
                 },
             );
         }

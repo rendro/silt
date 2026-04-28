@@ -37,7 +37,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // map; shape-for-shape equivalent to `connect_with` with no opts.
     env.define(
         intern("postgres.connect"),
-        Scheme::mono(Type::Fun(vec![Type::String], Box::new(result_pool.clone()))),
+        Scheme::with_effects(
+            Type::Fun(vec![Type::String], Box::new(result_pool.clone())),
+            EffectSet::io_net(),
+        ),
     );
 
     // postgres.connect_with: (String, Map(String, Int)) -> Result(PgPool, PgError)
@@ -52,13 +55,16 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // records. An empty call is simply `postgres.connect_with(url, #{})`.
     env.define(
         intern("postgres.connect_with"),
-        Scheme::mono(Type::Fun(
-            vec![
-                Type::String,
-                Type::Map(Box::new(Type::String), Box::new(Type::Int)),
-            ],
-            Box::new(result_pool),
-        )),
+        Scheme::with_effects(
+            Type::Fun(
+                vec![
+                    Type::String,
+                    Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+                ],
+                Box::new(result_pool),
+            ),
+            EffectSet::io_net(),
+        ),
     );
 
     // postgres.query: (T, String, List(Value)) -> Result(QueryResult, PgError)
@@ -79,7 +85,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_query),
                 ),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
@@ -96,7 +102,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_exec),
                 ),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
@@ -121,7 +127,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(inner_result),
                 ),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
@@ -129,7 +135,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // postgres.close: (PgPool) -> Unit
     env.define(
         intern("postgres.close"),
-        Scheme::mono(Type::Fun(vec![pg_pool.clone()], Box::new(Type::Unit))),
+        Scheme::with_effects(
+            Type::Fun(vec![pg_pool.clone()], Box::new(Type::Unit)),
+            EffectSet::io_net(),
+        ),
     );
 
     // postgres.stream: (T, String, List(Value)) -> Result(Channel(a), PgError)
@@ -166,7 +175,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_channel),
                 ),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
@@ -180,15 +189,18 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
         env.define(
             intern("postgres.cursor"),
-            Scheme::mono(Type::Fun(
-                vec![
-                    pg_tx.clone(),
-                    Type::String,
-                    Type::List(Box::new(Type::Generic(intern("Value"), vec![]))),
-                    Type::Int,
-                ],
-                Box::new(result_cursor),
-            )),
+            Scheme::with_effects(
+                Type::Fun(
+                    vec![
+                        pg_tx.clone(),
+                        Type::String,
+                        Type::List(Box::new(Type::Generic(intern("Value"), vec![]))),
+                        Type::Int,
+                    ],
+                    Box::new(result_cursor),
+                ),
+                EffectSet::io_net(),
+            ),
         );
     }
 
@@ -205,7 +217,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
         env.define(
             intern("postgres.cursor_next"),
-            Scheme::mono(Type::Fun(vec![pg_cursor], Box::new(result_rows))),
+            Scheme::with_effects(
+                Type::Fun(vec![pg_cursor], Box::new(result_rows)),
+                EffectSet::io_net(),
+            ),
         );
     }
 
@@ -218,7 +233,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
         env.define(
             intern("postgres.cursor_close"),
-            Scheme::mono(Type::Fun(vec![pg_cursor], Box::new(result_unit))),
+            Scheme::with_effects(
+                Type::Fun(vec![pg_cursor], Box::new(result_unit)),
+                EffectSet::io_net(),
+            ),
         );
     }
 
@@ -247,7 +265,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_channel),
                 ),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
@@ -266,15 +284,19 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![tv],
                 ty: Type::Fun(vec![t, Type::String, Type::String], Box::new(result_unit)),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::io_net(),
             },
         );
     }
 
     // postgres.uuidv7: () -> String  (RFC 9562 UUIDv7, time-ordered)
+    // Reads wall-clock + OS entropy — same effect set as `uuid.v7`.
     env.define(
         intern("postgres.uuidv7"),
-        Scheme::mono(Type::Fun(vec![], Box::new(Type::String))),
+        Scheme::with_effects(
+            Type::Fun(vec![], Box::new(Type::String)),
+            EffectSet::io_time_random(),
+        ),
     );
 
     attach_module_overview(env, super::docs::POSTGRES_MD, "postgres");

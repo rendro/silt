@@ -19,13 +19,13 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // encoding.url_encode: String -> String
     env.define(
         intern("encoding.url_encode"),
-        Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        Scheme::pure_mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
     );
 
     // encoding.url_decode: String -> Result(String, String)
     env.define(
         intern("encoding.url_decode"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::String],
             Box::new(result(Type::String, Type::String)),
         )),
@@ -42,7 +42,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     let pair_list = Type::List(Box::new(Type::Tuple(vec![Type::String, Type::String])));
     env.define(
         intern("encoding.form_encode"),
-        Scheme::mono(Type::Fun(vec![pair_list.clone()], Box::new(Type::String))),
+        Scheme::pure_mono(Type::Fun(vec![pair_list.clone()], Box::new(Type::String))),
     );
 
     // encoding.form_decode: String -> Result(List((String, String)), String)
@@ -53,7 +53,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // or non-UTF-8 decoded bytes surface as `Err(msg)`.
     env.define(
         intern("encoding.form_decode"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::String],
             Box::new(result(pair_list, Type::String)),
         )),

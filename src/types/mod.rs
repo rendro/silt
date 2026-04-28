@@ -237,6 +237,59 @@ impl Scheme {
             effects: EffectSet::TOP,
         }
     }
+
+    /// Construct a non-polymorphic scheme with an explicit effect set.
+    /// Used by the Phase C stdlib sweep to attach the actual effect
+    /// classification to each builtin registration site (e.g.
+    /// `Scheme::with_effects(ty, EffectSet::io_fs())` for
+    /// `io.read_file`).
+    pub fn with_effects(ty: Type, effects: EffectSet) -> Self {
+        Scheme {
+            vars: Vec::new(),
+            ty,
+            constraints: Vec::new(),
+            effects,
+        }
+    }
+
+    /// Convenience: a non-polymorphic scheme with `EffectSet::pure()`.
+    /// The most common shape in the Phase C sweep — every list / map /
+    /// set / string / int / float / bytes / encoding / TOML / option /
+    /// result / test builtin uses it. Equivalent to
+    /// `Scheme::with_effects(ty, EffectSet::pure())`.
+    pub fn pure_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::pure())
+    }
+
+    /// Mono scheme tagged `!{io}`. For env.* and stdin/stdout-style
+    /// OS-resource interactions that don't refine to fs/net/time/random.
+    pub fn io_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::io())
+    }
+
+    /// Mono scheme tagged `!{io, fs}`. For every filesystem operation
+    /// (`io.read_file`, `fs.*`, `stream.file_*`, etc).
+    pub fn io_fs_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::io_fs())
+    }
+
+    /// Mono scheme tagged `!{io, net}`. For every network operation
+    /// (`tcp.*`, `http.*`, `postgres.*`).
+    pub fn io_net_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::io_net())
+    }
+
+    /// Mono scheme tagged `!{io, time}`. For wall-clock reads
+    /// (`time.now`, `time.today`, …).
+    pub fn io_time_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::io_time())
+    }
+
+    /// Mono scheme tagged `!{io, random}`. For OS-entropy reads
+    /// (`math.random`, `uuid.v4`, `crypto.random_bytes`).
+    pub fn io_random_mono(ty: Type) -> Self {
+        Scheme::with_effects(ty, EffectSet::io_random())
+    }
 }
 
 // ── Type errors ─────────────────────────────────────────────────────

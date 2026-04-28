@@ -1,6 +1,15 @@
 //! Type signatures for the `time` builtin module.
 //!
 //! Extracted from the former monolithic `src/typechecker/builtins.rs`.
+//!
+//! Effect-set classification (Phase C of the effect-rows proposal):
+//!   - `time.now` / `time.today` / `time.sleep` read or block on the
+//!     wall clock — `!{io, time}`.
+//!   - Everything else is pure date / duration arithmetic that takes
+//!     a value-typed `Instant` / `DateTime` / `Date` and computes a
+//!     result without consulting the OS — `!{}`. The runtime impls
+//!     in `src/builtins/data.rs` confirm this: only `now` / `today`
+//!     / `sleep` reach for `vm.epoch_ms()` or `std::thread::sleep`.
 
 use super::super::*;
 use super::docs::attach_module_docs;
@@ -93,7 +102,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         checker
             .variant_to_enum
             .insert(intern(day), intern("Weekday"));
-        env.define(intern(day), Scheme::mono(weekday_ty.clone()));
+        env.define(intern(day), Scheme::pure_mono(weekday_ty.clone()));
     }
     // Register declaration-order ordinals so `cmp_gen(Monday, Friday)`
     // and `Monday < Friday` both honour the same ordering used by every
@@ -112,22 +121,24 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // ── Function signatures ──────────────────────────────────────
 
-    // time.now: () -> Instant
+    // time.now: () -> Instant — reads the system clock.
     env.define(
         intern("time.now"),
-        Scheme::mono(Type::Fun(vec![], Box::new(instant_ty.clone()))),
+        Scheme::io_time_mono(Type::Fun(vec![], Box::new(instant_ty.clone()))),
     );
 
-    // time.today: () -> Date
+    // time.today: () -> Date — reads the system clock for the current
+    // local-zone date.
     env.define(
         intern("time.today"),
-        Scheme::mono(Type::Fun(vec![], Box::new(date_ty.clone()))),
+        Scheme::io_time_mono(Type::Fun(vec![], Box::new(date_ty.clone()))),
     );
 
-    // time.date: (Int, Int, Int) -> Result(Date, String)
+    // time.date: (Int, Int, Int) -> Result(Date, String) — pure
+    // calendar-date constructor.
     env.define(
         intern("time.date"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::Int, Type::Int, Type::Int],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -136,10 +147,11 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         )),
     );
 
-    // time.time: (Int, Int, Int) -> Result(Time, String)
+    // time.time: (Int, Int, Int) -> Result(Time, String) — pure
+    // time-of-day constructor.
     env.define(
         intern("time.time"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::Int, Type::Int, Type::Int],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -151,73 +163,76 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         )),
     );
 
-    // time.datetime: (Date, Time) -> DateTime
+    // time.datetime: (Date, Time) -> DateTime — pure constructor.
     env.define(
         intern("time.datetime"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![date_ty.clone(), time_of_day_ty.clone()],
             Box::new(datetime_ty.clone()),
         )),
     );
 
-    // time.to_datetime: (Instant, Int) -> DateTime
+    // time.to_datetime: (Instant, Int) -> DateTime — pure conversion
+    // on a passed-in Instant + offset.
     env.define(
         intern("time.to_datetime"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![instant_ty.clone(), Type::Int],
             Box::new(datetime_ty.clone()),
         )),
     );
 
-    // time.to_instant: (DateTime, Int) -> Instant
+    // time.to_instant: (DateTime, Int) -> Instant — pure conversion.
     env.define(
         intern("time.to_instant"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![datetime_ty.clone(), Type::Int],
             Box::new(instant_ty.clone()),
         )),
     );
 
-    // time.to_utc: (Instant) -> DateTime
+    // time.to_utc: (Instant) -> DateTime — pure conversion (the
+    // Instant was acquired earlier; no clock read here).
     env.define(
         intern("time.to_utc"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![instant_ty.clone()],
             Box::new(datetime_ty.clone()),
         )),
     );
 
-    // time.from_utc: (DateTime) -> Instant
+    // time.from_utc: (DateTime) -> Instant — pure conversion.
     env.define(
         intern("time.from_utc"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![datetime_ty.clone()],
             Box::new(instant_ty.clone()),
         )),
     );
 
-    // time.format: (DateTime, String) -> String
+    // time.format: (DateTime, String) -> String — pure formatter.
     env.define(
         intern("time.format"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![datetime_ty.clone(), Type::String],
             Box::new(Type::String),
         )),
     );
 
-    // time.format_date: (Date, String) -> String
+    // time.format_date: (Date, String) -> String — pure formatter.
     env.define(
         intern("time.format_date"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![date_ty.clone(), Type::String],
             Box::new(Type::String),
         )),
     );
 
-    // time.parse: (String, String) -> Result(DateTime, String)
+    // time.parse: (String, String) -> Result(DateTime, String) — pure
+    // parser.
     env.define(
         intern("time.parse"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::String, Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -229,10 +244,11 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         )),
     );
 
-    // time.parse_date: (String, String) -> Result(Date, String)
+    // time.parse_date: (String, String) -> Result(Date, String) — pure
+    // parser.
     env.define(
         intern("time.parse_date"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::String, Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -241,109 +257,99 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         )),
     );
 
-    // time.add_days: (Date, Int) -> Date
+    // time.add_days: (Date, Int) -> Date — pure calendar arithmetic.
     env.define(
         intern("time.add_days"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![date_ty.clone(), Type::Int],
             Box::new(date_ty.clone()),
         )),
     );
 
-    // time.add_months: (Date, Int) -> Date
+    // time.add_months: (Date, Int) -> Date — pure calendar arithmetic.
     env.define(
         intern("time.add_months"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![date_ty.clone(), Type::Int],
             Box::new(date_ty.clone()),
         )),
     );
 
-    // time.add: (Instant, Duration) -> Instant
+    // time.add: (Instant, Duration) -> Instant — pure arithmetic.
     env.define(
         intern("time.add"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![instant_ty.clone(), duration_ty.clone()],
             Box::new(instant_ty.clone()),
         )),
     );
 
-    // time.since: (Instant, Instant) -> Duration
+    // time.since: (Instant, Instant) -> Duration — pure subtraction.
     env.define(
         intern("time.since"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![instant_ty.clone(), instant_ty.clone()],
             Box::new(duration_ty.clone()),
         )),
     );
 
-    // time.hours: (Int) -> Duration
+    // Duration constructors are pure.
     env.define(
         intern("time.hours"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
-
-    // time.minutes: (Int) -> Duration
     env.define(
         intern("time.minutes"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
-
-    // time.seconds: (Int) -> Duration
     env.define(
         intern("time.seconds"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
-
-    // time.ms: (Int) -> Duration
     env.define(
         intern("time.ms"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
-
-    // time.micros: (Int) -> Duration
     env.define(
         intern("time.micros"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
-
-    // time.nanos: (Int) -> Duration
     env.define(
         intern("time.nanos"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
 
-    // time.weekday: (Date) -> Weekday
+    // time.weekday: (Date) -> Weekday — pure.
     env.define(
         intern("time.weekday"),
-        Scheme::mono(Type::Fun(vec![date_ty.clone()], Box::new(weekday_ty))),
+        Scheme::pure_mono(Type::Fun(vec![date_ty.clone()], Box::new(weekday_ty))),
     );
 
-    // time.days_between: (Date, Date) -> Int
+    // time.days_between: (Date, Date) -> Int — pure.
     env.define(
         intern("time.days_between"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![date_ty.clone(), date_ty.clone()],
             Box::new(Type::Int),
         )),
     );
 
-    // time.days_in_month: (Int, Int) -> Int
+    // time.days_in_month: (Int, Int) -> Int — pure.
     env.define(
         intern("time.days_in_month"),
-        Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
     );
 
-    // time.is_leap_year: (Int) -> Bool
+    // time.is_leap_year: (Int) -> Bool — pure.
     env.define(
         intern("time.is_leap_year"),
-        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Bool))),
+        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(Type::Bool))),
     );
 
-    // time.sleep: (Duration) -> Unit
+    // time.sleep: (Duration) -> Unit — blocks on the wall clock.
     env.define(
         intern("time.sleep"),
-        Scheme::mono(Type::Fun(vec![duration_ty], Box::new(Type::Unit))),
+        Scheme::io_time_mono(Type::Fun(vec![duration_ty], Box::new(Type::Unit))),
     );
 
     attach_module_docs(env, super::docs::TIME_MD);

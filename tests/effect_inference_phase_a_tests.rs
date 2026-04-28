@@ -95,14 +95,18 @@ fn outer(x: Int) -> Int { inner(x) }
     );
 }
 
-// ── 3. Calls into TOP-defaulted builtins infer TOP ─────────────────
+// ── 3. Calls into classified builtins propagate the builtin's set ──
 
 #[test]
-fn function_calling_top_builtin_infers_top() {
-    // Phase A leaves every stdlib builtin at TOP; Phase C will narrow
-    // them. So a function that calls `io.read_file` infers TOP — the
-    // gradual rollout default. This is the load-bearing
-    // backwards-compat invariant.
+fn function_calling_classified_builtin_propagates_its_set() {
+    // Phase A locked the *plumbing*: a fn that calls a builtin
+    // inherits that builtin's `Scheme::effects`. Phase C completed
+    // the classification — `io.read_file` is now `!{io, fs}`, not
+    // the old `TOP` placeholder. The test was originally written
+    // against TOP because the sweep hadn't run yet. After Phase C the
+    // call propagates `io_fs`, which is the actual contract; the
+    // load-bearing invariant is "callee's effects flow to the caller",
+    // and that's still what we lock here.
     let checker = check(
         r#"
 fn read_thing() -> String { io.read_file("foo") }
@@ -113,15 +117,20 @@ fn read_thing() -> String { io.read_file("foo") }
         .expect("read_thing registered");
     assert_eq!(
         effects,
-        EffectSet::TOP,
-        "call to TOP-default builtin must propagate TOP"
+        EffectSet::io_fs(),
+        "call to io.read_file (classified `!{{io, fs}}`) must propagate that set"
     );
 }
 
-// ── 4. Union of two TOP builtins is still TOP ──────────────────────
+// ── 4. Union of two classified calls combines (idempotent here) ────
 
 #[test]
-fn effect_set_union_two_top_calls_is_top() {
+fn effect_set_union_two_calls_combines() {
+    // Two calls to the same `!{io, fs}` builtin: union == `!{io, fs}`.
+    // After Phase C the two values are equal (idempotent union). The
+    // pre-Phase-C version of this test asserted TOP because both
+    // calls fell through to the gradual default; with the sweep done
+    // we lock the actual classified set.
     let checker = check(
         r#"
 fn read_two() -> String {
@@ -136,8 +145,8 @@ fn read_two() -> String {
         .expect("read_two registered");
     assert_eq!(
         effects,
-        EffectSet::TOP,
-        "two TOP-default calls must union to TOP"
+        EffectSet::io_fs(),
+        "two io.read_file calls (each `!{{io, fs}}`) must union to `!{{io, fs}}`"
     );
 }
 

@@ -6,22 +6,29 @@ use super::super::*;
 use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
+    // Every env.* operation reads or mutates process environment, which
+    // is an OS-resource interaction — `!{io}` (no fs/net refinement).
+    let io = EffectSet::io();
+
     // env.get: (String) -> Option(String)
     env.define(
         intern("env.get"),
-        Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Generic(intern("Option"), vec![Type::String])),
-        )),
+        Scheme::with_effects(
+            Type::Fun(
+                vec![Type::String],
+                Box::new(Type::Generic(intern("Option"), vec![Type::String])),
+            ),
+            io,
+        ),
     );
 
     // env.set: (String, String) -> Unit
     env.define(
         intern("env.set"),
-        Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Unit),
-        )),
+        Scheme::with_effects(
+            Type::Fun(vec![Type::String, Type::String], Box::new(Type::Unit)),
+            io,
+        ),
     );
 
     // env.remove: (String) -> Unit
@@ -31,7 +38,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // the module.
     env.define(
         intern("env.remove"),
-        Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Unit))),
+        Scheme::with_effects(Type::Fun(vec![Type::String], Box::new(Type::Unit)), io),
     );
 
     // env.vars: () -> List((String, String))
@@ -43,13 +50,16 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // `Map` preserves that iteration order for callers who care.
     env.define(
         intern("env.vars"),
-        Scheme::mono(Type::Fun(
-            vec![],
-            Box::new(Type::List(Box::new(Type::Tuple(vec![
-                Type::String,
-                Type::String,
-            ])))),
-        )),
+        Scheme::with_effects(
+            Type::Fun(
+                vec![],
+                Box::new(Type::List(Box::new(Type::Tuple(vec![
+                    Type::String,
+                    Type::String,
+                ])))),
+            ),
+            io,
+        ),
     );
 
     attach_module_docs_filtered(env, super::docs::IO_FS_MD, "env");

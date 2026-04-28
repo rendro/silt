@@ -357,10 +357,10 @@ fn register_enum(
         checker.variant_to_enum.insert(variant_sym, enum_sym);
         let scheme = if fields.is_empty() {
             // Nullary: register as a value of the enum type.
-            Scheme::mono(result_ty.clone())
+            Scheme::pure_mono(result_ty.clone())
         } else {
             // N-ary: register as a constructor function.
-            Scheme::mono(Type::Fun(fields.to_vec(), Box::new(result_ty.clone())))
+            Scheme::pure_mono(Type::Fun(fields.to_vec(), Box::new(result_ty.clone())))
         };
         env.define(variant_sym, scheme);
     }

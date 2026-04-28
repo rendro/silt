@@ -7,7 +7,7 @@ use super::docs::attach_module_docs_filtered;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.exists / fs.is_file / fs.is_dir / fs.is_symlink: (String) -> Bool
-    let string_to_bool = Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool)));
+    let string_to_bool = Scheme::io_fs_mono(Type::Fun(vec![Type::String], Box::new(Type::Bool)));
     for name in &["fs.exists", "fs.is_file", "fs.is_dir", "fs.is_symlink"] {
         env.define(intern(name), string_to_bool.clone());
     }
@@ -20,7 +20,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.list_dir: (String) -> Result(List(String), IoError)
     env.define(
         intern("fs.list_dir"),
-        Scheme::mono(Type::Fun(
+        Scheme::io_fs_mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -30,7 +30,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
 
     // fs.mkdir / fs.remove: (String) -> Result(Unit, IoError)
-    let string_to_result = Scheme::mono(Type::Fun(
+    let string_to_result = Scheme::io_fs_mono(Type::Fun(
         vec![Type::String],
         Box::new(Type::Generic(
             intern("Result"),
@@ -42,7 +42,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     }
 
     // fs.rename / fs.copy: (String, String) -> Result(Unit, IoError)
-    let ss_to_result = Scheme::mono(Type::Fun(
+    let ss_to_result = Scheme::io_fs_mono(Type::Fun(
         vec![Type::String, Type::String],
         Box::new(Type::Generic(
             intern("Result"),
@@ -116,7 +116,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.stat: (String) -> Result(FileStat, IoError)
     env.define(
         intern("fs.stat"),
-        Scheme::mono(Type::Fun(
+        Scheme::io_fs_mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -128,7 +128,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.read_link: (String) -> Result(String, IoError)
     env.define(
         intern("fs.read_link"),
-        Scheme::mono(Type::Fun(
+        Scheme::io_fs_mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -139,7 +139,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // fs.walk: (String) -> Result(List(String), IoError)
     // fs.glob: (String) -> Result(List(String), IoError)
-    let string_to_result_list_string = Scheme::mono(Type::Fun(
+    let string_to_result_list_string = Scheme::io_fs_mono(Type::Fun(
         vec![Type::String],
         Box::new(Type::Generic(
             intern("Result"),

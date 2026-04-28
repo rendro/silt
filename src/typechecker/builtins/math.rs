@@ -9,7 +9,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Functions that can produce non-finite results: (Float) -> ExtFloat
     {
         let float_to_extfloat =
-            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::ExtFloat)));
+            Scheme::pure_mono(Type::Fun(vec![Type::Float], Box::new(Type::ExtFloat)));
         for name in &[
             "math.sqrt",
             "math.log",
@@ -24,7 +24,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // Functions that always produce finite results: (Float) -> Float
     {
-        let float_to_float = Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
+        let float_to_float = Scheme::pure_mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
         for name in &["math.sin", "math.cos", "math.tan", "math.atan"] {
             env.define(intern(name), float_to_float.clone());
         }
@@ -32,7 +32,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // math.pow: (Float, Float) -> ExtFloat (can overflow)
     {
-        let ff_to_ef = Scheme::mono(Type::Fun(
+        let ff_to_ef = Scheme::pure_mono(Type::Fun(
             vec![Type::Float, Type::Float],
             Box::new(Type::ExtFloat),
         ));
@@ -41,7 +41,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // math.atan2: (Float, Float) -> Float (always finite)
     {
-        let ff_to_f = Scheme::mono(Type::Fun(
+        let ff_to_f = Scheme::pure_mono(Type::Fun(
             vec![Type::Float, Type::Float],
             Box::new(Type::Float),
         ));
@@ -49,17 +49,21 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     }
 
     // math.random: () -> Float
+    // Reads OS entropy via the rand crate.
     env.define(
         intern("math.random"),
-        Scheme::mono(Type::Fun(vec![], Box::new(Type::Float))),
+        Scheme::with_effects(
+            Type::Fun(vec![], Box::new(Type::Float)),
+            EffectSet::io_random(),
+        ),
     );
 
     // Math constants. Float constants moved to `float.rs` so the
     // overview-attach there can see them — `register_float_builtins`
     // runs before `register_math_builtins`, and `attach_module_overview`
     // walks `env.bindings` at call time.
-    env.define(intern("math.pi"), Scheme::mono(Type::Float));
-    env.define(intern("math.e"), Scheme::mono(Type::Float));
+    env.define(intern("math.pi"), Scheme::pure_mono(Type::Float));
+    env.define(intern("math.e"), Scheme::pure_mono(Type::Float));
 
     attach_module_docs(env, super::docs::MATH_MD);
 }

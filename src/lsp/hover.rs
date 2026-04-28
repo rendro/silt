@@ -163,14 +163,43 @@ impl Server {
         // The block is plain markdown — no fenced code block — so it
         // sits visually between the signature code-fence and the
         // `---` doc separator.
-        if let Some(def) = def_entry {
-            let block = render_effects(def);
-            if !block.is_empty() {
-                if !value.is_empty() {
-                    value.push_str("\n\n");
+        let effect_block = if let Some(def) = def_entry {
+            render_effects(def)
+        } else {
+            // Phase C: the cursor is on a stdlib call (`io.read_file`,
+            // `list.map`, …). The user-document `DefInfo` map has no
+            // entry for those, so fall through to the cached
+            // `builtin_effects` map populated from
+            // `typechecker::builtin_effects()`. Lookup mirrors the
+            // doc-text fallback chain above (bare → qualified-via-name
+            // → qualified-via-source-scan).
+            let mut effects = None;
+            if let Some(name) = ident_at_cursor {
+                let bare = crate::intern::resolve(name);
+                if let Some(e) = self.builtin_effects.get(&bare) {
+                    effects = Some(*e);
+                } else if let Some(qualified) = qualified_name_at(&doc.source, cursor, &bare)
+                    && let Some(e) = self.builtin_effects.get(&qualified)
+                {
+                    effects = Some(*e);
                 }
-                value.push_str(&block);
             }
+            if effects.is_none()
+                && let Some(tok) = qualified_token_at(&doc.source, cursor)
+                && let Some(e) = self.builtin_effects.get(&tok)
+            {
+                effects = Some(*e);
+            }
+            match effects {
+                Some(e) => format!("effects: {e}"),
+                None => String::new(),
+            }
+        };
+        if !effect_block.is_empty() {
+            if !value.is_empty() {
+                value.push_str("\n\n");
+            }
+            value.push_str(&effect_block);
         }
         if let Some(d) = doc_text {
             if !value.is_empty() {

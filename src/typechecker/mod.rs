@@ -6725,6 +6725,56 @@ pub fn builtin_docs() -> std::collections::HashMap<String, String> {
     docs
 }
 
+/// Return a map of every function-typed built-in's name (qualified or
+/// bare) to its `EffectSet`. Phase C of the effect-rows proposal: every
+/// builtin is classified, so this map carries the canonical effect set
+/// for each. Surfaced by the LSP hover handler to render
+/// `effects: !{io, fs}` between the signature and the doc separator
+/// for stdlib calls (mirrors the user-fn rendering already wired by
+/// `render_effects`).
+///
+/// Non-function schemes (`None`, `Empty`, primitive descriptors) are
+/// skipped — only function-typed bindings carry meaningful effects.
+/// The map is keyed by the resolved (string) name to be symmetric with
+/// `builtin_type_signatures` and `builtin_docs`.
+pub fn builtin_effects() -> std::collections::HashMap<String, crate::types::effects::EffectSet> {
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    let mut effects = std::collections::HashMap::new();
+    for (name, scheme) in &env.bindings {
+        // Only function-typed schemes carry meaningful effects. Variant
+        // constants (None, Empty, …) and primitive descriptors (Int,
+        // Float, …) are typed as values, not functions; their `effects`
+        // field is a benign placeholder set by the registration site
+        // (typically `pure()`). Surfacing those would render
+        // `effects: !{}` on hover for `None` — accurate but noisy.
+        if matches!(scheme.ty, Type::Fun(_, _)) {
+            effects.insert(resolve(*name), scheme.effects);
+        }
+    }
+    effects
+}
+
+/// Test-only: iterate `(qualified_name, scheme)` for every built-in
+/// binding registered by `register_builtins`. The Phase C
+/// `tests/effect_stdlib_sweep_lock_tests.rs` lock test consumes this
+/// to assert no builtin remains at `EffectSet::TOP` after the sweep.
+#[doc(hidden)]
+pub fn iter_builtins_for_effects_audit() -> Vec<(String, crate::types::effects::EffectSet)> {
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    let mut out: Vec<(String, crate::types::effects::EffectSet)> = env
+        .bindings
+        .iter()
+        .filter(|(_, s)| matches!(s.ty, Type::Fun(_, _)))
+        .map(|(name, s)| (resolve(*name), s.effects))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 /// Test-only: iterate `(qualified_name, doc)` for every built-in name
 /// that has a registered doc. Used by the parity walker
 /// (`tests/docs_stdlib_println_parity_tests.rs`) to scan inlined

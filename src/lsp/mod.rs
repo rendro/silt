@@ -84,6 +84,14 @@ struct Server {
     /// `env.define_with_doc` / `env.attach_doc` registration sites
     /// under `src/typechecker/builtins/`.
     builtin_docs: HashMap<String, String>,
+    /// Cached effect sets for every function-typed built-in, populated
+    /// from `typechecker::builtin_effects()`. Phase C of the
+    /// effect-rows proposal: hover on a stdlib call (`io.read_file`,
+    /// `tcp.connect`, `list.map`, …) reads from this map to render the
+    /// `effects: !{...}` block between the signature and the doc
+    /// separator, identical to how user-fn effects are rendered via
+    /// `DefInfo`.
+    builtin_effects: HashMap<String, crate::types::effects::EffectSet>,
     /// Per-URI cache of the last computed diagnostics. Populated by
     /// `update_document` so the pull-based `textDocument/diagnostic`
     /// handler can answer without re-running the pipeline.
@@ -97,6 +105,7 @@ impl Server {
             documents: HashMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
             builtin_docs: typechecker::builtin_docs(),
+            builtin_effects: typechecker::builtin_effects(),
             diagnostics_cache: HashMap::new(),
         }
     }

@@ -12,7 +12,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // is_method_call arity tolerance still allows the 1-arg form.
     env.define(
         intern("test.assert"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![Type::Bool, Type::String],
             Box::new(Type::Unit),
         )),
@@ -28,7 +28,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::pure(),
             },
         );
     }
@@ -43,7 +43,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
-                effects: EffectSet::TOP,
+                effects: EffectSet::pure(),
             },
         );
     }

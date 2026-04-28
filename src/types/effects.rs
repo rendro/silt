@@ -119,6 +119,63 @@ impl EffectSet {
         EffectSet(e.bit())
     }
 
+    // ── Convenience constructors for the Phase C stdlib sweep ─────
+    //
+    // The stdlib registration sites build effect sets from a small
+    // fixed vocabulary: pure (`!{}`), `!{io}`, `!{io, fs}`,
+    // `!{io, net}`, `!{io, time}`, `!{io, random}`, plus the
+    // uuid.v7 special `!{io, time, random}`. These helpers let
+    // every site read at a glance ("io_fs", "io_net", …) instead of
+    // chained `singleton(...).insert(...)` calls.
+
+    /// Pure (no effects). Same as `EffectSet::EMPTY` — exposed as a
+    /// fn for parity with the other `io_*` constructors so the
+    /// builtin sites read uniformly.
+    #[inline]
+    pub const fn pure() -> Self {
+        Self::EMPTY
+    }
+
+    /// Just `!{io}` — printing, env-var reads, anything that touches
+    /// the OS without a more specific refinement.
+    #[inline]
+    pub const fn io() -> Self {
+        Self::singleton(Effect::Io)
+    }
+
+    /// `!{io, fs}` — every filesystem read/write.
+    #[inline]
+    pub const fn io_fs() -> Self {
+        Self::io().insert(Effect::Fs)
+    }
+
+    /// `!{io, net}` — every network call (TCP, HTTP, Postgres).
+    #[inline]
+    pub const fn io_net() -> Self {
+        Self::io().insert(Effect::Net)
+    }
+
+    /// `!{io, time}` — wall-clock reads (`time.now`, `time.today`,
+    /// `time.to_utc`, `time.format_now`).
+    #[inline]
+    pub const fn io_time() -> Self {
+        Self::io().insert(Effect::Time)
+    }
+
+    /// `!{io, random}` — OS entropy reads (`math.random`,
+    /// `uuid.v4`, `crypto.random_bytes`, `crypto.gen_*`).
+    #[inline]
+    pub const fn io_random() -> Self {
+        Self::io().insert(Effect::Random)
+    }
+
+    /// `!{io, time, random}` — `uuid.v7` (timestamp + entropy).
+    /// The only stdlib operation that combines two refinements.
+    #[inline]
+    pub const fn io_time_random() -> Self {
+        Self::io_time().insert(Effect::Random)
+    }
+
     /// `true` iff `e` is in this set.
     #[inline]
     pub const fn contains(self, e: Effect) -> bool {

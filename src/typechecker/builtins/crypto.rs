@@ -31,7 +31,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     ] {
         env.define(
             intern(name),
-            Scheme::mono(Type::Fun(
+            Scheme::pure_mono(Type::Fun(
                 vec![bytes_ty.clone()],
                 Box::new(bytes_ty.clone()),
             )),
@@ -44,14 +44,14 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     for name in &["crypto.md5_hex", "crypto.blake2b_hex"] {
         env.define(
             intern(name),
-            Scheme::mono(Type::Fun(vec![bytes_ty.clone()], Box::new(Type::String))),
+            Scheme::pure_mono(Type::Fun(vec![bytes_ty.clone()], Box::new(Type::String))),
         );
     }
 
     // crypto.hmac_sha256: (Bytes, Bytes) -> Bytes
     env.define(
         intern("crypto.hmac_sha256"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![bytes_ty.clone(), bytes_ty.clone()],
             Box::new(bytes_ty.clone()),
         )),
@@ -60,25 +60,29 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // crypto.hmac_sha512: (Bytes, Bytes) -> Bytes
     env.define(
         intern("crypto.hmac_sha512"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![bytes_ty.clone(), bytes_ty.clone()],
             Box::new(bytes_ty.clone()),
         )),
     );
 
     // crypto.random_bytes: Int -> Result(Bytes, String)
+    // Reads OS entropy via the rand crate.
     env.define(
         intern("crypto.random_bytes"),
-        Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(result(bytes_ty.clone(), Type::String)),
-        )),
+        Scheme::with_effects(
+            Type::Fun(
+                vec![Type::Int],
+                Box::new(result(bytes_ty.clone(), Type::String)),
+            ),
+            EffectSet::io_random(),
+        ),
     );
 
     // crypto.constant_time_eq: (Bytes, Bytes) -> Bool
     env.define(
         intern("crypto.constant_time_eq"),
-        Scheme::mono(Type::Fun(
+        Scheme::pure_mono(Type::Fun(
             vec![bytes_ty.clone(), bytes_ty],
             Box::new(Type::Bool),
         )),
