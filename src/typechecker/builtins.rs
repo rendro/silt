@@ -82,6 +82,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -93,6 +94,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -106,6 +108,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::Never)),
                     constraints: vec![(av, intern("Display"))],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -125,6 +128,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -141,6 +145,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -156,6 +161,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -168,6 +174,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("Option"), vec![a]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -270,6 +277,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -284,6 +292,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -339,6 +348,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -350,6 +360,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -361,6 +372,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -372,6 +384,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -418,6 +431,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -432,6 +446,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -450,6 +465,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Handle"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -466,6 +482,7 @@ impl TypeChecker {
                         Box::new(a),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -482,6 +499,7 @@ impl TypeChecker {
                         Box::new(Type::Unit),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -504,6 +522,7 @@ impl TypeChecker {
                         Box::new(a),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -524,6 +543,7 @@ impl TypeChecker {
                         Box::new(Type::Generic(intern("Handle"), vec![a])),
                     ),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -659,6 +679,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -677,6 +698,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -698,6 +720,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -711,6 +734,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -724,6 +748,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -750,6 +775,7 @@ impl TypeChecker {
                     vars: vec![],
                     ty: Type::Generic(intern("TypeOf"), vec![inner]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -771,6 +797,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -783,6 +810,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -795,6 +823,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }
@@ -808,6 +837,7 @@ impl TypeChecker {
                     vars: vec![kv, vv],
                     ty: Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
                     constraints: vec![],
+                    effects: EffectSet::TOP,
                 },
             );
         }

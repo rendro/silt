@@ -5,11 +5,14 @@
 
 pub mod builtins;
 pub mod canonical;
+pub mod effects;
 
 use std::collections::{BTreeMap, HashMap};
 
 use crate::intern::Symbol;
 use crate::lexer::Span;
+
+pub use crate::types::effects::{Effect, EffectSet};
 
 // ── Type representation ─────────────────────────────────────────────
 
@@ -211,11 +214,18 @@ impl std::fmt::Display for Type {
 /// A type scheme represents a polymorphic type: forall vars . ty
 /// The `vars` are the universally quantified type variables.
 /// The `constraints` are trait bounds on type variables (from `where` clauses).
+/// The `effects` field tracks the set of effects the function (if any)
+/// performs. Function-typed schemes carry a meaningful set; non-function
+/// schemes carry `EffectSet::TOP` as a benign placeholder. During the
+/// Phase A rollout every Scheme literal in the codebase defaults its
+/// `effects` to `EffectSet::TOP` (the gradual-rollout permissive
+/// default), which keeps existing programs typechecking unchanged.
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
     pub constraints: Vec<(TyVar, Symbol)>,
+    pub effects: EffectSet,
 }
 
 impl Scheme {
@@ -224,6 +234,7 @@ impl Scheme {
             vars: Vec::new(),
             ty,
             constraints: Vec::new(),
+            effects: EffectSet::TOP,
         }
     }
 }

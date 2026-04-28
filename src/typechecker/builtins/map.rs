@@ -19,6 +19,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Generic(intern("Option"), vec![v])),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -40,6 +41,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -60,6 +62,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -77,6 +80,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Bool),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -94,6 +98,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::List(Box::new(k))),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -111,6 +116,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::List(Box::new(v))),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -131,6 +137,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -148,6 +155,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Int),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -168,6 +176,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -193,6 +202,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k2), Box::new(v2))),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -210,6 +220,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::List(Box::new(Type::Tuple(vec![k, v])))),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -230,6 +241,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -250,6 +262,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Unit),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -272,6 +285,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }

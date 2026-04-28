@@ -622,6 +622,12 @@ impl TypeChecker {
         self.fn_body_types
             .insert(lookup_name, constrained_fn.clone());
 
+        // Phase A of the effect-rows proposal: walk the (now type-checked)
+        // body and record the inferred effect set. Phase A computes only
+        // — annotation enforcement and LSP rendering land in B/D.
+        let inferred_effects = super::effects_infer::infer_expr_effects(&f.body, &local_env);
+        self.fn_body_effects.insert(lookup_name, inferred_effects);
+
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;

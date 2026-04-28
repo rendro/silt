@@ -9,6 +9,7 @@
 
 mod auto_derive;
 mod builtins;
+mod effects_infer;
 mod exhaustiveness;
 mod inference;
 mod resolve;
@@ -373,6 +374,7 @@ pub(super) fn remap_scheme(
         vars: new_vars,
         ty: new_ty,
         constraints: new_constraints,
+        effects: EffectSet::TOP,
     }
 }
 
@@ -527,6 +529,15 @@ pub struct TypeChecker {
     pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
     /// Maps function names to their body-constrained types (populated during check_fn_body).
     pub(super) fn_body_types: HashMap<Symbol, Type>,
+    /// Maps function names to the effect set inferred from their body
+    /// (populated during `check_fn_body`). Phase A of the effect-rows
+    /// proposal: every function body has its effects computed and
+    /// stored here, but Phase A does not yet enforce that the inferred
+    /// set is a subset of the function's annotated set — that lands in
+    /// Phase B/D. The map exists so future phases (LSP hover, strict-
+    /// effects flag, capability boundaries) have a populated cache to
+    /// read from. See `docs/proposals/effect-rows.md`.
+    pub(super) fn_body_effects: HashMap<Symbol, EffectSet>,
     /// Deferred checks for field access on type variables (B4).
     /// Each entry is `(object_type, field_name, result_type, span)`.
     /// Re-examined after all function bodies are inferred: if the object type
@@ -704,6 +715,7 @@ impl TypeChecker {
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
+            fn_body_effects: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             top_level_names: std::collections::HashSet::new(),
@@ -1535,6 +1547,7 @@ impl TypeChecker {
             vars,
             ty,
             constraints,
+            effects: EffectSet::TOP,
         }
     }
 
@@ -2226,6 +2239,7 @@ impl TypeChecker {
             vars: fvs,
             ty: ty.clone(),
             constraints: Vec::new(),
+            effects: EffectSet::TOP,
         }
     }
 
@@ -2359,6 +2373,17 @@ impl TypeChecker {
         }
 
         exports
+    }
+
+    /// Look up the inferred effect set for a function by its bare name
+    /// (or impl-qualified name like `MyType.method` for trait methods).
+    /// Returns `None` if the name was never registered as a function or
+    /// if its body was never inferred (e.g. a recovery stub).
+    ///
+    /// Phase A of the effect-rows proposal — see
+    /// `docs/proposals/effect-rows.md` and `effects_infer.rs`.
+    pub fn fn_body_effects_for(&self, name: Symbol) -> Option<EffectSet> {
+        self.fn_body_effects.get(&name).copied()
     }
 
     // ── Check a full program ────────────────────────────────────────
@@ -3261,6 +3286,7 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: result_type,
                                 constraints: vec![],
+                                effects: EffectSet::TOP,
                             },
                         );
                     } else {
@@ -3271,6 +3297,7 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: Type::Fun(field_types, Box::new(result_type)),
                                 constraints: vec![],
+                                effects: EffectSet::TOP,
                             },
                         );
                     }
@@ -3353,6 +3380,7 @@ impl TypeChecker {
                         vars: var_ids.clone(),
                         ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
                         constraints: vec![],
+                        effects: EffectSet::TOP,
                     };
                     env.define(td.name, scheme);
                 }
@@ -3430,6 +3458,7 @@ impl TypeChecker {
                         vars: vec![],
                         ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
                         constraints: vec![],
+                        effects: EffectSet::TOP,
                     }
                 } else {
                     // Re-use the param TyVars that parameterize the
@@ -3450,6 +3479,7 @@ impl TypeChecker {
                         vars: var_ids,
                         ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
                         constraints: vec![],
+                        effects: EffectSet::TOP,
                     }
                 };
                 env.define(td.name, scheme);

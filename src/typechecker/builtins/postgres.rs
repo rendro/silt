@@ -79,6 +79,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_query),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -95,6 +96,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_exec),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -119,6 +121,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(inner_result),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -163,6 +166,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_channel),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -243,6 +247,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(result_channel),
                 ),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
@@ -261,6 +266,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![tv],
                 ty: Type::Fun(vec![t, Type::String, Type::String], Box::new(result_unit)),
                 constraints: vec![],
+                effects: EffectSet::TOP,
             },
         );
     }
