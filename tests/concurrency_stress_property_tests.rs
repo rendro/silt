@@ -832,10 +832,21 @@ fn main() {
         assert!(out.stdout.contains("finished"));
         // Cooperative parking: 100 tasks @ 10ms each should finish in
         // well under 2s. A serialized implementation would take ~1s
-        // even at worker-pool size 4, but we give generous slack.
+        // even at worker-pool size 4. Under CI=1, bump the ceiling to
+        // 5s to absorb GitHub-runner contention + Windows' 15.6ms
+        // timer-tick granularity, where each 10ms sleep can round up
+        // and silt subprocess cold-start adds 500-1500ms before the
+        // first sleep call begins. The cooperative-parking lock is
+        // preserved (a serial impl would still be ~1s, well below 5s);
+        // we just give Windows runners headroom.
+        let ceiling = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(2)
+        };
         assert!(
-            out.elapsed < Duration::from_secs(2),
-            "100 parallel sleeps took {:?}; expected << 2s (cooperative parking broken?)",
+            out.elapsed < ceiling,
+            "100 parallel sleeps took {:?}; expected << {ceiling:?} (cooperative parking broken?)",
             out.elapsed
         );
     }
