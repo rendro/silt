@@ -12,10 +12,10 @@ use silt::vm::Vm;
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::resolve_package_entry_point;
-use crate::cli::pipeline::compile_file;
+use crate::cli::pipeline::{compile_file_with_options, resolve_strict_effects};
 use crate::cli::source_scan::{is_missing_main_error, looks_like_test_file};
 
-/// Dispatch `silt run [--disassemble] [<file>]`.
+/// Dispatch `silt run [--disassemble] [--strict-effects] [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
     if args[2..].iter().any(|a| a == "--help" || a == "-h") {
         print!("{}", run_help_text());
@@ -23,13 +23,17 @@ pub(crate) fn dispatch(args: &[String]) {
     }
     let mut disasm = false;
     let mut file: Option<String> = None;
+    let mut strict_effects: Option<bool> = None;
     for arg in &args[2..] {
         if arg == "--disassemble" {
             disasm = true;
+        } else if arg == "--strict-effects" {
+            strict_effects = Some(true);
         } else if arg.starts_with('-') {
             let suggestion = match arg.as_str() {
                 "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
                 "--h" | "-help" => " (did you mean --help?)",
+                "--strict-effect" | "--strict_effects" => " (did you mean --strict-effects?)",
                 _ => "",
             };
             eprintln!("silt run: unknown flag '{arg}'{suggestion}");
@@ -54,28 +58,33 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
+    let strict = resolve_strict_effects(&file, strict_effects);
     if disasm {
         crate::cli::disasm::disasm_file(&file);
     } else {
-        vm_run_file(&file);
+        vm_run_file(&file, strict);
     }
 }
 
-/// Legacy `silt <file>.silt [--help|--disassemble]` convenience shim —
-/// same behavior as `silt run` with the file baked in as the first
-/// argument.
+/// Legacy `silt <file>.silt [--help|--disassemble|--strict-effects]`
+/// convenience shim — same behavior as `silt run` with the file baked
+/// in as the first argument.
 pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
     let mut disasm = false;
+    let mut strict_effects: Option<bool> = None;
     for extra in &args[2..] {
         if extra == "--help" || extra == "-h" {
             print!("{}", run_help_text());
             process::exit(0);
         } else if extra == "--disassemble" {
             disasm = true;
+        } else if extra == "--strict-effects" {
+            strict_effects = Some(true);
         } else if extra.starts_with('-') {
             let suggestion = match extra.as_str() {
                 "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
                 "--h" | "-help" => " (did you mean --help?)",
+                "--strict-effect" | "--strict_effects" => " (did you mean --strict-effects?)",
                 _ => "",
             };
             eprintln!("silt run: unknown flag '{extra}'{suggestion}");
@@ -83,17 +92,18 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
             process::exit(1);
         }
     }
+    let strict = resolve_strict_effects(file, strict_effects);
     if disasm {
         crate::cli::disasm::disasm_file(file);
     } else {
-        vm_run_file(file);
+        vm_run_file(file, strict);
     }
 }
 
 /// Run a file using the bytecode VM (default path).
-pub(crate) fn vm_run_file(path: &str) {
+pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
     silt::intern::reset();
-    let (functions, source) = compile_file(path);
+    let (functions, source) = compile_file_with_options(path, true, strict_effects);
 
     // Build a name → (module_file, source) map so runtime errors from
     // imported modules are rendered against the correct file.  See

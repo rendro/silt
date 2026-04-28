@@ -26,8 +26,35 @@ pub use crate::git::GitRef;
 pub struct Manifest {
     pub package: PackageMeta,
     pub dependencies: BTreeMap<Symbol, Dependency>,
+    /// Optional `[lints]` table — package-wide lint configuration.
+    /// Phase D of the effect-rows proposal exposes
+    /// `strict-effects = true` here so a package can opt every
+    /// `silt check` / `silt run` / `silt test` invocation into the
+    /// strict-effects mode without passing `--strict-effects` on
+    /// every CLI run. Absent table or absent field both default to
+    /// `false` (the legacy behavior). The CLI flag still wins when
+    /// supplied — see `cli::pipeline::resolve_strict_effects`.
+    pub lints: LintConfig,
     /// Absolute path to the silt.toml file this manifest was loaded from.
     pub manifest_path: PathBuf,
+}
+
+/// `[lints]` table contents.
+///
+/// Phase D adds `strict_effects` (TOML key `strict-effects`). Future
+/// lint flags land here too, so callers can read `manifest.lints.X`
+/// uniformly. Defaults to all-off.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LintConfig {
+    /// Phase D effect-rows mode. When `true`, unannotated user fns
+    /// default to `EffectSet::EMPTY` (pure) and the typechecker
+    /// rejects effectful calls without an explicit annotation. The
+    /// diagnostic includes a copy-paste `help:` line.
+    ///
+    /// CLI flag `--strict-effects` overrides this field on a per-
+    /// invocation basis. Absent field or absent `[lints]` table →
+    /// `false` (legacy behavior).
+    pub strict_effects: bool,
 }
 
 /// `[package]` table contents.
@@ -106,6 +133,19 @@ struct RawManifest {
     package: RawPackage,
     #[serde(default)]
     dependencies: BTreeMap<String, RawDependency>,
+    #[serde(default)]
+    lints: Option<RawLints>,
+}
+
+/// Raw `[lints]` table. We accept the kebab-case `strict-effects` key
+/// (TOML / Cargo convention) and stash unknown keys in a catch-all
+/// so a forward-looking lint we don't yet recognise doesn't reject
+/// the manifest outright. Validation surfaces unknowns as a single
+/// non-fatal note in a future audit round if the need arises.
+#[derive(Deserialize, Default)]
+struct RawLints {
+    #[serde(rename = "strict-effects", default)]
+    strict_effects: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -167,6 +207,13 @@ impl Manifest {
             dependencies.insert(sym, dep);
         }
 
+        let lints = match raw.lints {
+            Some(raw_lints) => LintConfig {
+                strict_effects: raw_lints.strict_effects.unwrap_or(false),
+            },
+            None => LintConfig::default(),
+        };
+
         Ok(Manifest {
             package: PackageMeta {
                 name: intern::intern(&raw.package.name),
@@ -174,6 +221,7 @@ impl Manifest {
                 edition: raw.package.edition,
             },
             dependencies,
+            lints,
             manifest_path: absolute,
         })
     }

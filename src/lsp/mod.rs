@@ -96,6 +96,16 @@ struct Server {
     /// `update_document` so the pull-based `textDocument/diagnostic`
     /// handler can answer without re-running the pipeline.
     diagnostics_cache: HashMap<Uri, Vec<Diagnostic>>,
+    /// Phase D of the effect-rows proposal: when `true`, the
+    /// typechecker invocation in `update_document` (and the various
+    /// handlers under `lsp/ast_walk.rs`) flips unannotated user fns
+    /// to `EffectSet::EMPTY` and emits the strict-mode diagnostic
+    /// (with the copy-paste `help:` annotation) when a body uses
+    /// effects the signature doesn't declare. Populated at workspace
+    /// preload time from the workspace's `silt.toml`'s
+    /// `[lints] strict-effects` field. Defaults to `false` so editors
+    /// pointed at non-strict packages stay permissive.
+    pub(super) strict_effects: bool,
 }
 
 impl Server {
@@ -107,6 +117,7 @@ impl Server {
             builtin_docs: typechecker::builtin_docs(),
             builtin_effects: typechecker::builtin_effects(),
             diagnostics_cache: HashMap::new(),
+            strict_effects: false,
         }
     }
 
@@ -485,6 +496,15 @@ pub fn run() {
         })
         .and_then(file_uri_to_path);
     if let Some(root) = root_path {
+        // Phase D: when the workspace's `silt.toml` opts into
+        // strict-effects via `[lints] strict-effects = true`, mirror
+        // that into the server so every subsequent typecheck honours
+        // the package-wide setting. We do this BEFORE the preload
+        // walk so the initial typecheck pass over every preloaded
+        // file already runs under strict mode.
+        if let Ok(Some(manifest)) = crate::manifest::Manifest::discover(&root) {
+            server.strict_effects = manifest.lints.strict_effects;
+        }
         preload::preload_workspace(&mut server, &root);
     }
 
@@ -705,5 +725,40 @@ mod tests {
         // Simulate DidCloseTextDocument by invoking the removal directly.
         server.documents.remove(&uri);
         assert!(!server.documents.contains_key(&uri));
+    }
+
+    // Phase D: when the server's `strict_effects` flag is on (set
+    // from the workspace's `silt.toml` `[lints] strict-effects =
+    // true`), the diagnostics published for a doc that uses an
+    // unannotated effectful builtin must include the strict-mode
+    // help annotation. Locks the workspace → server flag → diagnostic
+    // pipeline end-to-end. Spec calls this the LSP integration lock.
+    #[test]
+    fn lsp_surfaces_strict_effects_diagnostic() {
+        let mut server = make_server();
+        // Mirror the workspace-preload codepath in `lsp::run`.
+        server.strict_effects = true;
+        let source = "import io\nfn read(p: String) -> Result(String, IoError) = io.read_file(p)\n";
+        let uri = open_document(&mut server, source);
+        let diagnostics = server
+            .diagnostics_cache
+            .get(&uri)
+            .expect("diagnostics published");
+        let strict_diag = diagnostics
+            .iter()
+            .find(|d| d.message.contains("--strict-effects"))
+            .unwrap_or_else(|| {
+                panic!("expected strict-mode diagnostic in LSP output, got: {diagnostics:?}")
+            });
+        assert!(
+            strict_diag.message.contains("help:"),
+            "LSP-surfaced diagnostic must keep the help line: {}",
+            strict_diag.message
+        );
+        assert!(
+            strict_diag.message.contains("!{fs, io}"),
+            "LSP-surfaced diagnostic must keep the suggested annotation: {}",
+            strict_diag.message
+        );
     }
 }

@@ -52,7 +52,7 @@ pub(crate) fn disasm_file(path: &str) {
     // Read-only command — never mutates `silt.lock`. If the lock is
     // stale or missing we resolve in-memory and continue; the user
     // can still get a useful disassembly without a lockfile write.
-    let (functions, _source) = compile_file_with_options(path, false);
+    let (functions, _source) = compile_file_with_options(path, false, false);
 
     // Print disassembly of each function
     for func in &functions {

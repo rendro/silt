@@ -686,6 +686,29 @@ pub struct TypeChecker {
     /// param to `Int` and then surfacing a "type mismatch" at the
     /// caller) keep firing.
     pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
+    /// Phase D of the effect-rows proposal: when `true`, an
+    /// unannotated user function defaults to `EffectSet::EMPTY`
+    /// (pure) rather than the gradual-rollout `EffectSet::TOP`
+    /// permissive default. The body-inference subset check then
+    /// catches any effectful builtin call from such a fn and emits
+    /// the strict-mode diagnostic (with a copy-paste annotation in
+    /// the `help:` line). Off by default so legacy programs typecheck
+    /// unchanged. Surface: `silt check --strict-effects`,
+    /// `silt run --strict-effects`, `silt test --strict-effects`,
+    /// or `[lints] strict-effects = true` in `silt.toml`.
+    pub(super) strict_effects: bool,
+    /// Phase D companion of [`strict_effects`]: the byte offsets of
+    /// the fn declarations whose `declared_effects` was flipped from
+    /// `EffectSet::TOP` to `EffectSet::EMPTY` by the strict-mode
+    /// pre-pass in `check_program_returning_env`. Consulted by the
+    /// body-inference enforcement diagnostic so it can emit the
+    /// strict-mode-specific message (with the copy-paste annotation
+    /// in `help:`) for fns the user did NOT annotate, while still
+    /// emitting the original Phase B "user wrote `!{...}` and the
+    /// body went wider" diagnostic for fns that DID get an explicit
+    /// annotation. Keyed by `f.span.offset` because `Symbol` keys
+    /// would conflate trait impl methods sharing a name.
+    pub(super) strict_effects_flipped: std::collections::HashSet<usize>,
 }
 
 impl Default for TypeChecker {
@@ -734,7 +757,17 @@ impl TypeChecker {
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
+            strict_effects: false,
+            strict_effects_flipped: std::collections::HashSet::new(),
         }
+    }
+
+    /// Toggle Phase D strict-effects mode. When enabled, unannotated
+    /// user fn declarations default to `EffectSet::EMPTY` (pure) and
+    /// the body-inference subset check fires on any effectful call.
+    /// See `docs/strict-effects-migration.md` for the migration story.
+    pub fn set_strict_effects(&mut self, on: bool) {
+        self.strict_effects = on;
     }
 
     /// Sentinel package symbol used as the `defined_in` for built-in
@@ -2625,6 +2658,58 @@ impl TypeChecker {
         // `Op::CallMethod`'s qualified-global lookup finds them at
         // runtime, never falling through to `dispatch_trait_method`.
         self.synthesize_auto_derive_impls(&mut program.decls);
+
+        // Phase D of the effect-rows proposal: when strict-effects mode
+        // is enabled, flip the gradual-rollout `EffectSet::TOP` default
+        // to `EffectSet::EMPTY` (pure) for every UN-annotated user fn
+        // before registration runs. The body-inference subset check
+        // (in `check_fn_body_with_name`) then rejects any effectful
+        // call from such a fn unless the user adds an explicit
+        // annotation. The flip is gated to:
+        //   - `!is_recovery_stub`: parse-recovery stubs keep TOP so
+        //     their downstream call sites don't cascade.
+        //   - `f.span.line != 0`: auto-derived methods (synthesized
+        //     with line 0 sentinel spans) keep TOP — they are not
+        //     user-authored code. Default trait method bodies copied
+        //     by `synthesize_default_methods` carry their original
+        //     trait-decl spans, so they ARE flipped (they're user
+        //     code, just placed into impls that omitted them).
+        //   - `f.declared_effects == EffectSet::TOP`: only the
+        //     gradual-rollout default is flipped. A user who already
+        //     wrote `!{io}` keeps that set as their declared bound.
+        //
+        // The flip mutates the AST so the LSP's `build_definitions`
+        // pass sees the flipped value via `FnDecl::declared_effects`
+        // and renders it on hover under strict mode.
+        //
+        // See `docs/strict-effects-migration.md` for the user-facing
+        // workflow and `docs/proposals/effect-rows.md` Part 7 Phase D.
+        if self.strict_effects {
+            for decl in program.decls.iter_mut() {
+                match decl {
+                    Decl::Fn(f)
+                        if !f.is_recovery_stub
+                            && f.span.line != 0
+                            && f.declared_effects == EffectSet::TOP =>
+                    {
+                        f.declared_effects = EffectSet::EMPTY;
+                        self.strict_effects_flipped.insert(f.span.offset);
+                    }
+                    Decl::TraitImpl(ti) if !ti.is_auto_derived => {
+                        for m in ti.methods.iter_mut() {
+                            if !m.is_recovery_stub
+                                && m.span.line != 0
+                                && m.declared_effects == EffectSet::TOP
+                            {
+                                m.declared_effects = EffectSet::EMPTY;
+                                self.strict_effects_flipped.insert(m.span.offset);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         // 2c: Register fn signatures and trait impls (now seeing
         // synthesized methods alongside explicit ones).
@@ -6414,9 +6499,36 @@ pub fn check_with_package_and_imports(
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
 ) -> (Vec<TypeError>, ModuleExports) {
+    check_with_package_and_imports_options(program, package, module_exports, false)
+}
+
+/// Phase D entry point: same as [`check_with_package_and_imports`] but
+/// takes an additional `strict_effects` flag that propagates the
+/// `--strict-effects` mode through to the typechecker. When `true`,
+/// unannotated user fns default to `EffectSet::EMPTY` (pure) and the
+/// body-inference subset check rejects effectful calls from such fns
+/// unless an explicit `!{...}` annotation is added. The diagnostic
+/// includes a copy-paste `help:` line with the suggested annotation.
+///
+/// `false` reproduces the legacy behavior — every existing program
+/// continues to typecheck unchanged. CLI plumbing in `silt check`,
+/// `silt run`, and `silt test` reads the bool from the
+/// `--strict-effects` CLI flag (which wins) and from the
+/// `[lints] strict-effects = true` field in `silt.toml`.
+///
+/// See `docs/strict-effects-migration.md` for the user-facing
+/// migration story and `docs/proposals/effect-rows.md` Part 7 Phase D
+/// for the design.
+pub fn check_with_package_and_imports_options(
+    program: &mut Program,
+    package: Option<Symbol>,
+    module_exports: HashMap<Symbol, ModuleExports>,
+    strict_effects: bool,
+) -> (Vec<TypeError>, ModuleExports) {
     let mut checker = TypeChecker::new();
     checker.current_package = package;
     checker.module_exports = module_exports;
+    checker.set_strict_effects(strict_effects);
     let env = checker.check_program_returning_env(program);
     let exports = checker.collect_module_exports(program, &env);
     (checker.errors, exports)

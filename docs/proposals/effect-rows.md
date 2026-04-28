@@ -1,7 +1,7 @@
 ---
 title: "Proposal: effect-row tracking"
 section: "Proposals"
-status: draft
+status: implemented
 ---
 
 # Effect-row tracking for silt
@@ -9,7 +9,8 @@ status: draft
 **tl;dr:** Recommend a coarse, inferred, tracking-only effect system.
 Skip handlers and user-defined effects in v1.
 
-**Status:** proposal, not yet implemented.
+**Status:** implemented in v0.12 (Phases A→D shipped). See
+`docs/strict-effects-migration.md` for the user-facing guide.
 **Scope:** a fixed set of 5 named effects (`!io`, `!fs`, `!net`,
 `!time`, `!random`), inferred from function bodies, surfaced on LSP
 hover, optionally annotated at module boundaries. No algebraic
@@ -497,7 +498,9 @@ after the round-64 docs-sweep template. Lock test catches drift.
 **Phase D — `--strict-effects` flag (1 week).** When set,
 unannotated functions default to `!{}` and propagate; type checker
 rejects effectful calls from pure context. Future major version
-flips the default.
+flips the default. Shipped — see
+`docs/strict-effects-migration.md` for the user-facing rollout
+(commit hash filled in by the top-level commit).
 
 **Total: 5-7 weeks tracking-only.**
 

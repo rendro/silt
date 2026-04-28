@@ -16,12 +16,13 @@ use silt::vm::Vm;
 use crate::cli::help::test_usage_banner;
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::package_setup_for_file;
-use crate::cli::pipeline::is_unknown_module_warning;
+use crate::cli::pipeline::{is_unknown_module_warning, resolve_strict_effects};
 
-/// Dispatch `silt test [--filter <pat>] [path]`.
+/// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut file: Option<String> = None;
     let mut filter: Option<String> = None;
+    let mut strict_effects: Option<bool> = None;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--filter" {
@@ -43,12 +44,16 @@ pub(crate) fn dispatch(args: &[String]) {
             }
             filter = Some(value.to_string());
             i += 1;
+        } else if args[i] == "--strict-effects" {
+            strict_effects = Some(true);
+            i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", test_usage_banner());
             println!();
             println!("Options:");
-            println!("  --filter <pat>   Only run tests whose name contains <pat>");
-            println!("  --watch, -w      Re-run on file changes");
+            println!("  --filter <pat>      Only run tests whose name contains <pat>");
+            println!("  --strict-effects    Treat unannotated fns as pure (Phase D)");
+            println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Auto-discovery: when no file is given, recursively runs tests");
             println!("from files matching *_test.silt or *.test.silt.");
@@ -58,6 +63,7 @@ pub(crate) fn dispatch(args: &[String]) {
             let suggestion = match args[i].as_str() {
                 "--filters" | "-filter" | "-f" => " (did you mean --filter?)",
                 "--h" | "-help" => " (did you mean --help?)",
+                "--strict-effect" | "--strict_effects" => " (did you mean --strict-effects?)",
                 _ => "",
             };
             eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
@@ -68,7 +74,7 @@ pub(crate) fn dispatch(args: &[String]) {
             i += 1;
         }
     }
-    run_tests(file.as_deref(), filter);
+    run_tests(file.as_deref(), filter, strict_effects);
 }
 
 fn find_test_files(dir: &Path) -> Vec<String> {
@@ -91,7 +97,7 @@ fn find_test_files(dir: &Path) -> Vec<String> {
     results
 }
 
-fn run_tests(file: Option<&str>, filter: Option<String>) {
+fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Option<bool>) {
     silt::intern::reset();
     let paths: Vec<String> = if let Some(f) = file {
         let p = Path::new(f);
@@ -223,8 +229,18 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
         compiler.pre_typecheck_imports(&program);
         let exports = compiler.module_exports_snapshot();
-        let (type_errors, _entry_exports) =
-            typechecker::check_with_package_and_imports(&mut program, Some(local_pkg), exports);
+        // Phase D: each test file may live in a different package
+        // (autodiscovery walks the cwd recursively); resolve the
+        // strict-effects flag per-file so a per-package
+        // `[lints] strict-effects = true` honours its own boundary.
+        // CLI flag (Some) wins over per-file manifest discovery.
+        let strict_effects = resolve_strict_effects(path.as_str(), strict_effects_cli);
+        let (type_errors, _entry_exports) = typechecker::check_with_package_and_imports_options(
+            &mut program,
+            Some(local_pkg),
+            exports,
+            strict_effects,
+        );
         let mut has_type_error = false;
         let mut printed_type_errors: usize = 0;
         for te in &type_errors {

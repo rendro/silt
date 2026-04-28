@@ -79,7 +79,28 @@ impl Server {
             ));
         }
 
-        let type_errors = typechecker::check(&mut program);
+        // Phase D: when the workspace's manifest enables strict-effects
+        // mode (`[lints] strict-effects = true`), surface the
+        // strict-mode diagnostics in the editor too. The flag was
+        // captured at workspace preload time in `lsp::run`.
+        let type_errors = if self.strict_effects {
+            // No package context for an LSP-pull typecheck: the
+            // server doesn't have the producing-package symbol on
+            // hand for ad-hoc typechecks during editing. We also
+            // don't have cached cross-module exports plumbed through
+            // here yet — that's a follow-up. For now, route through
+            // the options entry so the strict flag flows; package=None
+            // matches the legacy `typechecker::check()` behaviour.
+            let (errs, _exports) = typechecker::check_with_package_and_imports_options(
+                &mut program,
+                None,
+                std::collections::HashMap::new(),
+                true,
+            );
+            errs
+        } else {
+            typechecker::check(&mut program)
+        };
         // GAP #8: drop the "unknown module" warning for user-module imports
         // and the follow-on "undefined" errors for names they bring in. The
         // type checker has no filesystem access, so every legitimate

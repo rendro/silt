@@ -28,6 +28,128 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
     format!("{{{}}}", names.join(", "))
 }
 
+/// Render a copy-paste-ready fn header carrying the supplied effect
+/// annotation. Used by the Phase D strict-effects diagnostic to emit
+/// the literal text the user can paste straight back into their fn
+/// signature — e.g. given the source `fn read_settings(path: String) -> Settings`
+/// and the inferred set `!{fs, io}`, returns
+/// `fn read_settings(path: String) -> Settings !{fs, io}`.
+///
+/// Mirrors `formatter.rs::format_fn_with_comments` but keeps the
+/// renderer minimal (no comment threading, no multi-line layout) —
+/// the help-line text needs to be a single short sentence, not a
+/// faithful reformat of the user's whole header. Where clauses are
+/// included so a fn whose annotation lives between the return type
+/// and a where-clause still emits a header that roundtrips through
+/// the parser.
+pub(super) fn format_suggested_fn_header(
+    f: &FnDecl,
+    effects: crate::types::effects::EffectSet,
+) -> String {
+    use crate::ast::{ParamKind, PatternKind};
+    let name = resolve(f.name);
+    let params: Vec<String> = f
+        .params
+        .iter()
+        .map(|p| {
+            // Render the binding pattern. For the help-line use case the
+            // patterns we care about are `Ident(x)` and `Wildcard`; we
+            // fall back to `_` for anything more exotic so the suggested
+            // header stays compact.
+            let pat = match &p.pattern.kind {
+                PatternKind::Ident(n) => resolve(*n),
+                PatternKind::Wildcard => "_".to_string(),
+                _ => "_".to_string(),
+            };
+            match p.kind {
+                ParamKind::Type => format!("type {pat}"),
+                ParamKind::Data => match &p.ty {
+                    Some(ty) => format!("{pat}: {}", render_type_expr(ty)),
+                    None => pat,
+                },
+            }
+        })
+        .collect();
+    let mut header = format!("fn {}({})", name, params.join(", "));
+    if let Some(ret) = &f.return_type {
+        header.push_str(&format!(" -> {}", render_type_expr(ret)));
+    }
+    header.push_str(&format!(" {effects}"));
+    if !f.where_clauses.is_empty() {
+        let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
+        for (n, t, args) in &f.where_clauses {
+            let rendered = if args.is_empty() {
+                resolve(*t)
+            } else {
+                let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
+                format!("{}({})", resolve(*t), arg_strs.join(", "))
+            };
+            if let Some(entry) = grouped.iter_mut().find(|(k, _)| k == n) {
+                entry.1.push(rendered);
+            } else {
+                grouped.push((*n, vec![rendered]));
+            }
+        }
+        let clauses: Vec<String> = grouped
+            .iter()
+            .map(|(n, traits)| format!("{}: {}", resolve(*n), traits.join(" + ")))
+            .collect();
+        header.push_str(&format!(" where {}", clauses.join(", ")));
+    }
+    header
+}
+
+/// Render a TypeExpr as the user would write it. Local copy of the
+/// `formatter.rs` helper; we duplicate it here rather than reach into
+/// the formatter module so the typechecker stays free of formatter
+/// dependencies. The Phase D strict-effects diagnostic is the only
+/// caller — its needs are narrow (named, generic, tuple, function
+/// types; no comment threading) so the duplication stays small.
+fn render_type_expr(ty: &TypeExpr) -> String {
+    match &ty.kind {
+        TypeExprKind::Named(name) => resolve(*name),
+        TypeExprKind::Generic(name, args) => {
+            let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
+            format!("{}({})", resolve(*name), arg_strs.join(", "))
+        }
+        TypeExprKind::Tuple(elems) => {
+            let items: Vec<String> = elems.iter().map(render_type_expr).collect();
+            format!("({})", items.join(", "))
+        }
+        TypeExprKind::Function(params, ret) => {
+            let param_strs: Vec<String> = params.iter().map(render_type_expr).collect();
+            format!("Fn({}) -> {}", param_strs.join(", "), render_type_expr(ret))
+        }
+        TypeExprKind::SelfType => "Self".to_string(),
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => {
+            if matches!(receiver.kind, TypeExprKind::SelfType) {
+                format!("Self::{}", resolve(*assoc_name))
+            } else {
+                format!(
+                    "<{} as {}>::{}",
+                    render_type_expr(receiver),
+                    resolve(*trait_name),
+                    resolve(*assoc_name)
+                )
+            }
+        }
+        TypeExprKind::AnonRecord { fields, tail } => {
+            let mut items: Vec<String> = fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
+                .collect();
+            if let Some(rname) = tail {
+                items.push(format!("...{}", resolve(*rname)));
+            }
+            format!("{{ {} }}", items.join(", "))
+        }
+    }
+}
+
 /// Format an "undefined variable '<typo>'" error message with an
 /// optional "did you mean `<cand>`?" hint appended as a `help:` body
 /// line so `SourceError::Display` renders it as a `= help:` continuation
@@ -663,14 +785,45 @@ impl TypeChecker {
                 .next()
                 .map(|e| format!("!{{{e}}}"))
                 .unwrap_or_else(|| "!{}".to_string());
-            self.errors.push(crate::types::TypeError {
-                message: format!(
+
+            // Phase D strict-effects-mode diagnostic shape: when this
+            // fn was flipped from TOP→EMPTY by the strict-effects
+            // pre-pass (i.e. the user did NOT write a `!{...}`
+            // annotation; the flag treated absent-annotation as
+            // pure), surface a tailored message that names strict
+            // mode AND ships a copy-paste-ready annotation in the
+            // `help:` line. The literal annotation suffix the user
+            // can paste straight back into their fn header is the
+            // load-bearing part of the migration story — see
+            // `docs/strict-effects-migration.md`.
+            //
+            // Otherwise (the user explicitly wrote `!{...}` and the
+            // body went wider), keep the original Phase B diagnostic
+            // shape so existing locks and tooling stay valid.
+            let was_strict_flipped = self.strict_effects_flipped.contains(&f.span.offset);
+            let message = if was_strict_flipped {
+                let suggested_header = format_suggested_fn_header(f, inferred_effects);
+                let inferred_render = format!("{inferred_effects}");
+                format!(
+                    "function '{}' uses effect '{}' but is declared pure (no annotation under --strict-effects)\n\
+                     fn body uses {}; under --strict-effects, missing annotation means !{{}}\n\
+                     help: annotate as `{}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller",
+                    crate::intern::resolve(f.name),
+                    inferred_render,
+                    inferred_render,
+                    suggested_header,
+                )
+            } else {
+                format!(
                     "effect '{}' not declared in fn '{}'\nfn body uses {}; signature declares {}",
                     representative,
                     crate::intern::resolve(f.name),
                     inferred_effects,
                     f.declared_effects,
-                ),
+                )
+            };
+            self.errors.push(crate::types::TypeError {
+                message,
                 span: f.body.span,
                 severity: crate::types::Severity::Error,
             });

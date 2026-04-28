@@ -7,12 +7,14 @@
 //! with the compiler's later resolution of those same imports.
 
 use std::fs;
+use std::path::Path;
 use std::process;
 
 use silt::bytecode::Function;
 use silt::compiler::Compiler;
 use silt::errors::SourceError;
 use silt::lexer::Lexer;
+use silt::manifest::Manifest;
 use silt::parser::Parser;
 use silt::typechecker;
 
@@ -45,11 +47,33 @@ pub(crate) struct CompilePipelineResult {
 ///   package, regenerate `silt.lock` if it's missing or stale before
 ///   compilation. Set to `false` for read-only commands like `silt
 ///   disasm` and `silt fmt` so they don't mutate user files.
-pub(crate) fn run_compile_pipeline(
+/// Resolve the effective strict-effects setting for `path`. CLI flag
+/// (Some) wins; otherwise consult the enclosing `silt.toml`'s
+/// `[lints] strict-effects` field; otherwise default `false`.
+///
+/// Phase D of the effect-rows proposal — see
+/// `docs/strict-effects-migration.md`.
+pub(crate) fn resolve_strict_effects(path: &str, cli_flag: Option<bool>) -> bool {
+    if let Some(v) = cli_flag {
+        return v;
+    }
+    match Manifest::discover(Path::new(path)) {
+        Ok(Some(m)) => m.lints.strict_effects,
+        _ => false,
+    }
+}
+
+/// Phase D variant of [`run_compile_pipeline_with_options`] is the
+/// canonical entry point — it threads the `strict_effects` flag
+/// through to the typechecker. The `silt check`/`silt run`/`silt
+/// test` dispatchers call this once they've resolved the effective
+/// flag from CLI + manifest.
+pub(crate) fn run_compile_pipeline_with_options(
     path: &str,
     skip_compile: bool,
     typecheck_on_parse_errors: bool,
     auto_update_lock: bool,
+    strict_effects: bool,
 ) -> CompilePipelineResult {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
@@ -117,10 +141,11 @@ pub(crate) fn run_compile_pipeline(
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
     let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
-        let (raw_type_errors, _entry_exports) = typechecker::check_with_package_and_imports(
+        let (raw_type_errors, _entry_exports) = typechecker::check_with_package_and_imports_options(
             &mut program,
             Some(local_pkg),
             module_exports,
+            strict_effects,
         );
         raw_type_errors
             .iter()
@@ -295,21 +320,19 @@ pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
             || err.message.contains("does not implement"))
 }
 
-/// Print all diagnostics to stderr and exit(1) if there are hard errors.
-/// Returns the compiled functions and source on success.
-pub(crate) fn compile_file(path: &str) -> (Vec<Function>, String) {
-    compile_file_with_options(path, true)
-}
-
-/// Like [`compile_file`] but lets the caller opt out of lockfile
-/// auto-regeneration. `silt disasm` is the only read-only caller that
-/// uses `false` here — it inspects bytecode without the side effect of
-/// writing `silt.lock`.
+/// Compile a file end-to-end (lex → parse → typecheck → compile),
+/// printing diagnostics and exiting on hard errors. Two knobs:
+/// `auto_update_lock` controls whether stale lockfiles are silently
+/// regenerated (read-only callers like `silt disasm` pass `false`),
+/// and `strict_effects` propagates Phase D's effect-row enforcement
+/// through to the typechecker.
 pub(crate) fn compile_file_with_options(
     path: &str,
     auto_update_lock: bool,
+    strict_effects: bool,
 ) -> (Vec<Function>, String) {
-    let result = run_compile_pipeline(path, false, false, auto_update_lock);
+    let result =
+        run_compile_pipeline_with_options(path, false, false, auto_update_lock, strict_effects);
 
     // Filter per-entry: drop the "unknown module" warnings the compiler will
     // resolve, but keep every other type diagnostic so real errors still
