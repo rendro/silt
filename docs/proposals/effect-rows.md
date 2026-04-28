@@ -10,11 +10,11 @@ status: draft
 Skip handlers and user-defined effects in v1.
 
 **Status:** proposal, not yet implemented.
-**Scope (aspirational):** a fixed set of ~5 named effects (`!io`,
-`!mut`, `!async`, `!panic`, `!net`), inferred from function bodies,
-surfaced on LSP hover, optionally annotated at module boundaries. No
-algebraic handlers, no user-defined effects, no row polymorphism in
-the user-facing surface.
+**Scope:** a fixed set of 5 named effects (`!io`, `!fs`, `!net`,
+`!time`, `!random`), inferred from function bodies, surfaced on LSP
+hover, optionally annotated at module boundaries. No algebraic
+handlers, no user-defined effects, no row polymorphism in the
+user-facing surface.
 
 ---
 
@@ -94,9 +94,9 @@ module config_loader exports load_defaults, save_user_pref
 
 Today the module boundary is purely about visibility. There is no
 way to say "this module exports functions that touch the
-filesystem" — and therefore no way to deny it of `!io` in a sandbox
-target. Effect tracking is the type-level prerequisite for
-capability-based deployment.
+filesystem" — and therefore no way to deny it of `!fs` (or `!io`)
+in a sandbox target. Effect tracking is the type-level prerequisite
+for capability-based deployment.
 
 ```silt
 -- Mock-friendly testing:
@@ -107,7 +107,42 @@ fn business_logic(repo: Repo) -> Result(Report, AppError) {
 
 Without effects in the signature, it is the *parameter* that decides
 purity, and the test author has to know that out-of-band. With
-effects, `repo: Repo` carrying `!io` would advertise the fact.
+effects, `repo: Repo` carrying `!{io, net}` would advertise the
+fact.
+
+### Why we dropped `!async`, `!mut`, `!panic`
+
+An earlier draft proposed `!io`, `!mut`, `!async`, `!panic`, `!net`.
+We discarded three; the chosen set (`!io`, `!fs`, `!net`, `!time`,
+`!random`) refines the OS-resource axis instead of adding orthogonal
+effect categories.
+
+**`!async` — dropped.** Silt's structured concurrency was explicitly
+designed to avoid the "what colour is your function" problem.
+`task.spawn` accepts any function value; there is no `async fn`
+keyword. `!async` would mark every transitive caller of any
+concurrency builtin — exactly the Tokio-style coloring pain Rust
+suffers and the async-keyword-generics RFC is trying to retrofit
+away. Out of design alignment.
+
+**`!mut` — dropped.** Silt has no top-level mutable state, no `&mut`
+references, no `Cell`-style interior mutability. The only "mutation"
+is channel send (a syscall, already covered indirectly through
+`!io`) and `let` rebinding (lexical, not effectful). `!mut` would
+have no operational referent. Revisit if silt ever adds mutable
+references.
+
+**`!panic` (and `!exit`) — dropped.** Silt promotes `Result`/`Option`
+for explicit failure; `!panic` would legitimise a failure mode the
+language wants to discourage. And even narrowed to explicit
+`panic(...)`, the label adds little — the call site already has
+`panic(` visible. Defer to a future `!throws(E)` proposal if typed
+exceptions ever return.
+
+In place of these three we added two refinements of `!io`: `!time`
+and `!random`. A function with neither is reproducible given input —
+the type-level signal deterministic-replay tooling and
+reproducibility audits actually want.
 
 ---
 
@@ -248,12 +283,14 @@ ergonomic story.
 ### Value to silt
 
 - **LSP hover safety.** Hover over `load_defaults` and see
-  `() -> Config !{io,panic}`. Caller knows immediately.
+  `() -> Config !{io, fs}`. Caller knows immediately the function
+  touches the filesystem.
 - **Capability boundaries.** Modules can refuse to import
-  `!net`-capable functions. Sandbox targets become possible.
-- **Async clarity.** `!async` in the signature is the type-level
-  signal silt currently lacks. Resolves the "is this thing
-  suspending" question without requiring a function-colour split.
+  `!net`-capable functions. `!fs` and `!net` are the refinements
+  policy code most often wants to grant or deny separately.
+- **Reproducibility audits.** A function whose effect set excludes
+  `!time` and `!random` is reproducible given input. The type-level
+  signal record/replay tooling needs.
 - **Mock-friendly testing.** Effect-free signatures advertise
   testability. Effectful ones advertise the dependency surface.
 - **Future-proof for sandboxing, distributed exec, deterministic
@@ -273,7 +310,7 @@ ergonomic story.
 - **Two universes problem.** Pure code and effectful code start to
   feel like two languages. Mitigated by inference + `!*` default
   but not eliminated.
-- **Viral propagation.** A `!panic` deep in a call graph propagates
+- **Viral propagation.** A `!net` deep in a call graph propagates
   out to the leaves. Either users opt out via `!*` (defeats the
   purpose) or they propagate honestly (cognitive load).
 - **LSP regressions.** Hover, completion, and goto-definition all
@@ -296,10 +333,15 @@ ergonomic story.
 9.3/10 today. But the score evaluation flagged effect rows as the
 single critical missing piece.
 
-**Option 2** delivers most of the value (LSP safety, capability
-substrate, async clarity) with the lowest implementation cost. Fits
-silt's "one way to do things" philosophy: a fixed vocabulary the
-whole community shares.
+**Option 2 — the chosen path.** Delivers most of the value (LSP
+safety, capability substrate, reproducibility audits) with the
+lowest implementation cost. Fits silt's "one way to do things"
+philosophy: a fixed vocabulary the whole community shares. The v1
+set is five flat labels — `!io`, `!fs`, `!net`, `!time`, `!random` —
+no hierarchy, no nesting. `!io` is the catch-all; the other four
+refine along the axes (filesystem / network / wall-clock / entropy)
+that sandbox policy and reproducibility tooling want to
+discriminate.
 
 **Option 3** opens the door to ecosystem fragmentation — every
 library invents its own `!Audit`, `!Telemetry`, `!Retry`. Pay the
@@ -315,8 +357,8 @@ would buy (cancellation, scope-bounded resources). Defer.
 
 **Ship a coarse, inferred, tracking-only effect system.**
 
-- Fixed set of ~5 named effects: `!io`, `!mut`, `!async`, `!panic`,
-  `!net`.
+- Fixed set of 5 flat named effects: `!io`, `!fs`, `!net`, `!time`,
+  `!random`. No hierarchy, no nesting.
 - Effects inferred from the body. No handler machinery.
 - Surfaced on LSP hover. Optional annotation at module / function
   boundaries.
@@ -325,7 +367,7 @@ would buy (cancellation, scope-bounded resources). Defer.
   flips the default.
 
 ```silt
--- Inferred. Hover shows: () -> Config !{io,panic}
+-- Inferred. Hover shows: () -> Config !{io, fs}
 fn load_defaults() -> Config {
   let raw = fs.read_to_string(env.home() ++ "/.config/app.toml")
   toml.parse(raw).unwrap()
@@ -335,7 +377,18 @@ fn load_defaults() -> Config {
 fn parse_config(raw: String) -> Result(Config, ConfigError) !{} {
   toml.parse(raw)
 }
+
+-- Reproducible-given-input: no !time, no !random.
+fn hash_payload(bytes: Bytes) -> Bytes !{} {
+  crypto.sha256(bytes)
+}
 ```
+
+The earlier draft of this memo proposed `!io`, `!mut`, `!async`,
+`!panic`, `!net`. The replacements (`!fs`, `!time`, `!random`)
+refine the OS-resource boundary in directions sandbox policy and
+reproducibility tooling actually want to discriminate. See Part 1's
+"Why we dropped `!async`, `!mut`, `!panic`" for the full rationale.
 
 ### Out of scope
 
@@ -343,6 +396,7 @@ fn parse_config(raw: String) -> Result(Config, ConfigError) !{} {
   user demand emerges. OCaml 5 evidence says we can defer
   indefinitely.
 - **User-defined effects.** Same. The fixed vocabulary is the point.
+  No `effect MyAuditLog` decls in v1.
 - **Refinement-typed effects** (F*-style). Never. Wildly out of
   scope for silt's target audience.
 - **Linear / affine resource tracking.** Separate feature, evaluate
@@ -362,83 +416,74 @@ new value. The cheap half is the valuable half.
 
 ---
 
-## Part 6 — Open decisions before implementation
+## Part 6 — Decisions made
 
-### (a) Granularity finalisation
+### (a) Granularity — RESOLVED
 
-Proposed five effects, mapped onto silt's current operational
-reality:
+Five flat effects, no hierarchy, no nesting, all baked-in for v1:
 
-- `!io` — filesystem (`fs.*`), terminal (`io.print`, `io.read`),
-  environment-variable read (`env.get`). Anything that touches the
-  local machine outside silt's heap.
-- `!net` — TCP (`tcp.*`), HTTP (`http.*`), Postgres (`postgres.*`),
-  any client that opens a socket. Distinguished from `!io` because
-  sandboxes commonly grant filesystem but deny network.
-- `!async` — `task.spawn`, `channel.recv`, cooperative yield. Any
-  call that requires a task scope.
-- `!panic` — explicit `panic`, array-bounds error, division by
-  zero, integer overflow in checked mode. Anything that aborts
-  control flow without going through `Result`.
-- `!mut` — mutable references, scope captures of mutable bindings.
-  *Caveat:* silt has no top-level mutable state today. `!mut` only
-  meaningfully applies to functions that close over mutable
-  locals. Open question: is `!mut` worth a slot, or should we drop
-  it and reserve four effects?
+- **`!io`** — any OS resource interaction; the catch-all sandboxing
+  label. Co-occurs with a refinement below for specific I/O kinds.
+- **`!fs`** — filesystem. Filesystem-touching code is `!{io, fs}`.
+- **`!net`** — network. Network-touching code is `!{io, net}`.
+- **`!time`** — wall-clock reads.
+- **`!random`** — OS entropy reads.
 
-**Recommendation:** keep `!mut` reserved but unused at v1. Document
-it as "future use". Five-slot vocabulary stays stable.
+No user-extensible `effect MyAuditLog` declarations in v1. The fixed
+vocabulary is the point.
 
-### (b) Default for legacy code
+#### Stdlib coverage map
 
-`!*` (top, forgiving) or `!{}` (bottom, strict)?
+| Effect | Modules / builtins contributing |
+|---|---|
+| `!io` (catch-all) | `io`, `fs`, `net`, `time`, `random`, `env`, `env_var`, `ffi` |
+| `!fs` | `io.read_file`, `io.write_file`, `io.exists`, `io.is_file`, `io.is_dir`, `fs.*` |
+| `!net` | `tcp.*`, `http.*`, `postgres.*` (`regex` is pure — no `!net`) |
+| `!time` | `time.now`, `time.today`, `time.to_utc`, `time.format_now`, `uuid.v7` |
+| `!random` | `math.random`, `uuid.v4`, `crypto.random_bytes`, `crypto.gen_*` |
 
-**Recommendation:** `!*` by default with `--strict-effects` opt-in.
-Flipping to `!{}` is a future-major-version migration. Same shape as
-Rust's edition mechanism.
+### (b) Default for legacy code — RESOLVED
 
-### (c) Stdlib sweep ordering
+`!*` (top, forgiving) by default. `--strict-effects` opt-in for
+inference + propagation. Default flips in v0.13 or v1.0 — same shape
+as Rust's edition mechanism.
 
-One-shot all 400 builtins, or roll out by module priority?
+### (c) Stdlib sweep ordering — RESOLVED
 
-**Recommendation:** one round, mechanical, follow the existing
-docs-sweep template. Big PR, mechanical review, lock test catches
-drift. Module-priority rollout doubles the engineering work and
-leaves the inference machinery in a half-correct state for months.
+One mechanical round over all 401 builtins, modeled after the
+round-64 docs-sweep template. Lock test catches drift.
 
-### (d) Compatibility boundary
+### (d) Compatibility boundary — RESOLVED
 
-What about external / unannotated code?
+External / unannotated code is `!*` with a warning. Refusing to
+call unannotated code would break every existing program on first
+upgrade.
 
-**Recommendation:** treat as `!*` with a warning. Refusing to call
-unannotated code would break every existing program on first
-upgrade. Most languages chose `!*`-with-warning; we should too.
+### (e) LSP UI — RESOLVED
 
-### (e) LSP UI
-
-Where does the inferred effect set render in the hover popup?
-
-**Recommendation:** between the type signature and the `---` doc
-separator. Example:
+Inferred effect set renders between the signature and the
+`\n\n---\n\n` doc separator, in Markdown form `effects: !{io, fs}`:
 
 ```
 fn load_defaults() -> Config
-!{io, panic}
+
+effects: !{io, fs}
+
 ---
+
 Loads the user's default config from $HOME/.config/app.toml.
 ```
-
-This keeps effects visually adjacent to the signature without
-crowding the doc-comment block.
 
 ---
 
 ## Part 7 — Phased implementation plan (if approved)
 
 **Phase A — plumbing (2 weeks).** Add `EffectSet` to the internal
-type representation. Inference machinery. No syntax change.
-Existing programs unaffected. Tests verify inference produces
-expected sets on synthetic examples.
+type representation. Inference machinery: the five named effects
+(`!io`, `!fs`, `!net`, `!time`, `!random`) are baked into a const
+enum; no user-extensible decls. No syntax change. Existing programs
+unaffected. Tests verify inference produces expected sets on
+synthetic examples.
 
 **Phase B — annotations and hover surfacing (1-2 weeks).** Parser
 accepts `!{set}` syntax in fn signatures. LSP renders inferred set
@@ -446,8 +491,8 @@ on hover. Annotation enforcement at fn boundaries. Stdlib annotated
 as `!*` (compatibility default).
 
 **Phase C — stdlib sweep (1-2 weeks).** Annotate every stdlib
-builtin with its real effect set. ~400 builtins. Mechanical. Lock
-test catches drift.
+builtin with its real effect set. 401 builtins. Mechanical, modeled
+after the round-64 docs-sweep template. Lock test catches drift.
 
 **Phase D — `--strict-effects` flag (1 week).** When set,
 unannotated functions default to `!{}` and propagate; type checker
