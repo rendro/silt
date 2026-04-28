@@ -256,6 +256,14 @@ pub fn builtin_names() -> Vec<String> {
         names.push(name.to_string());
     }
 
+    // Round-62 G6: primitive + container type names so REPL <Tab>
+    // completion offers `Int`, `Bool`, `List`, etc. wherever the user
+    // is typing a type annotation. Derived from the authoritative
+    // `BUILTIN_TYPES` constant so additions flow through automatically.
+    for entry in crate::types::builtins::iter_all() {
+        names.push(entry.name.to_string());
+    }
+
     // Generate module completions from the registry.
     for &module in crate::module::BUILTIN_MODULES {
         for func in crate::module::builtin_module_functions(module) {
@@ -567,7 +575,10 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                 collect_pattern_names(p, names);
             }
         }
-        PatternKind::Record { fields, .. } => {
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B9: anonymous record destructure
+            // (`let { x, y } = anon`) binds shorthand fields just like
+            // the nominal record case.
             for (field_name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, names);

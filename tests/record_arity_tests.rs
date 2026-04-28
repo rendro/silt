@@ -45,11 +45,17 @@ fn main() {
 "#,
     );
     let joined = errs.join("\n");
+    // Round 60 onward emits the canonical phrase
+    // "type argument count mismatch for Point: expected 0, got 1".
+    // Anchor on the two distinctive substrings so a future rephrasing
+    // that drops either token will trip this lock. The earlier
+    // round-51-flagged bare-`"arity"` substring branch was removed in
+    // round 62 — no current diagnostic spells the word "arity" in the
+    // arity-0 record path, and a substring weak-OR there would mask
+    // future drift.
     assert!(
-        joined.contains("arity")
-            || joined.contains("expected 0 type argument")
-            || joined.contains("expected 0, got"),
-        "expected an arity diagnostic mentioning 'expected 0', got:\n{joined}"
+        joined.contains("expected 0") && joined.contains("got"),
+        "expected an arity diagnostic mentioning 'expected 0' and 'got', got:\n{joined}"
     );
 }
 

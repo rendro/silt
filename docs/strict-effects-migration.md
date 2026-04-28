@@ -6,7 +6,7 @@ status: stable
 
 # `--strict-effects` migration guide
 
-`silt` v0.12 ships Phase D of the effect-row tracking proposal: an
+`silt` shipped Phase D of the effect-row tracking proposal in v0.12: an
 opt-in mode that promotes the gradual-rollout `EffectSet::TOP`
 default for unannotated user functions to `EffectSet::EMPTY` (pure)
 and asks the typechecker to enforce it. The result is a
@@ -20,7 +20,7 @@ to migrate an existing package.
 
 ## What strict-effects mode does
 
-By default (and across all of v0.12 without the flag), every
+By default (and through v0.13 without the flag), every
 unannotated user function carries the permissive `!*` ("any effect")
 declared bound. The typechecker still INFERS the body's real effect
 set — you can see it on LSP hover — but it does not enforce that the
@@ -164,8 +164,8 @@ the body will fail typecheck until the bound is widened.
   Annotate when the surface stabilises, not before.
 
 A future major silt version may flip the default — that's the
-explicit eventual destination called out in the proposal — but for
-v0.12 the choice stays with you, per package, per invocation.
+explicit eventual destination called out in the proposal — but the
+choice still stays with you in v0.13, per package, per invocation.
 
 ## Related material
 

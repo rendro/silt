@@ -87,8 +87,10 @@ cannot contain any matching test are skipped entirely.
 
 ## Assertions
 
-The `test` module provides assertion functions. See the
-[test module reference](../stdlib/test.md) for details.
+The `test` module provides assertion functions. Hover over any
+`test.*` call in your editor for the full signature and per-function
+documentation (the LSP surfaces it from the inlined builtin docs);
+`silt --help` also lists the assertion entry points.
 
 | Function | Description |
 |----------|-------------|

@@ -949,7 +949,10 @@ impl Parser {
         // Phase B of the effect-rows proposal: optional `!{set}`
         // annotation between the return type and the where clause /
         // body. Absent → `EffectSet::TOP` (gradual-rollout default).
-        let declared_effects = self.parse_effect_annotation_opt()?;
+        // The `_explicit` variant ALSO returns whether an annotation was
+        // present — needed downstream because `!{io, fs, net, time,
+        // random}` and "no annotation" share the same bitset.
+        let (declared_effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
 
         let where_clauses = self.parse_where_clauses_opt()?;
 
@@ -980,6 +983,7 @@ impl Parser {
             is_signature_only,
             doc,
             declared_effects,
+            is_annotated,
             inferred_effects: None,
         })
     }
@@ -1075,9 +1079,13 @@ impl Parser {
 
         // Phase B effect annotation. On failure, fall back to the
         // gradual-rollout `TOP` default for the recovery stub so the
-        // surrounding decl still produces a usable signature.
-        let declared_effects = match self.parse_effect_annotation_opt() {
-            Ok(set) => set,
+        // surrounding decl still produces a usable signature. The
+        // `_explicit` variant also tells us whether the user actually
+        // wrote a `!{...}` annotation so downstream can disambiguate
+        // it from the all-five-effects shape `!{io, fs, net, time,
+        // random}` which shares the same bitset.
+        let (declared_effects, is_annotated) = match self.parse_effect_annotation_opt_explicit() {
+            Ok(pair) => pair,
             Err(e) => {
                 return Err(Box::new((
                     self.make_recovery_stub(name, params, return_type, span, doc.clone()),
@@ -1163,6 +1171,7 @@ impl Parser {
             is_signature_only,
             doc,
             declared_effects,
+            is_annotated,
             inferred_effects: None,
         })
     }
@@ -1191,8 +1200,10 @@ impl Parser {
             doc,
             // Recovery stubs default to the gradual-rollout `TOP` so
             // any caller that propagates the stub's "effects" sees the
-            // permissive default.
+            // permissive default. They are NOT user-annotated — the
+            // user's source was malformed and we synthesized the stub.
             declared_effects: EffectSet::TOP,
+            is_annotated: false,
             inferred_effects: None,
         }
     }
@@ -1222,8 +1233,23 @@ impl Parser {
     /// annotation parsing. Newlines inside the annotation are tolerated
     /// (`skip_nl` is called after each comma) so a long list can wrap.
     fn parse_effect_annotation_opt(&mut self) -> Result<EffectSet> {
+        Ok(self.parse_effect_annotation_opt_explicit()?.0)
+    }
+
+    /// Like [`Self::parse_effect_annotation_opt`] but ALSO reports whether
+    /// the user actually wrote a `!{...}` annotation. The boolean is
+    /// `true` when an annotation was consumed and `false` when the
+    /// gradual-rollout `EffectSet::TOP` default was returned.
+    ///
+    /// Critical for distinguishing `!{io, fs, net, time, random}` (all
+    /// five effects, explicitly written) from no annotation at all —
+    /// both produce the same `EffectSet` bitset, but downstream
+    /// (formatter, strict-effects flip, body subset check, suggestion
+    /// help line) needs to behave differently between the two cases.
+    /// See the `is_annotated` field on `FnDecl`.
+    fn parse_effect_annotation_opt_explicit(&mut self) -> Result<(EffectSet, bool)> {
         if self.peek_skip_nl() != &Token::Not {
-            return Ok(EffectSet::TOP);
+            return Ok((EffectSet::TOP, false));
         }
         // Confirm the next non-newline token is `{` — without that, the
         // `!` is a stray prefix-not (e.g. someone wrote `fn f() -> !x`,
@@ -1234,7 +1260,7 @@ impl Parser {
             idx += 1;
         }
         if !matches!(self.tokens.get(idx).map(|t| &t.0), Some(Token::LBrace)) {
-            return Ok(EffectSet::TOP);
+            return Ok((EffectSet::TOP, false));
         }
         // Commit: consume the `!` and the `{`.
         self.advance();
@@ -1245,7 +1271,7 @@ impl Parser {
         // Empty annotation `!{}` — pure declared.
         if self.at(&Token::RBrace) {
             self.advance();
-            return Ok(set);
+            return Ok((set, true));
         }
         loop {
             self.skip_nl();
@@ -1285,7 +1311,7 @@ impl Parser {
         }
         self.skip_nl();
         self.expect(&Token::RBrace)?;
-        Ok(set)
+        Ok((set, true))
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {

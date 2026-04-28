@@ -209,8 +209,10 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
         // Auto-derived methods (Display / Compare / Equal / Hash on
         // user records and enums) carry the gradual-rollout `TOP`
         // default so they don't fail enforcement when callers happen
-        // to declare a tighter set on the calling fn.
+        // to declare a tighter set on the calling fn. Not user-
+        // annotated.
         declared_effects: crate::types::effects::EffectSet::TOP,
+        is_annotated: false,
         inferred_effects: None,
     }
 }

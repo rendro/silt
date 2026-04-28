@@ -1973,7 +1973,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             Value::Variant(tag, _) if tag == "PgTx" => extract_tx_id(&args[0])?,
             _ => {
                 return Err(VmError::new(
-                    "postgres.transact: internal: resume without PgTx handle".into(),
+                    "postgres.transact: internal VM error: resume without PgTx handle".into(),
                 ));
             }
         }

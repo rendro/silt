@@ -386,7 +386,23 @@ pub struct FnDecl {
     /// typechecker enforces `inferred ⊆ declared` at body-check time.
     /// When absent, the parser fills in `EffectSet::TOP` — the gradual
     /// rollout's permissive default — and no enforcement runs.
+    ///
+    /// IMPORTANT: bit-equality `== EffectSet::TOP` cannot be used to
+    /// detect "user wrote no annotation" because `!{io, fs, net, time,
+    /// random}` is the same bitset. Always pivot on
+    /// [`FnDecl::is_annotated`] for that question.
     pub declared_effects: EffectSet,
+    /// `true` when the user wrote a literal `!{...}` annotation in the
+    /// source. `false` when the parser filled in the gradual-rollout
+    /// default (`EffectSet::TOP`) because no annotation was present, or
+    /// when this `FnDecl` was synthesized internally (auto-derive,
+    /// trait-decl signatures, recovery stubs).
+    ///
+    /// Disambiguates `EffectSet::TOP` from a hand-written full
+    /// `!{io, fs, net, time, random}` — both share the same bitset, but
+    /// the formatter, strict-effects flip, body-subset check and
+    /// suggestion text behave differently between the two cases.
+    pub is_annotated: bool,
     /// Inferred effect set computed by the body-effects pass after
     /// typechecking. `None` until `check_fn_body_with_name` populates
     /// it. Surfaced on LSP hover so the user sees the actual body

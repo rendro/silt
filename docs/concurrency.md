@@ -212,7 +212,7 @@ task.spawn(fn() {
 
 -- this blocks until the spawned task calls channel.send
 when let Message(msg) = channel.receive(ch) else { return }
-println(msg)  -- "hello"
+println(msg)  -- hello
 ```
 
 ### Timeout channels
@@ -702,7 +702,8 @@ fn main() {
   when let Message(r2) = channel.receive(results) else { return }
   when let Message(r3) = channel.receive(results) else { return }
   println("results: {r1}, {r2}, {r3}")
-  -- output: results: 10, 20, 30
+  -- output: results: 10, 20, 30 (in some order — the receive order is
+  -- a permutation of the spawn order, since the workers race to send)
 }
 ```
 

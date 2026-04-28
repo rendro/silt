@@ -154,6 +154,14 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
                 find_type_in_expr(v, cursor, best);
             }
         }
+        ExprKind::AnonRecord { spread, fields } => {
+            if let Some(s) = spread {
+                find_type_in_expr(s, cursor, best);
+            }
+            for (_, v) in fields {
+                find_type_in_expr(v, cursor, best);
+            }
+        }
         ExprKind::Loop { bindings, body } => {
             for (_, init) in bindings {
                 find_type_in_expr(init, cursor, best);
@@ -216,13 +224,13 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
         Decl::Fn(f) => {
             check_fn_decl_name(f, cursor, source, best);
             for param in &f.params {
-                find_ident_in_pattern(&param.pattern, cursor, best);
+                find_ident_in_pattern(&param.pattern, cursor, source, best);
             }
-            find_ident_in_expr(&f.body, cursor, best);
+            find_ident_in_expr(&f.body, cursor, source, best);
         }
         Decl::Let { pattern, value, .. } => {
-            find_ident_in_pattern(pattern, cursor, best);
-            find_ident_in_expr(value, cursor, best);
+            find_ident_in_pattern(pattern, cursor, source, best);
+            find_ident_in_expr(value, cursor, source, best);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
@@ -231,9 +239,9 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             for method in &ti.methods {
                 check_fn_decl_name(method, cursor, source, best);
                 for param in &method.params {
-                    find_ident_in_pattern(&param.pattern, cursor, best);
+                    find_ident_in_pattern(&param.pattern, cursor, source, best);
                 }
-                find_ident_in_expr(&method.body, cursor, best);
+                find_ident_in_expr(&method.body, cursor, source, best);
             }
         }
         Decl::Type(t) => {
@@ -244,11 +252,17 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
         }
         Decl::Trait(t) => {
             check_decl_name_after_keyword(t.name, t.span, "trait", cursor, source, best);
-            // Trait method binders (for methods inside `trait X { fn m }`)
-            // are rarely called directly but hover on the method-name
-            // binder should also resolve.
+            // Trait method binders + default method bodies — round-62 B11.
+            // `Decl::Fn` and `Decl::TraitImpl` walk param patterns AND the
+            // method body so hover/rename works on default-method param
+            // and body identifiers too. Without this, cursor on `x` in
+            // `trait T { fn foo(x: Int) -> Int = x + 1 }` returned None.
             for method in &t.methods {
                 check_fn_decl_name(method, cursor, source, best);
+                for param in &method.params {
+                    find_ident_in_pattern(&param.pattern, cursor, source, best);
+                }
+                find_ident_in_expr(&method.body, cursor, source, best);
             }
         }
         _ => {}
@@ -342,7 +356,12 @@ fn check_fn_decl_name(
 /// `is_user_renameable` anyway, but we avoid even reporting them so
 /// hover/prepareRename produce a clean `null` rather than a spurious
 /// rejection error.
-fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Symbol>) {
+fn find_ident_in_pattern(
+    pattern: &Pattern,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
     match &pattern.kind {
         PatternKind::Ident(name) => {
             let start = pattern.span.offset;
@@ -353,34 +372,95 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
         }
         PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
-                find_ident_in_pattern(p, cursor, best);
+                find_ident_in_pattern(p, cursor, source, best);
             }
         }
         PatternKind::Constructor(_, fields) => {
             for p in fields {
-                find_ident_in_pattern(p, cursor, best);
+                find_ident_in_pattern(p, cursor, source, best);
             }
         }
         PatternKind::Record { fields, .. } => {
-            for (_, sub) in fields {
+            // Round-62 B8: field-shorthand binders (`let Point { x, y } = p`)
+            // had no dedicated `Pattern` node, so cursor on `x` returned
+            // None. Mirror the source-scanning approach used by
+            // `definitions.rs::collect_let_pattern_defs` and
+            // `local_bindings.rs::collect_pattern_bindings`: scan the
+            // source between the pattern start and a reasonable upper
+            // bound for each shorthand field name and match the cursor
+            // against that recovered offset.
+            for (name, sub) in fields {
                 if let Some(p) = sub {
-                    find_ident_in_pattern(p, cursor, best);
+                    find_ident_in_pattern(p, cursor, source, best);
+                } else {
+                    check_shorthand_field_binder(pattern, *name, cursor, source, best);
+                }
+            }
+        }
+        PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B9: anon-record destructure `let { x, y } = p`.
+            // Same handling as nominal `Record` — recurse into present
+            // sub-patterns; for shorthand binders, scan source for the
+            // field name's offset.
+            for (name, sub) in fields {
+                if let Some(p) = sub {
+                    find_ident_in_pattern(p, cursor, source, best);
+                } else {
+                    check_shorthand_field_binder(pattern, *name, cursor, source, best);
                 }
             }
         }
         PatternKind::List(pats, rest) => {
             for p in pats {
-                find_ident_in_pattern(p, cursor, best);
+                find_ident_in_pattern(p, cursor, source, best);
             }
             if let Some(r) = rest {
-                find_ident_in_pattern(r, cursor, best);
+                find_ident_in_pattern(r, cursor, source, best);
             }
         }
         _ => {}
     }
 }
 
-fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
+/// Recover the source offset of a shorthand field binder (`x` in
+/// `let Point { x, y } = ...` or `let { x, y } = ...`) by scanning the
+/// source from the pattern start. The pattern carries no dedicated
+/// `Pattern` node for the shorthand identifier; we mirror the same
+/// source-scan approach used by `definitions.rs` and `local_bindings.rs`.
+fn check_shorthand_field_binder(
+    pattern: &Pattern,
+    name: Symbol,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
+    let Some(source) = source else {
+        return;
+    };
+    let name_str = crate::intern::resolve(name);
+    let start = pattern.span.offset.min(source.len());
+    // Upper bound: the closing `}` of this pattern — but we cannot
+    // recover that precisely from the AST. Use the next `}` after the
+    // pattern start as an approximation; that's safe because the field
+    // name token must precede it.
+    let end = source[start..]
+        .find('}')
+        .map(|p| start + p)
+        .unwrap_or(source.len());
+    if let Some(off) = super::text_utils::find_ident_in_range(source, start, end, &name_str)
+        && cursor >= off
+        && cursor < off + name_str.len()
+    {
+        *best = Some(name);
+    }
+}
+
+fn find_ident_in_expr(
+    expr: &Expr,
+    cursor: usize,
+    source: Option<&str>,
+    best: &mut Option<Symbol>,
+) {
     if let ExprKind::Ident(name) = &expr.kind {
         let start = token_start(&expr.span);
         let name_len = crate::intern::resolve(*name).len();
@@ -392,25 +472,25 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
     // the arm/body. Visit them so the cursor on the binder resolves.
     if let ExprKind::Match { arms, .. } = &expr.kind {
         for arm in arms {
-            find_ident_in_pattern(&arm.pattern, cursor, best);
+            find_ident_in_pattern(&arm.pattern, cursor, source, best);
         }
     }
     if let ExprKind::Lambda { params, .. } = &expr.kind {
         for p in params {
-            find_ident_in_pattern(&p.pattern, cursor, best);
+            find_ident_in_pattern(&p.pattern, cursor, source, best);
         }
     }
     if let ExprKind::Block(stmts) = &expr.kind {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pattern, .. } | Stmt::When { pattern, .. } => {
-                    find_ident_in_pattern(pattern, cursor, best);
+                    find_ident_in_pattern(pattern, cursor, source, best);
                 }
                 _ => {}
             }
         }
     }
-    visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, best));
+    visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, source, best));
 }
 
 /// Visit all child expressions of an AST node.
@@ -489,6 +569,17 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         }
         ExprKind::RecordUpdate { expr, fields, .. } => {
             f(expr);
+            for (_, v) in fields {
+                f(v);
+            }
+        }
+        ExprKind::AnonRecord { spread, fields } => {
+            // Round-62 B10: anonymous-record literal field values must be
+            // walked so identifier searches (find references / hover etc.)
+            // descend into them. Mirrors the `RecordCreate` arm above.
+            if let Some(s) = spread {
+                f(s);
+            }
             for (_, v) in fields {
                 f(v);
             }

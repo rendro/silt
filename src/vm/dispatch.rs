@@ -411,12 +411,17 @@ impl Vm {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
-                // Variant and Record receivers are routed through the
-                // synth-emitted `<Type>.equal` global by `Op::CallMethod`
-                // before this fallback is consulted (see the round-62
-                // follow-up comment at the top of the module). The
-                // structural `*receiver == extra_args[0]` here covers
-                // primitive shapes only.
+                // Variant and Record receivers MAY be routed through a
+                // synth-emitted `<Type>.equal` global when the synth pass
+                // succeeds for that (trait, type) pair, but
+                // `register_type_decl` (src/typechecker/mod.rs:3612)
+                // unconditionally pre-stamps the trait_impl_set while the
+                // synth pass at typechecker/mod.rs:4856-4877 is gated on
+                // per-field trait support — for types with non-supportable
+                // fields (e.g. Channel/Map/Tuple/Function/Bytes/Handle),
+                // no global exists and execution falls through to this
+                // arm. `PartialEq for Value` (src/value.rs:1586/1610)
+                // already compares records and variants structurally.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
             "compare" => {
@@ -473,12 +478,20 @@ impl Vm {
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
                     | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
-                    // Variant and Record receivers are routed through the
-                    // synth-emitted `<Type>.compare` global by
-                    // `Op::CallMethod` before this fallback is consulted
-                    // (see the round-62 follow-up comment at the top of
-                    // the module). Both user and built-in enum / record
-                    // values are covered.
+                    // Variant and Record receivers MAY be routed through a
+                    // synth-emitted `<Type>.compare` global when the synth
+                    // pass succeeds for that (trait, type) pair, but
+                    // `register_type_decl` (src/typechecker/mod.rs:3612)
+                    // unconditionally pre-stamps the trait_impl_set while
+                    // the synth pass at typechecker/mod.rs:4856-4877 is
+                    // gated on per-field trait support — for types with
+                    // non-supportable fields (e.g. Channel/Map/Tuple/
+                    // Function/Bytes/Handle), no global exists and
+                    // execution falls through to this arm. `Value::cmp`
+                    // (src/value.rs:1728/1742) already handles records and
+                    // variants structurally.
+                    (Value::Variant(..), Value::Variant(..))
+                    | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
                     // (src/typechecker/mod.rs:3383). All units are equal.
@@ -515,10 +528,17 @@ impl Vm {
                 // Only honour hash() for types the typechecker actually
                 // auto-derives Hash for — emitting a dispatch error for
                 // anything else keeps the user-impl path authoritative.
-                // Variant and Record values are routed through the
-                // synth-emitted `<Type>.hash` global before this arm
-                // is consulted (see the round-62 follow-up comment at
-                // the top of the module).
+                // Variant and Record receivers MAY be routed through a
+                // synth-emitted `<Type>.hash` global when the synth pass
+                // succeeds for that (trait, type) pair, but
+                // `register_type_decl` (src/typechecker/mod.rs:3612)
+                // unconditionally pre-stamps the trait_impl_set while the
+                // synth pass at typechecker/mod.rs:4856-4877 is gated on
+                // per-field trait support — for types with non-supportable
+                // fields (e.g. Channel/Map/Tuple/Function/Bytes/Handle),
+                // no global exists and execution falls through to this
+                // arm. `impl Hash for Value` (src/value.rs:2020/2027)
+                // already hashes records and variants structurally.
                 match receiver {
                     Value::Int(_)
                     | Value::Float(_)
@@ -534,6 +554,8 @@ impl Vm {
                     | Value::Tuple(_)
                     | Value::Map(_)
                     | Value::Set(_)
+                    | Value::Variant(..)
+                    | Value::Record(..)
                     | Value::Unit => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};

@@ -74,7 +74,19 @@ pub(super) fn format_suggested_fn_header(
     if let Some(ret) = &f.return_type {
         header.push_str(&format!(" -> {}", render_type_expr(ret)));
     }
-    header.push_str(&format!(" {effects}"));
+    // BROKEN (round 62 B3): `Display for EffectSet` renders the
+    // const `EffectSet::TOP` as `!*` — a token reserved for the
+    // "no annotation declared" gradual-rollout default. Splicing
+    // it into a `help: annotate as ...` suggestion produces text
+    // the parser cannot accept (the parser only accepts `!{...}`).
+    // When the inferred effects bitset matches TOP, render the
+    // explicit set form instead so the user can copy-paste the
+    // suggestion straight back into their source.
+    if effects == crate::types::effects::EffectSet::TOP {
+        header.push_str(" !{fs, io, net, random, time}");
+    } else {
+        header.push_str(&format!(" {effects}"));
+    }
     if !f.where_clauses.is_empty() {
         let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
         for (n, t, args) in &f.where_clauses {
@@ -756,14 +768,21 @@ impl TypeChecker {
 
         // Phase B annotation enforcement: when the user declared a
         // narrower set than the body computed, emit a diagnostic.
-        // `EffectSet::TOP` is the gradual-rollout default applied to
-        // un-annotated functions; we skip enforcement in that case so
+        // We skip enforcement when no annotation was written so
         // legacy code keeps typechecking unchanged. Recovery stubs
         // never have meaningful inferred sets — their synthetic empty
         // bodies trivially infer EMPTY but the user's broken header
         // is the real problem and we don't pile on.
+        //
+        // Pivot on `f.is_annotated` rather than the bit-equality
+        // `f.declared_effects != EffectSet::TOP`: an explicit
+        // `!{io, fs, net, time, random}` annotation has the same
+        // bitset as TOP, and the old pivot silently skipped
+        // enforcement on those fns. Under --strict-effects the same
+        // bug would land in reverse (un-annotated fn flipped to
+        // EMPTY but compared via TOP-equality and excluded).
         if !f.is_recovery_stub
-            && f.declared_effects != crate::types::effects::EffectSet::TOP
+            && f.is_annotated
             && !inferred_effects.is_subset(f.declared_effects)
         {
             // Compute the offending bits — effects in the body that the
@@ -803,9 +822,27 @@ impl TypeChecker {
             let was_strict_flipped = self.strict_effects_flipped.contains(&f.span.offset);
             let message = if was_strict_flipped {
                 let suggested_header = format_suggested_fn_header(f, inferred_effects);
-                let inferred_render = format!("{inferred_effects}");
+                // GAP (round 62 G7): drop the single-quotes around
+                // the row syntax. `'!{IO}'` reads as a single
+                // weirdly-named effect; the non-strict branch below
+                // names a singleton `representative` like `!{fs}`
+                // and never wraps it in extra quotes inside the
+                // body sentence. Mirror that here so the strict
+                // diagnostic is uniform.
+                //
+                // Also: when the body inferred TOP, render it as
+                // the explicit five-effect form rather than the
+                // `!*` token. `!*` is the "no annotation" sigil,
+                // not a parseable annotation — splicing it into
+                // diagnostic text is misleading and the help line
+                // already substitutes the explicit form.
+                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
+                    "!{fs, io, net, random, time}".to_string()
+                } else {
+                    format!("{inferred_effects}")
+                };
                 format!(
-                    "function '{}' uses effect '{}' but is declared pure (no annotation under --strict-effects)\n\
+                    "function '{}' uses effect {} but is declared pure (no annotation under --strict-effects)\n\
                      fn body uses {}; under --strict-effects, missing annotation means !{{}}\n\
                      help: annotate as `{}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller",
                     crate::intern::resolve(f.name),
@@ -814,11 +851,22 @@ impl TypeChecker {
                     suggested_header,
                 )
             } else {
+                // BROKEN (round 62 B3): also avoid splicing `!*`
+                // (TOP's Display) into the user-facing message —
+                // the `!*` sigil is the "no annotation" gradual
+                // default, not a parseable effect annotation.
+                // Render the explicit five-effect form when the
+                // body's inferred set covers all five.
+                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
+                    "!{fs, io, net, random, time}".to_string()
+                } else {
+                    format!("{inferred_effects}")
+                };
                 format!(
                     "effect '{}' not declared in fn '{}'\nfn body uses {}; signature declares {}",
                     representative,
                     crate::intern::resolve(f.name),
-                    inferred_effects,
+                    inferred_render,
                     f.declared_effects,
                 )
             };

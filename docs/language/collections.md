@@ -48,7 +48,8 @@ Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 `list.reverse`, `list.get`, `list.take`, `list.drop`, `list.enumerate`,
 `list.group_by`, `list.fold_until`, `list.unfold`.
 
-See [`stdlib/list`](../stdlib/list.md) for the full reference.
+For the full reference, hover over any `list.*` call in your editor
+(the LSP renders the inlined builtin docs) or run `silt --help`.
 
 ## Maps
 
@@ -82,7 +83,8 @@ Key functions: `map.get`, `map.set`, `map.delete`, `map.contains`,
 `map.keys`, `map.values`, `map.entries`, `map.from_entries`, `map.length`,
 `map.merge`, `map.filter`, `map.map`, `map.each`, `map.update`.
 
-See [`stdlib/map`](../stdlib/map.md) for the full reference.
+For the full reference, hover over any `map.*` call in your editor
+(the LSP renders the inlined builtin docs) or run `silt --help`.
 
 ## Sets
 
@@ -105,4 +107,5 @@ Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
 `set.difference`, `set.is_subset`, `set.map`, `set.filter`, `set.each`,
 `set.fold`.
 
-See [`stdlib/set`](../stdlib/set.md) for the full reference.
+For the full reference, hover over any `set.*` call in your editor
+(the LSP renders the inlined builtin docs) or run `silt --help`.

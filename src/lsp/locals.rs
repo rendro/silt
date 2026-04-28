@@ -56,7 +56,10 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 collect_pattern_names(p, locals);
             }
         }
-        PatternKind::Record { fields, .. } => {
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B9: anon-record destructure (`let { x, y } = p`)
+            // also binds shorthand fields. Mirror the nominal `Record`
+            // arm's behaviour.
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);

@@ -358,6 +358,21 @@ pub fn builtins() -> Vec<(String, CompletionItemKind)> {
         ("false".to_string(), CompletionItemKind::CONSTANT),
     ];
 
+    // Round-62 G6: primitive + container type names from the
+    // authoritative `BUILTIN_TYPES` constant. Surfaced as completion
+    // items so an editor offers `Int`, `Bool`, `List`, etc. wherever
+    // identifier completion runs (notably in type-annotation positions
+    // like `let x: B|`). Derived from
+    // `crate::types::builtins::iter_all` so additions flow through.
+    for entry in crate::types::builtins::iter_all() {
+        // Skip the surface-alias `()` — completion items must be valid
+        // identifiers users would type to commit.
+        if entry.name == "()" {
+            continue;
+        }
+        items.push((entry.name.to_string(), CompletionItemKind::CLASS));
+    }
+
     // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
     // every gated variant (Recv/Send, IoNotFound, PgConnect, Monday,
     // GET/POST/…, etc.). Sourced from the authoritative module helper

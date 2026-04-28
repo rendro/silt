@@ -40,17 +40,21 @@
 //!
 //! Phase A's [`canonicalize`] was a pure function with no shared state.
 //! Phase D adds a process-global alias registry — see
-//! [`register_alias`] / [`lookup_alias`] / [`clear_aliases`] — that the
-//! typechecker populates at decl-processing time and the canonicaliser
-//! reads when expanding alias references. Implementation notes:
+//! [`register_alias`] / [`lookup_alias`] — that the typechecker
+//! populates at decl-processing time and the canonicaliser reads when
+//! expanding alias references. Implementation notes:
 //!
 //! - The registry is `RwLock<HashMap<Symbol, AliasInfo>>`, mirroring the
 //!   variant-decl-order registry pattern in `src/value.rs`. Pros: no
 //!   signature churn across the rest of the codebase; same architecture
-//!   already in use for variant ordinals. Cons: stateful global; tests
-//!   that need isolation across test threads must either name aliases
-//!   uniquely (recommended; aliases are interned `Symbol`s, so distinct
-//!   names never collide) or call [`clear_aliases`].
+//!   already in use for variant ordinals. Cons: stateful global. The
+//!   registry is process-global and is NOT cleared between checks;
+//!   production silt runs one typecheck per process, so this is a
+//!   non-issue in practice. There is intentionally no exposed
+//!   `clear_aliases` helper: any future test that needs cross-test
+//!   isolation should either use uniquely-named aliases (recommended;
+//!   aliases are keyed on resolved strings, so distinct names never
+//!   collide) or be designed to run out-of-process.
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
@@ -125,15 +129,6 @@ pub fn lookup_alias(name: Symbol) -> Option<AliasInfo> {
     guard.get(&resolve(name)).cloned()
 }
 
-/// Clear every registered alias. Provided for test isolation: tests
-/// that instantiate independent typecheckers can call this between
-/// runs to avoid cross-test contamination. Production code never
-/// needs to call this.
-pub fn clear_aliases() {
-    let mut guard = alias_registry().write().unwrap();
-    guard.clear();
-}
-
 // ── Associated-type bindings registry (Phase: associated types) ──────
 //
 // Mirrors the alias-registry pattern above. Keys are
@@ -203,13 +198,6 @@ pub fn lookup_assoc_binding(
             resolve(assoc_name),
         ))
         .cloned()
-}
-
-/// Clear every registered assoc-type binding. Provided for test
-/// isolation symmetric with `clear_aliases`.
-pub fn clear_assoc_bindings() {
-    let mut guard = assoc_registry().write().unwrap();
-    guard.clear();
 }
 
 /// Reduce a type to its canonical form.
@@ -1150,12 +1138,11 @@ mod tests {
         );
     }
 
-    // Note: `clear_aliases()` is intentionally not unit-tested here.
-    // It's a cross-cutting hook that empties the global registry; a
-    // unit test calling it would race against any concurrently-
-    // running test that has registered aliases. The integration
-    // suite (`tests/type_alias_tests.rs`) exercises it implicitly by
-    // never calling it, relying on per-test name uniqueness for
-    // isolation; the function is kept as part of the public API for
-    // out-of-process tests that need a hard reset.
+    // Note: there is no `clear_aliases()` helper. The alias registry
+    // is process-global and is not cleared between checks; production
+    // silt runs one typecheck per process, so accumulation is not a
+    // problem. The integration suite (`tests/type_alias_tests.rs`)
+    // relies on per-test name uniqueness for isolation. Any future
+    // test that needs cross-test isolation should either use
+    // uniquely-named aliases or be designed to run out-of-process.
 }

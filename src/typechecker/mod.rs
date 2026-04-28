@@ -354,6 +354,14 @@ pub(super) fn free_vars_in_types(types: &[Type]) -> Vec<TyVar> {
 /// remapping. Producer ids in `tv_remap` keys map to consumer ids in
 /// `tv_remap` values; any tyvar absent from the map is left alone (it's
 /// outside the snapshot's reach).
+///
+/// BROKEN (round 62 B5): previously hardcoded `effects: EffectSet::TOP`,
+/// which silently dropped cross-module declared effects. A producer
+/// module's `pub fn read_file() !{io, fs}` would arrive at the consumer
+/// looking like `!*`, so a consumer fn declared `!{io}` calling it
+/// would error that its body uses unspecified effects. Carry
+/// `scheme.effects` through the remap instead — the bitset doesn't
+/// reference any tyvars so it remaps trivially as identity.
 pub(super) fn remap_scheme(
     scheme: &Scheme,
     tv_remap: &HashMap<TyVar, TyVar>,
@@ -374,7 +382,7 @@ pub(super) fn remap_scheme(
         vars: new_vars,
         ty: new_ty,
         constraints: new_constraints,
-        effects: EffectSet::TOP,
+        effects: scheme.effects,
     }
 }
 
@@ -1551,6 +1559,16 @@ impl TypeChecker {
     /// include those constraints in the resulting scheme. This ensures that
     /// `let f = constrained_fn` and `let f = { x -> constrained_fn(x) }`
     /// preserve where-clause obligations.
+    ///
+    /// IMPORTANT (round 62 B4): the produced `Scheme::effects` is
+    /// always `EffectSet::TOP` — a placeholder. Every caller MUST
+    /// overwrite the field with the originating fn-decl's
+    /// `declared_effects` (or with the previous scheme's `effects` on
+    /// re-narrow) before storing the scheme in the env. The pass-3
+    /// narrowing path historically forgot to do this, which caused
+    /// `fn doit() !{io} { println("hi") }` to appear as `!*` to
+    /// callers after narrowing — see the `final_scheme.effects =
+    /// original_scheme.effects` line at the narrowing site.
     pub(super) fn generalize(&self, env: &TypeEnv, ty: &Type) -> Scheme {
         let ty = self.apply(ty);
         let env_fvs = env.free_vars(self);
@@ -2674,9 +2692,14 @@ impl TypeChecker {
         //     by `synthesize_default_methods` carry their original
         //     trait-decl spans, so they ARE flipped (they're user
         //     code, just placed into impls that omitted them).
-        //   - `f.declared_effects == EffectSet::TOP`: only the
-        //     gradual-rollout default is flipped. A user who already
-        //     wrote `!{io}` keeps that set as their declared bound.
+        //   - `!f.is_annotated`: only the gradual-rollout default is
+        //     flipped. A user who already wrote `!{io}` keeps that set
+        //     as their declared bound — and a user who wrote the
+        //     full `!{io, fs, net, time, random}` (which shares the
+        //     `EffectSet::TOP` bitset!) is correctly NOT treated as
+        //     un-annotated. Pivoting on the bit-equality `== TOP`
+        //     would silently flip such fns to EMPTY and reject every
+        //     IO call inside them.
         //
         // The flip mutates the AST so the LSP's `build_definitions`
         // pass sees the flipped value via `FnDecl::declared_effects`
@@ -2690,18 +2713,23 @@ impl TypeChecker {
                     Decl::Fn(f)
                         if !f.is_recovery_stub
                             && f.span.line != 0
-                            && f.declared_effects == EffectSet::TOP =>
+                            && !f.is_annotated =>
                     {
                         f.declared_effects = EffectSet::EMPTY;
+                        // The flip itself is what counts as the
+                        // synthesized annotation; mark it so the
+                        // body-subset check enforces it.
+                        f.is_annotated = true;
                         self.strict_effects_flipped.insert(f.span.offset);
                     }
                     Decl::TraitImpl(ti) if !ti.is_auto_derived => {
                         for m in ti.methods.iter_mut() {
                             if !m.is_recovery_stub
                                 && m.span.line != 0
-                                && m.declared_effects == EffectSet::TOP
+                                && !m.is_annotated
                             {
                                 m.declared_effects = EffectSet::EMPTY;
+                                m.is_annotated = true;
                                 self.strict_effects_flipped.insert(m.span.offset);
                             }
                         }
@@ -2920,6 +2948,17 @@ impl TypeChecker {
                     // Scheme was narrowed — some vars got constrained
                     any_narrowed = true;
                     let mut final_scheme = new_scheme.clone();
+                    // BROKEN (round 62 B4): `generalize` hardcodes
+                    // `effects: EffectSet::TOP`, so narrowing pass-3
+                    // would silently TOP-out the effect annotation
+                    // every caller of this fn was relying on. Copy
+                    // the original scheme's effects across before
+                    // re-defining. Without this, a fn declared
+                    // `!{io}` calling-narrowed scheme appears as
+                    // `!*` to its callers, and a caller declared
+                    // `!{io}` then errors that its body uses
+                    // unspecified effects.
+                    final_scheme.effects = original_scheme.effects;
                     // BROKEN (round 17 F1): `original_scheme.constraints` uses
                     // the pass-2 tyvars, while `new_scheme.vars` uses fresh
                     // pass-3 tyvars from `instantiate_with_constraints` that
@@ -3609,7 +3648,7 @@ impl TypeChecker {
             col: 0,
             offset: 0,
         };
-        for trait_name in &["Equal", "Compare", "Hash", "Display"] {
+        for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES {
             self.trait_impl_set.insert((intern(trait_name), td.name));
         }
         // Register auto-derived method entries
@@ -6128,8 +6167,10 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             doc: None,
             // Built-in trait method signatures default to the gradual
             // rollout's permissive `TOP`. Phase C will tighten the
-            // stdlib-builtin annotations.
+            // stdlib-builtin annotations. These are synthesized — not
+            // user-annotated — so `is_annotated = false`.
             declared_effects: EffectSet::TOP,
+            is_annotated: false,
             inferred_effects: None,
         }
     }
@@ -6158,8 +6199,10 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         is_signature_only: false,
         doc: None,
         // Built-in `Error.message` default body — gradual-rollout TOP
-        // until Phase C tightens stdlib annotations.
+        // until Phase C tightens stdlib annotations. Synthesized, not
+        // user-annotated.
         declared_effects: EffectSet::TOP,
+        is_annotated: false,
         inferred_effects: None,
     };
 

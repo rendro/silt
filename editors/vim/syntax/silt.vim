@@ -56,6 +56,9 @@ syntax match siltFloat "\<\d\+\.\d\+\>"
 syntax match siltNumber "\<\d\+\>"
 
 " ── Operators ───────────────────────────────────────────────────────
+" Multi-character operators are listed first so vim's longest-match
+" rule prefers them over the single-character forms below (e.g. `==`
+" beats `=`, `->` beats `-`, `<=` beats `<`).
 syntax match siltOperator "|>"
 syntax match siltOperator "->"
 syntax match siltOperator "\.\."
@@ -68,6 +71,17 @@ syntax match siltOperator "!="
 syntax match siltOperator "<="
 syntax match siltOperator ">="
 syntax match siltOperator "!"
+" Single-character arithmetic / assignment / relational operators.
+" The line-comment region (`--.*$`) and block-comment region (`{-`/`-}`)
+" take priority over `match` so `-` here will not eat comment markers.
+syntax match siltOperator "+"
+syntax match siltOperator "-"
+syntax match siltOperator "\*"
+syntax match siltOperator "/"
+syntax match siltOperator "%"
+syntax match siltOperator "="
+syntax match siltOperator "<"
+syntax match siltOperator ">"
 
 " ── Function definitions ────────────────────────────────────────────
 syntax match siltFnDef "\<fn\s\+\zs\w\+"

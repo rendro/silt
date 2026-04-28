@@ -64,7 +64,6 @@ pub(super) fn attach_module_docs(env: &mut TypeEnv, md: &str) {
 /// belonging to the other prefix are skipped (the relevant binding
 /// isn't registered in this crate's scope anyway, so `attach_doc`
 /// would no-op, but filtering keeps intent explicit).
-#[allow(dead_code)]
 pub(super) fn attach_module_docs_filtered(env: &mut TypeEnv, md: &str, prefix: &str) {
     let dot = format!("{prefix}.");
     for (keys, body) in iter_sections(md) {
@@ -97,7 +96,6 @@ pub(super) fn attach_module_docs_filtered(env: &mut TypeEnv, md: &str, prefix: &
 /// only matches the bare enum name. Phase-2 scope decision: per-
 /// variant docs are not authored separately (the table groups them
 /// already), so the enum-level body is the right hover content.
-#[allow(dead_code)]
 pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&str, &[&str])]) {
     let sections = iter_sections(md);
     for (enum_name, variants) in enums {
@@ -125,7 +123,6 @@ pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&s
     }
 }
 
-#[allow(dead_code)]
 pub(super) fn attach_module_overview(env: &mut TypeEnv, md: &str, prefix: &str) {
     let dot = format!("{prefix}.");
     let names: Vec<crate::intern::Symbol> = env
@@ -334,7 +331,6 @@ mod tests {
 // annotations against actual stdout.
 
 /// Verbatim former `docs/stdlib/bytes.md`.
-#[allow(dead_code)]
 pub(super) const BYTES_MD: &str = r#"---
 title: "bytes"
 section: "Standard Library"
@@ -467,7 +463,6 @@ for granular handling or fall back to `e.message()`:
 "#;
 
 /// Verbatim former `docs/stdlib/channel-task.md`.
-#[allow(dead_code)]
 pub(super) const CHANNEL_TASK_MD: &str = r#"---
 title: "channel / task"
 section: "Standard Library"
@@ -974,7 +969,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/crypto.md`.
-#[allow(dead_code)]
 pub(super) const CRYPTO_MD: &str = r#"---
 title: "crypto"
 section: "Standard Library"
@@ -1088,7 +1082,6 @@ total functions over their `Bytes` inputs.
 "#;
 
 /// Verbatim former `docs/stdlib/encoding.md`.
-#[allow(dead_code)]
 pub(super) const ENCODING_MD: &str = r#"---
 title: "encoding"
 section: "Standard Library"
@@ -1247,7 +1240,6 @@ a message identifying which pair and half (key / value) was bad.
 "#;
 
 /// Verbatim former `docs/stdlib/errors.md`.
-#[allow(dead_code)]
 pub(super) const ERRORS_MD: &str = r#"---
 title: "stdlib errors"
 section: "Standard Library"
@@ -1469,7 +1461,6 @@ design for a `.into()`-based ergonomics layer over this pattern.
 "#;
 
 /// Verbatim former `docs/stdlib/globals.md`.
-#[allow(dead_code)]
 pub(super) const GLOBALS_MD: &str = r#"---
 title: "Globals"
 section: "Standard Library"
@@ -1732,7 +1723,6 @@ the mixed send/receive form.
 "#;
 
 /// Verbatim former `docs/stdlib/http.md`.
-#[allow(dead_code)]
 pub(super) const HTTP_MD: &str = r#"---
 title: "http"
 section: "Standard Library"
@@ -2026,7 +2016,6 @@ handler to route on query parameters.
 "#;
 
 /// Verbatim former `docs/stdlib/int-float.md`.
-#[allow(dead_code)]
 pub(super) const INT_FLOAT_MD: &str = r#"---
 title: "int / float"
 section: "Standard Library"
@@ -2496,7 +2485,6 @@ constants are `ExtFloat` — use `else` to handle them if needed.
 "#;
 
 /// Verbatim former `docs/stdlib/io-fs.md`.
-#[allow(dead_code)]
 pub(super) const IO_FS_MD: &str = r#"---
 title: "io / fs / env"
 section: "Standard Library"
@@ -3122,7 +3110,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/json.md`.
-#[allow(dead_code)]
 pub(super) const JSON_MD: &str = r#"---
 title: "json"
 section: "Standard Library"
@@ -3301,7 +3288,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/list.md`.
-#[allow(dead_code)]
 pub(super) const LIST_MD: &str = r#"---
 title: "list"
 section: "Standard Library"
@@ -4117,7 +4103,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/map.md`.
-#[allow(dead_code)]
 pub(super) const MAP_MD: &str = r#"---
 title: "map"
 section: "Standard Library"
@@ -4404,7 +4389,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/math.md`.
-#[allow(dead_code)]
 pub(super) const MATH_MD: &str = r#"---
 title: "math"
 section: "Standard Library"
@@ -4701,7 +4685,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/postgres.md`.
-#[allow(dead_code)]
 pub(super) const POSTGRES_MD: &str = r#"---
 title: "postgres"
 section: "Standard Library"
@@ -4938,7 +4921,6 @@ get a formatted user-friendly string.
 "#;
 
 /// Verbatim former `docs/stdlib/regex.md`.
-#[allow(dead_code)]
 pub(super) const REGEX_MD: &str = r#"---
 title: "regex"
 section: "Standard Library"
@@ -5172,7 +5154,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/result-option.md`.
-#[allow(dead_code)]
 pub(super) const RESULT_OPTION_MD: &str = r#"---
 title: "result / option"
 section: "Standard Library"
@@ -5479,7 +5460,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/set.md`.
-#[allow(dead_code)]
 pub(super) const SET_MD: &str = r#"---
 title: "set"
 section: "Standard Library"
@@ -5788,7 +5768,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/stream.md`.
-#[allow(dead_code)]
 pub(super) const STREAM_MD: &str = r#"---
 title: "stream"
 section: "Standard Library"
@@ -5928,7 +5907,6 @@ continue to compile and behave identically when that trait lands.
 "#;
 
 /// Verbatim former `docs/stdlib/string.md`.
-#[allow(dead_code)]
 pub(super) const STRING_MD: &str = r#"---
 title: "string"
 section: "Standard Library"
@@ -6566,7 +6544,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/tcp.md`.
-#[allow(dead_code)]
 pub(super) const TCP_MD: &str = r#"---
 title: "tcp"
 section: "Standard Library"
@@ -6755,7 +6732,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/test.md`.
-#[allow(dead_code)]
 pub(super) const TEST_MD: &str = r#"---
 title: "test"
 section: "Standard Library"
@@ -6831,7 +6807,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/time.md`.
-#[allow(dead_code)]
 pub(super) const TIME_MD: &str = r#"---
 title: "time"
 section: "Standard Library"
@@ -7337,7 +7312,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/toml.md`.
-#[allow(dead_code)]
 pub(super) const TOML_MD: &str = r#"---
 title: "toml"
 section: "Standard Library"
@@ -7516,7 +7490,6 @@ fn main() {
 "#;
 
 /// Verbatim former `docs/stdlib/uuid.md`.
-#[allow(dead_code)]
 pub(super) const UUID_MD: &str = r#"---
 title: "uuid"
 section: "Standard Library"

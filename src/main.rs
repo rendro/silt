@@ -96,9 +96,79 @@ fn run_main(args: Vec<String>) {
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => cli::run::dispatch_bare_file(&args, arg),
         other => {
-            eprintln!("Unknown command: {other}");
+            eprintln!("Unknown command: '{other}'");
+            if let Some(suggestion) = suggest_subcommand(other) {
+                eprintln!("  Did you mean '{suggestion}'?");
+            }
             eprintln!("Run 'silt' with no arguments to see available commands.");
             process::exit(1);
         }
     }
+}
+
+/// Levenshtein edit distance between two strings, computed with the
+/// classic two-row dynamic-programming table. Used only by
+/// [`suggest_subcommand`] for the "did you mean" hint on unknown
+/// `silt <subcommand>` invocations, so we keep the implementation
+/// local rather than re-using `crate::typechecker::suggest::levenshtein`
+/// (which lives behind `pub(super)` visibility).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let n = a.len();
+    let m = b.len();
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut curr: Vec<usize> = vec![0; m + 1];
+    for i in 1..=n {
+        curr[0] = i;
+        for j in 1..=m {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[m]
+}
+
+/// List of valid `silt` subcommands, used to power the "did you mean"
+/// hint for unknown commands. Must stay in sync with the match arms in
+/// [`run_main`] — a regression test in
+/// `tests/cli_help_and_unknown_subcommand_tests.rs` exercises a typo of
+/// each of these to lock them together.
+const SUBCOMMANDS: &[&str] = &[
+    "run",
+    "disasm",
+    "test",
+    "check",
+    "lsp",
+    "repl",
+    "fmt",
+    "init",
+    "self-update",
+    "update",
+    "add",
+];
+
+/// Find the closest valid subcommand to `typo` within edit distance 2.
+/// Returns `None` if no candidate is within that distance — in which
+/// case the caller should suppress the suggestion line entirely rather
+/// than offer a wildly unrelated command.
+fn suggest_subcommand(typo: &str) -> Option<&'static str> {
+    let mut best: Option<(&'static str, usize)> = None;
+    for &candidate in SUBCOMMANDS {
+        let d = edit_distance(typo, candidate);
+        if d <= 2 {
+            match best {
+                Some((_, bd)) if d >= bd => {}
+                _ => best = Some((candidate, d)),
+            }
+        }
+    }
+    best.map(|(name, _)| name)
 }

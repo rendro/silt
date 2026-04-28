@@ -26,7 +26,9 @@ returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
 `ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError`, `BytesError`,
 and `ChannelError`. Each variant is module-prefixed so pattern names never
 collide: `IoNotFound`, `JsonSyntax`, `HttpTimeout`, and so on. The full
-catalog lives in [`stdlib/errors.md`](../stdlib/errors.md).
+catalog is registered alongside the builtin signatures in the compiler;
+hover over an error type in your editor (the LSP surfaces the variants
+inline) or run `silt --help` to enumerate the modules that produce them.
 
 You can either pattern-match on a specific variant, or fall back to
 `.message()` for a rendered string:

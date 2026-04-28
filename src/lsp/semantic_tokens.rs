@@ -419,10 +419,20 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
                 emit_pattern_binding_tokens(p, source, out);
             }
         }
-        PatternKind::Record { fields, .. } => {
-            for (_, sub) in fields {
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B8 + B9: shorthand binders (`{ x, y }`) bind the
+            // field name as a local; emit a VARIABLE token for them so
+            // they highlight consistently with the bare `let x = ...` case.
+            // We don't have a sub-pattern span for shorthand fields, so
+            // we use the enclosing pattern span — slightly imprecise for
+            // the second+ field but matches the strategy in
+            // `local_bindings.rs` (where the binder offset is recovered
+            // by source scan, not used for highlighting).
+            for (fname, sub) in fields {
                 if let Some(p) = sub {
                     emit_pattern_binding_tokens(p, source, out);
+                } else if resolve(*fname) != "_" {
+                    emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
                 }
             }
         }

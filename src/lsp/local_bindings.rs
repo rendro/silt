@@ -398,6 +398,52 @@ fn collect_pattern_bindings(
                 }
             }
         }
+        PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B9: row-polymorphism destructure
+            // (`let { x, y } = anon_record`). Mirror the `Record` arm.
+            // The expr type may be an anonymous record type; for now we
+            // don't try to extract field types from it (the v1
+            // typechecker may or may not surface them as Type::Record),
+            // so we conservatively bind without a type when sub is
+            // missing. Where sub is present, we recurse with no type.
+            let field_tys: Option<Vec<(Symbol, Type)>> = match expr_ty {
+                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                _ => None,
+            };
+            let lookup_field_ty = |fname: Symbol| -> Option<Type> {
+                field_tys
+                    .as_ref()
+                    .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
+            };
+            for (name, sub) in fields {
+                if let Some(p) = sub {
+                    let ty = lookup_field_ty(*name);
+                    collect_pattern_bindings(
+                        p,
+                        source,
+                        search_start,
+                        search_end,
+                        ty.as_ref(),
+                        scope_end,
+                        bindings,
+                    );
+                } else {
+                    let name_str = resolve(*name);
+                    if let Some(off) =
+                        find_ident_in_range(source, search_start, search_end, &name_str)
+                    {
+                        bindings.push(LocalBinding {
+                            name: *name,
+                            binding_offset: off,
+                            binding_len: name_str.len(),
+                            scope_start: search_end,
+                            scope_end,
+                            ty: lookup_field_ty(*name),
+                        });
+                    }
+                }
+            }
+        }
         PatternKind::List(pats, rest) => {
             // A list destructure binds each head element to the list's
             // element type and the tail to the full list type.

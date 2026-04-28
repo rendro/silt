@@ -3841,13 +3841,25 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     } else {
         String::new()
     };
-    // Effect annotation slot. The parser fills `EffectSet::TOP` for
-    // un-annotated functions (the gradual-rollout default), and we
-    // suppress that here so legacy code formats unchanged. Anything
-    // narrower — explicit `!{}`, `!{io}`, `!{io, fs}`, etc. — round-
-    // trips via `Display for EffectSet`.
-    let effects = if f.declared_effects == EffectSet::TOP {
+    // Effect annotation slot. The parser sets `is_annotated = false`
+    // for un-annotated functions and `is_annotated = true` for any
+    // explicit `!{...}` form (including the all-five `!{io, fs, net,
+    // time, random}` shape, which collides on bit-equality with
+    // `EffectSet::TOP` and was silently dropped by the previous
+    // `== TOP` pivot). Pivot on `is_annotated` instead so explicit
+    // five-effect annotations survive `silt fmt` round-trip. When
+    // emitting we render the bitset directly: for the explicit-five
+    // case that means re-emitting `!{fs, io, net, random, time}`
+    // rather than the gradual-rollout `!*` token, so the output
+    // re-parses cleanly.
+    let effects = if !f.is_annotated {
         String::new()
+    } else if f.declared_effects == EffectSet::TOP {
+        // User wrote `!{io, fs, net, time, random}`. Re-emit the
+        // explicit set rather than `!*` (which is reserved for the
+        // gradual-rollout default and would imply the user wrote
+        // nothing — but they did).
+        " !{fs, io, net, random, time}".to_string()
     } else {
         format!(" {}", f.declared_effects)
     };

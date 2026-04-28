@@ -9,8 +9,9 @@ status: implemented
 **tl;dr:** Recommend a coarse, inferred, tracking-only effect system.
 Skip handlers and user-defined effects in v1.
 
-**Status:** implemented in v0.12 (Phases A→D shipped). See
-`docs/strict-effects-migration.md` for the user-facing guide.
+**Status:** implemented (Phases A→D shipped in v0.12; default still
+permissive as of v0.13). See `docs/strict-effects-migration.md` for
+the user-facing guide.
 **Scope:** a fixed set of 5 named effects (`!io`, `!fs`, `!net`,
 `!time`, `!random`), inferred from function bodies, surfaced on LSP
 hover, optionally annotated at module boundaries. No algebraic
@@ -302,7 +303,7 @@ ergonomic story.
 
 - **Implementation cost.** ~4-6 weeks tracking-only. ~3-6 months
   with handlers.
-- **Stdlib sweep.** ~400 builtins to annotate. Mechanical but
+- **Stdlib sweep.** 388 builtins to annotate. Mechanical but
   load-bearing — a wrong annotation poisons every downstream
   inference.
 - **Error-message engineering tax.** "Effect `!io` from call to
@@ -446,12 +447,13 @@ vocabulary is the point.
 ### (b) Default for legacy code — RESOLVED
 
 `!*` (top, forgiving) by default. `--strict-effects` opt-in for
-inference + propagation. Default flips in v0.13 or v1.0 — same shape
-as Rust's edition mechanism.
+inference + propagation. The default remains permissive in v0.13;
+flipping it is reserved for a future release on the same shape as
+Rust's edition mechanism — no specific version is committed yet.
 
 ### (c) Stdlib sweep ordering — RESOLVED
 
-One mechanical round over all 401 builtins, modeled after the
+One mechanical round over all 388 builtins, modeled after the
 round-64 docs-sweep template. Lock test catches drift.
 
 ### (d) Compatibility boundary — RESOLVED
@@ -492,7 +494,7 @@ on hover. Annotation enforcement at fn boundaries. Stdlib annotated
 as `!*` (compatibility default).
 
 **Phase C — stdlib sweep (1-2 weeks).** Annotate every stdlib
-builtin with its real effect set. 401 builtins. Mechanical, modeled
+builtin with its real effect set. 388 builtins. Mechanical, modeled
 after the round-64 docs-sweep template. Lock test catches drift.
 
 **Phase D — `--strict-effects` flag (1 week).** When set,

@@ -211,6 +211,38 @@ fn collect_let_pattern_defs(
                 }
             }
         }
+        PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B9: anonymous-record destructure at top-level
+            // (`let { x, y } = some_anon_record`). Mirrors the nominal
+            // `Record` case above.
+            let field_tys: Option<Vec<(Symbol, Type)>> = match value_ty {
+                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                _ => None,
+            };
+            let lookup_field_ty = |fname: Symbol| -> Option<Type> {
+                field_tys
+                    .as_ref()
+                    .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
+            };
+            for (name, sub) in fields {
+                if let Some(p) = sub {
+                    let ty = lookup_field_ty(*name);
+                    collect_let_pattern_defs(p, decl_span, ty.as_ref(), None, false, defs);
+                } else if resolve(*name) != "_" {
+                    defs.insert(
+                        *name,
+                        DefInfo {
+                            span: decl_span,
+                            ty: lookup_field_ty(*name),
+                            params: vec![],
+                            doc: None,
+                            declared_effects: None,
+                            inferred_effects: None,
+                        },
+                    );
+                }
+            }
+        }
         PatternKind::List(pats, rest) => {
             let (elem_ty, list_ty): (Option<Type>, Option<Type>) = match value_ty {
                 Some(t @ Type::List(inner)) => (Some((**inner).clone()), Some(t.clone())),

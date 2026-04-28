@@ -14,6 +14,154 @@ impl TypeChecker {
         matches!(self.apply(ty), Type::Var(_))
     }
 
+    /// Check whether any already-emitted error has a span that points at
+    /// some sub-expression within `value`. This is used to suppress the
+    /// "cannot infer the type of `x`" cascade when the value itself failed
+    /// to typecheck — e.g. `let x = nonExistent` should only report the
+    /// `undefined variable 'nonExistent'` diagnostic, not also the
+    /// inference-failure follow-up that wouldn't be fixed by adding an
+    /// annotation.
+    ///
+    /// Spans are single points (line/col/offset) rather than ranges in this
+    /// codebase, so "containment" is implemented by collecting every
+    /// sub-expression's span offset within `value` and checking whether any
+    /// existing error span matches one of them. This is reliable because
+    /// type errors emitted from `infer_expr` always attach to the
+    /// expression node currently being inferred.
+    fn value_already_errored(&self, value: &Expr) -> bool {
+        if self.errors.is_empty() {
+            return false;
+        }
+        let mut offsets: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        Self::collect_sub_spans(value, &mut offsets);
+        self.errors.iter().any(|e| {
+            e.severity == Severity::Error && offsets.contains(&e.span.offset)
+        })
+    }
+
+    /// Collect the `span.offset` of every sub-expression within `expr`
+    /// (including `expr` itself) into `out`. Used by `value_already_errored`
+    /// to determine whether an existing diagnostic was emitted somewhere
+    /// inside the value expression.
+    fn collect_sub_spans(expr: &Expr, out: &mut std::collections::HashSet<usize>) {
+        out.insert(expr.span.offset);
+        match &expr.kind {
+            ExprKind::Binary(l, _, r)
+            | ExprKind::Pipe(l, r)
+            | ExprKind::Range(l, r)
+            | ExprKind::FloatElse(l, r) => {
+                Self::collect_sub_spans(l, out);
+                Self::collect_sub_spans(r, out);
+            }
+            ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Return(Some(e))
+            | ExprKind::FieldAccess(e, _)
+            | ExprKind::Ascription(e, _) => {
+                Self::collect_sub_spans(e, out);
+            }
+            ExprKind::Call(callee, args) => {
+                Self::collect_sub_spans(callee, out);
+                for a in args {
+                    Self::collect_sub_spans(a, out);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                for s in stmts {
+                    Self::collect_stmt_sub_spans(s, out);
+                }
+            }
+            ExprKind::Lambda { body, .. } => {
+                Self::collect_sub_spans(body, out);
+            }
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
+                if let Some(s) = scrutinee {
+                    Self::collect_sub_spans(s, out);
+                }
+                for arm in arms {
+                    if let Some(ref guard) = arm.guard {
+                        Self::collect_sub_spans(guard, out);
+                    }
+                    Self::collect_sub_spans(&arm.body, out);
+                }
+            }
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) | ListElem::Spread(e) => {
+                            Self::collect_sub_spans(e, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
+                for e in elems {
+                    Self::collect_sub_spans(e, out);
+                }
+            }
+            ExprKind::Map(pairs) => {
+                for (k, v) in pairs {
+                    Self::collect_sub_spans(k, out);
+                    Self::collect_sub_spans(v, out);
+                }
+            }
+            ExprKind::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    Self::collect_sub_spans(e, out);
+                }
+            }
+            ExprKind::RecordUpdate { expr, fields } => {
+                Self::collect_sub_spans(expr, out);
+                for (_, e) in fields {
+                    Self::collect_sub_spans(e, out);
+                }
+            }
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        Self::collect_sub_spans(e, out);
+                    }
+                }
+            }
+            ExprKind::Loop { bindings, body } => {
+                for (_, e) in bindings {
+                    Self::collect_sub_spans(e, out);
+                }
+                Self::collect_sub_spans(body, out);
+            }
+            ExprKind::Recur(args) => {
+                for a in args {
+                    Self::collect_sub_spans(a, out);
+                }
+            }
+            _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
+        }
+    }
+
+    fn collect_stmt_sub_spans(stmt: &Stmt, out: &mut std::collections::HashSet<usize>) {
+        match stmt {
+            Stmt::Let { value, .. } => Self::collect_sub_spans(value, out),
+            Stmt::When {
+                expr, else_body, ..
+            } => {
+                Self::collect_sub_spans(expr, out);
+                Self::collect_sub_spans(else_body, out);
+            }
+            Stmt::WhenBool {
+                condition,
+                else_body,
+            } => {
+                Self::collect_sub_spans(condition, out);
+                Self::collect_sub_spans(else_body, out);
+            }
+            Stmt::Expr(e) => Self::collect_sub_spans(e, out),
+        }
+    }
+
     /// After all inference passes, walk let-bindings (both top-level and inside
     /// function bodies) and emit an error when the value expression's type could
     /// not be determined (still a bare `Type::Var` with no user annotation).
@@ -48,6 +196,14 @@ impl TypeChecker {
                     .map(|t| self.is_bare_type_var(t))
                     .unwrap_or(false)
             {
+                // Skip the cascade if the value expression itself already
+                // produced an error — fixing that root cause would also
+                // resolve the inference failure, so the "cannot infer"
+                // follow-up is misleading (round 62 G4).
+                if self.value_already_errored(value) {
+                    continue;
+                }
+
                 let bound_names = collect_pattern_vars(pattern);
                 if bound_names.is_empty() {
                     self.error(
@@ -255,6 +411,14 @@ impl TypeChecker {
                 }
                 // Pipe expressions are also calls; skip them.
                 if matches!(&value.kind, ExprKind::Pipe(..)) {
+                    continue;
+                }
+
+                // Skip the cascade if the value expression itself already
+                // produced an error — fixing that root cause would also
+                // resolve the inference failure, so the "cannot infer"
+                // follow-up is misleading (round 62 G4).
+                if self.value_already_errored(value) {
                     continue;
                 }
 

@@ -293,10 +293,16 @@ fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<
                 collect_references_in_pattern(p, name, out);
             }
         }
-        PatternKind::Record { fields, .. } => {
-            for (_, sub) in fields {
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            // Round-62 B8 + B9: shorthand binders (`{ x, y }` with `sub
+            // = None`) bind the field name itself. Match against `name`
+            // so rename across a shorthand binder picks up every site
+            // (binder + uses).
+            for (fname, sub) in fields {
                 if let Some(p) = sub {
                     collect_references_in_pattern(p, name, out);
+                } else if *fname == name {
+                    out.push(pattern.span);
                 }
             }
         }

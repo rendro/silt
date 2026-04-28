@@ -147,8 +147,9 @@ pub(crate) fn run_help_text() -> String {
     s.push_str(&format!("Usage: {}\n", run_usage_banner()));
     s.push('\n');
     s.push_str("Options:\n");
-    s.push_str("  --watch, -w     Re-run on file changes\n");
-    s.push_str("  --disassemble   Show bytecode disassembly instead of running\n");
+    s.push_str("  --watch, -w         Re-run on file changes\n");
+    s.push_str("  --disassemble       Show bytecode disassembly instead of running\n");
+    s.push_str("  --strict-effects    Treat unannotated fns as pure (Phase D)\n");
     s.push('\n');
     s.push_str("Examples:\n");
     s.push_str("  silt run                      (inside a package, runs src/main.silt)\n");
