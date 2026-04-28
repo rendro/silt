@@ -84,21 +84,13 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
 
         ExprKind::FieldAccess(obj, _) => infer_expr_effects(obj, env),
 
-        ExprKind::Binary(l, _, r) => {
-            infer_expr_effects(l, env).union(infer_expr_effects(r, env))
-        }
+        ExprKind::Binary(l, _, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
         ExprKind::Unary(_, inner)
         | ExprKind::QuestionMark(inner)
         | ExprKind::Ascription(inner, _) => infer_expr_effects(inner, env),
-        ExprKind::Pipe(l, r) => {
-            infer_expr_effects(l, env).union(infer_expr_effects(r, env))
-        }
-        ExprKind::Range(l, r) => {
-            infer_expr_effects(l, env).union(infer_expr_effects(r, env))
-        }
-        ExprKind::FloatElse(l, r) => {
-            infer_expr_effects(l, env).union(infer_expr_effects(r, env))
-        }
+        ExprKind::Pipe(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
+        ExprKind::Range(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
+        ExprKind::FloatElse(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
 
         ExprKind::Call(callee, args) => {
             // Effects of evaluating the callee + args + the call itself.
@@ -229,7 +221,11 @@ fn callee_name(callee: &Expr) -> Option<Symbol> {
         // builtin scheme stored under that intern.
         ExprKind::FieldAccess(obj, field) => {
             if let ExprKind::Ident(base) = &obj.kind {
-                let joined = format!("{}.{}", crate::intern::resolve(*base), crate::intern::resolve(*field));
+                let joined = format!(
+                    "{}.{}",
+                    crate::intern::resolve(*base),
+                    crate::intern::resolve(*field)
+                );
                 Some(crate::intern::intern(&joined))
             } else {
                 None
@@ -279,10 +275,7 @@ mod tests {
             ExprKind::FieldAccess(Box::new(ident("io")), crate::intern::intern("read_file")),
             Span::new(0, 0),
         );
-        assert_eq!(
-            callee_name(&e),
-            Some(crate::intern::intern("io.read_file"))
-        );
+        assert_eq!(callee_name(&e), Some(crate::intern::intern("io.read_file")));
     }
 
     #[test]

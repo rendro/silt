@@ -41,7 +41,9 @@ fn pure_function_infers_empty_effects() {
     // bottom-up walk is contaminating with the gradual-rollout default
     // somewhere it shouldn't.
     let checker = check("fn add(x: Int, y: Int) -> Int { x + y }");
-    let got = checker.fn_body_effects_for(intern("add")).expect("registered");
+    let got = checker
+        .fn_body_effects_for(intern("add"))
+        .expect("registered");
     assert_eq!(got, EffectSet::EMPTY, "pure function must infer EMPTY");
 }
 
