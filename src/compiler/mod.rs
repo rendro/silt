@@ -2348,7 +2348,7 @@ impl Compiler {
                 self.compile_match(expr.as_deref(), arms, span, tail)?;
             }
 
-            ExprKind::Lambda { params, body } => {
+            ExprKind::Lambda { params, body, .. } => {
                 if params.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: format!(

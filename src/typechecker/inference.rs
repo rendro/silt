@@ -623,10 +623,58 @@ impl TypeChecker {
             .insert(lookup_name, constrained_fn.clone());
 
         // Phase A of the effect-rows proposal: walk the (now type-checked)
-        // body and record the inferred effect set. Phase A computes only
-        // — annotation enforcement and LSP rendering land in B/D.
+        // body and record the inferred effect set.
         let inferred_effects = super::effects_infer::infer_expr_effects(&f.body, &local_env);
         self.fn_body_effects.insert(lookup_name, inferred_effects);
+        // Phase B: write the inferred set back onto the FnDecl AST so
+        // the LSP `build_definitions` pass can surface the body effects
+        // on hover without having to keep a parallel side-channel
+        // mapping for every consumer.
+        f.inferred_effects = Some(inferred_effects);
+
+        // Phase B annotation enforcement: when the user declared a
+        // narrower set than the body computed, emit a diagnostic.
+        // `EffectSet::TOP` is the gradual-rollout default applied to
+        // un-annotated functions; we skip enforcement in that case so
+        // legacy code keeps typechecking unchanged. Recovery stubs
+        // never have meaningful inferred sets — their synthetic empty
+        // bodies trivially infer EMPTY but the user's broken header
+        // is the real problem and we don't pile on.
+        if !f.is_recovery_stub
+            && f.declared_effects != crate::types::effects::EffectSet::TOP
+            && !inferred_effects.is_subset(f.declared_effects)
+        {
+            // Compute the offending bits — effects in the body that the
+            // signature didn't declare. Display in alphabetic order
+            // (the EffectSet iterator's canonical order) so diagnostics
+            // are stable regardless of which sub-expression contributed
+            // each effect.
+            let mut offending = crate::types::effects::EffectSet::EMPTY;
+            for e in inferred_effects.iter() {
+                if !f.declared_effects.contains(e) {
+                    offending = offending.insert(e);
+                }
+            }
+            // Pick a representative effect for the headline. The
+            // "first offending in alphabetic order" rule keeps the
+            // headline deterministic across inference paths.
+            let representative = offending
+                .iter()
+                .next()
+                .map(|e| format!("!{{{e}}}"))
+                .unwrap_or_else(|| "!{}".to_string());
+            self.errors.push(crate::types::TypeError {
+                message: format!(
+                    "effect '{}' not declared in fn '{}'\nfn body uses {}; signature declares {}",
+                    representative,
+                    crate::intern::resolve(f.name),
+                    inferred_effects,
+                    f.declared_effects,
+                ),
+                span: f.body.span,
+                severity: crate::types::Severity::Error,
+            });
+        }
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
@@ -3270,7 +3318,7 @@ impl TypeChecker {
                 result_ty
             }
 
-            ExprKind::Lambda { params, body } => {
+            ExprKind::Lambda { params, body, .. } => {
                 let mut local_env = env.child();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way

@@ -201,7 +201,7 @@ fn collect_local_bindings_in_expr(
                 }
             }
         }
-        ExprKind::Lambda { params, body } => {
+        ExprKind::Lambda { params, body, .. } => {
             let body_start = body.span.offset;
             let (body_end, _) = expr_extent(body, source);
             for p in params {

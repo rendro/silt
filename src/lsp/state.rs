@@ -9,6 +9,7 @@ use crate::ast::*;
 use crate::intern::Symbol;
 use crate::lexer::Span;
 use crate::types::Type;
+use crate::types::effects::EffectSet;
 
 // ── Document state ─────────────────────────────────────────────────
 
@@ -21,6 +22,19 @@ pub(super) struct DefInfo {
     /// `TypeDecl.doc`, `TraitDecl.doc`, and `Decl::Let { doc, .. }`.
     /// Surfaced via hover / completion / signature-help as Markdown.
     pub(super) doc: Option<String>,
+    /// Declared effect annotation from the fn signature, if this
+    /// definition came from a `Decl::Fn`. `None` for non-fn defs
+    /// (types, traits, top-level lets) — those don't carry effects.
+    /// `Some(EffectSet::TOP)` for a fn without a user-written `!{...}`
+    /// (the gradual-rollout permissive default). Surfaced on hover by
+    /// the Phase B effect-rendering path.
+    pub(super) declared_effects: Option<EffectSet>,
+    /// Body-inferred effect set, populated by the typechecker after
+    /// `check_fn_body` runs. `None` until inference completes; will
+    /// stay `None` for recovery stubs and for non-fn defs. Hover
+    /// renders both declared and inferred when they differ — useful
+    /// for spotting over-broad annotations.
+    pub(super) inferred_effects: Option<EffectSet>,
 }
 
 /// A local binding (let-bound identifier, function parameter, match binding, …)

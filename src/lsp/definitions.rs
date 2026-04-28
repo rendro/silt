@@ -28,6 +28,8 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         ty: fn_ty,
                         params,
                         doc: f.doc.clone(),
+                        declared_effects: Some(f.declared_effects),
+                        inferred_effects: f.inferred_effects,
                     },
                 );
             }
@@ -39,6 +41,8 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
+                        declared_effects: None,
+                        inferred_effects: None,
                     },
                 );
                 if let TypeBody::Enum(variants) = &t.body {
@@ -56,6 +60,8 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                                 // bit of context for hover on `Some`
                                 // or `Red`.
                                 doc: t.doc.clone(),
+                                declared_effects: None,
+                                inferred_effects: None,
                             },
                         );
                     }
@@ -69,6 +75,8 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
+                        declared_effects: None,
+                        inferred_effects: None,
                     },
                 );
             }
@@ -141,6 +149,8 @@ fn collect_let_pattern_defs(
                     } else {
                         None
                     },
+                    declared_effects: None,
+                    inferred_effects: None,
                 },
             );
         }
@@ -194,6 +204,8 @@ fn collect_let_pattern_defs(
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
+                            declared_effects: None,
+                            inferred_effects: None,
                         },
                     );
                 }

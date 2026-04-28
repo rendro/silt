@@ -6,6 +6,7 @@ use crate::ast::*;
 use crate::intern::{Symbol, resolve};
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
+use crate::types::effects::EffectSet;
 
 const INDENT: &str = "  ";
 
@@ -3840,6 +3841,16 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     } else {
         String::new()
     };
+    // Effect annotation slot. The parser fills `EffectSet::TOP` for
+    // un-annotated functions (the gradual-rollout default), and we
+    // suppress that here so legacy code formats unchanged. Anything
+    // narrower — explicit `!{}`, `!{io}`, `!{io, fs}`, etc. — round-
+    // trips via `Display for EffectSet`.
+    let effects = if f.declared_effects == EffectSet::TOP {
+        String::new()
+    } else {
+        format!(" {}", f.declared_effects)
+    };
     let where_clause = if f.where_clauses.is_empty() {
         String::new()
     } else {
@@ -3878,7 +3889,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause}{trailing}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause}{trailing}",
             f.name,
         );
     }
@@ -3890,14 +3901,14 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {body_str}{trailing}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause} = {body_str}{trailing}",
             f.name,
         );
     }
 
     let body = format_body(&f.body, depth);
     format!(
-        "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
+        "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause} {body}",
         f.name
     )
 }
@@ -5375,7 +5386,11 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             format!("{callee_str}({}{trailing})", arg_strs.join(", "))
         }
 
-        ExprKind::Lambda { params, body } => {
+        ExprKind::Lambda {
+            params,
+            body,
+            effects,
+        } => {
             // The `fn(...) { ... }` syntax requires plain identifier
             // parameters — the parser's `parse_fn_params` rejects any
             // pattern other than `Ident` with `expected parameter name,
@@ -5395,7 +5410,19 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             } else {
                 ""
             };
-            format!("fn({params_str}{trailing}) {}", format_body(body, depth))
+            // Only emit the effect annotation when the user wrote one.
+            // The gradual-rollout `TOP` default is the absence-marker;
+            // emitting `!*` here would be noise and wouldn't round-trip
+            // through the parser (which has no `!*` syntax).
+            let effects_str = if *effects == EffectSet::TOP {
+                String::new()
+            } else {
+                format!(" {effects}")
+            };
+            format!(
+                "fn({params_str}{trailing}){effects_str} {}",
+                format_body(body, depth)
+            )
         }
 
         ExprKind::FieldAccess(expr, field) => {
@@ -5518,7 +5545,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
 }
 
 fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
-    if let ExprKind::Lambda { params, body } = &expr.kind {
+    if let ExprKind::Lambda { params, body, .. } = &expr.kind {
         format_closure_lambda(params, body, depth)
     } else {
         format_expr(expr, depth)

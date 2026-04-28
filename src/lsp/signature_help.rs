@@ -240,6 +240,8 @@ mod tests {
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
+            declared_effects: None,
+            inferred_effects: None,
         };
         let (label, params) = build_signature_from_def("add", &def);
         assert!(label.starts_with("fn add("));
@@ -258,6 +260,8 @@ mod tests {
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,
+            declared_effects: None,
+            inferred_effects: None,
         };
         let (label, params) = build_signature_from_def("foo", &def);
         assert_eq!(label, "fn foo(x, y)");

@@ -1,6 +1,7 @@
 use crate::intern::Symbol;
 use crate::lexer::Span;
 use crate::types::Type;
+use crate::types::effects::EffectSet;
 
 // ── Expressions ──────────────────────────────────────────────────────
 
@@ -56,6 +57,18 @@ pub enum ExprKind {
     Lambda {
         params: Vec<Param>,
         body: Box<Expr>,
+        /// Effect annotation declared on the lambda, if any.
+        ///
+        /// Phase B of the effect-rows proposal: lambdas may carry an
+        /// explicit `!{set}` annotation between their parameter list and
+        /// body (`fn() !{io} { ... }`). When absent at the surface, the
+        /// parser fills in `EffectSet::TOP` — the gradual-rollout
+        /// permissive default. The typechecker does not yet enforce the
+        /// annotation on lambdas (Phase A's inference pass also doesn't
+        /// thread lambda effects through values), but the field is
+        /// populated so the formatter can round-trip the syntax and
+        /// future phases can wire it in without an AST shape change.
+        effects: EffectSet,
     },
 
     // Records
@@ -365,6 +378,21 @@ pub struct FnDecl {
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,
+    /// Declared effect annotation parsed from the source.
+    ///
+    /// Phase B of the effect-rows proposal: a fn signature may carry an
+    /// explicit `!{set}` annotation immediately after its return-type
+    /// arrow (`fn read() -> String !{io, fs}`). When present, the
+    /// typechecker enforces `inferred ⊆ declared` at body-check time.
+    /// When absent, the parser fills in `EffectSet::TOP` — the gradual
+    /// rollout's permissive default — and no enforcement runs.
+    pub declared_effects: EffectSet,
+    /// Inferred effect set computed by the body-effects pass after
+    /// typechecking. `None` until `check_fn_body_with_name` populates
+    /// it. Surfaced on LSP hover so the user sees the actual body
+    /// effects alongside the declared bound; also fed back into the
+    /// declared-vs-inferred mismatch diagnostic.
+    pub inferred_effects: Option<EffectSet>,
     /// True when this declaration was synthesized by parser error recovery
     /// (Option B: salvage the header and emit a stub so downstream references
     /// to `name` do not cascade into "undefined variable" errors). The body

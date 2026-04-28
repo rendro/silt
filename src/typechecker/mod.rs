@@ -4214,6 +4214,17 @@ impl TypeChecker {
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
         let mut scheme = self.generalize(env, &fn_type);
+        // Phase B of the effect-rows proposal: the declared annotation
+        // (or the gradual-rollout `TOP` default for un-annotated
+        // functions) becomes the scheme's `effects`. Callers see the
+        // declared bound — the inferred body set is recorded separately
+        // in `fn_body_effects` so the annotation enforcement pass can
+        // compare them at body-check time. Recording the declared
+        // bound here (not the inferred one) preserves opaque-boundary
+        // semantics: a fn that declares `!{io}` advertises `!{io}` to
+        // every caller regardless of whether the body is currently
+        // narrower.
+        scheme.effects = f.declared_effects;
 
         // Round 64 item 6B (annotated polymorphic recursion): record
         // whether the user's signature is fully annotated. A `Data`
@@ -6030,6 +6041,11 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             is_recovery_stub: false,
             is_signature_only: true,
             doc: None,
+            // Built-in trait method signatures default to the gradual
+            // rollout's permissive `TOP`. Phase C will tighten the
+            // stdlib-builtin annotations.
+            declared_effects: EffectSet::TOP,
+            inferred_effects: None,
         }
     }
 
@@ -6056,6 +6072,10 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
+        // Built-in `Error.message` default body — gradual-rollout TOP
+        // until Phase C tightens stdlib annotations.
+        declared_effects: EffectSet::TOP,
+        inferred_effects: None,
     };
 
     vec![
