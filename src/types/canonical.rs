@@ -50,10 +50,10 @@
 //!   shared across every per-module typecheck in a single CLI compile
 //!   invocation (so module B importing module A still sees A's
 //!   aliases); LSP pulls each allocate a fresh `Resolver` so per-pull
-//!   state cannot leak across unrelated documents. See
-//!   `docs/proposals/canonical-registry-scoping.md` for the round-65
-//!   migration that replaced the previous process-global
-//!   `RwLock<HashMap>` design.
+//!   state cannot leak across unrelated documents. The pre-refactor
+//!   design used process-global `RwLock<HashMap>` statics; commit
+//!   6364552 replaced that with the per-session `Resolver` to close
+//!   the cross-pull contamination hazard.
 //! - Keys are resolved `String`s rather than `Symbol`s because the
 //!   interner is `thread_local!` (see `crate::intern`), so two threads
 //!   can produce different `Symbol` values for the same string.

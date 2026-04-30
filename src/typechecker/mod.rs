@@ -726,8 +726,8 @@ pub struct TypeChecker {
     /// `with_resolver` — the CLI compile pipeline does this so module
     /// B importing module A still sees A's aliases. LSP pulls each
     /// allocate a fresh `Resolver` so per-pull state cannot leak
-    /// across unrelated documents. See
-    /// `docs/proposals/canonical-registry-scoping.md`.
+    /// across unrelated documents. See commit 6364552 for the
+    /// migration from process-global `RwLock<HashMap>` statics.
     pub(crate) resolver: crate::types::canonical::Resolver,
 }
 
@@ -6624,7 +6624,7 @@ pub fn check_with_package_and_imports_options(
 /// `None` for one-shot typechecks (LSP pulls, REPL inputs); a fresh
 /// resolver is allocated and dropped on return.
 ///
-/// See `docs/proposals/canonical-registry-scoping.md`.
+/// See commit 6364552 for the original migration rationale.
 pub fn check_with_package_and_imports_options_resolver(
     program: &mut Program,
     package: Option<Symbol>,

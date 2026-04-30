@@ -475,8 +475,8 @@ pub struct Compiler {
     /// per-module typecheck threads it via
     /// `check_with_package_and_imports_options_resolver`) and out
     /// again so the next module / entrypoint typecheck sees the
-    /// accumulated state. See
-    /// `docs/proposals/canonical-registry-scoping.md`.
+    /// accumulated state. See commit 6364552 for the migration
+    /// rationale.
     resolver: crate::types::canonical::Resolver,
 }
 

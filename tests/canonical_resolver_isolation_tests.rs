@@ -1,5 +1,6 @@
-//! Lock tests for the compile-session-scoped `Resolver` (round 65
-//! follow-up on `docs/proposals/canonical-registry-scoping.md`).
+//! Lock tests for the compile-session-scoped `Resolver` (commit
+//! 6364552: scope canonical alias / assoc-binding registries to a
+//! compile session).
 //!
 //! Pre-refactor the alias and associated-type-binding registries lived
 //! in process-global `RwLock<HashMap>` statics — every `TypeChecker`
