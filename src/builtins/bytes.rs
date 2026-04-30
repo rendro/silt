@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 
-use super::common::{ok, require_bytes, require_int, require_string, value_kind};
+use super::common::{nibble_to_hex, ok, require_bytes, require_int, require_string, value_kind};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -183,8 +183,8 @@ fn to_hex(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "bytes.to_hex")?;
     let mut s = String::with_capacity(b.len() * 2);
     for byte in b.iter() {
-        s.push(hex_char(byte >> 4));
-        s.push(hex_char(byte & 0x0f));
+        s.push(nibble_to_hex(byte >> 4, false));
+        s.push(nibble_to_hex(byte & 0x0f, false));
     }
     Ok(Value::String(s))
 }
@@ -437,6 +437,10 @@ fn split(args: &[Value]) -> Result<Value, VmError> {
 }
 
 // ── Hex digit helpers ──────────────────────────────────────────────────
+//
+// The nibble→hex direction (`u8 → char`) lives in
+// `super::common::nibble_to_hex`. Round 64 hoisted it out alongside
+// `encoding::upper_hex` so both modules share one canonical body.
 
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
@@ -444,13 +448,5 @@ fn hex_nibble(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
-    }
-}
-
-fn hex_char(n: u8) -> char {
-    match n {
-        0..=9 => (b'0' + n) as char,
-        10..=15 => (b'a' + n - 10) as char,
-        _ => unreachable!("hex_char called with n > 15"),
     }
 }

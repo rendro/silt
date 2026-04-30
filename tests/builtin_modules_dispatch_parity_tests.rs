@@ -3,7 +3,7 @@
 //! `Vm::dispatch_builtin` (`src/vm/dispatch.rs:515`). Without this
 //! lock, adding a module to `BUILTIN_MODULES` without wiring it into
 //! the dispatcher would silently produce
-//!   `unknown module: <name>`
+//!   `unknown builtin namespace: <name>`
 //! at runtime — even though the rest of the toolchain (typechecker,
 //! manifest validator, REPL completion, editor grammars, compiler
 //! prelude registration) treats the module as live.
@@ -50,7 +50,7 @@ fn every_builtin_module_has_a_dispatch_arm() {
         "BUILTIN_MODULES lists module(s) with no `\"<name>\" =>` arm in \
          src/vm/dispatch.rs::dispatch_builtin: {missing:?}.\n\
          Without the arm, calls into the module fall through to \
-         `unknown module: <name>` at runtime even though the typechecker, \
+         `unknown builtin namespace: <name>` at runtime even though the typechecker, \
          compiler prelude, REPL, and editor grammars treat the module as live.\n\
          Authoritative list: src/module.rs (BUILTIN_MODULES).\n\
          Dispatcher: src/vm/dispatch.rs (Vm::dispatch_builtin).",

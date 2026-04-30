@@ -22,27 +22,10 @@
 //!     `lexer::KEYWORDS`, mirror it into `src/repl.rs`, and update
 //!     `EXPECTED_CORE_KEYWORDS` here.
 
-use std::fs;
-use std::path::PathBuf;
-
 const EXPECTED_CORE_KEYWORDS: &[&str] = &[
     "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
     "when", "where",
 ];
-
-fn read_source(rel: &str) -> String {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push(rel);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-}
-
-/// Whole-word presence check: `name` must appear as a string literal
-/// `"name"` in `src`. We require the surrounding quote to avoid false
-/// positives from comments or other identifiers.
-fn source_mentions_quoted(src: &str, name: &str) -> bool {
-    let needle = format!("\"{name}\"");
-    src.contains(&needle)
-}
 
 #[test]
 fn lexer_keywords_const_contains_core_set() {
@@ -80,23 +63,31 @@ fn lexer_keyword_literals_const_contains_true_false() {
 
 #[test]
 fn repl_keywords_contain_core_set() {
-    let src = read_source("src/repl.rs");
+    // Round-64 G4: src/repl.rs no longer inlines keyword string
+    // literals — it iterates `lexer::KEYWORDS` and `KEYWORD_LITERALS`
+    // directly. The invariant that REPL completion offers every core
+    // keyword now lives at the runtime/API level: call
+    // `repl::builtin_names()` and check membership.
+    let names: std::collections::HashSet<String> =
+        silt::repl::builtin_names().into_iter().collect();
     for kw in EXPECTED_CORE_KEYWORDS {
         assert!(
-            source_mentions_quoted(&src, kw),
-            "src/repl.rs keyword list missing core keyword `\"{kw}\"`. \
+            names.contains(*kw),
+            "repl::builtin_names() missing core keyword `\"{kw}\"`. \
              If a new keyword was added, also update lexer::KEYWORDS \
-             and EXPECTED_CORE_KEYWORDS here."
+             and EXPECTED_CORE_KEYWORDS here. The structural lock that \
+             repl.rs consumes lexer::KEYWORDS lives in \
+             tests/repl_keyword_parity_with_lexer_tests.rs."
         );
     }
     // Intentional delta: REPL keyword list also includes `true`/`false`
     // as completion entries (CONSTANT-shaped, not KEYWORD-shaped).
     assert!(
-        source_mentions_quoted(&src, "true"),
-        "src/repl.rs keyword list must include \"true\" as completion entry"
+        names.contains("true"),
+        "repl::builtin_names() must include \"true\" as completion entry"
     );
     assert!(
-        source_mentions_quoted(&src, "false"),
-        "src/repl.rs keyword list must include \"false\" as completion entry"
+        names.contains("false"),
+        "repl::builtin_names() must include \"false\" as completion entry"
     );
 }

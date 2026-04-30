@@ -35,7 +35,7 @@ error names the inferred effect set AND ships a copy-paste-ready
 annotation in its `help:` line:
 
 ```
-error[type]: function 'read_settings' uses effect '!{fs, io}' but is declared pure (no annotation under --strict-effects)
+error[type]: function 'read_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
    --> main.silt:5:1
     |
   5 | fn read_settings(path: String) -> Settings = io.read_file(path) |> parse
@@ -116,7 +116,7 @@ fn main() {
 Run `silt check --strict-effects main.silt` and you'll get:
 
 ```
-error[type]: function 'load_settings' uses effect '!{fs, io}' but is declared pure (no annotation under --strict-effects)
+error[type]: function 'load_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
 help: annotate as `fn load_settings(path: String) -> Result(String, IoError) !{fs, io}`
       to make the effect explicit, or wrap the IO behind a callable
       passed in by the caller

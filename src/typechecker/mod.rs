@@ -2811,11 +2811,18 @@ impl TypeChecker {
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
                 }
-                let scheme = if is_value {
+                let mut scheme = if is_value {
                     self.generalize(&env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
+                // BROKEN (round 64): `generalize` / `Scheme::mono` both
+                // hardcode `effects: EffectSet::TOP`. For an aliasing
+                // bind (`let alias = doit`) copy the source scheme's
+                // effects so the alias preserves the callee's declared
+                // effect set rather than widening every aliased call to
+                // TOP.
+                inference::propagate_alias_effects(&value.kind, &env, &mut scheme);
                 if let PatternKind::Ident(name) = &pattern.kind {
                     // G1: top-level duplicate let binding.
                     if self.top_level_names.contains(name) {

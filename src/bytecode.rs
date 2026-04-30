@@ -190,7 +190,7 @@ pub enum Op {
     /// emission crashes loudly instead of silently no-oping.
     LoopSetup, // operand: u8 binding_count (unused)
     /// Update loop bindings and jump back.
-    Recur, // operand: u8 arg_count
+    Recur, // operands: u8 arg_count, u16 first_slot
 
     // ── Error handling ─────────────────────────────────────────
     /// Unwrap Ok/Some or early-return Err/None.

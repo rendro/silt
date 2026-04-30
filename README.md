@@ -189,7 +189,7 @@ silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based depend
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
 
-LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. The prebuilt `silt` binary from the install script includes the LSP server — just run `silt lsp` and point your editor at it. Vim/Neovim syntax highlighting and editor setup ship in `editors/`.
+LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, formatting, find references, rename, and semantic tokens. The prebuilt `silt` binary from the install script includes the LSP server — just run `silt lsp` and point your editor at it. Vim/Neovim syntax highlighting and editor setup ship in `editors/`.
 
 ## Reference
 

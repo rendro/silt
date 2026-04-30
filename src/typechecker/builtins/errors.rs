@@ -93,6 +93,18 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
+    // Round-64 GAP fix: `PgError` is registered as a typechecker
+    // enum only when the `postgres` cargo feature is enabled. The VM
+    // dispatch arm at `src/vm/dispatch.rs` is `#[cfg(feature =
+    // "postgres")]`-gated, so without this gate a build like
+    //   cargo run --no-default-features --features "repl,http,tcp"
+    // would let `PgError.PgConnect("nope")` typecheck, then crash at
+    // runtime with `unknown builtin namespace: PgError`. With the
+    // gate, the typechecker rejects the use at compile time with the
+    // standard "enum 'PgError' has no variant" / "undefined variable"
+    // message — matching the user mental model that PgError simply
+    // does not exist in this build.
+    #[cfg(feature = "postgres")]
     register_enum(
         checker,
         env,
@@ -114,6 +126,12 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
+    // Round-64 GAP fix: `TcpError` is registered only when the `tcp`
+    // cargo feature is enabled. Mirrors the `PgError` reasoning above
+    // — the dispatch arm is `#[cfg(feature = "tcp")]`-gated, so
+    // without this gate a tcp-disabled build would crash at runtime
+    // instead of failing at typecheck.
+    #[cfg(feature = "tcp")]
     register_enum(
         checker,
         env,
@@ -172,19 +190,26 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fns with `where e: Error` constraints. The runtime counterpart
     // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
     let dummy_span = crate::lexer::Span::new(0, 0);
-    for enum_name in &[
+    // Round-64 GAP fix: `PgError`/`TcpError` only appear in this list
+    // when their cargo features are enabled — the trait-impl set must
+    // not advertise traits for an enum the typechecker doesn't know
+    // about (would diverge from the registered-enums set).
+    let mut enum_names: Vec<&'static str> = vec![
         "IoError",
         "JsonError",
         "TomlError",
         "ParseError",
         "HttpError",
         "RegexError",
-        "PgError",
-        "TcpError",
         "TimeError",
         "BytesError",
         "ChannelError",
-    ] {
+    ];
+    #[cfg(feature = "postgres")]
+    enum_names.push("PgError");
+    #[cfg(feature = "tcp")]
+    enum_names.push("TcpError");
+    for enum_name in &enum_names {
         for trait_name in &["Error", "Display"] {
             checker
                 .trait_impl_set

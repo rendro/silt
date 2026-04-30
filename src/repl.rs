@@ -232,14 +232,15 @@ pub fn run_repl() {
 }
 
 pub fn builtin_names() -> Vec<String> {
+    // REPL-only short commands (not part of the language lexer) and
+    // non-constructor globals. Language keywords come from
+    // `lexer::KEYWORDS` and `lexer::KEYWORD_LITERALS` below so that
+    // additions there flow through automatically — mirrors the post-
+    // round-63 pattern in `src/lsp/completion.rs` and
+    // `src/lsp/rename.rs`. Parity lock:
+    // `tests/repl_keyword_parity_with_lexer_tests.rs`.
     let mut names: Vec<String> = vec![
-        // Keywords / commands. Keep the non-`:` keywords in sync with
-        // `src/lsp/completion.rs::KEYWORDS` — they feed the same user-
-        // facing "things I can type here" expectation, just in two
-        // different UIs.
-        ":quit", ":q", ":help", ":h", "as", "else", "fn", "import", "let", "loop", "match", "mod",
-        "pub", "return", "trait", "type", "when", "where", "true", "false",
-        // Globals (non-constructor). Constructor variants come from
+        ":quit", ":q", ":help", ":h", // Globals (non-constructor). Constructor variants come from
         // `module::all_builtin_constructor_names` below so gated ones
         // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
         "print", "println", "panic",
@@ -247,6 +248,16 @@ pub fn builtin_names() -> Vec<String> {
     .into_iter()
     .map(String::from)
     .collect();
+
+    // Language keywords + reserved-word-shaped literals. Sourced from
+    // the lexer so REPL <Tab> completion automatically tracks any
+    // additions to the keyword set.
+    for kw in crate::lexer::KEYWORDS {
+        names.push((*kw).to_string());
+    }
+    for kw in crate::lexer::KEYWORD_LITERALS {
+        names.push((*kw).to_string());
+    }
 
     // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
     // every gated variant. Sourced from `module::all_builtin_constructor_names`

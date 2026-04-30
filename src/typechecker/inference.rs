@@ -4160,11 +4160,19 @@ impl TypeChecker {
                 // with mutable state (e.g. channels) that must remain
                 // monomorphic so that the element type is shared across
                 // all uses.
-                let scheme = if is_value {
+                let mut scheme = if is_value {
                     self.generalize(env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
+                // BROKEN (round 64): `generalize` and `Scheme::mono` both
+                // hardcode `effects: EffectSet::TOP`. For an aliasing
+                // bind (`let alias = doit` where `doit` is a fn-typed
+                // name in scope), copy the source scheme's effects so
+                // the alias preserves the callee's declared effect set
+                // rather than widening every aliased call to TOP. Same
+                // shape for FieldAccess (`let alias = mod.func`).
+                propagate_alias_effects(&value.kind, env, &mut scheme);
 
                 // Bind names in the pattern
                 // For let-polymorphism we need to bind with the generalized scheme
@@ -4752,6 +4760,57 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
             fields.iter().all(|(_, e)| is_syntactic_value(&e.kind))
         }
         _ => false,
+    }
+}
+
+/// BROKEN (round 64): close the alias effect-widening hole.
+///
+/// `let alias = doit` (where `doit` is a fn-typed name in scope) used
+/// to widen the alias's declared effects to `EffectSet::TOP`. Both
+/// let-binding sites (top-level in `mod.rs`, inline in `infer_stmt`)
+/// build their scheme via `generalize` / `Scheme::mono`, both of which
+/// hardcode `effects: EffectSet::TOP` (see the doc-comment on
+/// `generalize` at `mod.rs:1593-1601` warning every caller MUST
+/// overwrite the field). Neither caller did, so an alias call became
+/// `!*`-equivalent and any caller fn declared with anything narrower
+/// than the full five-effect row started failing the body-subset
+/// check with an off-target `effect '!{fs}' not declared` diagnostic.
+///
+/// This helper inspects the bound value expression and, if it's a
+/// simple aliasing reference (Ident or dotted FieldAccess), copies
+/// the source scheme's `effects` onto the freshly-built alias scheme.
+/// It also covers Phase A's higher-order=TOP gap for the Ident-callee
+/// case at the typechecker level — the matching effects-walker fix in
+/// `effects_infer.rs::stmt_effects` mirrors the alias map into the
+/// effects pass, since the typechecker's let-bound env is dropped
+/// before `infer_expr_effects` runs over the body.
+///
+/// More elaborate value shapes (lambdas with effectful bodies,
+/// arbitrary call/field chains) intentionally remain untouched; the
+/// goal is the alias case (BROKEN repro) and the LATENT Phase-A
+/// higher-order=TOP case for simple Ident / dotted-path callees.
+pub(super) fn propagate_alias_effects(kind: &ExprKind, env: &TypeEnv, scheme: &mut Scheme) {
+    match kind {
+        ExprKind::Ident(name) => {
+            if let Some(src) = env.lookup(*name) {
+                scheme.effects = src.effects;
+            }
+        }
+        // Dotted path `mod.func` is parsed as
+        // `FieldAccess(Ident(mod), func)`. `effects_infer.rs::callee_name`
+        // joins the two halves with `.` to look up the builtin scheme;
+        // mirror that here so `let alias = io.println` (or any other
+        // builtin) preserves its `!{io, ...}` annotation.
+        ExprKind::FieldAccess(obj, field) => {
+            if let ExprKind::Ident(base) = &obj.kind {
+                let joined = format!("{}.{}", resolve(*base), resolve(*field));
+                let key = intern(&joined);
+                if let Some(src) = env.lookup(key) {
+                    scheme.effects = src.effects;
+                }
+            }
+        }
+        _ => {}
     }
 }
 

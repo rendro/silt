@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
-use super::common::{err, ok, require_string, value_kind};
+use super::common::{err, nibble_to_hex, ok, require_string, value_kind};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -219,19 +219,11 @@ fn form_escape_component(s: &str) -> String {
         } else {
             // Upper-case hex, matching url_encode's output style.
             out.push('%');
-            out.push(upper_hex(c >> 4));
-            out.push(upper_hex(c & 0x0F));
+            out.push(nibble_to_hex(c >> 4, true));
+            out.push(nibble_to_hex(c & 0x0F, true));
         }
     }
     out
-}
-
-fn upper_hex(nibble: u8) -> char {
-    match nibble {
-        0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'A' + (nibble - 10)) as char,
-        _ => unreachable!("nibble must be in 0..=15"),
-    }
 }
 
 fn form_encode(args: &[Value]) -> Result<Value, VmError> {

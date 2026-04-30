@@ -30,6 +30,9 @@ The server communicates over stdin/stdout using the standard LSP protocol.
 | **Signature help** | Parameter names and types while typing a call |
 | **Document symbols** | Outline of all declarations in the file |
 | **Formatting** | Format via the existing `silt fmt` formatter |
+| **Find references** | Locate every use of a definition across the workspace |
+| **Rename** | Rename a definition and update every reference (`<leader>rn`) |
+| **Semantic tokens** | Token classification for richer editor highlighting |
 
 ## Neovim
 

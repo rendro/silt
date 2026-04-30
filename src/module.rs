@@ -201,6 +201,129 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
         .flat_map(|(_, variants)| variants.iter().copied())
 }
 
+/// Authoritative `(variant_name, arity)` listings for every stdlib
+/// typed-error enum. Single source of truth consulted by
+/// `src/vm/dispatch.rs::register_builtins` to seed the global
+/// `VariantConstructor` / `Variant` entries — collapsing the
+/// previously hand-rolled per-family loops at dispatch.rs:142-275 into
+/// one data-driven loop.
+///
+/// A parity-lock test at
+/// `tests/error_enum_dispatch_parity_tests.rs` asserts the typechecker
+/// registrations in `src/typechecker/builtins/errors.rs::register`
+/// match these `(variant, arity)` tuples shape-for-shape.
+///
+/// Round-64 DUP-1 fix (audit): adding/renaming a typed-error variant
+/// previously required edits in three independent registries
+/// (this file, `errors.rs`, and `dispatch.rs`). The dispatch-side list
+/// is now derived; `errors.rs` remains the type-side definition and is
+/// cross-checked against this data by the parity test.
+pub fn builtin_error_enum_variants_with_arity()
+-> &'static [(&'static str, &'static [(&'static str, usize)])] {
+    &[
+        (
+            "IoError",
+            &[
+                ("IoNotFound", 1),
+                ("IoPermissionDenied", 1),
+                ("IoAlreadyExists", 1),
+                ("IoInvalidInput", 1),
+                ("IoInterrupted", 0),
+                ("IoUnexpectedEof", 0),
+                ("IoWriteZero", 0),
+                ("IoUnknown", 1),
+            ],
+        ),
+        (
+            "JsonError",
+            &[
+                ("JsonSyntax", 2),
+                ("JsonTypeMismatch", 2),
+                ("JsonMissingField", 1),
+                ("JsonUnknown", 1),
+            ],
+        ),
+        (
+            "TomlError",
+            &[
+                ("TomlSyntax", 2),
+                ("TomlTypeMismatch", 2),
+                ("TomlMissingField", 1),
+                ("TomlUnknown", 1),
+            ],
+        ),
+        (
+            "ParseError",
+            &[
+                ("ParseEmpty", 0),
+                ("ParseInvalidDigit", 1),
+                ("ParseOverflow", 0),
+                ("ParseUnderflow", 0),
+            ],
+        ),
+        (
+            "HttpError",
+            &[
+                ("HttpConnect", 1),
+                ("HttpTls", 1),
+                ("HttpTimeout", 0),
+                ("HttpInvalidUrl", 1),
+                ("HttpInvalidResponse", 1),
+                ("HttpClosedEarly", 0),
+                ("HttpStatusCode", 2),
+                ("HttpUnknown", 1),
+            ],
+        ),
+        (
+            "RegexError",
+            &[("RegexInvalidPattern", 2), ("RegexTooBig", 0)],
+        ),
+        (
+            "PgError",
+            &[
+                ("PgConnect", 1),
+                ("PgTls", 1),
+                ("PgAuthFailed", 1),
+                ("PgQuery", 2),
+                ("PgTypeMismatch", 3),
+                ("PgNoSuchColumn", 1),
+                ("PgClosed", 0),
+                ("PgTimeout", 0),
+                ("PgTxnAborted", 0),
+                ("PgUnknown", 1),
+            ],
+        ),
+        (
+            "TcpError",
+            &[
+                ("TcpConnect", 1),
+                ("TcpTls", 1),
+                ("TcpClosed", 0),
+                ("TcpTimeout", 0),
+                ("TcpUnknown", 1),
+            ],
+        ),
+        (
+            "TimeError",
+            &[("TimeParseFormat", 1), ("TimeOutOfRange", 1)],
+        ),
+        (
+            "BytesError",
+            &[
+                ("BytesInvalidUtf8", 1),
+                ("BytesInvalidHex", 1),
+                ("BytesInvalidBase64", 1),
+                ("BytesByteOutOfRange", 1),
+                ("BytesOutOfBounds", 1),
+            ],
+        ),
+        (
+            "ChannelError",
+            &[("ChannelTimeout", 0), ("ChannelClosed", 0)],
+        ),
+    ]
+}
+
 /// Returns the list of builtin function suffixes for a given builtin module.
 /// E.g., for "string" returns ["split", "trim", "trim_start", ...].
 pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {

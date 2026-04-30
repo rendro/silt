@@ -123,28 +123,102 @@ fn effect_rows_docs_use_v0_12_or_later_for_phase_a_to_d() {
     }
 }
 
-/// G3 lock: the proposal's three builtin-count callouts must agree
-/// with the committed classification (388 per commit `0c72f41`).
+/// G3 lock: the proposal's builtin-count callouts must appear at
+/// least three times (Friction line, sweep-ordering line, Phase C
+/// line) and must agree with the actual implementation count, sourced
+/// dynamically. The bidirectional implementation-vs-doc lock lives in
+/// `effect_rows_builtin_count_is_pinned_to_implementation` below; this
+/// test is a sanity gate that the callouts haven't been deleted.
 #[test]
 fn effect_rows_builtin_count_matches_committed_classification() {
     let body = read_doc("docs/proposals/effect-rows.md");
-    // Stale numbers seen in the round-62 audit.
+    // Stale numbers seen in earlier audit rounds.
     for stale in ["~400 builtins", "401 builtins"] {
         assert!(
             !body.contains(stale),
             "docs/proposals/effect-rows.md still mentions `{stale}`. \
-             Reconcile to 388 (per commit 0c72f41 — \"Effect rows phase \
-             C: stdlib sweep — 388 builtins classified\")."
+             Reconcile to the implementation count (see \
+             `effect_rows_builtin_count_is_pinned_to_implementation`)."
         );
     }
-    // Positive assertion: the committed count appears at least three
-    // times (Friction line, sweep-ordering line, Phase C line).
-    let occurrences = body.matches("388 builtins").count();
+    let actual = silt::typechecker::iter_builtins_for_effects_audit().len();
+    let needle = format!("{actual} builtins");
+    let occurrences = body.matches(needle.as_str()).count();
     assert!(
         occurrences >= 3,
-        "docs/proposals/effect-rows.md should mention `388 builtins` \
+        "docs/proposals/effect-rows.md should mention `{needle}` \
          in at least three places (Friction / Stdlib sweep ordering / \
-         Phase C). Saw {occurrences}."
+         Phase C). Saw {occurrences}. Either the doc has not been \
+         updated to the current implementation count, or the callouts \
+         have been removed."
+    );
+}
+
+/// G3 strengthening (round-64 LATENT): the previous test only checks
+/// that the doc says "388 builtins" three times. That passes whenever
+/// the doc says "388" three times — even if a future stdlib edit
+/// brings the implementation's classified-builtin count to, say, 389.
+/// This test pins the magic number in the doc to the actual count
+/// reported by `silt::typechecker::iter_builtins_for_effects_audit`,
+/// which is the source of truth (it walks the same `register_builtins`
+/// path the typechecker uses at runtime). Bidirectional:
+///   - if the impl drifts (e.g. 389) but the doc still says 388, fail.
+///   - if the doc drifts (e.g. 389) but the impl still says 388, fail.
+/// The error message points at whichever side is wrong.
+#[test]
+fn effect_rows_builtin_count_is_pinned_to_implementation() {
+    let body = read_doc("docs/proposals/effect-rows.md");
+    let actual = silt::typechecker::iter_builtins_for_effects_audit().len();
+
+    // Extract every `<N> builtins` mention from the proposal. The
+    // round-62 audit landed three (Friction / Stdlib sweep ordering /
+    // Phase C); we don't hard-code the exact count of mentions here
+    // (the sibling test above already does that) — we only assert
+    // every mentioned number agrees with the implementation.
+    let mut mentioned: Vec<u64> = Vec::new();
+    for (idx, _) in body.match_indices(" builtins") {
+        // Walk backwards from `idx` over ASCII digits.
+        let prefix = &body[..idx];
+        let digit_start = prefix
+            .rfind(|c: char| !c.is_ascii_digit())
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        if digit_start == idx {
+            // No digits immediately before " builtins" — e.g. prose
+            // like "function-typed builtins". Skip.
+            continue;
+        }
+        let num_str = &prefix[digit_start..];
+        if let Ok(n) = num_str.parse::<u64>() {
+            mentioned.push(n);
+        }
+    }
+
+    assert!(
+        !mentioned.is_empty(),
+        "docs/proposals/effect-rows.md no longer contains any \
+         `<N> builtins` callout. Restore the count callouts (Friction \
+         / Stdlib sweep ordering / Phase C) — the implementation \
+         currently classifies {actual} function-typed builtins."
+    );
+
+    let actual_u64 = actual as u64;
+    let mismatched: Vec<u64> = mentioned
+        .iter()
+        .copied()
+        .filter(|n| *n != actual_u64)
+        .collect();
+    assert!(
+        mismatched.is_empty(),
+        "docs/proposals/effect-rows.md mentions builtin count(s) \
+         {mismatched:?} that disagree with the implementation \
+         (`silt::typechecker::iter_builtins_for_effects_audit().len() \
+         == {actual}`). The implementation is the source of truth — \
+         most likely the doc is stale and should be updated to \
+         `{actual} builtins` everywhere. If a stdlib change \
+         intentionally moved the count, update every `<N> builtins` \
+         callout in the proposal (Friction / Stdlib sweep ordering / \
+         Phase C) to match."
     );
 }
 

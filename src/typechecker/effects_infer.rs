@@ -21,16 +21,34 @@
 //! Annotation enforcement (does the body's inferred set fit inside the
 //! declared set?) lands in Phase B/D — this module only computes.
 
-use crate::ast::{Expr, ExprKind, ListElem, MatchArm, Stmt, StringPart};
+use std::collections::HashMap;
+
+use crate::ast::{Expr, ExprKind, ListElem, MatchArm, PatternKind, Stmt, StringPart};
 use crate::types::effects::EffectSet;
 
 use super::{Symbol, TypeEnv};
+
+/// Per-walk side-channel of let-bound function aliases. Block traversal
+/// extends this map with `let alias = doit` style bindings so that
+/// subsequent `alias()` calls can resolve to `doit`'s declared
+/// `Scheme::effects` instead of falling through to the conservative
+/// higher-order `EffectSet::TOP`. The typechecker fix in
+/// `inference::propagate_alias_effects` writes the same effect set onto
+/// the alias's `Scheme::effects` field; this map mirrors that into the
+/// effects-walker world, where the let-binding env is dropped before
+/// `infer_expr_effects` runs over `f.body`.
+type AliasMap = HashMap<Symbol, EffectSet>;
 
 /// Compute the effect set performed by `expr`. Walks the AST bottom-up
 /// and unions the effects of every sub-expression. Function calls
 /// contribute the callee's `Scheme::effects` from `env`; unknown names
 /// contribute `EffectSet::TOP` (conservative default).
 pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
+    let aliases = AliasMap::new();
+    walk_expr(expr, env, &aliases)
+}
+
+fn walk_expr(expr: &Expr, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
     match &expr.kind {
         // Pure leaves — literals carry no effects.
         ExprKind::Int(_)
@@ -48,7 +66,7 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
             let mut acc = EffectSet::EMPTY;
             for part in parts {
                 if let StringPart::Expr(e) = part {
-                    acc = acc.union(infer_expr_effects(e, env));
+                    acc = acc.union(walk_expr(e, env, aliases));
                 }
             }
             acc
@@ -60,7 +78,7 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
                 let inner = match e {
                     ListElem::Single(x) | ListElem::Spread(x) => x,
                 };
-                acc = acc.union(infer_expr_effects(inner, env));
+                acc = acc.union(walk_expr(inner, env, aliases));
             }
             acc
         }
@@ -68,8 +86,8 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
         ExprKind::Map(entries) => {
             let mut acc = EffectSet::EMPTY;
             for (k, v) in entries {
-                acc = acc.union(infer_expr_effects(k, env));
-                acc = acc.union(infer_expr_effects(v, env));
+                acc = acc.union(walk_expr(k, env, aliases));
+                acc = acc.union(walk_expr(v, env, aliases));
             }
             acc
         }
@@ -77,33 +95,41 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
         ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
             let mut acc = EffectSet::EMPTY;
             for e in elems {
-                acc = acc.union(infer_expr_effects(e, env));
+                acc = acc.union(walk_expr(e, env, aliases));
             }
             acc
         }
 
-        ExprKind::FieldAccess(obj, _) => infer_expr_effects(obj, env),
+        ExprKind::FieldAccess(obj, _) => walk_expr(obj, env, aliases),
 
-        ExprKind::Binary(l, _, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
+        ExprKind::Binary(l, _, r) => {
+            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
+        }
         ExprKind::Unary(_, inner)
         | ExprKind::QuestionMark(inner)
-        | ExprKind::Ascription(inner, _) => infer_expr_effects(inner, env),
-        ExprKind::Pipe(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
-        ExprKind::Range(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
-        ExprKind::FloatElse(l, r) => infer_expr_effects(l, env).union(infer_expr_effects(r, env)),
+        | ExprKind::Ascription(inner, _) => walk_expr(inner, env, aliases),
+        ExprKind::Pipe(l, r) => {
+            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
+        }
+        ExprKind::Range(l, r) => {
+            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
+        }
+        ExprKind::FloatElse(l, r) => {
+            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
+        }
 
         ExprKind::Call(callee, args) => {
             // Effects of evaluating the callee + args + the call itself.
-            let mut acc = infer_expr_effects(callee, env);
+            let mut acc = walk_expr(callee, env, aliases);
             for a in args {
-                acc = acc.union(infer_expr_effects(a, env));
+                acc = acc.union(walk_expr(a, env, aliases));
             }
             // The call itself contributes the callee's declared effects.
             // We extract a name when the callee is a simple identifier
             // or a dotted path resolved by the existing resolver shape
             // (`fs.read_file`); deeper resolution is Phase B.
             if let Some(name) = callee_name(callee) {
-                acc = acc.union(scheme_effects_of(name, env));
+                acc = acc.union(scheme_effects_of(name, env, aliases));
             } else {
                 // Higher-order calls (the callee is computed): we have
                 // no scheme to consult. Treat as TOP — the conservative
@@ -125,48 +151,57 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
         ExprKind::RecordCreate { fields, .. } => {
             let mut acc = EffectSet::EMPTY;
             for (_, e) in fields {
-                acc = acc.union(infer_expr_effects(e, env));
+                acc = acc.union(walk_expr(e, env, aliases));
             }
             acc
         }
         ExprKind::RecordUpdate { expr, fields } => {
-            let mut acc = infer_expr_effects(expr, env);
+            let mut acc = walk_expr(expr, env, aliases);
             for (_, e) in fields {
-                acc = acc.union(infer_expr_effects(e, env));
+                acc = acc.union(walk_expr(e, env, aliases));
             }
             acc
         }
         ExprKind::AnonRecord { spread, fields } => {
             let mut acc = EffectSet::EMPTY;
             if let Some(sp) = spread {
-                acc = acc.union(infer_expr_effects(sp, env));
+                acc = acc.union(walk_expr(sp, env, aliases));
             }
             for (_, e) in fields {
-                acc = acc.union(infer_expr_effects(e, env));
+                acc = acc.union(walk_expr(e, env, aliases));
             }
             acc
         }
 
         ExprKind::Match { expr, arms } => {
             let mut acc = match expr {
-                Some(e) => infer_expr_effects(e, env),
+                Some(e) => walk_expr(e, env, aliases),
                 None => EffectSet::EMPTY,
             };
             for arm in arms {
-                acc = acc.union(arm_effects(arm, env));
+                acc = acc.union(arm_effects(arm, env, aliases));
             }
             acc
         }
 
         ExprKind::Return(inner) => match inner {
-            Some(e) => infer_expr_effects(e, env),
+            Some(e) => walk_expr(e, env, aliases),
             None => EffectSet::EMPTY,
         },
 
         ExprKind::Block(stmts) => {
+            // Round 64 BROKEN: thread an alias map through statements
+            // so that `let alias = doit; alias()` resolves the alias
+            // call to `doit`'s declared `Scheme::effects` instead of
+            // falling through to the higher-order TOP default. The
+            // typechecker side (`inference::propagate_alias_effects`)
+            // writes the same effects onto the alias's `Scheme` field,
+            // but that env is dropped before the effects walker sees
+            // the body — so we recreate the binding here.
+            let mut local = aliases.clone();
             let mut acc = EffectSet::EMPTY;
             for s in stmts {
-                acc = acc.union(stmt_effects(s, env));
+                acc = acc.union(stmt_effects(s, env, &mut local));
             }
             acc
         }
@@ -174,39 +209,57 @@ pub(super) fn infer_expr_effects(expr: &Expr, env: &TypeEnv) -> EffectSet {
         ExprKind::Loop { bindings, body } => {
             let mut acc = EffectSet::EMPTY;
             for (_, e) in bindings {
-                acc = acc.union(infer_expr_effects(e, env));
+                acc = acc.union(walk_expr(e, env, aliases));
             }
-            acc.union(infer_expr_effects(body, env))
+            acc.union(walk_expr(body, env, aliases))
         }
         ExprKind::Recur(args) => {
             let mut acc = EffectSet::EMPTY;
             for a in args {
-                acc = acc.union(infer_expr_effects(a, env));
+                acc = acc.union(walk_expr(a, env, aliases));
             }
             acc
         }
     }
 }
 
-fn arm_effects(arm: &MatchArm, env: &TypeEnv) -> EffectSet {
+fn arm_effects(arm: &MatchArm, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
     let mut acc = EffectSet::EMPTY;
     if let Some(g) = &arm.guard {
-        acc = acc.union(infer_expr_effects(g, env));
+        acc = acc.union(walk_expr(g, env, aliases));
     }
-    acc.union(infer_expr_effects(&arm.body, env))
+    acc.union(walk_expr(&arm.body, env, aliases))
 }
 
-fn stmt_effects(stmt: &Stmt, env: &TypeEnv) -> EffectSet {
+fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet {
     match stmt {
-        Stmt::Let { value, .. } => infer_expr_effects(value, env),
+        Stmt::Let { pattern, value, .. } => {
+            // Round 64 BROKEN: an aliasing let (`let alias = doit`,
+            // `let alias = mod.func`) extends the alias map so a later
+            // `alias()` Call in the same Block resolves to the source's
+            // declared effects. Mirrors `inference::propagate_alias_effects`
+            // for the effects walker, which doesn't share the
+            // typechecker's TypeEnv mutations across passes.
+            let val_effects = walk_expr(value, env, aliases);
+            if let PatternKind::Ident(name) = &pattern.kind {
+                if let Some(src) = callee_name(value) {
+                    // The value is a simple aliasing reference. Look up
+                    // the source's effects through the same path the
+                    // Call site uses (env + previous aliases).
+                    let src_eff = scheme_effects_of(src, env, aliases);
+                    aliases.insert(*name, src_eff);
+                }
+            }
+            val_effects
+        }
         Stmt::When {
             expr, else_body, ..
-        } => infer_expr_effects(expr, env).union(infer_expr_effects(else_body, env)),
+        } => walk_expr(expr, env, aliases).union(walk_expr(else_body, env, aliases)),
         Stmt::WhenBool {
             condition,
             else_body,
-        } => infer_expr_effects(condition, env).union(infer_expr_effects(else_body, env)),
-        Stmt::Expr(e) => infer_expr_effects(e, env),
+        } => walk_expr(condition, env, aliases).union(walk_expr(else_body, env, aliases)),
+        Stmt::Expr(e) => walk_expr(e, env, aliases),
     }
 }
 
@@ -240,7 +293,17 @@ fn callee_name(callee: &Expr) -> Option<Symbol> {
 /// the conservative default. We don't emit a diagnostic here; the main
 /// type checker has already complained about unknown names by the time
 /// the effects pass runs.
-fn scheme_effects_of(name: Symbol, env: &TypeEnv) -> EffectSet {
+///
+/// Round 64 BROKEN: consult `aliases` first, so a let-bound alias
+/// (`let alias = doit`) resolves to the source fn's declared effect
+/// set rather than the env-lookup result for `alias` (a freshly
+/// generalized scheme whose effects field hardcoded TOP at the
+/// `let`-binding site — see `inference::propagate_alias_effects` for
+/// the matching typechecker-side fix).
+fn scheme_effects_of(name: Symbol, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
+    if let Some(eff) = aliases.get(&name) {
+        return *eff;
+    }
     match env.lookup(name) {
         Some(s) => s.effects,
         None => EffectSet::TOP,

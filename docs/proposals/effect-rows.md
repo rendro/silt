@@ -303,7 +303,7 @@ ergonomic story.
 
 - **Implementation cost.** ~4-6 weeks tracking-only. ~3-6 months
   with handlers.
-- **Stdlib sweep.** 388 builtins to annotate. Mechanical but
+- **Stdlib sweep.** 378 builtins to annotate. Mechanical but
   load-bearing — a wrong annotation poisons every downstream
   inference.
 - **Error-message engineering tax.** "Effect `!io` from call to
@@ -453,7 +453,7 @@ Rust's edition mechanism — no specific version is committed yet.
 
 ### (c) Stdlib sweep ordering — RESOLVED
 
-One mechanical round over all 388 builtins, modeled after the
+One mechanical round over all 378 builtins, modeled after the
 round-64 docs-sweep template. Lock test catches drift.
 
 ### (d) Compatibility boundary — RESOLVED
@@ -494,7 +494,7 @@ on hover. Annotation enforcement at fn boundaries. Stdlib annotated
 as `!*` (compatibility default).
 
 **Phase C — stdlib sweep (1-2 weeks).** Annotate every stdlib
-builtin with its real effect set. 388 builtins. Mechanical, modeled
+builtin with its real effect set. 378 builtins. Mechanical, modeled
 after the round-64 docs-sweep template. Lock test catches drift.
 
 **Phase D — `--strict-effects` flag (1 week).** When set,

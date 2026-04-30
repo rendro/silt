@@ -127,8 +127,15 @@ impl std::error::Error for ManifestError {
 // Serde's errors are clean for missing/wrongly-typed fields; everything
 // else (identifier rules, semver shape, builtin collisions, unknown dep
 // kinds) is enforced as a post-step so the messages are tailored.
+//
+// Each top-level table struct uses `#[serde(deny_unknown_fields)]` so a
+// typo like `descrption` under `[package]` or a misspelled section like
+// `[depndencies]` is rejected at parse time rather than silently
+// ignored. Inline-table dependency parsing (path / git deps below)
+// already validates unknown keys explicitly.
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawManifest {
     package: RawPackage,
     #[serde(default)]
@@ -138,17 +145,19 @@ struct RawManifest {
 }
 
 /// Raw `[lints]` table. We accept the kebab-case `strict-effects` key
-/// (TOML / Cargo convention) and stash unknown keys in a catch-all
-/// so a forward-looking lint we don't yet recognise doesn't reject
-/// the manifest outright. Validation surfaces unknowns as a single
-/// non-fatal note in a future audit round if the need arises.
+/// (TOML / Cargo convention). Unknown keys are rejected at parse time
+/// (`deny_unknown_fields`) so typos surface immediately rather than
+/// being silently ignored — when a new lint flag lands, add the field
+/// here.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct RawLints {
     #[serde(rename = "strict-effects", default)]
     strict_effects: Option<bool>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawPackage {
     name: String,
     version: String,

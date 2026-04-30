@@ -146,132 +146,23 @@ impl Vm {
         // global the same way other builtin variants are. N-ary variants
         // land as `VariantConstructor`; nullary variants land as
         // `Variant` values.
-
-        // IoError
-        for (name, arity) in [
-            ("IoNotFound", 1usize),
-            ("IoPermissionDenied", 1),
-            ("IoAlreadyExists", 1),
-            ("IoInvalidInput", 1),
-            ("IoUnknown", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-        for name in ["IoInterrupted", "IoUnexpectedEof", "IoWriteZero"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
-        }
-
-        // JsonError
-        for (name, arity) in [
-            ("JsonSyntax", 2usize),
-            ("JsonTypeMismatch", 2),
-            ("JsonMissingField", 1),
-            ("JsonUnknown", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-
-        // TomlError
-        for (name, arity) in [
-            ("TomlSyntax", 2usize),
-            ("TomlTypeMismatch", 2),
-            ("TomlMissingField", 1),
-            ("TomlUnknown", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-
-        // ParseError
-        self.globals.insert(
-            "ParseInvalidDigit".into(),
-            Value::VariantConstructor("ParseInvalidDigit".into(), 1),
-        );
-        for name in ["ParseEmpty", "ParseOverflow", "ParseUnderflow"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
-        }
-
-        // HttpError
-        for (name, arity) in [
-            ("HttpConnect", 1usize),
-            ("HttpTls", 1),
-            ("HttpInvalidUrl", 1),
-            ("HttpInvalidResponse", 1),
-            ("HttpStatusCode", 2),
-            ("HttpUnknown", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-        for name in ["HttpTimeout", "HttpClosedEarly"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
-        }
-
-        // RegexError
-        self.globals.insert(
-            "RegexInvalidPattern".into(),
-            Value::VariantConstructor("RegexInvalidPattern".into(), 2),
-        );
-        self.globals.insert(
-            "RegexTooBig".into(),
-            Value::Variant("RegexTooBig".into(), Vec::new()),
-        );
-
-        // PgError
-        for (name, arity) in [
-            ("PgConnect", 1usize),
-            ("PgTls", 1),
-            ("PgAuthFailed", 1),
-            ("PgQuery", 2),
-            ("PgTypeMismatch", 3),
-            ("PgNoSuchColumn", 1),
-            ("PgUnknown", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-        for name in ["PgClosed", "PgTimeout", "PgTxnAborted"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
-        }
-
-        // TcpError
-        for (name, arity) in [("TcpConnect", 1usize), ("TcpTls", 1), ("TcpUnknown", 1)] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-        for name in ["TcpClosed", "TcpTimeout"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
-        }
-
-        // TimeError
-        for (name, arity) in [("TimeParseFormat", 1usize), ("TimeOutOfRange", 1)] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-
-        // BytesError
-        for (name, arity) in [
-            ("BytesInvalidUtf8", 1usize),
-            ("BytesInvalidHex", 1),
-            ("BytesInvalidBase64", 1),
-            ("BytesByteOutOfRange", 1),
-            ("BytesOutOfBounds", 1),
-        ] {
-            self.globals
-                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
-        }
-
-        // ChannelError
-        for name in ["ChannelTimeout", "ChannelClosed"] {
-            self.globals
-                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        //
+        // Round-64 DUP-1 fix: this loop is now data-driven from
+        // `module::builtin_error_enum_variants_with_arity()`. The
+        // previous hand-rolled per-family loops (one per error enum)
+        // duplicated the registry that already lives in
+        // `src/typechecker/builtins/errors.rs::register`. The parity
+        // test at `tests/error_enum_dispatch_parity_tests.rs` keeps the
+        // two registries in lockstep on `(variant, arity)`.
+        for (_enum_name, variants) in module::builtin_error_enum_variants_with_arity() {
+            for (variant, arity) in variants.iter() {
+                let value = if *arity == 0 {
+                    Value::Variant((*variant).into(), Vec::new())
+                } else {
+                    Value::VariantConstructor((*variant).into(), *arity)
+                };
+                self.globals.insert((*variant).into(), value);
+            }
         }
 
         // ── __type_of__<variant> mappings for builtin error enums ──
@@ -776,7 +667,21 @@ impl Vm {
                     if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
                         invoke_foreign_fn(name, &f, args)
                     } else {
-                        Err(VmError::new(format!("unknown module: {module}")))
+                        // Round-64 LATENT fix: previously "unknown
+                        // module: <X>". The trait-method dispatch path
+                        // lowers `enum_value.method()` into the same
+                        // module-style name, so when a builtin error
+                        // enum is feature-gated off (e.g. `PgError`
+                        // without the postgres feature), users would
+                        // see "unknown module: PgError" — confusing,
+                        // since PgError is presented to them as an
+                        // enum, not a module. The "builtin namespace"
+                        // wording matches the user mental model for
+                        // both module-qualified function calls and
+                        // qualified-global error-trait dispatch.
+                        Err(VmError::new(format!(
+                            "unknown builtin namespace: {module}"
+                        )))
                     }
                 }
             }

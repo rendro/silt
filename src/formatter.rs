@@ -4567,6 +4567,16 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     {
         return out;
     }
+    if let ExprKind::Map(_) = &expr.kind
+        && let Some(out) = format_map_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
+    if let ExprKind::SetLit(_) = &expr.kind
+        && let Some(out) = format_set_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
     format_expr_inner(expr, depth)
 }
 
@@ -4794,6 +4804,113 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
     }
     Some(format!(
         "{name} {{\n{}\n{}}}",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Map-literal multi-line emitter. Mirrors `format_list_expr_if_multiline`
+/// but emits `#{ k: v, ... }` form. The map opener is `#{` — the
+/// `compute_bracket_end_line` scanner latches onto the first `{` it sees,
+/// which (because the leading `#` is just a scalar char) is the `#{`
+/// opener. Same anchoring rule for `source_has_trailing_comma_at_offset`.
+fn format_map_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::Map(pairs) = &expr.kind else {
+        return None;
+    };
+    if pairs.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '{', '}');
+    // Use each entry's KEY line to anchor "this entry lives on this
+    // source line" — keys appear first inside the literal so that's the
+    // correct anchor for trailing-comment lookup.
+    let entry_lines: Vec<usize> = pairs.iter().map(|(k, _)| k.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &entry_lines) {
+        return None;
+    }
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
+    let last_idx = pairs.len().saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        // Use the VALUE's line as the entry's "ending" line for trailing-
+        // comment lookup — a `-- comment` after `"a": 1,` lives on the
+        // value's source line, not the key's. For multi-line entries
+        // (key on one line, value on another) the value line is the one
+        // whose tail can carry a trailing comment.
+        let entry_line = entry_lines[i];
+        let value_line = v.span.line;
+        let pre = take_comments_between(prev_line, entry_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let entry_str = format!(
+            "{}: {}",
+            format_expr(k, depth + 1),
+            format_expr(v, depth + 1)
+        );
+        let trailing = take_trailing_for_line(value_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{entry_str}{comma}{trailing}", indent(depth + 1)));
+        prev_line = value_line;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "#{{\n{}\n{}}}",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Set-literal multi-line emitter. Mirrors `format_list_expr_if_multiline`
+/// but uses the `#[ ... ]` form. Bracket-counting uses `[`/`]` because
+/// the leading `#` is a scalar char the scanner skips over.
+fn format_set_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::SetLit(elems) = &expr.kind else {
+        return None;
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '[', ']');
+    let elem_lines: Vec<usize> = elems.iter().map(|e| e.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &elem_lines) {
+        return None;
+    }
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '[', ']');
+    let last_idx = elems.len().saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, elem) in elems.iter().enumerate() {
+        let elem_line = elem_lines[i];
+        let pre = take_comments_between(prev_line, elem_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let elem_str = format_expr(elem, depth + 1);
+        let trailing = take_trailing_for_line(elem_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
+        prev_line = elem_line;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "#[\n{}\n{}]",
         lines.join("\n"),
         indent(depth)
     ))
