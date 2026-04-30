@@ -30,7 +30,7 @@ mod patterns;
 
 /// Encode a TypeExpr as a compact string for runtime JSON parsing.
 /// Examples: "String", "Int", "List:String", "Option:Int", "Record:Address"
-fn encode_type_expr(te: &TypeExpr) -> String {
+fn encode_type_expr(resolver: &crate::types::canonical::Resolver, te: &TypeExpr) -> String {
     match &te.kind {
         TypeExprKind::Named(n) => {
             let s = resolve(*n);
@@ -43,7 +43,7 @@ fn encode_type_expr(te: &TypeExpr) -> String {
             }
         }
         TypeExprKind::Generic(name, args) => {
-            match resolve(canonicalize_type_name(*name)).as_str() {
+            match resolve(canonicalize_type_name(resolver, *name)).as_str() {
                 // Range collapses to List via canonicalize_type_name (see
                 // src/types/canonical.rs), so this arm matches both the
                 // user-typed `List(T)` and `Range(T)` shapes; the runtime
@@ -53,14 +53,14 @@ fn encode_type_expr(te: &TypeExpr) -> String {
                 "List" => {
                     let inner = args
                         .first()
-                        .map(encode_type_expr)
+                        .map(|a| encode_type_expr(resolver, a))
                         .unwrap_or_else(|| "String".into());
                     format!("List:{inner}")
                 }
                 "Option" => {
                     let inner = args
                         .first()
-                        .map(encode_type_expr)
+                        .map(|a| encode_type_expr(resolver, a))
                         .unwrap_or_else(|| "String".into());
                     format!("Option:{inner}")
                 }
@@ -464,6 +464,20 @@ pub struct Compiler {
     /// inner-module pass), the typechecker has seen every dependency
     /// it transitively imported.
     module_exports: HashMap<Symbol, typechecker::ModuleExports>,
+    /// Compile-session-scoped canonical-resolver, mirroring
+    /// [`typechecker::TypeChecker::resolver`]. The compiler reads the
+    /// alias / assoc-binding registries via
+    /// [`crate::types::canonical::canonicalize_type_name`] when
+    /// emitting trait-impl global keys; sharing the same `Resolver`
+    /// the typechecker populated keeps registration and lookup keys
+    /// in lockstep across the typecheck → compile boundary. The
+    /// resolver flows in through `pre_typecheck_imports` (where each
+    /// per-module typecheck threads it via
+    /// `check_with_package_and_imports_options_resolver`) and out
+    /// again so the next module / entrypoint typecheck sees the
+    /// accumulated state. See
+    /// `docs/proposals/canonical-registry-scoping.md`.
+    resolver: crate::types::canonical::Resolver,
 }
 
 /// Seed `known_enum_variants` with the builtin enums. Called from
@@ -507,6 +521,7 @@ impl Compiler {
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             module_exports: HashMap::new(),
+            resolver: crate::types::canonical::Resolver::new(),
         }
     }
 
@@ -544,6 +559,7 @@ impl Compiler {
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             module_exports: HashMap::new(),
+            resolver: crate::types::canonical::Resolver::new(),
         }
     }
 
@@ -865,8 +881,10 @@ impl Compiler {
                             let fname = self.add_constant(Value::String(resolve(f.name)), span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(fname, span);
-                            let ftype =
-                                self.add_constant(Value::String(encode_type_expr(&f.ty)), span)?;
+                            let ftype = self.add_constant(
+                                Value::String(encode_type_expr(&self.resolver, &f.ty)),
+                                span,
+                            )?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(ftype, span);
                         }
@@ -908,7 +926,8 @@ impl Compiler {
                 // receiver. Without this canonicalisation the compiler
                 // would emit `"Range.bar"` while the typechecker
                 // registers `"List.bar"`, leaving the impl unreachable.
-                let canonical_target = canonicalize_type_name(trait_impl.target_type);
+                let canonical_target =
+                    canonicalize_type_name(&self.resolver, trait_impl.target_type);
 
                 // Auto-derived impls for built-in enums and records
                 // synthesize bodies that reference the target type's
@@ -1325,6 +1344,24 @@ impl Compiler {
         self.module_exports.clone()
     }
 
+    /// Detach and return the session-shared canonical resolver,
+    /// leaving the compiler with a fresh empty one. The CLI pipeline
+    /// uses this to thread the resolver into the entrypoint typecheck
+    /// (so user aliases registered while pre-typechecking imported
+    /// modules stay visible) and then restores it via
+    /// [`Compiler::put_resolver`] before the compile pass runs.
+    pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
+        std::mem::take(&mut self.resolver)
+    }
+
+    /// Restore a previously-extracted resolver (see
+    /// [`Compiler::take_resolver`]) so the compile pass's
+    /// `canonicalize_type_name` calls see the same alias state the
+    /// typechecker used.
+    pub fn put_resolver(&mut self, resolver: crate::types::canonical::Resolver) {
+        self.resolver = resolver;
+    }
+
     /// Internal worker for [`pre_typecheck_imports`]. Same body —
     /// kept private and named distinctly so internal call sites
     /// (compile_file_module_inner) read clearly.
@@ -1397,12 +1434,20 @@ impl Compiler {
             // Recurse: pre-typecheck this module's own imports first.
             self.pre_typecheck_user_imports(&program);
 
-            // Typecheck with the accumulated exports.
-            let (_errors, exports) = typechecker::check_with_package_and_imports(
-                &mut program,
-                self.current_package(),
-                self.module_exports.clone(),
-            );
+            // Typecheck with the accumulated exports. Thread the
+            // session-shared resolver so module aliases registered by
+            // dependencies are visible here, and any aliases this
+            // module registers stay visible to downstream importers.
+            let resolver = std::mem::take(&mut self.resolver);
+            let (_errors, exports, resolver) =
+                typechecker::check_with_package_and_imports_options_resolver(
+                    &mut program,
+                    self.current_package(),
+                    self.module_exports.clone(),
+                    false,
+                    Some(resolver),
+                );
+            self.resolver = resolver;
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -1529,11 +1574,16 @@ impl Compiler {
         // importers (the entrypoint, sibling modules).
         let module_sym = intern(module_name);
         self.pre_typecheck_user_imports(&program);
-        let (_type_errors, this_exports) = typechecker::check_with_package_and_imports(
-            &mut program,
-            self.current_package(),
-            self.module_exports.clone(),
-        );
+        let resolver = std::mem::take(&mut self.resolver);
+        let (_type_errors, this_exports, resolver) =
+            typechecker::check_with_package_and_imports_options_resolver(
+                &mut program,
+                self.current_package(),
+                self.module_exports.clone(),
+                false,
+                Some(resolver),
+            );
+        self.resolver = resolver;
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.

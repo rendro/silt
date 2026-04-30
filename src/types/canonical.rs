@@ -39,22 +39,24 @@
 //! Bytes = ...; let y = x` infers `y : List(Int)` for diagnostics on `y`).
 //!
 //! Phase A's [`canonicalize`] was a pure function with no shared state.
-//! Phase D adds a process-global alias registry — see
-//! [`register_alias`] / [`lookup_alias`] — that the typechecker
-//! populates at decl-processing time and the canonicaliser reads when
-//! expanding alias references. Implementation notes:
+//! Phase D adds a compile-session-scoped alias registry — see
+//! [`Resolver::register_alias`] / [`Resolver::lookup_alias`] — that
+//! the typechecker populates at decl-processing time and the
+//! canonicaliser reads when expanding alias references. Implementation
+//! notes:
 //!
-//! - The registry is `RwLock<HashMap<Symbol, AliasInfo>>`, mirroring the
-//!   variant-decl-order registry pattern in `src/value.rs`. Pros: no
-//!   signature churn across the rest of the codebase; same architecture
-//!   already in use for variant ordinals. Cons: stateful global. The
-//!   registry is process-global and is NOT cleared between checks;
-//!   production silt runs one typecheck per process, so this is a
-//!   non-issue in practice. There is intentionally no exposed
-//!   `clear_aliases` helper: any future test that needs cross-test
-//!   isolation should either use uniquely-named aliases (recommended;
-//!   aliases are keyed on resolved strings, so distinct names never
-//!   collide) or be designed to run out-of-process.
+//! - The registry lives on a [`Resolver`] instance owned by the
+//!   `TypeChecker` (see `src/typechecker/mod.rs`). One `Resolver` is
+//!   shared across every per-module typecheck in a single CLI compile
+//!   invocation (so module B importing module A still sees A's
+//!   aliases); LSP pulls each allocate a fresh `Resolver` so per-pull
+//!   state cannot leak across unrelated documents. See
+//!   `docs/proposals/canonical-registry-scoping.md` for the round-65
+//!   migration that replaced the previous process-global
+//!   `RwLock<HashMap>` design.
+//! - Keys are resolved `String`s rather than `Symbol`s because the
+//!   interner is `thread_local!` (see `crate::intern`), so two threads
+//!   can produce different `Symbol` values for the same string.
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
@@ -66,7 +68,6 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::types::{TyVar, Type};
 use crate::value::Value;
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
 
 /// Resolved type-alias entry stored in the global alias registry.
 ///
@@ -98,37 +99,6 @@ pub struct AliasInfo {
     pub target: Type,
 }
 
-// Note: the registry is keyed on the resolved `String` rather than
-// the `Symbol`. The interner (`crate::intern`) is `thread_local!`,
-// so two threads (e.g. parallel test runners) can produce different
-// `Symbol` values for the same string. Keying by string sidesteps
-// that hazard and matches the cross-process variant-ordinal registry
-// pattern in `src/value.rs`, which also uses `String` keys for the
-// same reason.
-fn alias_registry() -> &'static RwLock<HashMap<String, AliasInfo>> {
-    static REG: OnceLock<RwLock<HashMap<String, AliasInfo>>> = OnceLock::new();
-    REG.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-/// Register a user-declared type alias into the canonicalisation
-/// registry. Called by the typechecker at decl-processing time.
-/// Re-registering the same name overwrites the previous entry, which
-/// matches the duplicate-decl semantics enforced elsewhere
-/// (`register_type_decl` already errors on a duplicate name; the
-/// overwrite here is a defensive convenience for tests).
-pub fn register_alias(name: Symbol, info: AliasInfo) {
-    let mut guard = alias_registry().write().unwrap();
-    guard.insert(resolve(name), info);
-}
-
-/// Look up a registered alias by name. Returns `None` for built-in
-/// names and for any user name that has not been registered (which
-/// is the common case during a non-alias-bearing typecheck run).
-pub fn lookup_alias(name: Symbol) -> Option<AliasInfo> {
-    let guard = alias_registry().read().unwrap();
-    guard.get(&resolve(name)).cloned()
-}
-
 // ── Associated-type bindings registry (Phase: associated types) ──────
 //
 // Mirrors the alias-registry pattern above. Keys are
@@ -148,56 +118,101 @@ pub struct AssocBinding {
     pub ty: Type,
 }
 
-fn assoc_registry() -> &'static RwLock<HashMap<(String, String, String), AssocBinding>> {
-    static REG: OnceLock<RwLock<HashMap<(String, String, String), AssocBinding>>> = OnceLock::new();
-    REG.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-/// Register an `assoc-type` impl binding.
+/// Compile-session-scoped storage for the alias and associated-type
+/// binding registries.
 ///
-/// Called by the typechecker when processing a `TraitImpl`: for each
-/// `type Item = X` binding, the target's canonical head is computed
-/// (so `Range` and `List` collapse to the same key) and the resolved
-/// type is stored. Re-registering the same triple overwrites the
-/// previous entry (matches the alias-registry convention; the
-/// typechecker enforces uniqueness via its duplicate-impl check, so
-/// in practice this only fires once per triple).
-pub fn register_assoc_binding(
-    trait_name: Symbol,
-    target_head: Symbol,
-    assoc_name: Symbol,
-    ty: Type,
-) {
-    let head_canon = canonicalize_type_name(target_head);
-    let mut guard = assoc_registry().write().unwrap();
-    guard.insert(
-        (
-            resolve(trait_name),
-            resolve(head_canon),
-            resolve(assoc_name),
-        ),
-        AssocBinding {
-            ty: canonicalize(&ty),
-        },
-    );
+/// Replaces the previous `RwLock<HashMap>` process-globals: every
+/// `TypeChecker` constructed in one compile invocation (one `silt
+/// run` / `silt check` / `silt test` call, or one LSP pull) shares a
+/// single `Resolver` so cross-module alias resolution still works
+/// (module B importing module A sees A's aliases) without leaking
+/// state across unrelated compile invocations (no cross-pull
+/// contamination in LSP).
+///
+/// Keys are resolved `String`s rather than `Symbol`s because the
+/// interner (`crate::intern`) is `thread_local!`, so two threads
+/// (e.g. parallel test runners) can produce different `Symbol`
+/// values for the same string. Keying by string sidesteps that
+/// hazard and matches the variant-ordinal registry pattern in
+/// `src/value.rs` which is intentionally kept process-global because
+/// the VM consumes it.
+#[derive(Debug, Clone, Default)]
+pub struct Resolver {
+    aliases: HashMap<String, AliasInfo>,
+    assoc_bindings: HashMap<(String, String, String), AssocBinding>,
 }
 
-/// Look up an `assoc-type` binding by `(trait, target_head, assoc_name)`.
-/// Returns `None` when no impl has registered the binding.
-pub fn lookup_assoc_binding(
-    trait_name: Symbol,
-    target_head: Symbol,
-    assoc_name: Symbol,
-) -> Option<AssocBinding> {
-    let head_canon = canonicalize_type_name(target_head);
-    let guard = assoc_registry().read().unwrap();
-    guard
-        .get(&(
-            resolve(trait_name),
-            resolve(head_canon),
-            resolve(assoc_name),
-        ))
-        .cloned()
+impl Resolver {
+    /// Allocate a fresh resolver with empty maps.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a user-declared type alias. Called by the typechecker
+    /// at decl-processing time. Re-registering the same name
+    /// overwrites the previous entry, which matches the duplicate-
+    /// decl semantics enforced elsewhere (`register_type_decl`
+    /// already errors on a duplicate name; the overwrite here is a
+    /// defensive convenience for tests).
+    pub fn register_alias(&mut self, name: Symbol, info: AliasInfo) {
+        self.aliases.insert(resolve(name), info);
+    }
+
+    /// Look up a registered alias by name. Returns `None` for built-
+    /// in names and for any user name that has not been registered
+    /// (which is the common case during a non-alias-bearing
+    /// typecheck run).
+    pub fn lookup_alias(&self, name: Symbol) -> Option<AliasInfo> {
+        self.aliases.get(&resolve(name)).cloned()
+    }
+
+    /// Register an `assoc-type` impl binding.
+    ///
+    /// Called by the typechecker when processing a `TraitImpl`: for
+    /// each `type Item = X` binding, the target's canonical head is
+    /// computed (so `Range` and `List` collapse to the same key) and
+    /// the resolved type is stored. Re-registering the same triple
+    /// overwrites the previous entry (matches the alias-registry
+    /// convention; the typechecker enforces uniqueness via its
+    /// duplicate-impl check, so in practice this only fires once per
+    /// triple).
+    pub fn register_assoc_binding(
+        &mut self,
+        trait_name: Symbol,
+        target_head: Symbol,
+        assoc_name: Symbol,
+        ty: Type,
+    ) {
+        let head_canon = canonicalize_type_name(self, target_head);
+        let canon_ty = canonicalize(self, &ty);
+        self.assoc_bindings.insert(
+            (
+                resolve(trait_name),
+                resolve(head_canon),
+                resolve(assoc_name),
+            ),
+            AssocBinding { ty: canon_ty },
+        );
+    }
+
+    /// Look up an `assoc-type` binding by `(trait, target_head,
+    /// assoc_name)`. Returns `None` when no impl has registered the
+    /// binding.
+    pub fn lookup_assoc_binding(
+        &self,
+        trait_name: Symbol,
+        target_head: Symbol,
+        assoc_name: Symbol,
+    ) -> Option<AssocBinding> {
+        let head_canon = canonicalize_type_name(self, target_head);
+        self.assoc_bindings
+            .get(&(
+                resolve(trait_name),
+                resolve(head_canon),
+                resolve(assoc_name),
+            ))
+            .cloned()
+    }
 }
 
 /// Reduce a type to its canonical form.
@@ -212,7 +227,7 @@ pub fn lookup_assoc_binding(
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
 /// variables are returned unchanged.
-pub fn canonicalize(ty: &Type) -> Type {
+pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
     match ty {
         // ── Primary reduction: Range collapses to List ─────────────
         // Range is a nominal zero-cost alias of List in silt
@@ -220,7 +235,7 @@ pub fn canonicalize(ty: &Type) -> Type {
         // compiler, and VM all need to treat them as the same type for
         // dispatch and equality; canonicalising at the boundary is the
         // single point where that invariant is enforced.
-        Type::Range(inner) => Type::List(Box::new(canonicalize(inner))),
+        Type::Range(inner) => Type::List(Box::new(canonicalize(resolver, inner))),
 
         // ── Phase D: user-declared aliases ─────────────────────────
         // A `Type::Generic(name, args)` whose `name` is a registered
@@ -230,37 +245,51 @@ pub fn canonicalize(ty: &Type) -> Type {
         // Pair(Int) -> (Int, Int)`) and zero-arity aliases that the
         // typechecker happens to produce as `Generic(name, [])` (e.g.
         // when the user wrote `Bytes` bare).
-        Type::Generic(name, args) if lookup_alias(*name).is_some() => {
-            let info = lookup_alias(*name).expect("checked just above");
+        Type::Generic(name, args) if resolver.lookup_alias(*name).is_some() => {
+            let info = resolver.lookup_alias(*name).expect("checked just above");
             // Canonicalise args first so nested alias references in
             // the args resolve before substitution. The targeted
             // substitution then operates on already-canonical types.
-            let canon_args: Vec<Type> = args.iter().map(canonicalize).collect();
+            let canon_args: Vec<Type> = args.iter().map(|t| canonicalize(resolver, t)).collect();
             let substituted = expand_alias(&info, &canon_args);
-            canonicalize(&substituted)
+            canonicalize(resolver, &substituted)
         }
 
         // ── Compound shapes: structural recursion ──────────────────
-        Type::List(inner) => Type::List(Box::new(canonicalize(inner))),
-        Type::Set(inner) => Type::Set(Box::new(canonicalize(inner))),
-        Type::Channel(inner) => Type::Channel(Box::new(canonicalize(inner))),
-        Type::Map(k, v) => Type::Map(Box::new(canonicalize(k)), Box::new(canonicalize(v))),
-        Type::Fun(params, ret) => Type::Fun(
-            params.iter().map(canonicalize).collect(),
-            Box::new(canonicalize(ret)),
+        Type::List(inner) => Type::List(Box::new(canonicalize(resolver, inner))),
+        Type::Set(inner) => Type::Set(Box::new(canonicalize(resolver, inner))),
+        Type::Channel(inner) => Type::Channel(Box::new(canonicalize(resolver, inner))),
+        Type::Map(k, v) => Type::Map(
+            Box::new(canonicalize(resolver, k)),
+            Box::new(canonicalize(resolver, v)),
         ),
-        Type::Tuple(elems) => Type::Tuple(elems.iter().map(canonicalize).collect()),
+        Type::Fun(params, ret) => Type::Fun(
+            params.iter().map(|t| canonicalize(resolver, t)).collect(),
+            Box::new(canonicalize(resolver, ret)),
+        ),
+        Type::Tuple(elems) => {
+            Type::Tuple(elems.iter().map(|t| canonicalize(resolver, t)).collect())
+        }
         Type::Record(name, fields) => Type::Record(
             *name,
-            fields.iter().map(|(n, t)| (*n, canonicalize(t))).collect(),
+            fields
+                .iter()
+                .map(|(n, t)| (*n, canonicalize(resolver, t)))
+                .collect(),
         ),
-        Type::Generic(name, args) => Type::Generic(*name, args.iter().map(canonicalize).collect()),
+        Type::Generic(name, args) => Type::Generic(
+            *name,
+            args.iter().map(|t| canonicalize(resolver, t)).collect(),
+        ),
 
         // ── Anonymous structural records ───────────────────────────
         // Recurse on each field. Tail is preserved as-is — row variables
         // are inference-internal and unification handles their binding.
         Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields.iter().map(|(n, t)| (*n, canonicalize(t))).collect(),
+            fields: fields
+                .iter()
+                .map(|(n, t)| (*n, canonicalize(resolver, t)))
+                .collect(),
             tail: tail.clone(),
         },
 
@@ -281,11 +310,12 @@ pub fn canonicalize(ty: &Type) -> Type {
             trait_name,
             assoc_name,
         } => {
-            let canon_recv = canonicalize(receiver);
+            let canon_recv = canonicalize(resolver, receiver);
             // Try to find a head symbol on the canonicalised receiver.
             // Concrete heads -> impl-table lookup. None -> abstract.
             if let Some(head) = head_symbol_of_canon(&canon_recv)
-                && let Some(binding) = lookup_assoc_binding(*trait_name, head, *assoc_name)
+                && let Some(binding) =
+                    resolver.lookup_assoc_binding(*trait_name, head, *assoc_name)
             {
                 // The stored binding was canonicalised at registration
                 // time. Canonicalise again here so any nested alias /
@@ -293,7 +323,7 @@ pub fn canonicalize(ty: &Type) -> Type {
                 // before another alias became known) reduces too. The
                 // recursion terminates because the binding's head is
                 // not the same as the AssocProj's input head.
-                return canonicalize(&binding.ty);
+                return canonicalize(resolver, &binding.ty);
             }
             // No binding (or abstract receiver): keep as canonical
             // AssocProj. The typechecker emits a "type does not
@@ -351,8 +381,8 @@ fn expand_alias(info: &AliasInfo, args: &[Type]) -> Type {
 /// positions count as equal) is a phase-B+ concern: the unifier will
 /// continue to handle var-binding via its substitution map, and
 /// [`types_equal`] is only consulted on already-substituted types.
-pub fn types_equal(a: &Type, b: &Type) -> bool {
-    canonicalize(a) == canonicalize(b)
+pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
+    canonicalize(resolver, a) == canonicalize(resolver, b)
 }
 
 /// Single canonical built-in type name used by the runtime, compiler,
@@ -443,7 +473,7 @@ pub fn canonical_name(ty: &Type) -> String {
 /// canonicalisation rules ever expand, both must be updated together
 /// (see also: the architectural lock test in
 /// `tests/canonical_type_arch_lock_tests.rs`).
-pub fn canonicalize_type_name(name: Symbol) -> Symbol {
+pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     if resolve(name).as_str() == "Range" {
         return intern("List");
     }
@@ -455,10 +485,10 @@ pub fn canonicalize_type_name(name: Symbol) -> Symbol {
     // returns the final non-alias head. The recursive call protects
     // against future canonicalize changes that might leave a partial
     // chain in place.
-    if let Some(info) = lookup_alias(name) {
-        let canon_target = canonicalize(&info.target);
+    if let Some(info) = resolver.lookup_alias(name) {
+        let canon_target = canonicalize(resolver, &info.target);
         if let Some(head) = head_symbol_of_canon(&canon_target) {
-            return canonicalize_type_name(head);
+            return canonicalize_type_name(resolver, head);
         }
     }
     name
@@ -594,7 +624,8 @@ mod tests {
     #[test]
     fn canonicalize_range_becomes_list() {
         let r = Type::Range(Box::new(Type::Int));
-        assert_eq!(canonicalize(&r), Type::List(Box::new(Type::Int)));
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &r), Type::List(Box::new(Type::Int)));
     }
 
     #[test]
@@ -607,7 +638,8 @@ mod tests {
             vec![Type::List(Box::new(Type::Int))],
             Box::new(Type::List(Box::new(Type::Bool))),
         );
-        assert_eq!(canonicalize(&f), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &f), expected);
     }
 
     #[test]
@@ -622,7 +654,8 @@ mod tests {
             Type::String,
             Type::List(Box::new(Type::Bool)),
         ]);
-        assert_eq!(canonicalize(&t), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &t), expected);
     }
 
     #[test]
@@ -630,7 +663,8 @@ mod tests {
         // List of Range collapses to List of List.
         let t = Type::List(Box::new(Type::Range(Box::new(Type::Int))));
         let expected = Type::List(Box::new(Type::List(Box::new(Type::Int))));
-        assert_eq!(canonicalize(&t), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &t), expected);
     }
 
     #[test]
@@ -643,19 +677,21 @@ mod tests {
             Box::new(Type::List(Box::new(Type::Int))),
             Box::new(Type::List(Box::new(Type::Bool))),
         );
-        assert_eq!(canonicalize(&t), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &t), expected);
     }
 
     #[test]
     fn canonicalize_range_in_set_and_channel() {
         let s = Type::Set(Box::new(Type::Range(Box::new(Type::Int))));
+        let res = Resolver::new();
         assert_eq!(
-            canonicalize(&s),
+            canonicalize(&res, &s),
             Type::Set(Box::new(Type::List(Box::new(Type::Int))))
         );
         let c = Type::Channel(Box::new(Type::Range(Box::new(Type::Int))));
         assert_eq!(
-            canonicalize(&c),
+            canonicalize(&res, &c),
             Type::Channel(Box::new(Type::List(Box::new(Type::Int))))
         );
     }
@@ -666,7 +702,8 @@ mod tests {
         let field = intern::intern("xs");
         let r = Type::Record(name, vec![(field, Type::Range(Box::new(Type::Int)))]);
         let expected = Type::Record(name, vec![(field, Type::List(Box::new(Type::Int)))]);
-        assert_eq!(canonicalize(&r), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &r), expected);
     }
 
     #[test]
@@ -674,7 +711,8 @@ mod tests {
         let name = intern::intern("Result");
         let g = Type::Generic(name, vec![Type::Range(Box::new(Type::Int)), Type::String]);
         let expected = Type::Generic(name, vec![Type::List(Box::new(Type::Int)), Type::String]);
-        assert_eq!(canonicalize(&g), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &g), expected);
     }
 
     #[test]
@@ -700,7 +738,8 @@ mod tests {
             )],
             Box::new(Type::Unit),
         );
-        assert_eq!(canonicalize(&t), expected);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &t), expected);
     }
 
     #[test]
@@ -731,9 +770,10 @@ mod tests {
             Type::Never,
             Type::Unit,
         ];
+        let res = Resolver::new();
         for t in &cases {
-            let once = canonicalize(t);
-            let twice = canonicalize(&once);
+            let once = canonicalize(&res, t);
+            let twice = canonicalize(&res, &once);
             assert_eq!(
                 once, twice,
                 "canonicalize is not idempotent for {t:?}: once={once:?} twice={twice:?}"
@@ -743,6 +783,7 @@ mod tests {
 
     #[test]
     fn canonicalize_leaves_primitives_unchanged() {
+        let res = Resolver::new();
         for t in [
             Type::Int,
             Type::Float,
@@ -751,27 +792,31 @@ mod tests {
             Type::String,
             Type::Unit,
         ] {
-            assert_eq!(canonicalize(&t), t);
+            assert_eq!(canonicalize(&res, &t), t);
         }
     }
 
     #[test]
     fn canonicalize_leaves_special_shapes_unchanged() {
-        assert_eq!(canonicalize(&Type::Var(0)), Type::Var(0));
-        assert_eq!(canonicalize(&Type::Error), Type::Error);
-        assert_eq!(canonicalize(&Type::Never), Type::Never);
+        let res = Resolver::new();
+        assert_eq!(canonicalize(&res, &Type::Var(0)), Type::Var(0));
+        assert_eq!(canonicalize(&res, &Type::Error), Type::Error);
+        assert_eq!(canonicalize(&res, &Type::Never), Type::Never);
     }
 
     // ── types_equal ────────────────────────────────────────────────
 
     #[test]
     fn types_equal_range_eq_list() {
+        let res = Resolver::new();
         assert!(types_equal(
+            &res,
             &Type::Range(Box::new(Type::Int)),
             &Type::List(Box::new(Type::Int))
         ));
         // And symmetrically.
         assert!(types_equal(
+            &res,
             &Type::List(Box::new(Type::Int)),
             &Type::Range(Box::new(Type::Int))
         ));
@@ -782,25 +827,30 @@ mod tests {
         // Tuple(Range(Int), Bool) == Tuple(List(Int), Bool)
         let a = Type::Tuple(vec![Type::Range(Box::new(Type::Int)), Type::Bool]);
         let b = Type::Tuple(vec![Type::List(Box::new(Type::Int)), Type::Bool]);
-        assert!(types_equal(&a, &b));
+        let res = Resolver::new();
+        assert!(types_equal(&res, &a, &b));
     }
 
     #[test]
     fn types_equal_distinct_primitives_not_equal() {
-        assert!(!types_equal(&Type::Int, &Type::Float));
-        assert!(!types_equal(&Type::Int, &Type::Bool));
-        assert!(!types_equal(&Type::String, &Type::Bool));
-        assert!(!types_equal(&Type::Float, &Type::ExtFloat));
-        assert!(!types_equal(&Type::Unit, &Type::Int));
+        let res = Resolver::new();
+        assert!(!types_equal(&res, &Type::Int, &Type::Float));
+        assert!(!types_equal(&res, &Type::Int, &Type::Bool));
+        assert!(!types_equal(&res, &Type::String, &Type::Bool));
+        assert!(!types_equal(&res, &Type::Float, &Type::ExtFloat));
+        assert!(!types_equal(&res, &Type::Unit, &Type::Int));
     }
 
     #[test]
     fn types_equal_distinct_inner_types_not_equal() {
+        let res = Resolver::new();
         assert!(!types_equal(
+            &res,
             &Type::List(Box::new(Type::Int)),
             &Type::List(Box::new(Type::String))
         ));
         assert!(!types_equal(
+            &res,
             &Type::Range(Box::new(Type::Int)),
             &Type::List(Box::new(Type::Bool))
         ));
@@ -808,6 +858,7 @@ mod tests {
 
     #[test]
     fn types_equal_reflexive() {
+        let res = Resolver::new();
         for t in [
             Type::Int,
             Type::Range(Box::new(Type::Int)),
@@ -815,7 +866,10 @@ mod tests {
             Type::Tuple(vec![Type::Int, Type::String]),
             Type::Var(3),
         ] {
-            assert!(types_equal(&t, &t), "types_equal not reflexive for {t:?}");
+            assert!(
+                types_equal(&res, &t, &t),
+                "types_equal not reflexive for {t:?}"
+            );
         }
     }
 
@@ -830,8 +884,9 @@ mod tests {
         //
         // This test locks in current behaviour: identical TyVar ids
         // compare equal, distinct ids do not.
-        assert!(types_equal(&Type::Var(0), &Type::Var(0)));
-        assert!(!types_equal(&Type::Var(0), &Type::Var(1)));
+        let res = Resolver::new();
+        assert!(types_equal(&res, &Type::Var(0), &Type::Var(0)));
+        assert!(!types_equal(&res, &Type::Var(0), &Type::Var(1)));
     }
 
     // ── canonical_name ─────────────────────────────────────────────
@@ -964,17 +1019,23 @@ mod tests {
 
     #[test]
     fn canonicalize_type_name_collapses_range_to_list() {
+        let res = Resolver::new();
         assert_eq!(
-            resolve(canonicalize_type_name(intern::intern("Range"))),
+            resolve(canonicalize_type_name(&res, intern::intern("Range"))),
             "List"
         );
     }
 
     #[test]
     fn canonicalize_type_name_round_trips_unrelated_names() {
+        let res = Resolver::new();
         for n in ["Int", "List", "Map", "Set", "Tuple", "Foo", "Bar"] {
             let s = intern::intern(n);
-            assert_eq!(canonicalize_type_name(s), s, "expected round-trip for {n}");
+            assert_eq!(
+                canonicalize_type_name(&res, s),
+                s,
+                "expected round-trip for {n}"
+            );
         }
     }
 
@@ -1051,14 +1112,14 @@ mod tests {
     // ── Phase D: alias registry + expansion in canonicalize ──────────
 
     /// `canonicalize` expands a registered non-parametric alias to its
-    /// stored target. Test isolation: every alias in this module uses
-    /// the `CanonTest_*` prefix so parallel test threads don't collide
-    /// with the integration tests in `tests/type_alias_tests.rs` which
-    /// use `PhD*` prefixes.
+    /// stored target. Test isolation: each unit test owns a fresh
+    /// `Resolver` so cross-test contamination is impossible by
+    /// construction (post-refactor).
     #[test]
     fn alias_expansion_simple() {
+        let mut res = Resolver::new();
         let name = intern::intern("CanonTest_Bytes");
-        register_alias(
+        res.register_alias(
             name,
             AliasInfo {
                 params: vec![],
@@ -1067,18 +1128,19 @@ mod tests {
             },
         );
         let ty = Type::Generic(name, vec![]);
-        assert_eq!(canonicalize(&ty), Type::List(Box::new(Type::Int)));
+        assert_eq!(canonicalize(&res, &ty), Type::List(Box::new(Type::Int)));
     }
 
     /// Parametric alias: the target's TyVar is substituted with the
     /// call-site argument before canonicalisation.
     #[test]
     fn alias_expansion_parametric() {
+        let mut res = Resolver::new();
         let name = intern::intern("CanonTest_PairOf");
         // `type CanonTest_PairOf(a) = (a, a)` with a hand-rolled
         // TyVar id of 999.
         let var_id: TyVar = 999;
-        register_alias(
+        res.register_alias(
             name,
             AliasInfo {
                 params: vec![intern::intern("a")],
@@ -1087,7 +1149,10 @@ mod tests {
             },
         );
         let ty = Type::Generic(name, vec![Type::Int]);
-        assert_eq!(canonicalize(&ty), Type::Tuple(vec![Type::Int, Type::Int]));
+        assert_eq!(
+            canonicalize(&res, &ty),
+            Type::Tuple(vec![Type::Int, Type::Int])
+        );
     }
 
     /// Chained alias: `B = A; A = List(Int)` — `B` canonicalises to
@@ -1095,9 +1160,10 @@ mod tests {
     /// re-enters expansion on the substituted target.
     #[test]
     fn alias_expansion_chained() {
+        let mut res = Resolver::new();
         let a = intern::intern("CanonTest_ChainA");
         let b = intern::intern("CanonTest_ChainB");
-        register_alias(
+        res.register_alias(
             a,
             AliasInfo {
                 params: vec![],
@@ -1105,7 +1171,7 @@ mod tests {
                 target: Type::List(Box::new(Type::Int)),
             },
         );
-        register_alias(
+        res.register_alias(
             b,
             AliasInfo {
                 params: vec![],
@@ -1114,7 +1180,7 @@ mod tests {
             },
         );
         let ty = Type::Generic(b, vec![]);
-        assert_eq!(canonicalize(&ty), Type::List(Box::new(Type::Int)));
+        assert_eq!(canonicalize(&res, &ty), Type::List(Box::new(Type::Int)));
     }
 
     /// `canonicalize_type_name` follows alias chains to the head
@@ -1122,8 +1188,9 @@ mod tests {
     /// dispatches under the same key as a direct `List` impl.
     #[test]
     fn canonicalize_type_name_follows_alias_to_head() {
+        let mut res = Resolver::new();
         let name = intern::intern("CanonTest_Bytes2");
-        register_alias(
+        res.register_alias(
             name,
             AliasInfo {
                 params: vec![],
@@ -1132,17 +1199,30 @@ mod tests {
             },
         );
         assert_eq!(
-            resolve(canonicalize_type_name(name)),
+            resolve(canonicalize_type_name(&res, name)),
             "List",
             "alias name should route to its target's canonical head"
         );
     }
 
-    // Note: there is no `clear_aliases()` helper. The alias registry
-    // is process-global and is not cleared between checks; production
-    // silt runs one typecheck per process, so accumulation is not a
-    // problem. The integration suite (`tests/type_alias_tests.rs`)
-    // relies on per-test name uniqueness for isolation. Any future
-    // test that needs cross-test isolation should either use
-    // uniquely-named aliases or be designed to run out-of-process.
+    /// Two `Resolver` instances do not share alias state — locks the
+    /// post-refactor isolation contract. Pre-refactor this would have
+    /// failed because the alias registry was a process-global
+    /// `RwLock<HashMap>`.
+    #[test]
+    fn two_resolvers_do_not_share_aliases_unit() {
+        let mut a = Resolver::new();
+        let b = Resolver::new();
+        let name = intern::intern("CanonTest_IsolatedAlias");
+        a.register_alias(
+            name,
+            AliasInfo {
+                params: vec![],
+                param_var_ids: vec![],
+                target: Type::List(Box::new(Type::Int)),
+            },
+        );
+        assert!(a.lookup_alias(name).is_some());
+        assert!(b.lookup_alias(name).is_none());
+    }
 }

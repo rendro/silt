@@ -140,13 +140,24 @@ pub(crate) fn run_compile_pipeline_with_options(
 
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
+    //
+    // Thread the compiler's session-shared `Resolver` through the
+    // entrypoint's typecheck so user aliases registered while
+    // pre-typechecking imported modules stay visible. The resolver is
+    // stitched back into the compiler afterward so the trait-impl
+    // emission path (`Decl::TraitImpl` arm) sees the accumulated
+    // alias state when canonicalising target-type symbols.
     let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
-        let (raw_type_errors, _entry_exports) = typechecker::check_with_package_and_imports_options(
-            &mut program,
-            Some(local_pkg),
-            module_exports,
-            strict_effects,
-        );
+        let resolver = compiler.take_resolver();
+        let (raw_type_errors, _entry_exports, resolver) =
+            typechecker::check_with_package_and_imports_options_resolver(
+                &mut program,
+                Some(local_pkg),
+                module_exports,
+                strict_effects,
+                Some(resolver),
+            );
+        compiler.put_resolver(resolver);
         raw_type_errors
             .iter()
             .map(|e| SourceError::from_type_error(e, &source, path))

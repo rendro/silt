@@ -2393,7 +2393,7 @@ impl TypeChecker {
                 // separate Range redirect to the List method table
                 // is needed because the Range form has been collapsed
                 // away upstream of this match.
-                let obj_ty = crate::types::canonical::canonicalize(&obj_ty);
+                let obj_ty = crate::types::canonical::canonicalize(&self.resolver, &obj_ty);
 
                 // Field / method access
                 //
@@ -3891,7 +3891,7 @@ impl TypeChecker {
                 if let Some(base_expr) = spread {
                     let base_ty = self.infer_expr(base_expr, env);
                     let base_ty = self.apply(&base_ty);
-                    let base_canon = crate::types::canonical::canonicalize(&base_ty);
+                    let base_canon = crate::types::canonical::canonicalize(&self.resolver, &base_ty);
                     // Determine base's known fields and tail.
                     let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
                         match &base_canon {

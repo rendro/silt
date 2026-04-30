@@ -34,7 +34,7 @@
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::canonical::{canonicalize, types_equal};
+use silt::types::canonical::{Resolver, canonicalize, types_equal};
 use silt::types::{Severity, Type};
 
 fn type_errors(input: &str) -> Vec<String> {
@@ -191,12 +191,13 @@ fn mixed_nesting_canonicalizes() {
         vec![Type::List(Box::new(Type::Int))],
         Box::new(Type::Range(Box::new(Type::Bool))),
     );
+    let resolver = Resolver::new();
     assert!(
-        types_equal(&a, &b),
+        types_equal(&resolver, &a, &b),
         "expected canonical equality across Fn(Range(Int)) -> List(Bool) ~ Fn(List(Int)) -> Range(Bool); \
          canonicalize(a) = {:?}, canonicalize(b) = {:?}",
-        canonicalize(&a),
-        canonicalize(&b)
+        canonicalize(&resolver, &a),
+        canonicalize(&resolver, &b)
     );
 }
 

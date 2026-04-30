@@ -579,11 +579,11 @@ pub struct TypeChecker {
     /// alias the typechecker has seen this run so `resolve_type_expr`
     /// knows whether an uppercase identifier should fall through to
     /// the builtins / record-or-enum lookup or be treated as an
-    /// alias. The actual alias body lives in
-    /// [`crate::types::canonical::lookup_alias`] (the canonicaliser
-    /// owns expansion); this set is just a fast-path so the
-    /// typechecker doesn't have to take the registry's RwLock on
-    /// every type-expr resolution.
+    /// alias. The actual alias body lives on
+    /// [`crate::types::canonical::Resolver`] (the session-scoped
+    /// alias / assoc-binding store the canonicaliser reads); this
+    /// set is just a fast-path so the typechecker doesn't have to go
+    /// through the resolver on every type-expr resolution.
     pub(super) type_aliases: std::collections::HashSet<Symbol>,
     /// Phase D: parameter arity of each declared alias, for arity-
     /// error diagnostics at use sites. Parallel to `type_aliases`
@@ -717,6 +717,18 @@ pub struct TypeChecker {
     /// annotation. Keyed by `f.span.offset` because `Symbol` keys
     /// would conflate trait impl methods sharing a name.
     pub(super) strict_effects_flipped: std::collections::HashSet<usize>,
+    /// Compile-session-scoped storage for the canonical alias /
+    /// associated-type-binding registries. Populated as the
+    /// typechecker processes user `type ... = ...` decls and trait
+    /// impls; consumed by `canonicalize` and `canonicalize_type_name`
+    /// at every read site. Cross-module sharing happens by extracting
+    /// this field from one TypeChecker and constructing the next via
+    /// `with_resolver` — the CLI compile pipeline does this so module
+    /// B importing module A still sees A's aliases. LSP pulls each
+    /// allocate a fresh `Resolver` so per-pull state cannot leak
+    /// across unrelated documents. See
+    /// `docs/proposals/canonical-registry-scoping.md`.
+    pub(crate) resolver: crate::types::canonical::Resolver,
 }
 
 impl Default for TypeChecker {
@@ -767,7 +779,25 @@ impl TypeChecker {
             recursive_fn_names: std::collections::HashSet::new(),
             strict_effects: false,
             strict_effects_flipped: std::collections::HashSet::new(),
+            resolver: crate::types::canonical::Resolver::new(),
         }
+    }
+
+    /// Construct a `TypeChecker` that takes ownership of an existing
+    /// `Resolver`. Used by the cross-module entry points so the
+    /// session-scoped alias / assoc-binding registries are shared
+    /// across each module's typecheck.
+    pub fn with_resolver(resolver: crate::types::canonical::Resolver) -> Self {
+        let mut tc = Self::new();
+        tc.resolver = resolver;
+        tc
+    }
+
+    /// Detach and return the resolver, leaving the typechecker with a
+    /// fresh empty one. Used by the cross-module entry points to
+    /// recover the shared resolver after typechecking finishes.
+    pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
+        std::mem::take(&mut self.resolver)
     }
 
     /// Toggle Phase D strict-effects mode. When enabled, unannotated
@@ -1170,12 +1200,12 @@ impl TypeChecker {
         // is an AssocProj — keeps the cost out of the hot unification
         // path for normal types.
         let t1 = if matches!(&t1, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.apply(&t1))
+            crate::types::canonical::canonicalize(&self.resolver, &self.apply(&t1))
         } else {
             t1
         };
         let t2 = if matches!(&t2, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.apply(&t2))
+            crate::types::canonical::canonicalize(&self.resolver, &self.apply(&t2))
         } else {
             t2
         };
@@ -1736,7 +1766,7 @@ impl TypeChecker {
     /// side; the VM and compiler will reach the same conclusion via
     /// `canonical_name` in phase C.
     pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<Symbol> {
-        let ty = crate::types::canonical::canonicalize(ty);
+        let ty = crate::types::canonical::canonicalize(&self.resolver, ty);
         match &ty {
             Type::Int => Some(intern("Int")),
             Type::Float => Some(intern("Float")),
@@ -1777,8 +1807,8 @@ impl TypeChecker {
     ///
     /// Phase B: canonicalise the input first so a Range receiver supplies
     /// its element type via the List arm rather than a dedicated Range arm.
-    pub(super) fn type_args_of(ty: &Type) -> Vec<Type> {
-        let ty = crate::types::canonical::canonicalize(ty);
+    pub(super) fn type_args_of(&self, ty: &Type) -> Vec<Type> {
+        let ty = crate::types::canonical::canonicalize(&self.resolver, ty);
         match &ty {
             Type::Generic(_, args) => args.clone(),
             Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
@@ -1843,7 +1873,7 @@ impl TypeChecker {
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(impl_args.iter()) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
-                if !Self::trait_arg_compatible(&b, &i) {
+                if !self.trait_arg_compatible(&b, &i) {
                     self.error(
                         format!(
                             "type '{}' does not implement trait '{}({})': \
@@ -1874,7 +1904,7 @@ impl TypeChecker {
         let Some(obligations) = self.impl_constraints.get(&(trait_name, type_name)).cloned() else {
             return;
         };
-        let args = Self::type_args_of(&resolved);
+        let args = self.type_args_of(&resolved);
         for (idx, sub_trait) in obligations {
             if let Some(arg_ty) = args.get(idx).cloned() {
                 // Sub-obligations on impl target args: no trait args to
@@ -1894,9 +1924,9 @@ impl TypeChecker {
     /// Phase B: canonicalise both sides at entry. The recursive walk
     /// then never sees `Type::Range`; the dedicated `(Range, Range)`
     /// pair-arm is unreachable and removed.
-    fn trait_arg_compatible(a: &Type, b: &Type) -> bool {
-        let a = crate::types::canonical::canonicalize(a);
-        let b = crate::types::canonical::canonicalize(b);
+    fn trait_arg_compatible(&self, a: &Type, b: &Type) -> bool {
+        let a = crate::types::canonical::canonicalize(&self.resolver, a);
+        let b = crate::types::canonical::canonicalize(&self.resolver, b);
         Self::trait_arg_compatible_canon(&a, &b)
     }
 
@@ -2837,7 +2867,7 @@ impl TypeChecker {
                 // leaving the canonical `"List"` entry stuck on the
                 // still-polymorphic template and producing a type
                 // cascade at the first call site.
-                let target = canonicalize_type_name(ti.target_type);
+                let target = canonicalize_type_name(&self.resolver, ti.target_type);
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
@@ -3196,7 +3226,7 @@ impl TypeChecker {
                         .all(|(e, a)| {
                             let e = self.apply(e);
                             let a = self.apply(a);
-                            Self::trait_arg_compatible(&e, &a)
+                            self.trait_arg_compatible(&e, &a)
                         });
                 if !pos_ok {
                     let fmt_args = |args: &[Type]| -> String {
@@ -3695,8 +3725,9 @@ impl TypeChecker {
     ///
     /// Resolves `target_te` to a [`Type`] (with the alias's params bound
     /// to fresh `TyVar`s already populated in `param_vars`), detects
-    /// cycles, then writes the entry into the canonical alias registry
-    /// at [`crate::types::canonical::register_alias`].
+    /// cycles, then writes the entry into the typechecker's session-
+    /// scoped [`crate::types::canonical::Resolver`] via
+    /// [`crate::types::canonical::Resolver::register_alias`].
     ///
     /// Cycle detection traverses the resolved target looking for any
     /// reference back to the alias being declared (or to another alias
@@ -3768,7 +3799,7 @@ impl TypeChecker {
             })
             .collect();
 
-        crate::types::canonical::register_alias(
+        self.resolver.register_alias(
             td.name,
             crate::types::canonical::AliasInfo {
                 params: td.params.clone(),
@@ -3793,7 +3824,7 @@ impl TypeChecker {
                     chain.push(*name);
                     return Some(chain);
                 }
-                if let Some(info) = crate::types::canonical::lookup_alias(*name) {
+                if let Some(info) = self.resolver.lookup_alias(*name) {
                     visiting.push(*name);
                     let result = self.find_alias_cycle(&info.target, visiting);
                     visiting.pop();
@@ -3889,7 +3920,7 @@ impl TypeChecker {
         // the match each canonicalise their subtree, and the outer
         // call canonicalises the already-canonical result — a no-op.
         let resolved = self.resolve_type_expr_inner(te, param_vars);
-        crate::types::canonical::canonicalize(&resolved)
+        crate::types::canonical::canonicalize(&self.resolver, &resolved)
     }
 
     fn resolve_type_expr_inner(
@@ -4705,7 +4736,7 @@ impl TypeChecker {
             if let Decl::TraitImpl(ti) = decl
                 && !ti.is_auto_derived
             {
-                let target = canonicalize_type_name(ti.target_type);
+                let target = canonicalize_type_name(&self.resolver, ti.target_type);
                 user_impls.insert((ti.trait_name, target));
             }
         }
@@ -4834,7 +4865,7 @@ impl TypeChecker {
         let mut synthesized: Vec<Decl> = Vec::new();
         for (type_name, type_params, body) in tasks {
             // Helper closures to scope the synthesis decisions per-trait.
-            let key = canonicalize_type_name(type_name);
+            let key = canonicalize_type_name(&self.resolver, type_name);
 
             // Resolve this type's field types in the form they appear in
             // EnumInfo/RecordInfo (already-resolved Types). Use them to
@@ -5078,7 +5109,7 @@ impl TypeChecker {
         let Some(type_name) = self.type_name_for_impl(ty) else {
             return false;
         };
-        let canonical = canonicalize_type_name(type_name);
+        let canonical = canonicalize_type_name(&self.resolver, type_name);
         self.trait_impl_set.contains(&(trait_name, canonical))
     }
 
@@ -5218,7 +5249,7 @@ impl TypeChecker {
         // `user_trait_method_on_list_dispatches_for_range_receiver`
         // (and its siblings) regresses to "type 'Range' does not
         // implement trait 'Foo'".
-        let target_type = canonicalize_type_name(ti.target_type);
+        let target_type = canonicalize_type_name(&self.resolver, ti.target_type);
         let impl_key = (ti.trait_name, target_type);
 
         // Coherence check: reject duplicate user-defined impls.
@@ -5356,7 +5387,7 @@ impl TypeChecker {
             // form (`canonicalize_type_name` collapses the impl_key
             // to `"List"`), so the dispatch lookup arrives at the
             // right global.
-            if let Some(info) = crate::types::canonical::lookup_alias(ti.target_type) {
+            if let Some(info) = self.resolver.lookup_alias(ti.target_type) {
                 // Build a fresh-var instantiation per alias parameter so
                 // the impl methods see polymorphic vars rather than
                 // shared template tyvars. For `Bytes = List(Int)` (no
@@ -5369,7 +5400,7 @@ impl TypeChecker {
                     mapping.insert(var_id, self.fresh_var());
                 }
                 let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&substituted)
+                crate::types::canonical::canonicalize(&self.resolver, &substituted)
             } else {
                 let user_arity = self
                     .record_param_var_ids
@@ -5646,7 +5677,7 @@ impl TypeChecker {
             // registry keys on the canonical target head (so Range and
             // List collapse), parallel to method_table's
             // canonicalize_type_name routing above.
-            crate::types::canonical::register_assoc_binding(
+            self.resolver.register_assoc_binding(
                 ti.trait_name,
                 ti.target_type,
                 binding.name,
@@ -5902,7 +5933,10 @@ impl TypeChecker {
 /// Used by `register_trait_impl` so that `trait Foo for Range(a)`
 /// registers under `"List"` — the same key both List and Range
 /// receivers reach via [`Self::type_name_for_impl`] at dispatch time.
-pub(super) fn canonicalize_type_name(name: Symbol) -> Symbol {
+pub(super) fn canonicalize_type_name(
+    resolver: &crate::types::canonical::Resolver,
+    name: Symbol,
+) -> Symbol {
     // Built-in collapse: `Range` is a nominal alias of `List`.
     if resolve(name).as_str() == "Range" {
         return intern("List");
@@ -5913,15 +5947,15 @@ pub(super) fn canonicalize_type_name(name: Symbol) -> Symbol {
     // The lookup walks transitively until a non-alias head is reached
     // — chained aliases (`type B = A; type A = List(Int)`) collapse
     // to the same final head.
-    if let Some(info) = crate::types::canonical::lookup_alias(name) {
-        let canon_target = crate::types::canonical::canonicalize(&info.target);
+    if let Some(info) = resolver.lookup_alias(name) {
+        let canon_target = crate::types::canonical::canonicalize(resolver, &info.target);
         if let Some(head) = head_symbol_of(&canon_target) {
             // Recurse so a chain of aliases collapses fully. The
             // canonicaliser's expansion already follows aliases, so
             // `head_symbol_of` returns the final non-alias head — but
             // we still recurse defensively in case a future change to
             // `canonicalize` introduces a partial-expansion mode.
-            return canonicalize_type_name(head);
+            return canonicalize_type_name(resolver, head);
         }
     }
     name
@@ -6568,13 +6602,51 @@ pub fn check_with_package_and_imports_options(
     module_exports: HashMap<Symbol, ModuleExports>,
     strict_effects: bool,
 ) -> (Vec<TypeError>, ModuleExports) {
-    let mut checker = TypeChecker::new();
+    let (errors, exports, _resolver) = check_with_package_and_imports_options_resolver(
+        program,
+        package,
+        module_exports,
+        strict_effects,
+        None,
+    );
+    (errors, exports)
+}
+
+/// Resolver-threaded cross-module entry point. Mirrors
+/// [`check_with_package_and_imports_options`] but accepts an optional
+/// caller-owned [`crate::types::canonical::Resolver`] so the alias /
+/// associated-type-binding registries are shared across every module
+/// typechecked in one CLI compile invocation. Returns the resolver
+/// alongside the errors / exports so the next module's call can
+/// continue threading the same instance.
+///
+/// Pass `Some(resolver)` for cross-module compile pipelines. Pass
+/// `None` for one-shot typechecks (LSP pulls, REPL inputs); a fresh
+/// resolver is allocated and dropped on return.
+///
+/// See `docs/proposals/canonical-registry-scoping.md`.
+pub fn check_with_package_and_imports_options_resolver(
+    program: &mut Program,
+    package: Option<Symbol>,
+    module_exports: HashMap<Symbol, ModuleExports>,
+    strict_effects: bool,
+    resolver: Option<crate::types::canonical::Resolver>,
+) -> (
+    Vec<TypeError>,
+    ModuleExports,
+    crate::types::canonical::Resolver,
+) {
+    let mut checker = match resolver {
+        Some(r) => TypeChecker::with_resolver(r),
+        None => TypeChecker::new(),
+    };
     checker.current_package = package;
     checker.module_exports = module_exports;
     checker.set_strict_effects(strict_effects);
     let env = checker.check_program_returning_env(program);
     let exports = checker.collect_module_exports(program, &env);
-    (checker.errors, exports)
+    let resolver = checker.take_resolver();
+    (checker.errors, exports, resolver)
 }
 
 // ── Persistent REPL type context ───────────────────────────────────
@@ -6802,7 +6874,7 @@ impl ReplTypeContext {
                 // leaving the canonical `"List"` entry stuck on the
                 // still-polymorphic template and producing a type
                 // cascade at the first call site.
-                let target = canonicalize_type_name(ti.target_type);
+                let target = canonicalize_type_name(&self.checker.resolver, ti.target_type);
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
