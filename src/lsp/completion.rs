@@ -7,6 +7,7 @@ use lsp_types::{
 
 use crate::ast::*;
 use crate::intern::intern;
+use crate::lexer::KEYWORDS;
 use crate::module;
 use crate::types::Type;
 
@@ -337,10 +338,9 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 
 // ── Completion data ────────────────────────────────────────────────
 
-const KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
-    "when", "where",
-];
+// `KEYWORDS` is sourced from `crate::lexer::KEYWORDS` — the authoritative
+// list maintained alongside the lexer's keyword match arms. Re-introducing
+// a hand-rolled list here is guarded by `tests/lexer_keyword_parity_tests.rs`.
 
 /// Build the builtins completion list dynamically from the module registry
 /// so it never falls out of sync with `module.rs`.

@@ -1,31 +1,26 @@
-//! Round-60 G3 regression: lock the silt keyword list across the
-//! three source surfaces that hardcode their own copies.
+//! Round-60 G3 regression, updated round-63 L1: lock the silt keyword
+//! list across surfaces that consume it.
 //!
-//! The three lists, with their owners and known intentional deltas:
+//! Authoritative source: `src/lexer.rs::KEYWORDS` (+ `KEYWORD_LITERALS`
+//! for `true`/`false`). Round-63 collapsed the previously-hand-rolled
+//! arrays in `src/lsp/completion.rs` and `src/lsp/rename.rs` into
+//! references to the lexer constants. The structural drift check for
+//! those LSP files now lives in `tests/lexer_keyword_parity_tests.rs`
+//! (it source-greps for re-introduction of the hand-rolled head).
 //!
-//!   * `src/lsp/completion.rs::KEYWORDS` (14 items)
-//!     — drives LSP completion. Excludes `true`/`false` because those
-//!       are emitted as CONSTANT items (not KEYWORD items) elsewhere
-//!       in the same file.
+//! What remains here:
 //!
-//!   * `src/repl.rs` inlined keyword list (14 + `true` + `false`,
-//!      plus REPL meta-commands `:quit` / `:help`)
-//!     — drives REPL completion. Includes `true`/`false` as keyword-
-//!       like completion entries.
+//!   * `lexer::KEYWORDS` itself contains every core keyword. Belt-and-
+//!     braces: if someone trims the const we still notice.
 //!
-//!   * `src/lsp/rename.rs::SILT_KEYWORDS` (16 items)
-//!     — drives the user-renameable check. Includes `true`/`false`
-//!       so renaming a binding to `true`/`false` is rejected.
-//!
-//! The 14 *core* keywords must appear in all three lists. Drift on the
-//! core set silently breaks parity (e.g. adding a new keyword to the
-//! lexer but forgetting one of the three surfaces). This test asserts
-//! the intersection is at least the expected core set.
+//!   * `src/repl.rs` still inlines its own keyword list (REPL completion
+//!     surface, not in scope of round-63 L1). It must include the 14
+//!     core keywords plus `true`/`false`.
 //!
 //! Authoritative shape:
-//!   * If you add a new keyword token to the lexer, add it to ALL THREE
-//!     source files above and update `EXPECTED_CORE_KEYWORDS` here.
-//!   * `true`/`false` differences are intentional (see deltas above).
+//!   * If you add a new keyword token to the lexer, add it to
+//!     `lexer::KEYWORDS`, mirror it into `src/repl.rs`, and update
+//!     `EXPECTED_CORE_KEYWORDS` here.
 
 use std::fs;
 use std::path::PathBuf;
@@ -50,40 +45,36 @@ fn source_mentions_quoted(src: &str, name: &str) -> bool {
 }
 
 #[test]
-fn lsp_completion_keywords_contain_core_set() {
-    let src = read_source("src/lsp/completion.rs");
+fn lexer_keywords_const_contains_core_set() {
+    // After round-63 L1, the LSP modules consume `lexer::KEYWORDS`
+    // directly — checking the source files for quoted strings is no
+    // longer meaningful (they don't appear there anymore). Instead we
+    // assert that the authoritative const itself contains the core set.
     for kw in EXPECTED_CORE_KEYWORDS {
         assert!(
-            source_mentions_quoted(&src, kw),
-            "src/lsp/completion.rs::KEYWORDS missing core keyword `\"{kw}\"`. \
-             If a new keyword was added, also update src/repl.rs and \
-             src/lsp/rename.rs::SILT_KEYWORDS, then add it to \
-             tests/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS."
+            silt::lexer::KEYWORDS.contains(kw),
+            "lexer::KEYWORDS missing core keyword `\"{kw}\"`. \
+             If a keyword was removed from the lexer's match arms, also \
+             remove the EXPECTED_CORE_KEYWORDS entry. If the const \
+             drifted from the match arms, the parity-lock in \
+             tests/lexer_keyword_parity_tests.rs catches that."
         );
     }
 }
 
 #[test]
-fn lsp_rename_keywords_contain_core_set() {
-    let src = read_source("src/lsp/rename.rs");
-    for kw in EXPECTED_CORE_KEYWORDS {
-        assert!(
-            source_mentions_quoted(&src, kw),
-            "src/lsp/rename.rs::SILT_KEYWORDS missing core keyword `\"{kw}\"`. \
-             If a new keyword was added, also update src/lsp/completion.rs and \
-             src/repl.rs, then add it to \
-             tests/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS."
-        );
-    }
-    // Intentional delta: rename.rs MUST include `true`/`false` so
-    // renaming a binding to `true`/`false` is rejected.
+fn lexer_keyword_literals_const_contains_true_false() {
+    // The bool-literal split (round-63): `true`/`false` live in their
+    // own const because the lexer emits them as `Token::Bool(_)`, not
+    // as keyword tokens. Rename consults BOTH constants so renaming a
+    // binding to `true`/`false` is rejected.
     assert!(
-        source_mentions_quoted(&src, "true"),
-        "src/lsp/rename.rs::SILT_KEYWORDS must include \"true\" so rename to a bool-literal name is rejected"
+        silt::lexer::KEYWORD_LITERALS.contains(&"true"),
+        "lexer::KEYWORD_LITERALS must include \"true\""
     );
     assert!(
-        source_mentions_quoted(&src, "false"),
-        "src/lsp/rename.rs::SILT_KEYWORDS must include \"false\" so rename to a bool-literal name is rejected"
+        silt::lexer::KEYWORD_LITERALS.contains(&"false"),
+        "lexer::KEYWORD_LITERALS must include \"false\""
     );
 }
 
@@ -94,9 +85,8 @@ fn repl_keywords_contain_core_set() {
         assert!(
             source_mentions_quoted(&src, kw),
             "src/repl.rs keyword list missing core keyword `\"{kw}\"`. \
-             If a new keyword was added, also update src/lsp/completion.rs \
-             and src/lsp/rename.rs::SILT_KEYWORDS, then add it to \
-             tests/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS."
+             If a new keyword was added, also update lexer::KEYWORDS \
+             and EXPECTED_CORE_KEYWORDS here."
         );
     }
     // Intentional delta: REPL keyword list also includes `true`/`false`

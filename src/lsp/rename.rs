@@ -25,6 +25,7 @@ use lsp_server::{ErrorCode, Response};
 use lsp_types::{PrepareRenameResponse, Range, TextEdit, Uri, WorkspaceEdit};
 
 use crate::intern::resolve as resolve_sym;
+use crate::lexer;
 use crate::module;
 use crate::types::builtins as builtin_types;
 
@@ -144,7 +145,7 @@ pub fn is_user_renameable(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
-    if SILT_KEYWORDS.contains(&name) {
+    if is_silt_keyword(name) {
         return false;
     }
     if module::is_builtin_module(name) {
@@ -174,13 +175,17 @@ fn is_valid_silt_ident(name: &str) -> bool {
             return false;
         }
     }
-    !SILT_KEYWORDS.contains(&name)
+    !is_silt_keyword(name)
 }
 
-const SILT_KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
-    "when", "where", "true", "false",
-];
+/// Reject every reserved word the lexer recognizes — both keyword-shaped
+/// tokens (`KEYWORDS`) and reserved-word-shaped boolean literals
+/// (`KEYWORD_LITERALS`). Sourced from `crate::lexer` so a future keyword
+/// addition flows through automatically; guarded by
+/// `tests/lexer_keyword_parity_tests.rs`.
+fn is_silt_keyword(name: &str) -> bool {
+    lexer::KEYWORDS.contains(&name) || lexer::KEYWORD_LITERALS.contains(&name)
+}
 
 // Builtin constructor rejection consults `module::all_builtin_constructor_names`
 // so new gated variants (e.g. `IoNotFound`, `PgConnect`, `Recv`/`Send`) are

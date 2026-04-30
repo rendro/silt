@@ -196,6 +196,32 @@ impl fmt::Display for LexError {
     }
 }
 
+/// Authoritative keyword list. Reserved words a user cannot bind as an
+/// identifier; each name corresponds to a non-`Bool` match arm in
+/// `scan_ident_or_keyword` below.
+///
+/// Boolean literals (`true`, `false`) are intentionally split out into
+/// `KEYWORD_LITERALS` because the lexer emits them as `Token::Bool(_)`
+/// rather than a keyword-shaped token — semantically they are literals,
+/// even though they are reserved-word-shaped.
+///
+/// Consumers (LSP completion, LSP rename, etc.) MUST source their
+/// keyword lists from these constants instead of hand-rolling parallel
+/// arrays. A parity-lock test in
+/// `tests/lexer_keyword_parity_tests.rs` asserts this set matches the
+/// `match name.as_str()` arms in `scan_ident_or_keyword` and that no
+/// LSP module re-introduces a hand-rolled keyword list.
+pub const KEYWORDS: &[&str] = &[
+    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
+    "when", "where",
+];
+
+/// Reserved-word-shaped boolean literals. Lexed as `Token::Bool(_)`,
+/// not as keyword tokens, but still un-bindable as identifiers — so
+/// surfaces that gate "is this a keyword" must consult both
+/// `KEYWORDS` and `KEYWORD_LITERALS` (see `src/lsp/rename.rs`).
+pub const KEYWORD_LITERALS: &[&str] = &["true", "false"];
+
 pub struct Lexer {
     source: Vec<char>,
     pos: usize,
