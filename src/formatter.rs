@@ -5402,6 +5402,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             params,
             body,
             effects,
+            is_annotated,
         } => {
             // The `fn(...) { ... }` syntax requires plain identifier
             // parameters — the parser's `parse_fn_params` rejects any
@@ -5422,12 +5423,23 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             } else {
                 ""
             };
-            // Only emit the effect annotation when the user wrote one.
-            // The gradual-rollout `TOP` default is the absence-marker;
-            // emitting `!*` here would be noise and wouldn't round-trip
-            // through the parser (which has no `!*` syntax).
-            let effects_str = if *effects == EffectSet::TOP {
+            // Effect annotation slot. Pivot on `is_annotated` rather
+            // than `*effects == EffectSet::TOP` — the two states
+            // ("user wrote no annotation" vs "user wrote `!{io, fs,
+            // net, time, random}`") collide on bit-equality but must
+            // format differently. When the user wrote the explicit
+            // five-effect set, re-emit the alphabetised explicit form
+            // so the output round-trips through the parser; the bare
+            // `!*` token is reserved for the gradual-rollout default
+            // and is not parseable. Mirrors round 62's `FnDecl` fix
+            // (see `format_fn_decl`'s effect slot).
+            let effects_str = if !*is_annotated {
                 String::new()
+            } else if *effects == EffectSet::TOP {
+                // User wrote `!{io, fs, net, time, random}`. Re-emit
+                // the explicit set rather than `!*` (reserved for the
+                // un-annotated default).
+                " !{fs, io, net, random, time}".to_string()
             } else {
                 format!(" {effects}")
             };

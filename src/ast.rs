@@ -68,7 +68,25 @@ pub enum ExprKind {
         /// thread lambda effects through values), but the field is
         /// populated so the formatter can round-trip the syntax and
         /// future phases can wire it in without an AST shape change.
+        ///
+        /// IMPORTANT: bit-equality `== EffectSet::TOP` cannot be used to
+        /// detect "user wrote no annotation" because `!{io, fs, net, time,
+        /// random}` is the same bitset. Always pivot on `is_annotated`
+        /// for that question.
         effects: EffectSet,
+        /// `true` when the user wrote a literal `!{...}` annotation in the
+        /// source on the `fn(...)` lambda form. `false` when the parser
+        /// filled in the gradual-rollout default (`EffectSet::TOP`)
+        /// because no annotation was present, or for the trailing-closure
+        /// form `{ x, y -> body }` which has no syntactic slot for an
+        /// effect annotation.
+        ///
+        /// Disambiguates `EffectSet::TOP` from a hand-written full
+        /// `!{io, fs, net, time, random}` — both share the same bitset,
+        /// but the formatter must behave differently between the two
+        /// cases (mirrors `FnDecl::is_annotated`; see round 62 audit
+        /// fix for the same root-cause bug on top-level fn decls).
+        is_annotated: bool,
     },
 
     // Records

@@ -1232,21 +1232,18 @@ impl Parser {
     /// unary-not prefix it always was; only the `! {` pair triggers
     /// annotation parsing. Newlines inside the annotation are tolerated
     /// (`skip_nl` is called after each comma) so a long list can wrap.
-    fn parse_effect_annotation_opt(&mut self) -> Result<EffectSet> {
-        Ok(self.parse_effect_annotation_opt_explicit()?.0)
-    }
-
-    /// Like [`Self::parse_effect_annotation_opt`] but ALSO reports whether
-    /// the user actually wrote a `!{...}` annotation. The boolean is
-    /// `true` when an annotation was consumed and `false` when the
-    /// gradual-rollout `EffectSet::TOP` default was returned.
+    /// Parse an optional `!{...}` effect annotation, returning the
+    /// effect set AND a boolean reporting whether the user actually
+    /// wrote one. The boolean is `true` when an annotation was consumed
+    /// and `false` when the gradual-rollout `EffectSet::TOP` default
+    /// was returned.
     ///
     /// Critical for distinguishing `!{io, fs, net, time, random}` (all
     /// five effects, explicitly written) from no annotation at all —
     /// both produce the same `EffectSet` bitset, but downstream
     /// (formatter, strict-effects flip, body subset check, suggestion
     /// help line) needs to behave differently between the two cases.
-    /// See the `is_annotated` field on `FnDecl`.
+    /// See the `is_annotated` field on `FnDecl` and `ExprKind::Lambda`.
     fn parse_effect_annotation_opt_explicit(&mut self) -> Result<(EffectSet, bool)> {
         if self.peek_skip_nl() != &Token::Not {
             return Ok((EffectSet::TOP, false));
@@ -2995,6 +2992,9 @@ impl Parser {
                 // is the only way to declare effects on a lambda for
                 // now.
                 effects: EffectSet::TOP,
+                // Trailing-closure form has no annotation slot, so the
+                // user could not have written one. Always `false`.
+                is_annotated: false,
             },
             span,
         ))
@@ -3223,8 +3223,12 @@ impl Parser {
         self.expect(&Token::Fn)?;
         let params = self.parse_fn_params()?;
         // Optional effect annotation between params and body, matching
-        // top-level fn-decl syntax: `fn() !{io} { ... }`.
-        let effects = self.parse_effect_annotation_opt()?;
+        // top-level fn-decl syntax: `fn() !{io} { ... }`. Use the
+        // `_explicit` variant so we can distinguish "user wrote no
+        // annotation" from "user wrote `!{io, fs, net, time, random}`"
+        // — the two collide on bit-equality (`EffectSet::TOP`) and
+        // were silently dropped by the formatter prior to this fix.
+        let (effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
         self.skip_nl();
         let body = self.parse_block()?;
         Ok(Expr::new(
@@ -3232,6 +3236,7 @@ impl Parser {
                 params,
                 body: Box::new(body),
                 effects,
+                is_annotated,
             },
             span,
         ))
