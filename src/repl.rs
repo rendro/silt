@@ -239,15 +239,21 @@ pub fn builtin_names() -> Vec<String> {
     // round-63 pattern in `src/lsp/completion.rs` and
     // `src/lsp/rename.rs`. Parity lock:
     // `tests/repl_keyword_parity_with_lexer_tests.rs`.
-    let mut names: Vec<String> = vec![
-        ":quit", ":q", ":help", ":h", // Globals (non-constructor). Constructor variants come from
-        // `module::all_builtin_constructor_names` below so gated ones
-        // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
-        "print", "println", "panic",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+    // Globals (non-constructor). Constructor variants come from
+    // `module::all_builtin_constructor_names` below so gated ones
+    // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
+    // Free-function names (`print`/`println`/`panic`) come from
+    // `module::builtin_free_function_names()` so adding a new free
+    // function (e.g. `eprintln`, `assert`) flows through automatically.
+    // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+    for name in crate::module::builtin_free_function_names() {
+        names.push((*name).to_string());
+    }
 
     // Language keywords + reserved-word-shaped literals. Sourced from
     // the lexer so REPL <Tab> completion automatically tracks any

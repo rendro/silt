@@ -124,7 +124,7 @@ error[type]: function 'load_settings' uses effect !{fs, io} but is declared pure
   = help: annotate as `fn load_settings(path: String) -> Result(String, IoError) !{fs, io}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller
 ```
 
-**After** (paste the annotation, re-run, clean):
+**After** (paste the annotation, re-run, fix the next caller, repeat):
 
 ```silt
 import io
@@ -132,15 +132,19 @@ import io
 fn load_settings(path: String) -> Result(String, IoError) !{fs, io} =
   io.read_file(path)
 
-fn main() {
+fn main() !{fs, io} {
   let _settings = load_settings("config.toml")
   ()
 }
 ```
 
-That's the whole migration. The `!{fs, io}` annotation is now the
-function's contract; future commits that add a `tcp.connect` call to
-the body will fail typecheck until the bound is widened.
+That's the whole migration. The first re-run after annotating
+`load_settings` will surface the same diagnostic for `main`, because
+`main` indirectly inherits `!{fs, io}` through its call to
+`load_settings`; paste the suggested annotation onto `main` and the
+file goes clean. The annotations are now the functions' contracts;
+future commits that add a `tcp.connect` call to either body will fail
+typecheck until the bound is widened.
 
 ## When you'd want it
 

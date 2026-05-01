@@ -120,6 +120,14 @@ impl TypeChecker {
                     Self::collect_sub_spans(e, out);
                 }
             }
+            ExprKind::AnonRecord { spread, fields } => {
+                if let Some(s) = spread {
+                    Self::collect_sub_spans(s, out);
+                }
+                for (_, e) in fields {
+                    Self::collect_sub_spans(e, out);
+                }
+            }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
@@ -353,6 +361,14 @@ impl TypeChecker {
                     self.check_unresolved_in_expr(e);
                 }
             }
+            ExprKind::AnonRecord { spread, fields } => {
+                if let Some(s) = spread {
+                    self.check_unresolved_in_expr(s);
+                }
+                for (_, e) in fields {
+                    self.check_unresolved_in_expr(e);
+                }
+            }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
@@ -526,6 +542,15 @@ impl TypeChecker {
                         .iter()
                         .any(|(_, e)| Self::expr_references_name(e, name))
             }
+            ExprKind::AnonRecord { spread, fields } => {
+                spread
+                    .as_ref()
+                    .map(|s| Self::expr_references_name(s, name))
+                    .unwrap_or(false)
+                    || fields
+                        .iter()
+                        .any(|(_, e)| Self::expr_references_name(e, name))
+            }
             ExprKind::StringInterp(parts) => parts.iter().any(|part| match part {
                 StringPart::Expr(e) => Self::expr_references_name(e, name),
                 _ => false,
@@ -682,6 +707,14 @@ impl TypeChecker {
             }
             ExprKind::RecordUpdate { expr, fields } => {
                 self.resolve_expr_types(expr);
+                for (_, e) in fields {
+                    self.resolve_expr_types(e);
+                }
+            }
+            ExprKind::AnonRecord { spread, fields } => {
+                if let Some(s) = spread {
+                    self.resolve_expr_types(s);
+                }
                 for (_, e) in fields {
                     self.resolve_expr_types(e);
                 }

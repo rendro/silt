@@ -28,16 +28,21 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 |         90 | `-x`, `!x`      | **prefix**     | Numeric negation, boolean NOT                      |
 |         95 | `as`            | infix          | Type ascription: `expr as Type`                    |
 |        115 | `{ ... }`       | postfix        | Trailing closure (only on same line as call)       |
-|        120 | `f(...)`, `xs[i]` | postfix      | Function call, index                               |
+|        120 | `f(...)`        | postfix        | Function call                                      |
 |        130 | `.`             | infix/postfix  | Field access, `expr.{ ... }` record update         |
 
 `?` is postfix and sits between comparison (`<`, `>=`) and pipe (`|>`).
+
+silt has **no postfix bracket indexing** (`xs[i]`). The parser rejects it
+with `postfix indexing is not supported; use list.get(xs, i), map.get(m, k), or string.char_at(s, i)`.
+Use the explicit module function for the collection you have:
+`list.get(xs, i)`, `map.get(m, k)`, `string.char_at(s, i)`.
 
 ## Reading the Table
 
 Higher precedence wins. Given `a + b * c`, `*` (80) binds tighter than `+` (70), so the expression parses as `a + (b * c)`. All infix operators are left-associative, so `a - b - c` parses as `(a - b) - c`.
 
-Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Float` is `-(x as Float)`.
+Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as ExtFloat` parses as `-(x as ExtFloat)`.
 
 ## Error Propagation (`?`)
 
@@ -106,7 +111,7 @@ let y = 10
   + 20            -- NOT a continuation — `y = 10` then `+20` starts a new expr
 ```
 
-**Postfix operators do not cross newlines.** Call, index, `?`, and trailing closure must appear on the same line as their operand:
+**Postfix operators do not cross newlines.** Call, `?`, and trailing closure must appear on the same line as their operand:
 
 ```silt
 let n = parse(input)?       -- OK
@@ -146,21 +151,29 @@ let r: Range(Int) = 1..10         -- annotated
 let xs: List(Int) = 1..10         -- implicit Range→List
 ```
 
-Today `a..b` is materialized eagerly into a list at runtime; the `Range`
-type is a zero-cost alias for `List(Int)` that lets annotations and
-diagnostics say what the user wrote. Lazy iteration is a future design
-and is not implemented yet.
+Ranges are lazy — they don't allocate memory until iterated, so
+`1..1000000` is cheap. `Range` is a distinct runtime variant
+(`Value::Range(lo, hi)`), not a materialised list, and the iteration
+helpers in `list.*` walk it without first expanding it into a `List(Int)`.
 
 Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 
 ## Type Ascription (`as`)
 
-`expr as Type` constrains the type of an expression. Used mainly to disambiguate polymorphic literals or to narrow an `ExtFloat` with a known fallback:
+`expr as Type` constrains the type of an expression. Used mainly to
+disambiguate polymorphic literals where inference cannot pick a concrete
+type from context:
 
 ```silt
 let xs = [] as List(Int)
-let n = 42 as Float
+let rows = [[]] as List(List(Int))
 ```
+
+`as` is a compile-time *assertion*, not a coercion: it only succeeds when
+the expression already has the named type. There is no implicit numeric
+conversion — `42 as Float` is rejected with `type mismatch: expected
+Float, got Int`. Convert numbers explicitly with `int.to_float(42)` or
+`float.to_int(x)`.
 
 ## Field Access and Record Update (`.`)
 

@@ -482,7 +482,29 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                             tail: extra_tail.clone(),
                         };
                     }
-                    Some(_other) => RowTail::Var(*v), // can't merge sensibly
+                    // Generic instantiation maps row tail var `v` to
+                    // a fresh `Type::Var(w)`; carry the freshening
+                    // through by re-tailing on `w`. Without this we
+                    // silently kept `RowTail::Var(*v)`, leaving the
+                    // unifier with a bound row var (`v`) that the
+                    // caller had already instantiated away — which
+                    // tripped the `apply` chain and surfaced as
+                    // missing-binding crashes.
+                    Some(Type::Var(w)) => RowTail::Var(*w),
+                    Some(_other) => {
+                        // Any other concrete type bound here is a
+                        // genuine drift — the unifier should never
+                        // bind a row tail var to a non-record,
+                        // non-Var type. Catch it loudly in debug
+                        // builds; release falls through to the
+                        // pre-existing safe behaviour.
+                        debug_assert!(
+                            false,
+                            "row tail var bound to non-record concrete type {:?}",
+                            _other
+                        );
+                        RowTail::Var(*v)
+                    }
                     None => RowTail::Var(*v),
                 },
             };

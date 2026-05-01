@@ -890,10 +890,22 @@ impl TypeChecker {
         // appear in it. Hover on any global surfaces the same prose
         // — the LSP renders the markdown as a single document and
         // the user scrolls to the relevant section.
-        for name in &[
-            "print", "println", "panic", "Ok", "Err", "Some", "None", "Stop", "Continue",
-            "Message", "Closed", "Empty", "Sent", "Recv", "Send",
-        ] {
+        //
+        // Free-function names sourced from
+        // `crate::module::builtin_free_function_names()` so adding a
+        // new free function automatically attaches its docs here (parity lock:
+        // `tests/builtin_free_function_parity_tests.rs`). The
+        // constructor subset below is the specific list documented in
+        // `GLOBALS_MD` — NOT the full builtin-constructor universe
+        // (Monday/IoNotFound/... have per-module docs); leave this
+        // sub-set hand-rolled to track the markdown contents.
+        let mut doc_targets: Vec<&'static str> =
+            crate::module::builtin_free_function_names().to_vec();
+        doc_targets.extend_from_slice(&[
+            "Ok", "Err", "Some", "None", "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
+            "Recv", "Send",
+        ]);
+        for name in &doc_targets {
             let sym = intern(name);
             if env.bindings.contains_key(&sym) {
                 env.builtin_docs.insert(sym, docs::GLOBALS_MD.to_string());

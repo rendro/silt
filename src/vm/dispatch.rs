@@ -242,8 +242,13 @@ impl Vm {
         self.globals
             .insert("math.e".into(), Value::Float(std::f64::consts::E));
 
-        // Non-module builtin functions (not scoped to a module)
-        for name in ["print", "println", "panic"] {
+        // Non-module builtin functions (not scoped to a module).
+        // Sourced from `module::builtin_free_function_names()` so that
+        // module.rs is the single source of truth — adding a new free
+        // function (e.g. `eprintln`, `assert`) only requires touching
+        // the registry plus the typechecker registration site.
+        // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+        for &name in module::builtin_free_function_names() {
             self.globals
                 .insert(name.into(), Value::BuiltinFn(name.into()));
         }

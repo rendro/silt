@@ -192,24 +192,24 @@ fn is_silt_keyword(name: &str) -> bool {
 // picked up automatically. Parity-lock test in
 // `tests/builtin_constructor_parity_tests.rs` guards the coupling.
 
-/// Built-in print/panic free functions that user code cannot rename.
-/// Type names (`Int`, `List`, `Map`, ...) are sourced separately from
-/// the authoritative table at `crate::types::builtins`, so adding a
-/// new built-in type does not require touching this file.
-const BUILTIN_FUNCTIONS: &[&str] = &["println", "print", "panic"];
-
 /// Combined list of every reserved global identifier — built-in
-/// functions plus every name in [`builtin_types::BUILTIN_TYPES`].
+/// free functions plus every name in [`builtin_types::BUILTIN_TYPES`].
 /// Computed once on first access via [`OnceLock`]; the `&[&str]`
 /// surface mirrors the previous hand-rolled constant so existing
-/// callers keep working unchanged. Type-name entries are derived
-/// from `crate::types::builtins::iter_all()` so additions to that
-/// authoritative table propagate here automatically.
+/// callers keep working unchanged.
+///
+/// Free-function entries (`print`/`println`/`panic`) come from
+/// `module::builtin_free_function_names()` so adding a new global
+/// free function in the typechecker registers everywhere. Type-name
+/// entries are derived from `crate::types::builtins::iter_all()` so
+/// additions to that authoritative table propagate here automatically.
+/// Parity lock: `tests/builtin_free_function_parity_tests.rs`.
 pub(crate) fn builtin_globals() -> &'static [&'static str] {
     static GLOBALS: OnceLock<Vec<&'static str>> = OnceLock::new();
     GLOBALS
         .get_or_init(|| {
-            let mut v: Vec<&'static str> = BUILTIN_FUNCTIONS.to_vec();
+            let mut v: Vec<&'static str> =
+                module::builtin_free_function_names().to_vec();
             v.extend(builtin_types::iter_all().map(|b| b.name));
             v
         })

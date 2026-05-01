@@ -45,7 +45,9 @@ Silt uses 64-bit signed integers. Arithmetic that overflows (e.g.
 `9223372036854775807 + 1`) is a **runtime error**, not silent wrapping.
 This matches the "explicit over implicit" philosophy -- silent wrong answers
 are worse than crashes. `int.abs` also errors on the single unrepresentable
-value (`int.abs(-9223372036854775808)`).
+value: `let min = -9223372036854775807 - 1` constructs `Int::MIN` (since
+the literal `9223372036854775808` is rejected at lex time), and
+`int.abs(min)` then raises `integer overflow: abs(-9223372036854775808)`.
 
 ## Float Safety
 

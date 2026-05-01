@@ -349,12 +349,15 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 /// can assert every gated constructor from
 /// `module::all_builtin_constructor_names` is emitted here.
 pub fn builtins() -> Vec<(String, CompletionItemKind)> {
-    let mut items = vec![
-        // Globals (not part of any module)
-        ("print".to_string(), CompletionItemKind::FUNCTION),
-        ("println".to_string(), CompletionItemKind::FUNCTION),
-        ("panic".to_string(), CompletionItemKind::FUNCTION),
-    ];
+    // Globals (not part of any module). Sourced from
+    // `module::builtin_free_function_names()` so adding a new free
+    // function (e.g. `eprintln`, `assert`) flows through automatically.
+    // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+    let mut items: Vec<(String, CompletionItemKind)> =
+        module::builtin_free_function_names()
+            .iter()
+            .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
+            .collect();
 
     // Reserved-word-shaped boolean literals. Sourced from
     // `crate::lexer::KEYWORD_LITERALS` so additions there flow through

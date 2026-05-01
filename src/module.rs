@@ -201,6 +201,30 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
         .flat_map(|(_, variants)| variants.iter().copied())
 }
 
+/// Names of silt's builtin global free functions — i.e. callable without
+/// a module prefix: `print(...)`, not `io.print(...)`. These are the
+/// non-constructor identifiers `register_builtins` (in
+/// `src/typechecker/builtins.rs`) defines unqualified at the top of the
+/// type environment, plus the matching `BuiltinFn` globals seeded by
+/// `src/vm/dispatch.rs::register_builtins`.
+///
+/// Authoritative for: REPL completion, LSP completion/rename, the
+/// typechecker's "did you mean" candidate set for unqualified
+/// identifiers, and VM dispatch's free-fn shadow check. Sibling shape
+/// to `all_builtin_constructor_names` (round-58/64) and the
+/// `KEYWORD_LITERALS`/`KEYWORDS` consolidations (round-63/64).
+///
+/// A parity-lock test at
+/// `tests/builtin_free_function_parity_tests.rs` asserts every surface
+/// that mentions these free-function names consults this helper, and
+/// that the helper itself matches what's actually registered in the
+/// typechecker's free-function table at runtime.
+///
+/// Keep alphabetic.
+pub fn builtin_free_function_names() -> &'static [&'static str] {
+    &["panic", "print", "println"]
+}
+
 /// Authoritative `(variant_name, arity)` listings for every stdlib
 /// typed-error enum. Single source of truth consulted by
 /// `src/vm/dispatch.rs::register_builtins` to seed the global

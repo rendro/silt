@@ -160,136 +160,20 @@ fn variant_ordinal_registry() -> &'static RwLock<HashMap<String, u32>> {
         // Seed built-in enum ordinals up front so unit tests that build
         // `Value::Variant("Ok", ...)` directly (without going through a
         // typechecker / Vm) still get declaration-order semantics.
-        // Mirrors the authoritative list in `module::builtin_enum_variants`.
-        for (_enum_name, variants) in builtin_variant_seed() {
+        // Forwards directly to `module::builtin_enum_variants` — the
+        // authoritative source of truth. Round 67 collapsed a parallel
+        // ~115-line hand-rolled list that lived here (the historical
+        // comment about a "circular dependency" was wrong: neither
+        // file imports the other, so the direct call compiles and the
+        // duplicate list was just bloat that drifted from the module
+        // side, e.g. `ChannelResult` ordinal order had diverged).
+        for (_enum_name, variants) in crate::module::builtin_enum_variants() {
             for (idx, variant) in variants.iter().enumerate() {
                 map.insert((*variant).to_string(), idx as u32);
             }
         }
         RwLock::new(map)
     })
-}
-
-/// Authoritative list of built-in enum → variant tags used to seed the
-/// ordinal registry on first access. Kept in this module to avoid a
-/// circular dependency with `module::builtin_enum_variants` — the two
-/// MUST stay in sync (a regression test in `value::tests` checks one
-/// representative variant from each enum).
-fn builtin_variant_seed() -> &'static [(&'static str, &'static [&'static str])] {
-    &[
-        ("Result", &["Ok", "Err"]),
-        ("Option", &["Some", "None"]),
-        ("Step", &["Stop", "Continue"]),
-        ("ChannelResult", &["Message", "Closed", "Sent", "Empty"]),
-        ("ChannelOp", &["Recv", "Send"]),
-        (
-            "Weekday",
-            &[
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-            ],
-        ),
-        (
-            "Method",
-            &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-        ),
-        (
-            "IoError",
-            &[
-                "IoNotFound",
-                "IoPermissionDenied",
-                "IoAlreadyExists",
-                "IoInvalidInput",
-                "IoInterrupted",
-                "IoUnexpectedEof",
-                "IoWriteZero",
-                "IoUnknown",
-            ],
-        ),
-        (
-            "JsonError",
-            &[
-                "JsonSyntax",
-                "JsonTypeMismatch",
-                "JsonMissingField",
-                "JsonUnknown",
-            ],
-        ),
-        (
-            "TomlError",
-            &[
-                "TomlSyntax",
-                "TomlTypeMismatch",
-                "TomlMissingField",
-                "TomlUnknown",
-            ],
-        ),
-        (
-            "ParseError",
-            &[
-                "ParseEmpty",
-                "ParseInvalidDigit",
-                "ParseOverflow",
-                "ParseUnderflow",
-            ],
-        ),
-        (
-            "HttpError",
-            &[
-                "HttpConnect",
-                "HttpTls",
-                "HttpTimeout",
-                "HttpInvalidUrl",
-                "HttpInvalidResponse",
-                "HttpClosedEarly",
-                "HttpStatusCode",
-                "HttpUnknown",
-            ],
-        ),
-        ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
-        (
-            "PgError",
-            &[
-                "PgConnect",
-                "PgTls",
-                "PgAuthFailed",
-                "PgQuery",
-                "PgTypeMismatch",
-                "PgNoSuchColumn",
-                "PgClosed",
-                "PgTimeout",
-                "PgTxnAborted",
-                "PgUnknown",
-            ],
-        ),
-        (
-            "TcpError",
-            &[
-                "TcpConnect",
-                "TcpTls",
-                "TcpClosed",
-                "TcpTimeout",
-                "TcpUnknown",
-            ],
-        ),
-        ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
-        (
-            "BytesError",
-            &[
-                "BytesInvalidUtf8",
-                "BytesInvalidHex",
-                "BytesInvalidBase64",
-                "BytesByteOutOfRange",
-                "BytesOutOfBounds",
-            ],
-        ),
-        ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
-    ]
 }
 
 /// Register the declaration-order ordinal for a variant tag. If the
@@ -1515,19 +1399,6 @@ fn format_bytes_preview(b: &[u8]) -> String {
 }
 
 impl Value {
-    /// Materialize a Range into a List. Returns self unchanged for non-Range values.
-    /// Returns an error if the range exceeds [`MAX_RANGE_MATERIALIZE`] elements.
-    pub fn materialize_range(&self) -> Result<Value, String> {
-        match self {
-            Value::Range(lo, hi) => {
-                checked_range_len(*lo, *hi)?;
-                let items: Vec<Value> = (*lo..=*hi).map(Value::Int).collect();
-                Ok(Value::List(Arc::new(items)))
-            }
-            other => Ok(other.clone()),
-        }
-    }
-
     /// Get the length of a list or range, if applicable.
     pub fn collection_len(&self) -> Option<usize> {
         match self {
@@ -2089,7 +1960,22 @@ impl FromValue for f64 {
 
 impl IntoValue for f64 {
     fn into_value(self) -> Value {
-        Value::Float(self)
+        // Canonicalize to the same Float/ExtFloat split the VM uses
+        // everywhere else: `Value::Float` is finite, non-finite (NaN
+        // and ±∞) goes in `Value::ExtFloat`. The invariant is
+        // documented at `Vm::finite_float`, the `PartialEq`/`Ord`
+        // arms above, and `tests/list_sum_product_float_finite_tests.rs`,
+        // and is re-enforced in `src/builtins/numeric.rs::clamp`. Without
+        // this canonicalization, an embedder registering a Rust closure
+        // returning a non-finite f64 (e.g. `register_fn0("get_nan",
+        // || f64::NAN)`) would happily produce `Value::Float(NaN)` and
+        // break every downstream container/dedup path that assumes
+        // `Float` is finite.
+        if self.is_finite() {
+            Value::Float(self)
+        } else {
+            Value::ExtFloat(self)
+        }
     }
 }
 

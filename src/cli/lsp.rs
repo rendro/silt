@@ -22,6 +22,18 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    // Reject positional arguments — the LSP server reads/writes
+    // entirely over stdio and takes no positionals. Pre-fix the
+    // dispatcher silently accepted them, which made `silt lsp foo`
+    // look like it had worked. Mirror the rejection pattern used by
+    // `silt fmt`, `silt run`, `silt update`, and `silt add`.
+    for arg in &args[2..] {
+        if !arg.starts_with('-') {
+            eprintln!("silt lsp: unexpected argument '{arg}'");
+            eprintln!("Run 'silt lsp --help' for usage.");
+            process::exit(1);
+        }
+    }
     silt::lsp::run();
 }
 

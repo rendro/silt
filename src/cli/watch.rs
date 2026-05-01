@@ -53,20 +53,27 @@ fn handle_watch(args: &[String]) {
 
     // BEFORE entering the watcher, dry-validate the underlying subcommand
     // so we don't spawn a watcher for a command that's going to fail
-    // immediately on every rerun. Two failure modes we catch up front:
+    // immediately on every rerun. Three failure modes we catch up front:
     //
     //   1. `--help` / `-h` combined with `--watch` — the user wants
     //      help, not a watcher. Run the subcommand once (which will
     //      print help and exit 0) and return without watching.
     //
-    //   2. A subcommand that requires a positional file arg is missing
-    //      one — print usage to stderr and exit 1 WITHOUT entering the
-    //      watch loop (which would otherwise hang silently forever,
-    //      because the initial rerun prints a 1-line usage banner and
-    //      the loop just sits there waiting for saves).
+    //   2. The subcommand isn't runnable in a watch context (no
+    //      subcommand at all; or `repl`, `init`, `lsp`, `fmt`,
+    //      `update`, `add`, `self-update`; or an unknown subcommand).
+    //      Re-running these on each save has no meaningful semantics
+    //      — they're either interactive (`repl`, `lsp`), one-shot
+    //      mutators (`init`, `add`, `update`, `self-update`), or
+    //      would create feedback loops (`fmt` rewrites in place).
+    //      Reject with a clear error and exit 1 — NOT enter the loop.
     //
-    // Subcommands that take no file (repl, init, lsp, fmt with
-    // implicit recursion, etc.) are passed through untouched.
+    //   3. A runnable subcommand that requires a positional file arg
+    //      is missing one outside a silt package — print usage and
+    //      exit 1 WITHOUT entering the watch loop (which would
+    //      otherwise hang silently forever, because the initial rerun
+    //      prints a 1-line usage banner and the loop just sits there
+    //      waiting for saves).
     let wants_help = filtered.iter().any(|a| a == "--help" || a == "-h");
     if wants_help {
         // Run the subcommand once so its own help handler fires, then
@@ -85,6 +92,37 @@ fn handle_watch(args: &[String]) {
         }
     }
 
+    // Gate non-runnable subcommands BEFORE entering the watch loop.
+    // Only `run`, `check`, `disasm`, and `test` have meaningful
+    // re-execute-on-save semantics. Anything else (no subcommand,
+    // `repl`, `init`, `lsp`, `fmt`, `update`, `add`, `self-update`,
+    // or an unknown subcommand) entered the loop pre-fix and silently
+    // sat there waiting for file changes — exactly the failure mode
+    // the doc-comment above warns about.
+    //
+    // We reject the empty-argv case and any subcommand outside the
+    // runnable allowlist with a fixed error and exit 1, so users get
+    // a clear pointer to the supported subcommands instead of a
+    // hanging process.
+    const RUNNABLE: &[&str] = &["run", "check", "disasm", "test"];
+    let sub = filtered.first().map(|s| s.as_str());
+    let runnable = sub.map(|s| RUNNABLE.contains(&s)).unwrap_or(false);
+    if !runnable {
+        match sub {
+            None => {
+                eprintln!(
+                    "error: --watch requires a runnable subcommand (run, check, test, disasm)"
+                );
+            }
+            Some(s) => {
+                eprintln!(
+                    "error: silt {s} does not support --watch (only run, check, test, disasm do)"
+                );
+            }
+        }
+        process::exit(1);
+    }
+
     // Detect subcommands that require a positional file argument and
     // bail out up front if it's missing. We only gate on the common
     // case (first positional after the subcommand name is missing or
@@ -95,51 +133,49 @@ fn handle_watch(args: &[String]) {
     // explicit file when the cwd is inside a silt package (manifest
     // discoverable). In that case the subcommand resolves the entry
     // point to `<root>/src/main.silt`, so we let the watcher start.
-    if let Some(sub) = filtered.first().map(|s| s.as_str()) {
-        let requires_file = matches!(sub, "run" | "check" | "disasm");
-        // `silt test` and `silt fmt` take an optional file / path, so
-        // they're NOT in the list above — `silt test --watch` alone is
-        // legitimate and means "watch the cwd and rerun auto-discovered
-        // tests".
-        if requires_file {
-            // Find the first positional (non-flag) arg after the
-            // subcommand name. Flags like `--format json` consume a
-            // value; the simple scan below is good enough because
-            // our value-taking flags all start with `--`.
-            let mut has_positional = false;
-            let mut i = 1;
-            while i < filtered.len() {
-                let a = filtered[i].as_str();
-                if a == "--format" {
-                    // Skip the flag and its value (if present).
-                    i += 2;
-                    continue;
-                }
-                if a.starts_with('-') {
-                    i += 1;
-                    continue;
-                }
-                has_positional = true;
-                break;
+    let sub = sub.expect("runnable check above guarantees Some");
+    let requires_file = matches!(sub, "run" | "check" | "disasm");
+    // `silt test` takes an optional file / path, so it's NOT in
+    // the list above — `silt test --watch` alone is legitimate
+    // and means "watch the cwd and rerun auto-discovered tests".
+    if requires_file {
+        // Find the first positional (non-flag) arg after the
+        // subcommand name. Flags like `--format json` consume a
+        // value; the simple scan below is good enough because
+        // our value-taking flags all start with `--`.
+        let mut has_positional = false;
+        let mut i = 1;
+        while i < filtered.len() {
+            let a = filtered[i].as_str();
+            if a == "--format" {
+                // Skip the flag and its value (if present).
+                i += 2;
+                continue;
             }
-            if !has_positional {
-                // No positional path — only allowed if we're inside a
-                // silt package (manifest reachable from cwd).
-                let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
-                let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
-                if !in_package {
-                    let banner = match sub {
-                        "run" => format!("Usage: {}", run_usage_banner()),
-                        // Keep in sync with check_usage_banner().
-                        "check" => {
-                            format!("Usage: {}", check_usage_banner())
-                        }
-                        "disasm" => format!("Usage: {}", disasm_usage_banner()),
-                        _ => unreachable!(),
-                    };
-                    eprintln!("{banner}");
-                    process::exit(1);
-                }
+            if a.starts_with('-') {
+                i += 1;
+                continue;
+            }
+            has_positional = true;
+            break;
+        }
+        if !has_positional {
+            // No positional path — only allowed if we're inside a
+            // silt package (manifest reachable from cwd).
+            let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
+            let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
+            if !in_package {
+                let banner = match sub {
+                    "run" => format!("Usage: {}", run_usage_banner()),
+                    // Keep in sync with check_usage_banner().
+                    "check" => {
+                        format!("Usage: {}", check_usage_banner())
+                    }
+                    "disasm" => format!("Usage: {}", disasm_usage_banner()),
+                    _ => unreachable!(),
+                };
+                eprintln!("{banner}");
+                process::exit(1);
             }
         }
     }

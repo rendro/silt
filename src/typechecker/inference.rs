@@ -193,6 +193,19 @@ pub(super) fn format_undefined_variable_message(
         "break" | "continue" => {
             Some("silt has no 'break'/'continue' — return early or restructure the recursion")
         }
+        // F12 (round 67): mirror parser.rs G1 (parser.rs:2084-2118) for
+        // the expression-position case. The parser only catches these
+        // at statement position (and gates on a "looks like a mistake"
+        // lookahead); in expression position the parser parses `if` /
+        // `while` / `for` as bare identifiers and we land here with an
+        // "undefined variable" diagnostic. Wording is copied verbatim
+        // from parser.rs so both paths give the user identical advice.
+        "if" => Some(
+            "silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'",
+        ),
+        "while" | "for" => Some(
+            "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
+        ),
         _ => None,
     };
     if let Some(hint) = foreign_keyword_hint {
@@ -2816,27 +2829,37 @@ impl TypeChecker {
                                 let err_count_before = self.errors.len();
                                 self.unify(&lt, &rt, span);
                                 let unify_errored = self.errors.len() > err_count_before;
-                                // B2: enforce operand domain — Add accepts
-                                // Int/Float/ExtFloat or String (concatenation).
-                                let resolved = self.apply(&lt);
-                                match &resolved {
-                                    Type::Var(_) => {
-                                        // Still unresolved — defer to final pass.
-                                        self.pending_numeric_checks.push((
-                                            resolved.clone(),
-                                            "'+'",
-                                            span,
-                                        ));
+                                // F1 (round 67): if `unify` already emitted
+                                // a "type mismatch: expected X, got Y"
+                                // diagnostic, that message already points
+                                // out the misaligned operand. Running the
+                                // operand-domain check below would emit a
+                                // second diagnostic at the same span saying
+                                // "operator '+' requires ..., got 'Bool'"
+                                // — pure noise. Skip it.
+                                if !unify_errored {
+                                    // B2: enforce operand domain — Add accepts
+                                    // Int/Float/ExtFloat or String (concatenation).
+                                    let resolved = self.apply(&lt);
+                                    match &resolved {
+                                        Type::Var(_) => {
+                                            // Still unresolved — defer to final pass.
+                                            self.pending_numeric_checks.push((
+                                                resolved.clone(),
+                                                "'+'",
+                                                span,
+                                            ));
+                                        }
+                                        _ if !is_valid_arith_operand(&resolved, true) => {
+                                            self.error(
+                                                format!(
+                                                    "operator '+' requires Int, Float, ExtFloat, or String, got '{resolved}'"
+                                                ),
+                                                span,
+                                            );
+                                        }
+                                        _ => {}
                                     }
-                                    _ if !is_valid_arith_operand(&resolved, true) => {
-                                        self.error(
-                                            format!(
-                                                "operator '+' requires Int, Float, ExtFloat, or String, got '{resolved}'"
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                    _ => {}
                                 }
                                 if unify_errored { Type::Error } else { lt }
                             }
@@ -2866,28 +2889,43 @@ impl TypeChecker {
                                 lt
                             }
                             _ => {
+                                // F1 (round 67): mirror the Add arm.
+                                // Snapshot error count around `unify` so
+                                // we can suppress the operand-domain
+                                // check when `unify` already emitted a
+                                // "type mismatch" diagnostic for the
+                                // misaligned operand — the second
+                                // domain message would be noise. Also
+                                // return `Type::Error` on unify failure
+                                // so an outer ascribed-let (`let n: Int
+                                // = s - 1`) hits the cascade-suppression
+                                // branch in `unify` (`mod.rs:741`).
+                                let err_count_before = self.errors.len();
                                 self.unify(&lt, &rt, span);
-                                // B2: enforce numeric-only operand domain.
-                                let resolved = self.apply(&lt);
-                                match &resolved {
-                                    Type::Var(_) => {
-                                        self.pending_numeric_checks.push((
-                                            resolved.clone(),
-                                            op_str,
-                                            span,
-                                        ));
+                                let unify_errored = self.errors.len() > err_count_before;
+                                if !unify_errored {
+                                    // B2: enforce numeric-only operand domain.
+                                    let resolved = self.apply(&lt);
+                                    match &resolved {
+                                        Type::Var(_) => {
+                                            self.pending_numeric_checks.push((
+                                                resolved.clone(),
+                                                op_str,
+                                                span,
+                                            ));
+                                        }
+                                        _ if !is_valid_arith_operand(&resolved, false) => {
+                                            self.error(
+                                                format!(
+                                                    "operator {op_str} requires Int, Float, or ExtFloat, got '{resolved}'"
+                                                ),
+                                                span,
+                                            );
+                                        }
+                                        _ => {}
                                     }
-                                    _ if !is_valid_arith_operand(&resolved, false) => {
-                                        self.error(
-                                            format!(
-                                                "operator {op_str} requires Int, Float, or ExtFloat, got '{resolved}'"
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                    _ => {}
                                 }
-                                lt
+                                if unify_errored { Type::Error } else { lt }
                             }
                         }
                     }

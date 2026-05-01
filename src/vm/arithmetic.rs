@@ -115,21 +115,24 @@ impl Vm {
         let a = self.pop()?;
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).ok_or_else(|| {
+            // Collapsed from four byte-identical NaN/non-finite arms
+            // (`(Float, Float)`, `(ExtFloat, ExtFloat)`, `(Float,
+            // ExtFloat)`, `(ExtFloat, Float)`) that previously had two
+            // divergent error wordings — a non-finite phrasing on the
+            // Float/Float arm and a NaN-only phrasing on the three
+            // Float/ExtFloat shapes — for the semantically identical
+            // condition. Round 67 unified to ONE message — NaN IS
+            // non-finite, so the broader phrasing covers every
+            // partial_cmp failure. The typechecker permits the mixed
+            // Float/ExtFloat pair for ordering comparisons; the
+            // or-pattern dereference + f64 partial_cmp matches the
+            // widening rule used elsewhere.
+            (
+                Value::Float(a) | Value::ExtFloat(a),
+                Value::Float(b) | Value::ExtFloat(b),
+            ) => a.partial_cmp(b).ok_or_else(|| {
                 VmError::new("cannot compare non-finite float values".to_string())
             })?,
-            (Value::ExtFloat(a), Value::ExtFloat(b)) => a
-                .partial_cmp(b)
-                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
-            // Mixed Float/ExtFloat: the typechecker permits this pair for
-            // ordering comparisons, so widen the `Float` operand to `ExtFloat`
-            // and compare as f64.
-            (Value::Float(a), Value::ExtFloat(b)) => a
-                .partial_cmp(b)
-                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
-            (Value::ExtFloat(a), Value::Float(b)) => a
-                .partial_cmp(b)
-                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
             (Value::String(a), Value::String(b)) => a.cmp(b),
             // List vs List and the mixed List/Range pairings share the same
             // Silt type (`List(T)`), so must be ordered element-wise. The

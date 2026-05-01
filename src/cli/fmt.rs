@@ -49,6 +49,30 @@ pub(crate) fn dispatch(args: &[String]) {
         // Strip the `.` marker; we'll treat it as the recursive sentinel.
         files.retain(|f| f != "." && f != "./");
     }
+    // Expand any explicit directory positionals into their `.silt`
+    // descendants. Pre-fix `silt fmt src/` ran straight to
+    // `format_file`, which `read_to_string`'d the directory and
+    // surfaced the raw `Is a directory (os error 21)` message. After
+    // fix, fmt mirrors `silt test <dir>` and recurses with
+    // `find_silt_files`. We do this *after* the explicit-dot strip so
+    // `.` keeps its existing implicit-recursive sentinel meaning.
+    {
+        let mut expanded: Vec<String> = Vec::with_capacity(files.len());
+        for f in files.drain(..) {
+            let p = Path::new(&f);
+            if p.is_dir() {
+                let found = find_silt_files(p);
+                if found.is_empty() {
+                    eprintln!("silt fmt: no .silt files found in {f}");
+                    process::exit(1);
+                }
+                expanded.extend(found);
+            } else {
+                expanded.push(f);
+            }
+        }
+        files = expanded;
+    }
     let implicit_recursive = files.is_empty();
     if implicit_recursive {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));

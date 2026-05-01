@@ -5,10 +5,9 @@
 //! `for i in lo..=hi { v.push(Value::Int(i)) }` with no bound on the
 //! range size. Every sibling range-materialization site
 //! (`ListConcat`, `materialize_iter`, `list.flatten`, `value_to_json`,
-//! `Value::materialize_range`, etc.) calls `checked_range_len` with
-//! the `MAX_RANGE_MATERIALIZE` cap. This one did not, so a callback
-//! returning `0..i64::MAX` would hang the process while RSS grew
-//! without bound.
+//! etc.) calls `checked_range_len` with the `MAX_RANGE_MATERIALIZE`
+//! cap. This one did not, so a callback returning `0..i64::MAX` would
+//! hang the process while RSS grew without bound.
 //!
 //! These tests drive the VM via the library API (never via `silt run`)
 //! so a regression surfaces as a clean `VmError` or a `#[should_panic]`

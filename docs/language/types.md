@@ -51,8 +51,14 @@ silt treats silent wrong answers as worse than crashes. The numeric types are de
 
 ```silt
 9223372036854775807 + 1      -- runtime error: integer overflow
-int.abs(-9223372036854775808) -- runtime error: absolute value overflow
+let min = -9223372036854775807 - 1   -- Int::MIN, the unrepresentable value
+int.abs(min)                  -- runtime error: integer overflow: abs(-9223372036854775808)
 ```
+
+The lexer rejects `9223372036854775808` directly as a number literal
+(it overflows `Int`); to construct `Int::MIN` you write
+`-9223372036854775807 - 1` because unary `-` is a separate operator,
+not part of the literal.
 
 ### Finite floats and `ExtFloat`
 

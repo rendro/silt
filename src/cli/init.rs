@@ -23,6 +23,22 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    // Reject positional arguments. Users coming from `cargo new <name>`
+    // / `npm init <name>` will reach for `silt init my_project` and
+    // expect either Cargo-style honoring or a clear rejection — the
+    // pre-fix behavior silently ignored the positional and named the
+    // package after cwd, which was a footgun.
+    for arg in &args[2..] {
+        if !arg.starts_with('-') {
+            eprintln!(
+                "silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
+            );
+            eprintln!(
+                "       to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
+            );
+            process::exit(1);
+        }
+    }
     init_project();
 }
 
