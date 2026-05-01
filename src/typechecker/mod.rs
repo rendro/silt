@@ -6466,6 +6466,23 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Equal / Hash / Display impl. No stamps; the synth pass walks
     // `self.enums` and skips this entry because every trait fails
     // the field-support gate.
+
+    // Bytes: Display only. The generic `dispatch_trait_method` arm at
+    // src/vm/dispatch.rs:295 routes `display` to `display_value`, and
+    // `Value::Bytes` already has a runtime Display impl
+    // (`format_bytes_preview` at src/value.rs:1258 — short hex preview
+    // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
+    // `bytes.eq(a, b)` but is not auto-derived through the trait
+    // surface; Compare / Hash are intentionally omitted (Bytes is an
+    // opaque resource, not an ordered key type — users wanting to
+    // compare or hash should `bytes.to_hex` first).
+    register_auto_derived_impls_for(checker, &["Bytes"], &["Display"]);
+
+    // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
+    // trait-impl-target gate gives an orphan-rule rejection (rather
+    // than "type not declared") if a user tries to add their own
+    // impls, but no built-in trait impls are stamped — they remain
+    // unprintable opaque resources.
 }
 
 /// Register auto-derived trait impls and method-table entries for a

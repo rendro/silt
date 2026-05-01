@@ -3519,7 +3519,12 @@ impl TypeChecker {
                 result_ty
             }
 
-            ExprKind::Lambda { params, body, .. } => {
+            ExprKind::Lambda {
+                params,
+                body,
+                effects,
+                is_annotated,
+            } => {
                 let mut local_env = env.child();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
@@ -3544,6 +3549,53 @@ impl TypeChecker {
                     .collect();
 
                 let body_type = self.infer_expr(body, &mut local_env);
+
+                // Round-65: enforce `fn(...) !{...} { ... }` annotations
+                // the same way `register_fn_decl` enforces FnDecl-level
+                // annotations. Mirror the FnDecl narrowing path: walk
+                // the body's inferred effects, compare to the declared
+                // set, emit a diagnostic if the body uses anything not
+                // in the declaration. Trailing-closure form
+                // `{ params -> body }` has no syntactic slot for an
+                // annotation so `is_annotated` is always false there
+                // and this branch is a no-op — effects remain inferred.
+                if *is_annotated {
+                    let inferred =
+                        super::effects_infer::infer_expr_effects(body, &local_env);
+                    if !inferred.is_subset(*effects) {
+                        let mut offending = crate::types::effects::EffectSet::EMPTY;
+                        for e in inferred.iter() {
+                            if !effects.contains(e) {
+                                offending = offending.insert(e);
+                            }
+                        }
+                        let representative = offending
+                            .iter()
+                            .next()
+                            .map(|e| format!("!{{{e}}}"))
+                            .unwrap_or_else(|| "!{}".to_string());
+                        // Match the FnDecl strict-effects diagnostic:
+                        // render TOP as the explicit five-effect form
+                        // rather than the `!*` "no annotation" sigil,
+                        // which is not a parseable annotation.
+                        let inferred_render = if inferred
+                            == crate::types::effects::EffectSet::TOP
+                        {
+                            "!{fs, io, net, random, time}".to_string()
+                        } else {
+                            format!("{inferred}")
+                        };
+                        self.errors.push(crate::types::TypeError {
+                            message: format!(
+                                "effect '{}' not declared in lambda\nlambda body uses {}; signature declares {}",
+                                representative, inferred_render, effects,
+                            ),
+                            span: body.span,
+                            severity: crate::types::Severity::Error,
+                        });
+                    }
+                }
+
                 Type::Fun(param_types, Box::new(body_type))
             }
 

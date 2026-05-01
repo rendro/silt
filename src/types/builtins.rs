@@ -146,6 +146,28 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
         arity: None,
         kind: BuiltinKind::Container,
     },
+    // Opaque resource / value types that flow as `Type::Generic("Name",
+    // vec![])` from their builtin modules (`bytes::register`,
+    // `tcp::register`). Registering them here exposes them to the
+    // trait-impl-target gate (`is_builtin_container`) so error messages
+    // for `trait T for Bytes { ... }` walk the orphan-rule path
+    // instead of `target 'Bytes' is not a declared type`. See round-65
+    // GAP fix that lifted these out of the deferred bucket.
+    BuiltinType {
+        name: "Bytes",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "TcpListener",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
+    BuiltinType {
+        name: "TcpStream",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
 ];
 
 /// Look up a built-in type entry by surface name. Returns `None` for
