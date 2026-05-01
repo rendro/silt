@@ -89,29 +89,58 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
     Ok(())
 }
 
-/// Count "significant" tokens, skipping `Newline`, `Eof`, and the
-/// round-paren delimiters `(` and `)`.
+/// Count "significant" tokens, skipping `Newline`, `Eof`, the
+/// round-paren delimiters `(` and `)`, and any `,` that immediately
+/// precedes a closer `)`, `]`, or `}` (a trailing comma).
 ///
 /// silt's parser requires explicit commas between elements in every
-/// list-style construct, so commas stay strict. But the formatter
-/// legitimately inserts disambiguation parens around sub-expressions
-/// whose precedence is non-obvious (e.g. `B?-F` → `(B?) - F`). Those
-/// paren pairs are balanced and harmless — they are verified
-/// separately by `delimiter_balance`, which asserts that net open and
-/// close counts match exactly — so excluding them from the "every
-/// token must survive" count avoids false positives without losing
-/// coverage of dropped parens (those still break the balance check).
+/// list-style construct, but the formatter legitimately drops a
+/// trailing comma when it reflows a multi-line collection to a single
+/// line and re-adds one when it reflows a single-line collection to
+/// multi-line. Counting trailing commas as "significant" makes that
+/// pure-layout normalization a fuzzer false positive, so they are
+/// excluded here. Inter-element commas remain counted — dropping one
+/// of those changes program structure and must still trip the check.
 ///
-/// Braces and brackets remain counted: the formatter never inserts
-/// `{`, `}`, `[`, or `]` tokens the source didn't already have.
+/// Likewise the formatter inserts disambiguation parens around sub-
+/// expressions whose precedence is non-obvious (e.g. `B?-F` → `(B?) - F`).
+/// Those paren pairs are balanced and harmless — verified separately
+/// by `delimiter_balance`, which asserts net open and close counts
+/// match exactly — so excluding them from the "every token must
+/// survive" count avoids false positives without losing coverage of
+/// dropped parens.
+///
+/// Braces and brackets remain counted (the formatter never inserts
+/// `{`, `}`, `[`, or `]` tokens the source didn't already have), and
+/// non-trailing commas remain counted.
 fn significant_token_count(tokens: &[SpannedToken]) -> usize {
     tokens
         .iter()
-        .filter(|(t, _)| {
-            !matches!(
+        .enumerate()
+        .filter(|(i, (t, _))| {
+            if matches!(
                 t,
                 Token::Newline | Token::Eof | Token::LParen | Token::RParen
-            )
+            ) {
+                return false;
+            }
+            if matches!(t, Token::Comma) {
+                // Skip whitespace-equivalent tokens (`Newline`) when
+                // looking for the next non-trivial token.
+                let mut j = i + 1;
+                while j < tokens.len() && matches!(tokens[j].0, Token::Newline) {
+                    j += 1;
+                }
+                if j < tokens.len()
+                    && matches!(
+                        tokens[j].0,
+                        Token::RParen | Token::RBracket | Token::RBrace
+                    )
+                {
+                    return false;
+                }
+            }
+            true
         })
         .count()
 }
@@ -141,20 +170,86 @@ fn delimiter_balance(tokens: &[SpannedToken]) -> (i64, i64, i64) {
 /// Rough comment count using textual scanning. Line comments start with
 /// `--` (to end of line); block comments start with `{-` and nest.
 ///
-/// This is intentionally naïve — it does not exclude comment markers
-/// appearing inside string literals — because the formatter preserves
-/// string-literal content byte-for-byte, so whatever count the original
-/// produces, the formatted output must produce the same count. The
-/// invariant compares two scans of the *same* scheme, so the bias
-/// cancels out.
+/// String-aware: the scanner skips over the content of `"..."` and
+/// `"""..."""` string literals so `--` markers appearing inside string
+/// content do not count as comment markers. This is required because
+/// the formatter legitimately reflows multi-line `"..."` content to
+/// single-line `\n`-escaped form (and vice versa), which collapses the
+/// number of physical lines `--` markers appear on. Without string
+/// awareness, two scans of input vs output disagree on a "comment"
+/// count that has nothing to do with real comments. The same scheme
+/// is applied to both inputs so the comparison stays apples-to-apples.
+///
+/// Block-comment-aware: a `--` inside an open `{- ... -}` block is also
+/// not a line comment, so block depth is tracked while scanning.
 fn comment_marker_count(source: &str) -> (usize, usize) {
     let bytes = source.as_bytes();
     let mut line_comments = 0usize;
     let mut block_open = 0usize;
     let mut i = 0;
-    while i + 1 < bytes.len() {
-        // `--` line comment
-        if bytes[i] == b'-' && bytes[i + 1] == b'-' {
+    let mut block_depth: usize = 0;
+    while i < bytes.len() {
+        // Inside a `{- ... -}` block: only `{-` deepens, `-}` closes;
+        // `--` and string quotes are inert.
+        if block_depth > 0 {
+            if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                block_open += 1;
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Triple-quoted string `"""..."""` — content is opaque.
+        if i + 2 < bytes.len() && &bytes[i..i + 3] == b"\"\"\"" {
+            i += 3;
+            while i + 2 < bytes.len() && &bytes[i..i + 3] != b"\"\"\"" {
+                i += 1;
+            }
+            if i + 2 < bytes.len() {
+                i += 3;
+            } else {
+                // Unterminated triple — consume rest.
+                i = bytes.len();
+            }
+            continue;
+        }
+
+        // Regular string `"..."` — content is opaque (including embedded
+        // raw newlines, which the silt lexer tolerates and the formatter
+        // re-emits as `\n` escapes). Honour `\"` escapes.
+        if bytes[i] == b'"' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+
+        // `{-` block comment opener (outside any string).
+        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+            block_open += 1;
+            block_depth += 1;
+            i += 2;
+            continue;
+        }
+
+        // `--` line comment (outside any string / block comment).
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
             line_comments += 1;
             // Skip to end of line so we don't double-count `----`.
             while i < bytes.len() && bytes[i] != b'\n' {
@@ -162,12 +257,7 @@ fn comment_marker_count(source: &str) -> (usize, usize) {
             }
             continue;
         }
-        // `{-` block comment opener
-        if bytes[i] == b'{' && bytes[i + 1] == b'-' {
-            block_open += 1;
-            i += 2;
-            continue;
-        }
+
         i += 1;
     }
     (line_comments, block_open)

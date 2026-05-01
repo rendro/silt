@@ -50,7 +50,7 @@ fn assert_fails(source: &str) {
 fn closed_anon_record_literal_and_field_access() {
     assert_passes(
         r#"
-fn main() = {
+fn main() {
     let p = {name: "A", age: 30}
     let n = p.name
     let _ = n
@@ -64,7 +64,7 @@ fn closed_x_closed_unify_ok() {
     assert_passes(
         r#"
 fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
-fn main() = {
+fn main() {
     let _ = ident({a: 1, b: "hi"})
 }
 "#,
@@ -76,7 +76,7 @@ fn closed_x_closed_unify_extra_field_rejected() {
     assert_fails(
         r#"
 fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
-fn main() = {
+fn main() {
     let _ = ident({a: 1, b: "hi", c: 9})
 }
 "#,
@@ -88,7 +88,7 @@ fn open_accepts_subset() {
     assert_passes(
         r#"
 fn first_name(p: {name: String, ...r}) -> String = p.name
-fn main() = {
+fn main() {
     let n = first_name({name: "A", age: 30})
     let _ = n
 }
@@ -102,7 +102,7 @@ fn nominal_flows_into_open_row() {
         r#"
 type Person { name: String, age: Int }
 fn name(p: {name: String, ...r}) -> String = p.name
-fn main() = {
+fn main() {
     let _ = name(Person { name: "A", age: 30 })
 }
 "#,
@@ -113,7 +113,7 @@ fn main() = {
 fn extend_operator_basic() {
     assert_passes(
         r#"
-fn main() = {
+fn main() {
     let p = {name: "A"}
     let q = {...p, age: 30}
     let _ = q.name
@@ -127,7 +127,7 @@ fn main() = {
 fn extend_rejects_existing_field() {
     assert_fails(
         r#"
-fn main() = {
+fn main() {
     let p = {name: "A"}
     let q = {...p, name: "B"}
     let _ = q
@@ -140,7 +140,7 @@ fn main() = {
 fn pattern_destructure_with_rest_anon_source() {
     assert_passes(
         r#"
-fn main() = {
+fn main() {
     let p = {name: "A", age: 30}
     let n = match p {
         {name: nm, ...rest} -> nm
@@ -156,7 +156,7 @@ fn closed_record_missing_field_rejected() {
     assert_fails(
         r#"
 fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
-fn main() = {
+fn main() {
     let _ = ident({a: 1})
 }
 "#,
@@ -167,7 +167,7 @@ fn main() = {
 fn anon_record_field_access_unknown_field_rejected() {
     assert_fails(
         r#"
-fn main() = {
+fn main() {
     let p = {name: "A"}
     let _ = p.age
 }
@@ -183,7 +183,7 @@ fn field_access_generates_row_constraint() {
     assert_passes(
         r#"
 fn show_name(p) = p.name
-fn main() = {
+fn main() {
     let _ = show_name({name: "A", age: 30})
 }
 "#,
@@ -198,7 +198,7 @@ fn multiple_field_access_on_open() {
     assert_passes(
         r#"
 fn full(p) = p.first + " " + p.last
-fn main() = {
+fn main() {
     let _ = full({first: "A", last: "B", age: 30})
 }
 "#,
@@ -212,7 +212,7 @@ fn open_row_threading_through_fn_call() {
     assert_passes(
         r#"
 fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
-fn main() = {
+fn main() {
     let q = id_name({name: "A", age: 30})
     let _ = q.age
 }
@@ -227,7 +227,7 @@ fn pattern_destructure_with_rest_nominal_source() {
     assert_passes(
         r#"
 type Person { name: String, age: Int }
-fn main() = {
+fn main() {
     let p = Person { name: "A", age: 30 }
     let n = match p {
         {name: nm, ...rest} -> nm

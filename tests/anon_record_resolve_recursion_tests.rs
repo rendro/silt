@@ -62,7 +62,7 @@ fn f2_anon_record_field_use_suppresses_cannot_infer_cascade() {
     // misleading "cannot infer the type of `x`" diagnostic.
     let source = r#"
 fn nullary() = []
-fn main() = {
+fn main() {
   let x = nullary()
   let r = { val: x }
   ()
@@ -84,8 +84,8 @@ fn f2_anon_record_spread_use_suppresses_cannot_infer_cascade() {
     // fix, `r` is an unresolved bare Var (because `r2`'s spread is
     // invisible) and a "cannot infer" error fires for `r`.
     let source = r#"
-fn make() = { val: 1 }
-fn main() = {
+fn make() = ({ val: 1 })
+fn main() {
   let r = make()
   let r2 = { ...r, extra: 2 }
   ()
@@ -164,7 +164,7 @@ fn f9_anon_record_field_subexpr_types_resolved() {
     // field expr's `expr.ty` stays as the bare `Type::Var`.
     let source = r#"
 fn nullary() = []
-fn main() = {
+fn main() {
   let x = nullary()
   let r = { val: x }
   let y: List(Int) = r.val

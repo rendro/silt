@@ -173,9 +173,9 @@ fn formatter_invariants_reject_dropped_token() {
 
 #[test]
 fn formatter_invariants_reject_unbalanced_braces() {
-    let original = "fn f() = { 1 + 2 }\n";
+    let original = "fn f() { 1 + 2 }\n";
     // Corrupted output drops the closing brace.
-    let corrupted = "fn f() = { 1 + 2 \n";
+    let corrupted = "fn f() { 1 + 2 \n";
     let err = check_formatter_invariants(original, corrupted).unwrap_err();
     assert!(
         err.contains("delimiter balance") || err.contains("significant token count"),

@@ -961,6 +961,16 @@ impl Parser {
             // Single-expression form: fn square(x) = x * x
             self.advance();
             self.skip_nl();
+            // `fn name() = { ... }` is rejected: it overlaps the
+            // block-body form `fn name() { ... }`. silt has one shape
+            // per construct, so the `=` is required to introduce a
+            // non-block expression.
+            if self.at(&Token::LBrace) {
+                return Err(ParseError {
+                    message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
+                    span: self.span(),
+                });
+            }
             (self.parse_expr()?, false)
         } else if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
@@ -1135,6 +1145,15 @@ impl Parser {
         let (body, is_signature_only) = if self.at(&Token::Eq) {
             self.advance();
             self.skip_nl();
+            if self.at(&Token::LBrace) {
+                return Err(Box::new((
+                    self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                    ParseError {
+                        message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
+                        span: self.span(),
+                    },
+                )));
+            }
             match self.parse_expr() {
                 Ok(e) => (e, false),
                 Err(err) => {

@@ -2748,7 +2748,22 @@ fn expr_max_line(expr: &Expr) -> usize {
                 visit(a);
             }
         }
-        ExprKind::Lambda { body, .. } => visit(body),
+        ExprKind::Lambda { body, .. } => {
+            visit(body);
+            // A lambda's `}` close-brace line may carry a trailing
+            // comment (`}-- foo`). Without this, `expr_max_line`
+            // stops at the last statement's line, the outer
+            // `format_stmts_with_comments` consumes a trailing for
+            // the smaller line, and the close-brace trailing stays
+            // orphaned in `trailing_map`. Use the block's actual
+            // close line so the outer drain reaches it.
+            if let ExprKind::Block(_) = &body.kind {
+                let close = compute_block_end_line(body.span);
+                if close > max {
+                    max = close;
+                }
+            }
+        }
         ExprKind::RecordCreate { fields, .. } => {
             for (_, v) in fields {
                 visit(v);
@@ -2790,6 +2805,13 @@ fn expr_max_line(expr: &Expr) -> usize {
                 if m > max {
                     max = m;
                 }
+            }
+            // Include the block's actual close-brace line so a
+            // trailing comment on `}` is reachable to the outer
+            // statement drain.
+            let close = compute_block_end_line(expr.span);
+            if close > max {
+                max = close;
             }
         }
         ExprKind::Loop { bindings, body } => {
@@ -3613,12 +3635,42 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         .enumerate()
         .map(|(i, d)| {
             let decl_body_comments = body_comments[i].clone();
+            let end_line = decl_end_lines[i];
             with_fmt_state(
                 decl_body_comments,
                 trailing_map.clone(),
                 leading_inline_map.clone(),
                 source,
-                || format_decl_with_comments(d, 0),
+                || {
+                    let mut s = format_decl_with_comments(d, 0);
+                    // Preserve a trailing same-line comment on the
+                    // closing line of a top-level decl (e.g.
+                    // `import task -- foo`, `type T { ... } -- foo`).
+                    // Inner emitters (fn body close brace, multi-line
+                    // brace closers) consume their own trailing
+                    // comments via `take_trailing_for_line` and mark
+                    // the line consumed; this fallback only fires
+                    // when no inner emitter claimed the line, so it
+                    // does not double-emit.
+                    if let Some(t) = take_trailing_for_line(end_line) {
+                        // s currently ends with the decl text (no
+                        // trailing newline). Append the comment with
+                        // a single space to keep it on the same line.
+                        if s.ends_with('\n') {
+                            // Strip exactly one trailing newline so
+                            // the comment stays on the decl's last
+                            // line, then re-add it.
+                            s.pop();
+                            s.push(' ');
+                            s.push_str(&t);
+                            s.push('\n');
+                        } else {
+                            s.push(' ');
+                            s.push_str(&t);
+                        }
+                    }
+                    s
+                },
             )
         })
         .collect();
@@ -3778,8 +3830,26 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     let param_lines: Vec<Option<usize>> =
         compute_param_lines(fn_start_line, params_close_line, f.params.len());
     let concrete_param_lines: Vec<usize> = param_lines.iter().filter_map(|l| *l).collect();
-    let multiline_params = !f.params.is_empty()
-        && should_layout_multiline(fn_start_line, params_close_line, &concrete_param_lines);
+    // Force multi-line layout when:
+    //   * params exist and any has interior comments / spans lines, OR
+    //   * params is empty but the source `(...)` has interior standalone
+    //     comments. The empty-paren case is what the nightly fuzzer hit
+    //     for `fn man(-- B\n-- T\n) {}` — silently dropping every
+    //     interior comment.
+    // A trailing comment on `fn_start_line` is "inside the parens" only
+    // when `params_close_line > fn_start_line` — i.e. the `)` is on a
+    // later line, so anything trailing the `(` on line 1 must precede
+    // a newline that lives between `(` and `)`. When close is on the
+    // same line, any trailing comment belongs to the body / post-body
+    // and is handled by the top-level trailing-comment fallback.
+    let inner_trailing_on_open =
+        params_close_line > fn_start_line && has_trailing_for_line(fn_start_line);
+    let multiline_params = if f.params.is_empty() {
+        has_comments_between(fn_start_line, params_close_line) || inner_trailing_on_open
+    } else {
+        should_layout_multiline(fn_start_line, params_close_line, &concrete_param_lines)
+            || inner_trailing_on_open
+    };
     let params = if multiline_params {
         // Round-52 trailing-comma preservation for fn params. Use the
         // byte-offset-anchored scan so a `fn foo(x) = Some(x,)` single-
@@ -3787,6 +3857,16 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         let source_has_trailing_comma = source_has_trailing_comma_at_offset(f.span, '(', ')');
         let last_idx = f.params.len().saturating_sub(1);
         let mut lines: Vec<String> = Vec::new();
+        // Consume any trailing comment on the `(` line itself when the
+        // `)` is on a later line — that comment lives inside the
+        // parens (e.g. `fn man(-- inside\n) {}`). Without this, the
+        // comment stays in `trailing_map` unconsumed and is silently
+        // dropped.
+        if inner_trailing_on_open
+            && let Some(t) = take_trailing_for_line(fn_start_line)
+        {
+            lines.push(format!("{}{}", indent(depth + 1), t));
+        }
         let mut prev_line = fn_start_line;
         for (i, p) in f.params.iter().enumerate() {
             let p_line = param_lines[i].unwrap_or(prev_line + 1);

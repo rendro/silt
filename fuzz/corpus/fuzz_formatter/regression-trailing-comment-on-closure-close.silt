@@ -1,0 +1,7 @@
+fn main() {
+  list.each { e ->
+    let x = e
+    println(x)
+  } -- trailing on closure close brace
+  Date
+}

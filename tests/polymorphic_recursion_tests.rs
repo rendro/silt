@@ -44,7 +44,7 @@ fn annotated_poly_recursion_accepted_recursive_call_at_different_concrete_type()
     // instantiate `a` afresh — exactly the polymorphic-recursion case
     // that should typecheck.
     let source = r#"
-fn myfn(p: a) -> Int where a: Display = {
+fn myfn(p: a) -> Int where a: Display {
   let s = "{p}"
   let _ = myfn("hello")
   let _ = myfn(42)
@@ -72,7 +72,7 @@ fn annotated_recursion_constraining_body_use_does_not_collapse_scheme() {
     // annotated-fn lock, the scheme stays polymorphic and the
     // recursive call at String works.
     let source = r#"
-fn announce(x: a) -> String where a: Display = {
+fn announce(x: a) -> String where a: Display {
   let label = "{x}"
   let _ = announce("nested")
   label
@@ -101,7 +101,7 @@ fn unannotated_poly_recursion_rejected_at_recursive_call_site() {
     // the recursive call must match it. Unify fails with a
     // type-mismatch.
     let source = r#"
-fn myfn(p) = {
+fn myfn(p) {
   let x = p + 1
   let _ = myfn("hello")
   0
@@ -182,12 +182,12 @@ fn annotated_mutual_recursion_at_different_types_accepted() {
     // Both schemes are locked; instantiation at each call site is
     // fresh.
     let source = r#"
-fn ping(x: a) -> Int where a: Display = {
+fn ping(x: a) -> Int where a: Display {
   let _ = pong("string-arg")
   0
 }
 
-fn pong(x: b) -> Int where b: Display = {
+fn pong(x: b) -> Int where b: Display {
   let _ = ping(42)
   0
 }
@@ -210,7 +210,7 @@ fn main() {
 #[test]
 fn unannotated_recursion_diagnostic_includes_polymorphic_recursion_hint() {
     let source = r#"
-fn myfn(p) = {
+fn myfn(p) {
   let x = p + 1
   let _ = myfn("hello")
   0
@@ -248,7 +248,7 @@ fn main() {
 #[test]
 fn annotated_recursion_does_not_emit_hint_for_a_well_typed_call() {
     let source = r#"
-fn myfn(p: a) -> Int where a: Display = {
+fn myfn(p: a) -> Int where a: Display {
   let _ = myfn("nested")
   0
 }
@@ -285,7 +285,7 @@ fn annotated_recursive_fn_body_pinning_param_emits_signature_mismatch() {
     // invariants stable. Item 6B is scoped to the recursive case
     // only.
     let source = r#"
-fn f(x: a) -> Int = {
+fn f(x: a) -> Int {
   let _ = f(0)
   x + 1
 }
