@@ -46,8 +46,9 @@ trait Ordered: Equal {
 ```
 
 Implementing `Ordered` on `Int` requires `Int` to also implement `Equal`
-(the four built-in traits — `Equal`, `Hash`, `Compare`, `Display` — are
-auto-derived for every type, so the obligation is satisfied automatically).
+(four of silt's five built-in traits — `Equal`, `Hash`, `Compare`,
+`Display` — are auto-derived for every type, so the obligation is
+satisfied automatically; the fifth, `Error`, is not auto-derived).
 
 **`Equal` vs `==` for `ExtFloat` (NaN divergence).** For `ExtFloat`,
 `a.equal(b)` is reflexive by bit pattern (so `NaN.equal(NaN) = true`)
@@ -382,21 +383,107 @@ fn main() {
 
 ## Built-in Traits
 
-| Trait     | Purpose                          |
-|-----------|----------------------------------|
-| `Display` | Convert to human-readable string |
-| `Equal`   | Equality comparison              |
-| `Hash`    | Hash value for maps/sets         |
-| `Compare` | Order comparison                 |
+silt ships **five** built-in traits. Four of them — `Equal`, `Hash`,
+`Compare`, `Display` — are **automatically derived** for every
+user-defined type. The fifth, `Error`, is built-in but is **not**
+auto-derived.
 
-All four are **automatically derived** for every user-defined type. The
-auto-derived `Display` formats in constructor syntax (`Circle(5)`). Write
-your own `trait Display for T` to override.
+| Trait     | Purpose                          | Auto-derived? |
+|-----------|----------------------------------|---------------|
+| `Display` | Convert to human-readable string | yes           |
+| `Equal`   | Equality comparison              | yes           |
+| `Hash`    | Hash value for maps/sets         | yes           |
+| `Compare` | Order comparison                 | yes           |
+| `Error`   | Error reporting (`message()`)    | no            |
 
-The built-in `Error` trait (supertraits `Display`; method
-`message(self) -> String`) is **not** auto-derived. Each stdlib error enum
-(`IoError`, `JsonError`, `HttpError`, …) implements it explicitly, and user
-code can implement it on its own error types.
+The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
+Write your own `trait Display for T` to override.
+
+The `Error` trait has supertrait `Display` and one method,
+`message(self) -> String`. Each stdlib error enum (`IoError`,
+`JsonError`, `HttpError`, …) implements it explicitly, and user code
+can implement it on its own error types.
+
+## Coherence — The Orphan Rule
+
+silt enforces a **trait orphan rule** so two unrelated packages cannot
+both register an impl for the same `(trait, type)` pair and silently
+disagree on dispatch. The rule:
+
+> An `impl Trait for Type` declared in package `P` is allowed only when
+> at least one of `Trait` or `Type` is defined in `P` (or is built-in
+> to silt). Impls where both the trait and the head type are foreign to
+> `P` are rejected.
+
+Built-in traits and built-in types (`List`, `Map`, `Set`, `Option`,
+`Result`, `Range`, …) are stdlib-owned. They count as foreign to your
+package — implementing `Display` for `List(a)` from your own package is
+forbidden. Auto-derived synthetic impls are exempt: the synth pass
+specialises stdlib impls to user-supplied type parameters and never
+races with another package.
+
+The rule is **disabled** in the REPL — anything typechecked without a
+current package treats every decl as local — so quick experiments at the
+prompt aren't punished. The CLI still enforces the rule on every file
+it loads (stand-alone scripts run under a synthetic `__local__`
+package).
+
+### Allowed: at least one local anchor
+
+A local trait on a built-in type satisfies the trait-local arm:
+
+```silt
+trait Greet { fn greet(self) -> String }
+
+trait Greet for List(a) {
+  fn greet(self) -> String { "a list" }
+}
+```
+
+A built-in trait on a local type satisfies the type-local arm:
+
+```silt
+type Color { Red, Green, Blue }
+
+trait Display for Color {
+  fn display(self) -> String { "a color" }
+}
+```
+
+A local trait on a local type is the trivial case — both arms are
+satisfied:
+
+```silt
+type Color { Red, Green, Blue }
+trait Greet { fn greet(self) -> String }
+
+trait Greet for Color {
+  fn greet(self) -> String { "color" }
+}
+```
+
+### Rejected: both anchors foreign
+
+Implementing a built-in trait on a built-in type from a user package is
+an orphan impl — neither anchor is local:
+
+```silt
+-- in package `myapp`
+trait Display for List(a) {                  -- error
+  fn display(self) -> String { "stolen" }
+}
+```
+
+The compiler emits:
+
+```
+orphan impl: trait 'Display' is from package '__builtin__' and type
+'List' is from package '__builtin__'; either the trait or the type
+must be defined in the current package 'myapp'
+```
+
+To add behaviour to a built-in type, wrap it in a local newtype or
+declare your own trait and implement that instead.
 
 ## Where Clauses
 

@@ -79,7 +79,7 @@ verbose, but enables concurrency safety and reasoning guarantees.
 
 ## Newline Sensitivity
 
-Postfix operators (function call, `?`, trailing closure, index) do **not**
+Postfix operators (function call, `?`, trailing closure) do **not**
 cross newlines. Infix operators (`|>`, `.`, `==`, `*`, etc.) do. `+` and `-`
 are ambiguous (also unary) so they do not cross newlines -- place them at the
 end of the line to continue:
@@ -91,6 +91,10 @@ let x = 10 +
 let y = 10
   + 20          -- NOT a continuation
 ```
+
+(Bracket indexing `xs[i]` is reserved syntax but is not a real postfix
+operator -- silt's parser rejects it. Use `list.get(xs, i)`,
+`map.get(m, k)`, or `string.char_at(s, i)` instead.)
 
 Trailing closures must start on the same line as the function call:
 

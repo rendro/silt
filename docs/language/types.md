@@ -133,6 +133,144 @@ let alice2 = alice.{ age: 31 }
 Read as "alice, but with age 31." Compare to Elm `{ u | age = 31 }`, Rust
 `User { age: 31, ..u }`. Silt's `.{ }` syntax avoids new keywords or sigils.
 
+## Anonymous Records and Row Polymorphism
+
+Beside nominal records (`type User { ... }`), silt has **anonymous
+structural records**: a record literal or type written without a name.
+Two anonymous records with the same fields and field types are the same
+type — there is no `type Foo { ... }` declaration to anchor identity.
+
+```silt
+let alice = { name: "Alice", age: 30 }
+let bob   = { name: "Bob",   age: 25 }   -- same type as alice
+alice.name   -- "Alice"
+```
+
+The type of `alice` is the structural type `{name: String, age: Int}`,
+which can also appear in any annotation:
+
+```silt
+fn full_name(p: {first: String, last: String}) -> String =
+  p.first + " " + p.last
+```
+
+### Open rows: `...r`
+
+A record type can leave its tail **open** with `...r`, where `r` is a
+lowercase row variable — a polymorphic placeholder for "any further
+fields you happen to have." The function only commits to the fields it
+names; the row variable absorbs whatever else the caller passes:
+
+```silt
+fn first_name(p: {name: String, ...r}) -> String = p.name
+
+fn main() {
+  println(first_name({name: "Alice", age: 30}))
+  println(first_name({name: "Bob"}))
+}
+```
+
+Inside the function `p.name` is the only legal access; `p.age` would be
+rejected, even when the caller passes a record that happens to have an
+`age` field.
+
+A row variable can be threaded into the return type so the caller's
+extra fields survive the round trip:
+
+```silt
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
+
+fn main() {
+  let q = id_name({name: "Alice", age: 30})
+  -- `age` came along with the row
+  println(q.age)       -- 30
+}
+```
+
+Row variables are inferred at first appearance, just like ordinary type
+variables: a function written without annotations like
+`fn show_name(p) = p.name` is inferred to take an open record carrying
+at least a `name` field.
+
+### Nominal records flow into open rows
+
+Nominal records widen to open rows automatically, so a fn taking a
+`{name: String, ...r}` parameter accepts any nominal record that has a
+`name: String` field:
+
+```silt
+type Person { name: String, age: Int }
+
+fn name(p: {name: String, ...r}) -> String = p.name
+
+fn main() {
+  println(name(Person { name: "Bob", age: 42 }))   -- Bob
+}
+```
+
+The reverse direction does not happen — anonymous records do not
+automatically become nominal. Use the constructor (`Person { ... }`)
+when nominal identity matters.
+
+### Closed rows reject extra fields
+
+A record type **without** `...r` is closed: the caller must supply
+exactly the listed fields, no more, no less:
+
+```silt
+fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
+
+ident({a: 1, b: "hi"})            -- OK
+ident({a: 1, b: "hi", c: 9})      -- error: extra field `c`
+ident({a: 1})                     -- error: missing field `b`
+```
+
+### Record extension: `{...p, ...}`
+
+The same `...` token, in a record **expression**, spreads an existing
+record into a new one. Additional fields after the spread are appended;
+attempting to overwrite a field that already exists is rejected:
+
+```silt
+fn main() {
+  let p = {name: "Alice"}
+  let q = {...p, age: 30}        -- {name: String, age: Int}
+  println(q.name)                -- Alice
+  println(q.age)                 -- 30
+}
+```
+
+Trying to redefine an existing field — `{...p, name: "Bob"}` — is a
+compile-time error. The shape is "extend, never overwrite"; use record
+update (`p.{ name: "Bob" }`) for that.
+
+### Pattern destructuring with rest
+
+Record patterns mirror the type form. A `{name: nm, ...rest}` pattern
+in a `match` arm binds the listed fields and lets a row variable
+capture the rest of the type, the same way `..rest` works on lists:
+
+```silt
+fn main() {
+  let p = {name: "A", age: 30}
+  match p {
+    {name: nm} -> println(nm)      -- "A"
+  }
+}
+```
+
+See [pattern matching](pattern-matching.md) for the full record-pattern
+grammar.
+
+### Summary
+
+| Form                              | Meaning                                                |
+|-----------------------------------|--------------------------------------------------------|
+| `{name: "A", age: 30}`            | Anonymous record literal                               |
+| `{name: String, age: Int}`        | Closed structural record type — exactly these fields   |
+| `{name: String, ...r}`            | Open row — at least `name`, plus any tail captured by `r` |
+| `{...p, age: 30}`                 | Record extension — copy `p`, append `age` (no overwrite) |
+
 ## Tuples
 
 Fixed-size, heterogeneous:

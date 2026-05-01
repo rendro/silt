@@ -481,6 +481,143 @@ This is how `default`, `empty`, and similar constructor-style trait
 methods become directly writable in user code — without silt growing
 `T::method()` path syntax or inherent impls.
 
+### Associated types
+
+A trait can declare a **type member** alongside its methods. Each impl
+binds the member to a concrete type, and the trait's methods may refer
+to that member through `Self::Item` projection. This lets a single
+trait relate one self-type to a family of related types without paying
+for a trait parameter at every use site.
+
+Declarations live on the trait; bindings live on each impl:
+
+```silt
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Stream for Wrap {
+  type Item = Int
+
+  fn first(self) -> Int {
+    self.v
+  }
+}
+```
+
+Inside the trait body, `Self::Item` refers to whatever the impl will
+bind. At the call site (`w.first()` on a `Wrap`), the compiler reduces
+the projection to `Int` via the impl's `type Item = Int` binding.
+
+A trait may declare more than one associated type:
+
+```silt
+trait Pair {
+  type First
+  type Second
+  fn first(self) -> Self::First
+  fn second(self) -> Self::Second
+}
+
+type IntStringPair { a: Int, b: String }
+
+trait Pair for IntStringPair {
+  type First = Int
+  type Second = String
+
+  fn first(self) -> Int { self.a }
+  fn second(self) -> String { self.b }
+}
+```
+
+#### Bounds on associated types
+
+A declaration may attach trait bounds to the member. Bindings in impls
+must satisfy those bounds:
+
+```silt
+trait Container {
+  type Item: Compare
+  fn first(self) -> Self::Item
+}
+
+type Box { v: Int }
+
+trait Container for Box {
+  type Item = Int           -- OK: Int auto-derives Compare
+  fn first(self) -> Int { self.v }
+}
+```
+
+Multiple bounds combine with `+`, the same way method-level constraints
+do: `type Item: Compare + Hash`.
+
+#### Qualified projection: `<T as Trait>::Item`
+
+Inside a trait body or impl, `Self::Item` is the natural form. Outside
+a trait — in a free function's signature, for example — write the
+fully-qualified `<T as Trait>::Item` form to project the associated
+type of a known concrete impl:
+
+```silt
+fn first_out(w: Wrap) -> <Wrap as Producer>::Out {
+  w.produce()
+}
+```
+
+The compiler resolves the projection through the registered impl, so
+the return type reduces to whatever `type Out = ...` the impl bound.
+
+#### Supertrait inheritance
+
+A subtrait inherits its supertrait's associated types automatically.
+You bind them once on the supertrait impl and reference them from
+either trait body:
+
+```silt
+trait Super {
+  type Item
+  fn one(self) -> Self::Item
+}
+
+trait Sub: Super {
+  fn first(self) -> Self::Item       -- Self::Item comes from Super
+}
+
+type Wrap { v: Int }
+
+trait Super for Wrap {
+  type Item = Int
+  fn one(self) -> Int { self.v }
+}
+
+trait Sub for Wrap {
+  fn first(self) -> Int { self.v + 1 }
+}
+```
+
+#### Rules
+
+- **Declarations live on the trait.** `type Item` (optionally
+  `type Item: Compare + Hash`) appears inside the trait body alongside
+  method declarations. Order is free — declarations and methods may
+  interleave.
+- **Bindings live on each impl.** Every concrete impl must supply
+  `type Item = ConcreteType` for every associated type the trait
+  declares. Missing bindings are a compile-time error
+  (`missing required associated type 'Item'`).
+- **No defaults in v1.** `type Item = SomeDefault` on a trait
+  declaration is rejected — silt reserves the syntax for a future
+  extension. Bindings are required on every impl.
+- **No duplicates.** Two `type Item = ...` bindings in the same impl
+  are a compile-time error.
+- **`Self::Item` is trait-local.** Outside any trait body, `Self`
+  alone is meaningless; use `<T as Trait>::Item` to project from a
+  named type.
+
 ## Worked examples
 
 ### Collection operations
@@ -568,18 +705,6 @@ type errors and inference substantially harder for everyone else.
 Silt's position: the stdlib provides the common shapes directly
 (`List`, `Option`, `Result`, `Map`), and that covers the overwhelming
 majority of real code.
-
-### No associated types
-
-Traits cannot declare `type Item` alongside their methods. If a trait
-needs to relate multiple types, it takes them as trait parameters:
-
-```silt
-trait Into(b) { fn into(self) -> b }
-```
-
-This costs a parameter at every use site but avoids the complexity of
-projection types (`<T as Trait>::Item`) and family-dependent inference.
 
 ### No constants in type parameters
 

@@ -189,6 +189,8 @@ silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based depend
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
 
+`run`, `check`, and `test` also accept `--strict-effects` to enforce effect annotations on user functions; see the [strict-effects migration guide](docs/strict-effects-migration.md).
+
 LSP server with diagnostics, hover types, go-to-definition, go-to-type-definition, go-to-implementation, completion, signature help, document symbols, workspace symbol search, formatting, find references, document highlight, rename, code actions, inlay hints, folding ranges, selection ranges, and semantic tokens. The prebuilt `silt` binary from the install script includes the LSP server — just run `silt lsp` and point your editor at it. Vim/Neovim syntax highlighting and editor setup ship in `editors/`.
 
 ## Reference
