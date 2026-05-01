@@ -35,14 +35,13 @@ error names the inferred effect set AND ships a copy-paste-ready
 annotation in its `help:` line:
 
 ```
-error[type]: function 'read_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
-   --> main.silt:5:1
-    |
-  5 | fn read_settings(path: String) -> Settings = io.read_file(path) |> parse
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    | help: annotate as `fn read_settings(path: String) -> Settings !{fs, io}`
-    |       to make the effect explicit, or wrap the IO behind a
-    |       callable passed in by the caller
+error[type]: function 'load_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
+ --> main.silt:3:61
+   |
+ 3 | fn load_settings(path: String) -> Result(String, IoError) = io.read_file(path)
+   |                                                             ^ function 'load_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
+  = note: fn body uses !{fs, io}; under --strict-effects, missing annotation means !{}
+  = help: annotate as `fn load_settings(path: String) -> Result(String, IoError) !{fs, io}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller
 ```
 
 The literal annotation in the `help:` line is the load-bearing piece:
@@ -117,9 +116,12 @@ Run `silt check --strict-effects main.silt` and you'll get:
 
 ```
 error[type]: function 'load_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
-help: annotate as `fn load_settings(path: String) -> Result(String, IoError) !{fs, io}`
-      to make the effect explicit, or wrap the IO behind a callable
-      passed in by the caller
+ --> main.silt:4:3
+   |
+ 4 |   io.read_file(path)
+   |   ^ function 'load_settings' uses effect !{fs, io} but is declared pure (no annotation under --strict-effects)
+  = note: fn body uses !{fs, io}; under --strict-effects, missing annotation means !{}
+  = help: annotate as `fn load_settings(path: String) -> Result(String, IoError) !{fs, io}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller
 ```
 
 **After** (paste the annotation, re-run, clean):

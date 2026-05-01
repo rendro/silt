@@ -71,15 +71,14 @@ fn sha512(args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Bytes(Arc::new(digest.to_vec())))
 }
 
-/// Lower-case hex encoding. Kept local (rather than a round-trip
-/// through `bytes::to_hex`) so the hex-variant helpers don't grow a
-/// dependency on the `bytes` module's public API surface.
+/// Lower-case hex encoding. Routes each nibble through the canonical
+/// `super::common::nibble_to_hex` helper (round-65 dedup of DC1) so
+/// every hex-emitting builtin in the crate shares one digit table.
 fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
+        out.push(super::common::nibble_to_hex(b >> 4, false));
+        out.push(super::common::nibble_to_hex(b & 0x0f, false));
     }
     out
 }

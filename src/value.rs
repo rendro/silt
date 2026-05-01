@@ -905,7 +905,15 @@ pub struct TaskHandle {
     result: Mutex<Option<Result<Value, VmError>>>,
     condvar: Condvar,
     /// Wakers to call when the task completes (for scheduler-based join).
-    join_wakers: Mutex<Vec<Waker>>,
+    /// Each entry carries a monotonic id so a `JoinWakerRegistration`
+    /// guard can deregister exactly its own entry on drop, avoiding the
+    /// leak that occurred when a `task.join(h)`-blocked task was
+    /// cancelled while the joinee was still running (the closure stayed
+    /// in this Vec holding `Arc<Mutex<Option<Task>>>` + `Arc<SchedulerInner>`
+    /// until the joinee finally completed).
+    join_wakers: Mutex<Vec<(u64, Waker)>>,
+    /// Monotonic counter for minting `join_wakers` entry ids.
+    next_join_waker_id: AtomicU64,
     /// Cleanup to run when a blocked task is cancelled (removes stale waker state).
     cancel_cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
@@ -917,6 +925,7 @@ impl TaskHandle {
             result: Mutex::new(None),
             condvar: Condvar::new(),
             join_wakers: Mutex::new(Vec::new()),
+            next_join_waker_id: AtomicU64::new(0),
             cancel_cleanup: Mutex::new(None),
         }
     }
@@ -951,11 +960,11 @@ impl TaskHandle {
         }
         self.condvar.notify_all();
         // Wake all tasks blocked on join.
-        let wakers: Vec<Waker> = {
+        let wakers: Vec<(u64, Waker)> = {
             let mut guard = self.join_wakers.lock();
             std::mem::take(&mut *guard)
         };
-        for w in wakers {
+        for (_, w) in wakers {
             w();
         }
     }
@@ -976,26 +985,141 @@ impl TaskHandle {
         self.result.lock().clone()
     }
 
+    /// Mint a fresh id for a new join-waker registration.
+    fn mint_join_waker_id(&self) -> u64 {
+        self.next_join_waker_id
+            .fetch_add(1, AtomicOrdering::Relaxed)
+    }
+
     /// Register a waker to be called when the task completes.
+    ///
+    /// Legacy entry point: callers that need RAII deregistration on
+    /// cancel should prefer [`register_join_waker_guard`](Self::register_join_waker_guard).
+    /// This non-guard variant remains for stable call sites that join
+    /// with no cancellation pressure (e.g. `task.join(h)` from main in
+    /// `concurrency::main_thread_wait_for_join`).
     pub fn register_join_waker(&self, waker: Waker) {
+        // Allocate an id even on the non-guard path so the storage
+        // shape stays uniform — drop(_id) is a no-op once the closure
+        // has been fired or drained.
+        let id = self.mint_join_waker_id();
         // Check if already complete to avoid missed wakeups.
         let already_done = self.result.lock().is_some();
         if already_done {
             waker();
         } else {
-            self.join_wakers.lock().push(waker);
+            self.join_wakers.lock().push((id, waker));
             // Double-check to avoid race: if result was set between our check and push.
             if self.result.lock().is_some() {
                 // It completed in the meantime; drain and fire.
-                let wakers: Vec<Waker> = {
+                let wakers: Vec<(u64, Waker)> = {
                     let mut guard = self.join_wakers.lock();
                     std::mem::take(&mut *guard)
                 };
-                for w in wakers {
+                for (_, w) in wakers {
                     w();
                 }
             }
         }
+    }
+
+    /// Register a join waker and return a `JoinWakerRegistration` RAII
+    /// guard that deregisters the entry on drop. Required for cancel-
+    /// path correctness: a `task.join(h)`-blocked task that is cancelled
+    /// before the joinee completes must NOT leave its waker closure in
+    /// `join_wakers`, because the closure holds `Arc<Mutex<Option<Task>>>`
+    /// (with the Task already taken, so it would be inert) plus
+    /// `Arc<SchedulerInner>`. Without the guard, the entry persists
+    /// until the joinee finally completes — N cancelled joiners means N
+    /// leaked closures on a long-running joinee.
+    ///
+    /// If the joinee is already complete, this fires the waker inline
+    /// and returns a guard whose `id` does not appear in the Vec; the
+    /// guard's Drop is a no-op deregister in that case.
+    pub fn register_join_waker_guard(
+        self: &Arc<Self>,
+        waker: Waker,
+    ) -> JoinWakerRegistration {
+        let id = self.mint_join_waker_id();
+        let already_done = self.result.lock().is_some();
+        if already_done {
+            waker();
+        } else {
+            self.join_wakers.lock().push((id, waker));
+            // Double-check to avoid race: if result was set between our check and push.
+            if self.result.lock().is_some() {
+                let wakers: Vec<(u64, Waker)> = {
+                    let mut guard = self.join_wakers.lock();
+                    std::mem::take(&mut *guard)
+                };
+                for (_, w) in wakers {
+                    w();
+                }
+            }
+        }
+        JoinWakerRegistration {
+            handle: self.clone(),
+            id,
+        }
+    }
+
+    /// Remove a previously-registered join waker by id. Returns `true`
+    /// if the entry was found and removed, `false` if it had already
+    /// been drained (e.g. by `complete()` firing all pending wakers).
+    pub fn remove_join_waker(&self, id: u64) -> bool {
+        let mut guard = self.join_wakers.lock();
+        if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
+            // Drop the (id, Waker) tuple — we are intentionally
+            // discarding the closure without firing it; cancellation
+            // of a parked task means its waker should never run.
+            let _ = guard.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Test/introspection accessor: number of join-waker entries
+    /// currently registered. Used by regression tests that verify
+    /// cancelled `task.join(h)` blocks do not leak waker closures.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn join_waker_count(&self) -> usize {
+        self.join_wakers.lock().len()
+    }
+}
+
+/// RAII guard that owns a registered join-waker entry on a
+/// `TaskHandle` and deregisters it on drop. Construct via
+/// [`TaskHandle::register_join_waker_guard`].
+///
+/// Ensures the cancel path for `task.join(h)`-blocked tasks does not
+/// leak waker closures into `TaskHandle::join_wakers`. The guard's
+/// Drop calls `remove_join_waker`, which is idempotent: if the waker
+/// already fired (drained by `complete()`), Drop returns `false`
+/// without further action.
+pub struct JoinWakerRegistration {
+    handle: Arc<TaskHandle>,
+    id: u64,
+}
+
+impl JoinWakerRegistration {
+    /// Expose the underlying entry id. Primarily for tests; production
+    /// code should not need this because the guard owns deregistration.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Expose the handle this registration is on. Useful for tests
+    /// that want to query `join_waker_count` without re-plumbing the
+    /// handle separately.
+    pub fn handle(&self) -> &Arc<TaskHandle> {
+        &self.handle
+    }
+}
+
+impl Drop for JoinWakerRegistration {
+    fn drop(&mut self) {
+        self.handle.remove_join_waker(self.id);
     }
 }
 
@@ -1029,15 +1153,28 @@ pub fn io_unknown_timeout_err(msg: &str) -> Value {
 pub struct IoCompletion {
     result: Mutex<Option<Value>>,
     condvar: Condvar,
-    wakers: Mutex<Vec<Waker>>,
+    /// Wakers to call when the I/O op completes. Each entry carries a
+    /// monotonic id so an `IoWakerRegistration` guard can deregister
+    /// exactly its own entry on drop, avoiding the leak that occurred
+    /// when an I/O-blocked task was cancelled (or its deadline elapsed)
+    /// before the completion fired — the closure stayed in this Vec
+    /// holding `Arc<Mutex<Option<Task>>>` + `Arc<SchedulerInner>` until
+    /// the underlying I/O finally produced a value.
+    wakers: Mutex<Vec<(u64, Waker)>>,
+    /// Monotonic counter for minting `wakers` entry ids.
+    next_waker_id: AtomicU64,
     timeout_err: TimeoutErrFactory,
 }
 
 impl IoCompletion {
-    /// Build a completion whose deadline-cancellation error is
-    /// `Err(IoUnknown(msg))`. Legacy entry point preserved for call
-    /// sites that haven't been migrated yet; new code should prefer
-    /// `with_timeout_err` to declare a module-specific factory.
+    /// Default constructor: deadline-cancellation surfaces as
+    /// `Err(IoUnknown(msg))`. This is the standard entry point and is
+    /// used by the io/fs family of builtins (and by any builtin that
+    /// has not declared a typed error enum). Builtins whose signature
+    /// declares a different error enum should call
+    /// [`with_timeout_err`](Self::with_timeout_err) and pass a
+    /// module-specific factory so a deadline-cancelled `tcp.read`
+    /// produces `Err(TcpTimeout)` rather than `Err(IoUnknown(_))`.
     pub fn new() -> Arc<Self> {
         Self::with_timeout_err(std::sync::Arc::new(io_unknown_timeout_err))
     }
@@ -1048,6 +1185,7 @@ impl IoCompletion {
             result: Mutex::new(None),
             condvar: Condvar::new(),
             wakers: Mutex::new(Vec::new()),
+            next_waker_id: AtomicU64::new(0),
             timeout_err,
         })
     }
@@ -1073,11 +1211,11 @@ impl IoCompletion {
             *guard = Some(value);
         }
         self.condvar.notify_all();
-        let wakers: Vec<Waker> = {
+        let wakers: Vec<(u64, Waker)> = {
             let mut guard = self.wakers.lock();
             std::mem::take(&mut *guard)
         };
-        for w in wakers {
+        for (_, w) in wakers {
             w();
         }
         true
@@ -1101,24 +1239,131 @@ impl IoCompletion {
         }
     }
 
+    /// Mint a fresh id for a new waker registration.
+    fn mint_waker_id(&self) -> u64 {
+        self.next_waker_id.fetch_add(1, AtomicOrdering::Relaxed)
+    }
+
     /// Register a waker with double-check pattern (prevents missed wakeups).
+    ///
+    /// Legacy entry point: callers that need RAII deregistration on
+    /// cancel should prefer [`register_waker_guard`](Self::register_waker_guard).
+    /// This non-guard variant remains for stable call sites whose
+    /// caller does not race with cancellation.
     pub fn register_waker(&self, waker: Waker) {
+        // Allocate an id on the non-guard path too so the storage
+        // shape stays uniform.
+        let id = self.mint_waker_id();
         let already_done = self.result.lock().is_some();
         if already_done {
             waker();
         } else {
-            self.wakers.lock().push(waker);
+            self.wakers.lock().push((id, waker));
             // Double-check: result may have arrived between check and push
             if self.result.lock().is_some() {
-                let wakers: Vec<Waker> = {
+                let wakers: Vec<(u64, Waker)> = {
                     let mut guard = self.wakers.lock();
                     std::mem::take(&mut *guard)
                 };
-                for w in wakers {
+                for (_, w) in wakers {
                     w();
                 }
             }
         }
+    }
+
+    /// Register a waker and return an `IoWakerRegistration` RAII guard
+    /// that deregisters the entry on drop. Required for cancel-path
+    /// correctness: an I/O-blocked task that is cancelled (or whose
+    /// deadline elapses) before the I/O completes must NOT leave its
+    /// waker closure in `wakers`, because the closure holds
+    /// `Arc<Mutex<Option<Task>>>` plus `Arc<SchedulerInner>`. Without
+    /// the guard, the entry persists until the I/O finally produces a
+    /// value — N cancelled waiters on a slow I/O op means N leaked
+    /// closures on the completion handle.
+    pub fn register_waker_guard(
+        self: &Arc<Self>,
+        waker: Waker,
+    ) -> IoWakerRegistration {
+        let id = self.mint_waker_id();
+        let already_done = self.result.lock().is_some();
+        if already_done {
+            waker();
+        } else {
+            self.wakers.lock().push((id, waker));
+            // Double-check: result may have arrived between check and push
+            if self.result.lock().is_some() {
+                let wakers: Vec<(u64, Waker)> = {
+                    let mut guard = self.wakers.lock();
+                    std::mem::take(&mut *guard)
+                };
+                for (_, w) in wakers {
+                    w();
+                }
+            }
+        }
+        IoWakerRegistration {
+            completion: self.clone(),
+            id,
+        }
+    }
+
+    /// Remove a previously-registered waker by id. Returns `true` if
+    /// the entry was found and removed, `false` if it had already been
+    /// drained (e.g. by `complete()` firing all pending wakers).
+    pub fn remove_waker(&self, id: u64) -> bool {
+        let mut guard = self.wakers.lock();
+        if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
+            // Drop the (id, Waker) tuple — we are intentionally
+            // discarding the closure without firing it; cancellation
+            // of a parked task means its waker should never run.
+            let _ = guard.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Test/introspection accessor: number of waker entries currently
+    /// registered. Used by regression tests that verify cancelled
+    /// I/O-blocked tasks do not leak waker closures.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn waker_count(&self) -> usize {
+        self.wakers.lock().len()
+    }
+}
+
+/// RAII guard that owns a registered waker entry on an `IoCompletion`
+/// and deregisters it on drop. Construct via
+/// [`IoCompletion::register_waker_guard`].
+///
+/// Ensures the cancel path for I/O-blocked tasks does not leak waker
+/// closures into `IoCompletion::wakers`. The guard's Drop calls
+/// `remove_waker`, which is idempotent: if the waker already fired
+/// (drained by `complete()`), Drop returns `false` without further
+/// action.
+pub struct IoWakerRegistration {
+    completion: Arc<IoCompletion>,
+    id: u64,
+}
+
+impl IoWakerRegistration {
+    /// Expose the underlying entry id. Primarily for tests.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Expose the completion this registration is on. Useful for
+    /// tests that want to query `waker_count` without re-plumbing the
+    /// completion separately.
+    pub fn completion(&self) -> &Arc<IoCompletion> {
+        &self.completion
+    }
+}
+
+impl Drop for IoWakerRegistration {
+    fn drop(&mut self) {
+        self.completion.remove_waker(self.id);
     }
 }
 

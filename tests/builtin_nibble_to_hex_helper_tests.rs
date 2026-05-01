@@ -156,6 +156,61 @@ fn main() {
     );
 }
 
+/// Round-65 DC1 lock: the `crypto::hex_encode` helper used to ship its
+/// own `b"0123456789abcdef"` digit table. Round 65 deduplicated it to
+/// route through `super::common::nibble_to_hex`. This source-grep test
+/// asserts (a) the routing call is present, and (b) the old local
+/// ASCII-arithmetic / digit-table literal is gone. If someone reverts
+/// the dedup by inlining the table again, this test fails.
+#[test]
+fn crypto_hex_encode_routes_through_nibble_to_hex_lowercase() {
+    let src = include_str!("../src/builtins/crypto.rs");
+    // Positive lock: the routing call must be present.
+    assert!(
+        src.contains("nibble_to_hex"),
+        "crypto.rs must route hex_encode through common::nibble_to_hex; \
+         did someone revert the round-65 DC1 dedup?"
+    );
+    // Negative lock: the old local digit-table literal must be gone.
+    assert!(
+        !src.contains("b\"0123456789abcdef\""),
+        "crypto.rs must not redefine its own hex digit table — \
+         use common::nibble_to_hex instead"
+    );
+    // Negative lock: the old `HEX[(b >> 4) as usize]` indexing pattern
+    // must be gone.
+    assert!(
+        !src.contains("HEX[(b >> 4) as usize]"),
+        "crypto.rs must not use a local HEX[..] table; route through \
+         common::nibble_to_hex instead"
+    );
+}
+
+/// Round-65 DC1 lock: end-to-end byte-identical-output proof. The
+/// canonical SHA-256 digest of "hello" is the well-known constant below.
+/// `crypto.sha256` returns raw bytes, so we run it through `bytes.to_hex`
+/// (which itself routes through `common::nibble_to_hex`) and compare to
+/// the published hex digest. If the dedup of `crypto::hex_encode`
+/// changed any nibble's encoding, this test fails.
+#[test]
+fn crypto_sha256_output_is_byte_identical_pre_post_dedup() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.to_hex(crypto.sha256(bytes.from_string("hello")))
+}
+"#,
+    );
+    let s = expect_string(v);
+    assert_eq!(
+        s, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "SHA-256(\"hello\") hex digest must remain byte-identical \
+         after the round-65 DC1 dedup of crypto::hex_encode"
+    );
+}
+
 /// `encoding.form_encode` (and `encoding.url_encode`) must use uppercase
 /// A–F for percent-escaped bytes. The old `upper_hex` helper hard-coded
 /// `b'A' + (nibble - 10)`; this lock pins that contract through the

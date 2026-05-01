@@ -46,6 +46,39 @@ fn lexer_keywords_const_contains_core_set() {
 }
 
 #[test]
+fn lexer_keywords_const_equals_expected_core_set() {
+    // Bidirectional equality lock (round-65 LATENT X1):
+    // `lexer_keywords_const_contains_core_set` above only asserts
+    // `lexer::KEYWORDS ⊇ EXPECTED_CORE_KEYWORDS`. If a NEW keyword is
+    // added to `lexer::KEYWORDS` (and the lexer match arms), neither
+    // `EXPECTED_CORE_KEYWORDS` here nor its parallel copy in
+    // `tests/editor_grammar_keywords_tests.rs` would notice — the
+    // editor grammars (vim/vscode) would then silently miss the new
+    // keyword. This test closes that gap by asserting the two sets are
+    // exactly equal.
+    let lexer_set: std::collections::HashSet<&str> =
+        silt::lexer::KEYWORDS.iter().copied().collect();
+    let expected_set: std::collections::HashSet<&str> =
+        EXPECTED_CORE_KEYWORDS.iter().copied().collect();
+
+    let extra_in_lexer: Vec<&str> = lexer_set.difference(&expected_set).copied().collect();
+    let extra_in_expected: Vec<&str> = expected_set.difference(&lexer_set).copied().collect();
+
+    assert!(
+        extra_in_lexer.is_empty() && extra_in_expected.is_empty(),
+        "lexer::KEYWORDS drift: a new keyword was added to lexer/match \
+         arms but EXPECTED_CORE_KEYWORDS was not updated; add the \
+         keyword name to EXPECTED_CORE_KEYWORDS in this file AND in \
+         tests/editor_grammar_keywords_tests.rs, plus the editor \
+         grammar files (editors/vim/syntax/silt.vim and \
+         editors/vscode/syntaxes/silt.tmLanguage.json).\n  \
+         in lexer::KEYWORDS but not EXPECTED_CORE_KEYWORDS: {:?}\n  \
+         in EXPECTED_CORE_KEYWORDS but not lexer::KEYWORDS: {:?}",
+        extra_in_lexer, extra_in_expected
+    );
+}
+
+#[test]
 fn lexer_keyword_literals_const_contains_true_false() {
     // The bool-literal split (round-63): `true`/`false` live in their
     // own const because the lexer emits them as `Token::Bool(_)`, not
@@ -58,6 +91,32 @@ fn lexer_keyword_literals_const_contains_true_false() {
     assert!(
         silt::lexer::KEYWORD_LITERALS.contains(&"false"),
         "lexer::KEYWORD_LITERALS must include \"false\""
+    );
+}
+
+/// Hand-rolled expected set for `lexer::KEYWORD_LITERALS`. Round-65
+/// LATENT X1 follow-up: we lock the bool-literal const bidirectionally
+/// so that, if a future change adds (say) `null` to `KEYWORD_LITERALS`,
+/// the test fails until both this list and downstream consumers
+/// (`src/lsp/completion.rs::builtins`, `src/repl.rs::builtin_names`,
+/// `src/lsp/rename.rs::is_user_renameable`) are updated.
+const EXPECTED_KEYWORD_LITERALS: &[&str] = &["true", "false"];
+
+#[test]
+fn lexer_keyword_literals_const_equals_expected_set() {
+    // Round-65 LATENT X1 bidirectional lock for KEYWORD_LITERALS.
+    let lexer_set: std::collections::HashSet<&str> =
+        silt::lexer::KEYWORD_LITERALS.iter().copied().collect();
+    let expected_set: std::collections::HashSet<&str> =
+        EXPECTED_KEYWORD_LITERALS.iter().copied().collect();
+    assert_eq!(
+        lexer_set, expected_set,
+        "lexer::KEYWORD_LITERALS drift: update EXPECTED_KEYWORD_LITERALS \
+         in this file and verify that downstream consumers \
+         (src/lsp/completion.rs::builtins iterates KEYWORD_LITERALS, \
+         src/repl.rs::builtin_names iterates KEYWORD_LITERALS, \
+         src/lsp/rename.rs consults KEYWORD_LITERALS) handle the new \
+         entry."
     );
 }
 

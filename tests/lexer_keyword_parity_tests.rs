@@ -114,3 +114,67 @@ fn lsp_modules_use_lexer_keywords() {
          still reserved words)."
     );
 }
+
+#[test]
+fn completion_iterates_lexer_keyword_literals() {
+    // Round-65 LATENT X2: the `builtins()` function in
+    // `src/lsp/completion.rs` previously hand-rolled `("true", CONSTANT)`
+    // and `("false", CONSTANT)` as bare strings — the inverse of the
+    // round-64 G4 fix in `src/repl.rs`. If `lexer::KEYWORD_LITERALS`
+    // ever grows (rare but possible), completion would silently fail
+    // to surface the new literal.
+    //
+    // This test asserts:
+    //   1. completion.rs imports `KEYWORD_LITERALS` from the lexer.
+    //   2. completion.rs has a loop over `KEYWORD_LITERALS` that pushes
+    //      a `CompletionItemKind::CONSTANT` entry per literal.
+    //   3. The hand-rolled `"true"`/`"false"` CONSTANT pairs are gone
+    //      (negative source-grep lock).
+    //
+    // The `completion` submodule is private inside `src/lsp/mod.rs`, so
+    // we cannot call `builtins()` directly from this integration test —
+    // hence the source-grep parity-lock pattern, matching the round-63
+    // approach used elsewhere in this file.
+
+    // (1) Import is present.
+    assert!(
+        COMPLETION_SRC.contains("KEYWORD_LITERALS"),
+        "src/lsp/completion.rs must reference `KEYWORD_LITERALS` so the \
+         dependency on the authoritative bool-literal list is explicit \
+         (round-65 LATENT X2)."
+    );
+
+    // (2) Loop iterating KEYWORD_LITERALS pushes CONSTANT entries.
+    //     We accept either `for kw in KEYWORD_LITERALS` (after a
+    //     `use crate::lexer::KEYWORD_LITERALS`) or
+    //     `for kw in crate::lexer::KEYWORD_LITERALS`.
+    let has_loop = COMPLETION_SRC.contains("for kw in KEYWORD_LITERALS")
+        || COMPLETION_SRC.contains("for kw in crate::lexer::KEYWORD_LITERALS")
+        || COMPLETION_SRC.contains("for kw in &KEYWORD_LITERALS")
+        || COMPLETION_SRC.contains("KEYWORD_LITERALS.iter()");
+    assert!(
+        has_loop,
+        "src/lsp/completion.rs::builtins must iterate \
+         `lexer::KEYWORD_LITERALS` and push a `CompletionItemKind::CONSTANT` \
+         entry per literal — see round-65 LATENT X2 fix and the \
+         round-64 G4 mirror in src/repl.rs."
+    );
+
+    // (3) Negative lock: the hand-rolled head must not be reintroduced.
+    let bad_true = "\"true\".to_string(), CompletionItemKind::CONSTANT";
+    let bad_false = "\"false\".to_string(), CompletionItemKind::CONSTANT";
+    assert!(
+        !COMPLETION_SRC.contains(bad_true),
+        "src/lsp/completion.rs re-introduced a hand-rolled \
+         `(\"true\".to_string(), CompletionItemKind::CONSTANT)` entry. \
+         Source bool literals from `crate::lexer::KEYWORD_LITERALS` \
+         instead — see round-65 LATENT X2."
+    );
+    assert!(
+        !COMPLETION_SRC.contains(bad_false),
+        "src/lsp/completion.rs re-introduced a hand-rolled \
+         `(\"false\".to_string(), CompletionItemKind::CONSTANT)` entry. \
+         Source bool literals from `crate::lexer::KEYWORD_LITERALS` \
+         instead — see round-65 LATENT X2."
+    );
+}

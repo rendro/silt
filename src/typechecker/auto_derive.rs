@@ -72,8 +72,13 @@ use crate::lexer::Span;
 /// `(0, 0, 0)` keeps any diagnostic raised against synthesized code
 /// distinguishable from a real user-source location: line 0 / col 0 /
 /// offset 0 is impossible for any character read by the lexer (every
-/// real token starts at line 1+). Test helpers and audits can grep for
-/// this sentinel to confirm a diagnostic is auto-derive-related.
+/// real token starts at line 1+). The 0-byte span signals
+/// "compiler-synthesized" to the diagnostic renderer, which suppresses
+/// the source-line-with-caret display. It is NOT unique to auto-derive
+/// — exhaustiveness, CLI helpers, bytecode/disassemble, and several
+/// other internal call sites use the same zero-span shape, so it
+/// cannot be used as a grep-sentinel to identify auto-derive
+/// diagnostics specifically.
 fn synth_span() -> Span {
     Span {
         line: 0,

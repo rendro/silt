@@ -149,6 +149,30 @@ fn vscode_keyword_tokens(vscode_scope: &str) -> Vec<String> {
 }
 
 #[test]
+fn local_expected_core_keywords_equals_lexer_keywords() {
+    // Round-65 LATENT X1: the parallel copy of EXPECTED_CORE_KEYWORDS
+    // here is duplicated from `tests/keyword_list_parity_tests.rs` to
+    // avoid cross-test-file coupling. If a new keyword is added to
+    // `lexer::KEYWORDS`, this local copy MUST be updated too — else
+    // the editor-grammar checks below silently miss the new keyword.
+    // This test bidirectionally locks the local copy to the lexer
+    // const, mirroring `lexer_keywords_const_equals_expected_core_set`
+    // in the sibling test file.
+    let lexer_set: std::collections::HashSet<&str> =
+        silt::lexer::KEYWORDS.iter().copied().collect();
+    let local_set: std::collections::HashSet<&str> =
+        EXPECTED_CORE_KEYWORDS.iter().copied().collect();
+    assert_eq!(
+        lexer_set, local_set,
+        "EXPECTED_CORE_KEYWORDS in tests/editor_grammar_keywords_tests.rs \
+         drifted from `silt::lexer::KEYWORDS`. Update both this list \
+         AND the parallel copy in tests/keyword_list_parity_tests.rs, \
+         then add the new keyword to editors/vim/syntax/silt.vim and \
+         editors/vscode/syntaxes/silt.tmLanguage.json."
+    );
+}
+
+#[test]
 fn editor_grammars_include_all_core_keywords() {
     let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
     let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");

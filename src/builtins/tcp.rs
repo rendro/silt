@@ -537,18 +537,17 @@ fn err_closed() -> Value {
     )
 }
 
+// Round 65 dedup (DC2): the byte-identical bodies of these helpers
+// previously lived in both `tcp.rs` and `stream.rs`. They now delegate
+// to `super::common::{require_str_borrow, require_int_plain}`. The
+// thin wrappers preserve the local function names so the dozens of
+// existing call sites in this module stay unchanged.
 fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.as_str()),
-        _ => Err(VmError::new(format!("{fn_label} requires String"))),
-    }
+    super::common::require_str_borrow(arg, fn_label)
 }
 
 fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    match arg {
-        Value::Int(n) => Ok(*n),
-        _ => Err(VmError::new(format!("{fn_label} requires Int"))),
-    }
+    super::common::require_int_plain(arg, fn_label)
 }
 
 #[cfg(feature = "tcp-tls")]

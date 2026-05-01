@@ -6,10 +6,12 @@
 //! `bytes.rs`. Each call site had the same bodies and the same error
 //! phrasing, so we hoist one canonical copy here.
 //!
-//! `stream.rs` and `tcp.rs` keep their own local helpers: their
-//! signatures differ (they return `&str` rather than `String` from
-//! `require_string`, omit `value_kind` from error messages, and wrap
-//! `err` in module-specific error variants like `TcpUnknown`).
+//! `stream.rs` and `tcp.rs` keep a thinner pair of shared helpers
+//! (`require_int_plain`, `require_str_borrow`) — their signatures
+//! differ from the canonical `require_*` (return `&str` rather than
+//! `String`, omit the `, got <kind>` suffix). Their `err()` helpers
+//! stay local because they wrap module-specific error variants like
+//! `TcpUnknown` / `StreamErr`.
 
 use std::sync::Arc;
 
@@ -65,6 +67,34 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::Bytes(_) => "Bytes",
         Value::Tuple(_) => "Tuple",
         _ => "value",
+    }
+}
+
+/// `require_int` variant for callers that want a plain error message
+/// without the `, got <kind>` suffix that `require_int` appends.
+///
+/// Round 65 hoisted out byte-identical helpers from `tcp.rs` and
+/// `stream.rs` (both produced "{fn_label} requires Int" verbatim). The
+/// `tcp`/`stream` `err()` helpers stay local because they wrap
+/// module-specific error variants; only these argument-shape checks are
+/// shared.
+pub(super) fn require_int_plain(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
+    match arg {
+        Value::Int(n) => Ok(*n),
+        _ => Err(VmError::new(format!("{fn_label} requires Int"))),
+    }
+}
+
+/// `require_string` variant that borrows the underlying `&str` instead
+/// of cloning into a `String`. Shares `tcp.rs` / `stream.rs` byte-
+/// identical implementations (round 65 dedup).
+pub(super) fn require_str_borrow<'a>(
+    arg: &'a Value,
+    fn_label: &str,
+) -> Result<&'a str, VmError> {
+    match arg {
+        Value::String(s) => Ok(s.as_str()),
+        _ => Err(VmError::new(format!("{fn_label} requires String"))),
     }
 }
 

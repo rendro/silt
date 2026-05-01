@@ -1,7 +1,7 @@
 {
   "name": "silt-vscode",
   "displayName": "Silt",
-  "description": "Silt language support: syntax highlighting and LSP client (diagnostics, hover, go-to-definition, completion, signature help, document symbols, formatting).",
+  "description": "Silt language support: syntax highlighting and LSP client (diagnostics, hover, go-to-definition, go-to-type-definition, go-to-implementation, completion, signature help, document symbols, workspace symbol search, formatting, find references, document highlight, rename, code actions, inlay hints, folding ranges, selection ranges, semantic tokens).",
   "version": "0.1.0",
   "publisher": "silt-lang",
   "engines": {

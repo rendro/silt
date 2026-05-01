@@ -26,12 +26,20 @@ The server communicates over stdin/stdout using the standard LSP protocol.
 | **Diagnostics** | Lex, parse, and type errors on every edit |
 | **Hover** | Show inferred type for any expression (`K` in nvim) |
 | **Go to definition** | Jump to function, type, trait, let-binding definitions (`gd`) |
+| **Go to type definition** | Jump from a value to the definition of its type |
+| **Go to implementation** | Jump from a trait method to its implementations |
 | **Completion** | Keywords, builtins, stdlib functions, user definitions |
 | **Signature help** | Parameter names and types while typing a call |
 | **Document symbols** | Outline of all declarations in the file |
+| **Workspace symbol search** | Find any definition across the entire workspace by name |
 | **Formatting** | Format via the existing `silt fmt` formatter |
 | **Find references** | Locate every use of a definition across the workspace |
+| **Document highlight** | Highlight every occurrence of the symbol under the cursor in the active file |
 | **Rename** | Rename a definition and update every reference (`<leader>rn`) |
+| **Code actions** | Quick fixes and refactors offered for the symbol or diagnostic under the cursor |
+| **Inlay hints** | Inline parameter names and inferred types rendered in the editor |
+| **Folding ranges** | Editor-driven code folding for blocks, records, and match arms |
+| **Selection ranges** | Smart syntax-aware expand/shrink selection |
 | **Semantic tokens** | Token classification for richer editor highlighting |
 
 ## Neovim
@@ -97,8 +105,12 @@ Install [nvim-cmp](https://github.com/hrsh7th/nvim-cmp) with the
 
 A dedicated VS Code extension lives in `editors/vscode/`. It bundles a
 TextMate grammar for syntax highlighting and bootstraps `silt lsp` as a
-language server for diagnostics, hover, go-to-definition, completion,
-signature help, document symbols, and formatting.
+language server. Because the extension launches the same server, it
+inherits every advertised capability: diagnostics, hover, go-to-definition,
+go-to-type-definition, go-to-implementation, completion, signature help,
+document symbols, workspace symbol search, formatting, find references,
+document highlight, rename, code actions, inlay hints, folding ranges,
+selection ranges, and semantic tokens.
 
 Build and install it locally:
 

@@ -99,18 +99,15 @@ fn require_channel<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<Channel
     }
 }
 
+// Round 65 dedup (DC2): see comment in `tcp.rs`. These thin wrappers
+// preserve the local function names so existing call sites stay
+// unchanged; the bodies live in `super::common`.
 fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    match arg {
-        Value::Int(n) => Ok(*n),
-        _ => Err(VmError::new(format!("{fn_label} requires Int"))),
-    }
+    super::common::require_int_plain(arg, fn_label)
 }
 
 fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.as_str()),
-        _ => Err(VmError::new(format!("{fn_label} requires String"))),
-    }
+    super::common::require_str_borrow(arg, fn_label)
 }
 
 fn require_callable<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Value, VmError> {

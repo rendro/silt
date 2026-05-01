@@ -7,7 +7,7 @@ use lsp_types::{
 
 use crate::ast::*;
 use crate::intern::intern;
-use crate::lexer::KEYWORDS;
+use crate::lexer::{KEYWORD_LITERALS, KEYWORDS};
 use crate::module;
 use crate::types::Type;
 
@@ -354,9 +354,16 @@ pub fn builtins() -> Vec<(String, CompletionItemKind)> {
         ("print".to_string(), CompletionItemKind::FUNCTION),
         ("println".to_string(), CompletionItemKind::FUNCTION),
         ("panic".to_string(), CompletionItemKind::FUNCTION),
-        ("true".to_string(), CompletionItemKind::CONSTANT),
-        ("false".to_string(), CompletionItemKind::CONSTANT),
     ];
+
+    // Reserved-word-shaped boolean literals. Sourced from
+    // `crate::lexer::KEYWORD_LITERALS` so additions there flow through
+    // automatically — mirrors the round-63 pattern used for `KEYWORDS`
+    // above and the round-64 G4 fix in `src/repl.rs`. Parity lock:
+    // `tests/lexer_keyword_parity_tests.rs`.
+    for kw in KEYWORD_LITERALS {
+        items.push((kw.to_string(), CompletionItemKind::CONSTANT));
+    }
 
     // Round-62 G6: primitive + container type names from the
     // authoritative `BUILTIN_TYPES` constant. Surfaced as completion

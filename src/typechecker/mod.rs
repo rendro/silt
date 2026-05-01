@@ -3333,6 +3333,43 @@ impl TypeChecker {
             );
             return;
         }
+        // BROKEN T1: a type-decl whose name shadows a builtin enum's
+        // variant constructor (e.g. `type Empty {}`, `type Some { x: Int }`,
+        // `type Ok { x: Int }`, `type Closed { ... }`, `type Sent { ... }`,
+        // `type None { ... }`, `type Err { ... }`, `type Message { ... }`)
+        // used to silently overwrite the variant binding via
+        // `env.define(td.name, TypeOf(record_ty))` (record arm) or
+        // `env.define(td.name, TypeOf(enum_ty))` (enum arm with no
+        // self-referential variant), then downstream auto-derive synth
+        // or stamping unified the residual ChannelResult/Option/Result
+        // scheme against the new TypeOf and emitted up to 8 unspanned
+        // cascade errors of the shape `expected TypeOf, got ChannelResult`.
+        //
+        // The sibling case `td.name` matching the *enum* name itself
+        // (e.g. `type Option { ... }`) is handled by the existing
+        // `variant '{}' of enum '{}' shadows same-named variant of
+        // builtin enum '{}'` warning inside the enum arm — we exclude
+        // that here so we don't double-diagnose. We detect that case
+        // by `prev_enum_owner == td.name`: the variant `td.name` is
+        // owned by an enum whose name is also `td.name`, which only
+        // happens when `td.name` is a self-named variant (e.g. the
+        // builtin `Box(T)` pattern doesn't apply to any builtin, so
+        // this guard fires for user shadows of `Some`/`Ok`/`Empty`/
+        // etc. but stays out of the enum-vs-enum path).
+        if let Some(prev_enum_owner) = self.variant_to_enum.get(&td.name).copied()
+            && prev_enum_owner != td.name
+        {
+            self.error(
+                format!(
+                    "type '{}' shadows variant of builtin enum '{}'; \
+                     choose a different name or fully-qualify the variant",
+                    resolve(td.name),
+                    resolve(prev_enum_owner)
+                ),
+                td.span,
+            );
+            return;
+        }
         // G1: Detect duplicate top-level type declarations. Only user-defined
         // top-level names count; collision with a builtin type (Option,
         // Result, ChannelResult, Step) is handled by the shadow-warning

@@ -1042,13 +1042,92 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     }
                     Some(BlockReason::Join(target_handle)) => {
                         fire_hook!(on_park, "blocked_arm_entry_join");
-                        let slot = task_slot.clone();
-                        let inner2 = inner.clone();
-                        target_handle.register_join_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task, false);
+                        // Mirror the Receive arm: capture the handle
+                        // BEFORE registering the waker because
+                        // `register_join_waker_guard` may synchronously
+                        // invoke the waker closure if the joinee has
+                        // already completed (the inline-fire path takes
+                        // `task_slot`, leaving it `None`).
+                        //
+                        // F10 cancelled-mid-setup: a concurrent
+                        // `task.cancel(h)` between the initial
+                        // `set_cancel_cleanup` at :669 and here may
+                        // already have drained `task_slot`; defend
+                        // with an `if let` and skip waker registration
+                        // on `None`. Same shape as the Receive arm.
+                        let handle_for_cancel_opt =
+                            task_slot.lock().as_ref().map(|t| t.handle.clone());
+                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
+                            let slot = task_slot.clone();
+                            let inner2 = inner.clone();
+                            let reg = target_handle.register_join_waker_guard(Box::new(move || {
+                                if let Some(task) = slot.lock().take() {
+                                    requeue(&inner2, task, false);
+                                }
+                            }));
+                            // Re-install the cancel cleanup so it ALSO
+                            // owns the `JoinWakerRegistration` guard.
+                            // The guard's Drop deregisters this task's
+                            // waker entry from the joinee's
+                            // `join_wakers` Vec on any path that drops
+                            // the closure (cancel → `complete` fires
+                            // it, then closure drops; or normal wake →
+                            // `requeue` calls `clear_cancel_cleanup`,
+                            // closure drops). Without this, a cancelled
+                            // `task.join(h)` block leaks its waker
+                            // closure into `join_wakers` until the
+                            // joinee finally completes — N cancelled
+                            // joiners on a long-running joinee means N
+                            // leaked closures, each holding
+                            // `Arc<Mutex<Option<Task>>>` plus
+                            // `Arc<SchedulerInner>`.
+                            //
+                            // Phase 3 / round 31: hold the `task_slot`
+                            // lock across the is_some-check +
+                            // set_cancel_cleanup so an inline-fire-
+                            // then-new-arm sequence cannot clobber a
+                            // concurrent worker's NEW arm cleanup. Same
+                            // rationale as the Receive arm above.
+                            let slot_guard = task_slot.lock();
+                            if slot_guard.is_some() {
+                                let cancel_slot = task_slot.clone();
+                                let cancel_inner = inner.clone();
+                                let cancel_task_id = id;
+                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                                    // Move the guard into the body so
+                                    // its Drop runs at the end of this
+                                    // scope (cancel path) or when the
+                                    // closure itself is dropped (normal
+                                    // wake path).
+                                    let _reg = reg;
+                                    if cancel_slot.lock().take().is_none() {
+                                        return;
+                                    }
+                                    if was_io {
+                                        cancel_inner.watchdog.remove(cancel_task_id);
+                                    }
+                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
+                                    signal_progress(&cancel_inner);
+                                }));
+                                drop(slot_guard);
+                            } else {
+                                drop(slot_guard);
+                                // Inline-fire already requeued the task
+                                // and dropped the prior cleanup; `reg`
+                                // here refers to a drained entry whose
+                                // Drop is a no-op deregister.
+                                drop(reg);
                             }
-                        }));
+                        } else {
+                            // F10 cancelled-mid-setup: the initial
+                            // cleanup at :669 already took the task.
+                            // Remove any phantom park edge and skip
+                            // waker/cleanup install. See the Receive
+                            // arm for the full rationale.
+                            inner.wake_graph.on_wake(NodeId::Task(id));
+                            signal_progress(&inner);
+                        }
                     }
                     Some(BlockReason::Io(completion)) => {
                         fire_hook!(on_park, "blocked_arm_entry_io");
@@ -1082,13 +1161,59 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         if let Some((deadline, source)) = effective {
                             inner.watchdog.add(id, &completion, deadline, source);
                         }
-                        let slot = task_slot.clone();
-                        let inner2 = inner.clone();
-                        completion.register_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task, true);
+                        // Same shape as the Join arm: capture the
+                        // handle BEFORE registering the waker so a
+                        // synchronous inline-fire (already-complete
+                        // I/O) does not invalidate the slot we need to
+                        // clone the handle from.
+                        let handle_for_cancel_opt =
+                            task_slot.lock().as_ref().map(|t| t.handle.clone());
+                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
+                            let slot = task_slot.clone();
+                            let inner2 = inner.clone();
+                            let reg = completion.register_waker_guard(Box::new(move || {
+                                if let Some(task) = slot.lock().take() {
+                                    requeue(&inner2, task, true);
+                                }
+                            }));
+                            // Re-install the cancel cleanup so it ALSO
+                            // owns the `IoWakerRegistration` guard.
+                            // Without this, a cancelled I/O-blocked
+                            // task (e.g. deadline elapsed, or explicit
+                            // `task.cancel(h)`) leaks its waker closure
+                            // into `IoCompletion::wakers` until the
+                            // I/O finally produces a value.
+                            let slot_guard = task_slot.lock();
+                            if slot_guard.is_some() {
+                                let cancel_slot = task_slot.clone();
+                                let cancel_inner = inner.clone();
+                                let cancel_task_id = id;
+                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                                    let _reg = reg;
+                                    if cancel_slot.lock().take().is_none() {
+                                        return;
+                                    }
+                                    if was_io {
+                                        cancel_inner.watchdog.remove(cancel_task_id);
+                                    }
+                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
+                                    signal_progress(&cancel_inner);
+                                }));
+                                drop(slot_guard);
+                            } else {
+                                drop(slot_guard);
+                                drop(reg);
                             }
-                        }));
+                        } else {
+                            // F10 cancelled-mid-setup: see the Receive/
+                            // Join arms for the full rationale. The
+                            // watchdog entry installed above is removed
+                            // by the initial cleanup at :669 (which
+                            // sets `was_io == true`).
+                            inner.wake_graph.on_wake(NodeId::Task(id));
+                            signal_progress(&inner);
+                        }
                     }
                     None => {
                         // No block reason — shouldn't happen but treat as yield.
