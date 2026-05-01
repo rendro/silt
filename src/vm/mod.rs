@@ -13,6 +13,43 @@ pub(crate) use execute::BuiltinIterKind;
 pub use runtime::Runtime;
 pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind};
 
+/// Test-only: report the worker count of the I/O pool attached to this
+/// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
+/// verify the env var actually shaped pool construction (no silent
+/// regression to the old hardcoded `min(cores, 4)` form).
+///
+/// Gated on `cfg(any(test, feature = "test-hooks"))` so it does not
+/// appear in the release surface area. Returns the pool worker count.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn io_pool_worker_count(vm: &Vm) -> usize {
+    vm.runtime.io_pool.worker_count()
+}
+
+/// Test-only: return [`runtime::resolve_io_pool_size`] without
+/// requiring the caller to construct a full `Vm`. Lets integration
+/// tests assert the env-var → resolved-size mapping directly. Same
+/// gating as [`io_pool_worker_count`].
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn resolve_io_pool_size() -> usize {
+    runtime::resolve_io_pool_size()
+}
+
+/// Test-only: the cap [`runtime::resolve_io_pool_size`] clamps at when
+/// the env var is set to an absurdly large value. Re-exported so the
+/// integration test asserts the same constant the resolver uses.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn io_pool_size_cap() -> usize {
+    runtime::IO_POOL_SIZE_CAP
+}
+
+/// Test-only: the unset-env default for the I/O pool worker count.
+/// Re-exported so the integration test compares against the same
+/// definition the production resolver falls back to.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn default_io_pool_size() -> usize {
+    runtime::default_io_pool_size()
+}
+
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -209,11 +246,7 @@ impl Vm {
                 foreign_fns: HashMap::new(),
                 scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
-                io_pool: IoPool::new(
-                    std::thread::available_parallelism()
-                        .map(|n| n.get().min(4))
-                        .unwrap_or(2),
-                ),
+                io_pool: IoPool::new(runtime::resolve_io_pool_size()),
             }),
             frames: Vec::new(),
             stack: Vec::new(),

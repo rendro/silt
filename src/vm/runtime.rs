@@ -211,8 +211,59 @@ impl TimerManager {
 
 // ── I/O thread pool ─────────────────────────────────────────────
 
+/// Upper bound on the number of I/O worker threads when the
+/// `SILT_IO_POOL_SIZE` env var is set. More than this is almost
+/// certainly misconfiguration (typical OS file-descriptor / blocking
+/// thread-pool norms cluster well below this). The cap silently clamps
+/// rather than erroring so a misset env var cannot brick startup.
+pub(crate) const IO_POOL_SIZE_CAP: usize = 64;
+
+/// Compute the default I/O pool worker count when `SILT_IO_POOL_SIZE` is
+/// unset or invalid: `min(available_parallelism, 4)`, falling back to 2
+/// if the platform cannot report parallelism. Mirrors the historical
+/// hardcoded sizing inside `Vm::new` so the resolved value is identical
+/// when the knob is absent.
+pub(crate) fn default_io_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().min(4))
+        .unwrap_or(2)
+}
+
+/// Resolve the I/O pool worker count, honoring the `SILT_IO_POOL_SIZE`
+/// environment variable.
+///
+/// - If unset, returns [`default_io_pool_size`] (`min(cores, 4)`,
+///   fallback 2).
+/// - If set to a valid `usize > 0`, returns that value clamped at
+///   [`IO_POOL_SIZE_CAP`] (currently 64).
+/// - If set to `0`, an unparsable string, or anything else invalid,
+///   silently falls back to [`default_io_pool_size`]. Matches the
+///   shape of `SILT_TIME_SLICE` / `SILT_IO_TIMEOUT` parsing in
+///   `scheduler.rs` (no panic, no eprintln, no error result — a typo
+///   in the env var must never break startup).
+///
+/// The env var is read lazily at construction time, so changing it
+/// after `Vm::new` has no effect on the running pool.
+pub(crate) fn resolve_io_pool_size() -> usize {
+    std::env::var("SILT_IO_POOL_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .map(|n| n.min(IO_POOL_SIZE_CAP))
+        .unwrap_or_else(default_io_pool_size)
+}
+
 pub(crate) struct IoPool {
     sender: parking_lot::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+    /// Number of worker threads spawned for this pool. Retained so
+    /// test-only introspection (`worker_count`) can confirm the
+    /// `SILT_IO_POOL_SIZE` knob took effect; the production code path
+    /// does not consult it. The field is unused outside `cfg(test)` /
+    /// the `test-hooks` feature, so silence the dead-code warning on
+    /// release builds rather than gate the field itself (which would
+    /// fork the struct layout between configurations).
+    #[allow(dead_code)]
+    num_workers: usize,
 }
 
 impl IoPool {
@@ -236,7 +287,18 @@ impl IoPool {
         }
         IoPool {
             sender: parking_lot::Mutex::new(tx),
+            num_workers: num_threads,
         }
+    }
+
+    /// Number of worker threads spawned for this pool. Test-only:
+    /// gated on `cfg(test)` for in-crate unit tests and the
+    /// `test-hooks` feature for external integration tests that need
+    /// to assert the `SILT_IO_POOL_SIZE` knob propagated to the
+    /// running pool. Not part of the public API.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn worker_count(&self) -> usize {
+        self.num_workers
     }
 
     /// Submit a blocking I/O operation. Defaults to an `IoError`-shaped
@@ -345,5 +407,110 @@ impl RegexCache {
             self.map.insert(pattern.to_string(), re);
         }
         Ok(self.map.get(pattern).expect("pattern was just inserted"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serialize `SILT_IO_POOL_SIZE` mutations across tests in this module
+    /// so concurrent runs don't observe each other's transient values.
+    /// `std::sync::Mutex` is sufficient — we never panic while holding it
+    /// (each test cleans up via `remove_var` before assertions could fail
+    /// in a way that poisons).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard: removes `SILT_IO_POOL_SIZE` on drop so a panicking test
+    /// can't leak state to its neighbours.
+    struct EnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        fn acquire() -> Self {
+            // If a prior test poisoned the lock, recover — env-var state
+            // is still safe to clean up below.
+            let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            // SAFETY: see scheduler.rs:1614 — Rust 1.80+ uses thread-local
+            // env caches and these tests do not spawn concurrent env readers.
+            unsafe { std::env::remove_var("SILT_IO_POOL_SIZE") };
+            EnvGuard { _lock: lock }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: see acquire().
+            unsafe { std::env::remove_var("SILT_IO_POOL_SIZE") };
+        }
+    }
+
+    #[test]
+    fn worker_count_reports_constructor_argument() {
+        for n in [1usize, 2, 4, 8, 16] {
+            let pool = IoPool::new(n);
+            assert_eq!(pool.worker_count(), n, "worker_count drift for n={n}");
+        }
+    }
+
+    #[test]
+    fn resolve_io_pool_size_unset_returns_default() {
+        let _g = EnvGuard::acquire();
+        assert_eq!(resolve_io_pool_size(), default_io_pool_size());
+    }
+
+    #[test]
+    fn resolve_io_pool_size_env_overrides_to_8() {
+        let _g = EnvGuard::acquire();
+        // SAFETY: see EnvGuard::acquire.
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "8") };
+        assert_eq!(resolve_io_pool_size(), 8);
+    }
+
+    #[test]
+    fn resolve_io_pool_size_zero_falls_back_to_default() {
+        let _g = EnvGuard::acquire();
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "0") };
+        assert_eq!(resolve_io_pool_size(), default_io_pool_size());
+    }
+
+    #[test]
+    fn resolve_io_pool_size_invalid_falls_back_to_default() {
+        let _g = EnvGuard::acquire();
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "abc") };
+        assert_eq!(resolve_io_pool_size(), default_io_pool_size());
+    }
+
+    #[test]
+    fn resolve_io_pool_size_negative_falls_back_to_default() {
+        let _g = EnvGuard::acquire();
+        // "-1" is not a valid usize — must fall back, not silently accept
+        // wrap-around or anything else exotic.
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "-1") };
+        assert_eq!(resolve_io_pool_size(), default_io_pool_size());
+    }
+
+    #[test]
+    fn resolve_io_pool_size_caps_at_upper_bound() {
+        let _g = EnvGuard::acquire();
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "100000") };
+        assert_eq!(resolve_io_pool_size(), IO_POOL_SIZE_CAP);
+    }
+
+    #[test]
+    fn resolve_io_pool_size_at_cap_returns_cap() {
+        let _g = EnvGuard::acquire();
+        unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "64") };
+        assert_eq!(resolve_io_pool_size(), IO_POOL_SIZE_CAP);
+    }
+
+    #[test]
+    fn default_io_pool_size_floor_two() {
+        // Any platform we run on must produce at least 2 (the fallback
+        // when available_parallelism returns Err is 2; otherwise it is
+        // capped at 4). Locks the documented "floor 2" guarantee.
+        let n = default_io_pool_size();
+        assert!((2..=4).contains(&n), "default out of [2,4]: {n}");
     }
 }

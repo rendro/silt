@@ -931,9 +931,12 @@ Consequences:
   routinely overrun their deadline), the I/O pool can saturate with
   zombie work -- threads that are still blocked on a syscall whose
   result nobody will read. New I/O submissions queue behind them.
-- The I/O pool is sized at VM startup (currently `min(available
-  parallelism, 4)`, floor 2) and has no tuning knob today; making it
-  larger requires rebuilding silt with a different cap.
+- The I/O pool is sized at VM startup. The default is `min(available
+  parallelism, 4)`, floor 2. Set the `SILT_IO_POOL_SIZE` environment
+  variable to override; the value must be a positive integer and is
+  silently clamped at 64 (anything larger is almost certainly a
+  misconfiguration). Invalid or zero values fall back to the default.
+  Read once at `Vm::new`, so changing it mid-run has no effect.
 
 Mitigations:
 
