@@ -32,6 +32,10 @@ partition="${1:?missing partition arg: heavy|concurrency|rest}"
 HEAVY_TESTS=(
   integration
   integration_concurrency
+  # ~135s on Windows runners (3-5x slower I/O / spawn) for the property
+  # cases generated_int_programs_*. Pushes the rest bucket past the
+  # 25-min wall-clock cap when left there.
+  vm_small_program_property_tests
 )
 
 CONCURRENCY_TESTS=(
