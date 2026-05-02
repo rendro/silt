@@ -58,13 +58,23 @@ jobs:
       - name: Seed corpus
         run: ./fuzz/seed.sh
 
+      # Discovery-mode: a crash here is a *finding*, not a regression.
+      # The deterministic regression gate is `fuzz-corpus` in ci.yml,
+      # which replays every committed seed and fails if any regress.
+      # So this step is allowed to "fail" (= produce a crash artifact)
+      # without failing the job. The job conclusion stays green; new
+      # findings are surfaced via uploaded artifacts and a workflow
+      # warning annotation. Triage by copying any worth-keeping crash
+      # into fuzz/corpus/<target>/ so the regression gate locks it.
       - name: Fuzz ${{ matrix.target }}
+        id: fuzz
+        continue-on-error: true
         run: |
           secs=${{ github.event.inputs.seconds_per_target || 900 }}
           cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=$secs
 
-      - name: Upload reproducers on failure
-        if: failure()
+      - name: Upload reproducers if any
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: fuzz-nightly-${{ matrix.target }}
@@ -76,3 +86,8 @@ jobs:
             fuzz/oom-*
           retention-days: 30
           if-no-files-found: ignore
+
+      - name: Annotate new crash
+        if: steps.fuzz.outcome == 'failure'
+        run: |
+          echo "::warning title=New fuzz finding::Target ${{ matrix.target }} produced a crash artifact in this run. Job is intentionally not failed — see uploaded artifacts to triage. Add the repro to fuzz/corpus/${{ matrix.target }}/ to lock it as a regression test."
