@@ -241,14 +241,14 @@ fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet
             // for the effects walker, which doesn't share the
             // typechecker's TypeEnv mutations across passes.
             let val_effects = walk_expr(value, env, aliases);
-            if let PatternKind::Ident(name) = &pattern.kind {
-                if let Some(src) = callee_name(value) {
-                    // The value is a simple aliasing reference. Look up
-                    // the source's effects through the same path the
-                    // Call site uses (env + previous aliases).
-                    let src_eff = scheme_effects_of(src, env, aliases);
-                    aliases.insert(*name, src_eff);
-                }
+            if let PatternKind::Ident(name) = &pattern.kind
+                && let Some(src) = callee_name(value)
+            {
+                // The value is a simple aliasing reference. Look up
+                // the source's effects through the same path the
+                // Call site uses (env + previous aliases).
+                let src_eff = scheme_effects_of(src, env, aliases);
+                aliases.insert(*name, src_eff);
             }
             val_effects
         }
