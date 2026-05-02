@@ -684,9 +684,7 @@ impl Vm {
                         // wording matches the user mental model for
                         // both module-qualified function calls and
                         // qualified-global error-trait dispatch.
-                        Err(VmError::new(format!(
-                            "unknown builtin namespace: {module}"
-                        )))
+                        Err(VmError::new(format!("unknown builtin namespace: {module}")))
                     }
                 }
             }

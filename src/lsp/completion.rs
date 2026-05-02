@@ -353,11 +353,10 @@ pub fn builtins() -> Vec<(String, CompletionItemKind)> {
     // `module::builtin_free_function_names()` so adding a new free
     // function (e.g. `eprintln`, `assert`) flows through automatically.
     // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
-    let mut items: Vec<(String, CompletionItemKind)> =
-        module::builtin_free_function_names()
-            .iter()
-            .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
-            .collect();
+    let mut items: Vec<(String, CompletionItemKind)> = module::builtin_free_function_names()
+        .iter()
+        .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
+        .collect();
 
     // Reserved-word-shaped boolean literals. Sourced from
     // `crate::lexer::KEYWORD_LITERALS` so additions there flow through

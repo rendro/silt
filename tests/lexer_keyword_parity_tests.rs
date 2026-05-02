@@ -97,7 +97,8 @@ fn lsp_modules_use_lexer_keywords() {
     // Belt-and-braces: each LSP module must reference `lexer::KEYWORDS`
     // (or import it) so the dependency is explicit.
     assert!(
-        COMPLETION_SRC.contains("lexer::KEYWORDS") || COMPLETION_SRC.contains("use crate::lexer::KEYWORDS"),
+        COMPLETION_SRC.contains("lexer::KEYWORDS")
+            || COMPLETION_SRC.contains("use crate::lexer::KEYWORDS"),
         "src/lsp/completion.rs must reference `lexer::KEYWORDS` so the \
          dependency on the authoritative list is explicit."
     );

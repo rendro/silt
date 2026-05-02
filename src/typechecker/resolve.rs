@@ -32,12 +32,11 @@ impl TypeChecker {
         if self.errors.is_empty() {
             return false;
         }
-        let mut offsets: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut offsets: std::collections::HashSet<usize> = std::collections::HashSet::new();
         Self::collect_sub_spans(value, &mut offsets);
-        self.errors.iter().any(|e| {
-            e.severity == Severity::Error && offsets.contains(&e.span.offset)
-        })
+        self.errors
+            .iter()
+            .any(|e| e.severity == Severity::Error && offsets.contains(&e.span.offset))
     }
 
     /// Collect the `span.offset` of every sub-expression within `expr`

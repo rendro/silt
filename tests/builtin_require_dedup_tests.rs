@@ -187,9 +187,7 @@ fn main() { stream.write_to_file(stream.from_list([]), 42) }
 "#;
     let outcome = try_run(src);
     let err = match outcome {
-        Ok(v) => panic!(
-            "expected runtime error from stream.write_to_file(_, 42); got Ok({v:?})"
-        ),
+        Ok(v) => panic!("expected runtime error from stream.write_to_file(_, 42); got Ok({v:?})"),
         Err(msg) => msg,
     };
     assert!(
@@ -232,9 +230,7 @@ fn main() {
 "#;
     let outcome = try_run(src);
     let err = match outcome {
-        Ok(v) => panic!(
-            "expected runtime error from tcp.connect(42); got Ok({v:?})"
-        ),
+        Ok(v) => panic!("expected runtime error from tcp.connect(42); got Ok({v:?})"),
         Err(msg) => msg,
     };
     assert!(

@@ -127,12 +127,11 @@ impl Vm {
             // Float/ExtFloat pair for ordering comparisons; the
             // or-pattern dereference + f64 partial_cmp matches the
             // widening rule used elsewhere.
-            (
-                Value::Float(a) | Value::ExtFloat(a),
-                Value::Float(b) | Value::ExtFloat(b),
-            ) => a.partial_cmp(b).ok_or_else(|| {
-                VmError::new("cannot compare non-finite float values".to_string())
-            })?,
+            (Value::Float(a) | Value::ExtFloat(a), Value::Float(b) | Value::ExtFloat(b)) => {
+                a.partial_cmp(b).ok_or_else(|| {
+                    VmError::new("cannot compare non-finite float values".to_string())
+                })?
+            }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             // List vs List and the mixed List/Range pairings share the same
             // Silt type (`List(T)`), so must be ordered element-wise. The

@@ -153,7 +153,7 @@ let xs: List(Int) = 1..10         -- implicit Range→List
 
 Ranges are lazy — they don't allocate memory until iterated, so
 `1..1000000` is cheap. `Range` is a distinct runtime variant
-(`Value::Range(lo, hi)`), not a materialised list, and the iteration
+(`Value::Range(lo, hi)`), not a materialized list, and the iteration
 helpers in `list.*` walk it without first expanding it into a `List(Int)`.
 
 Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.

@@ -99,7 +99,10 @@ fn run_help_text_source_mentions_strict_effects() {
     // Stop at the next top-level fn or end-of-file so we don't
     // accidentally match the (already-existing) mention in the
     // `check_usage_banner` doc comment.
-    let end = body[1..].find("\npub(crate) fn ").map(|i| i + 1).unwrap_or(body.len());
+    let end = body[1..]
+        .find("\npub(crate) fn ")
+        .map(|i| i + 1)
+        .unwrap_or(body.len());
     let body = &body[..end];
     assert!(
         body.contains("strict-effects"),

@@ -920,10 +920,7 @@ impl TaskHandle {
     /// If the joinee is already complete, this fires the waker inline
     /// and returns a guard whose `id` does not appear in the Vec; the
     /// guard's Drop is a no-op deregister in that case.
-    pub fn register_join_waker_guard(
-        self: &Arc<Self>,
-        waker: Waker,
-    ) -> JoinWakerRegistration {
+    pub fn register_join_waker_guard(self: &Arc<Self>, waker: Waker) -> JoinWakerRegistration {
         let id = self.mint_join_waker_id();
         let already_done = self.result.lock().is_some();
         if already_done {
@@ -1165,10 +1162,7 @@ impl IoCompletion {
     /// the guard, the entry persists until the I/O finally produces a
     /// value — N cancelled waiters on a slow I/O op means N leaked
     /// closures on the completion handle.
-    pub fn register_waker_guard(
-        self: &Arc<Self>,
-        waker: Waker,
-    ) -> IoWakerRegistration {
+    pub fn register_waker_guard(self: &Arc<Self>, waker: Waker) -> IoWakerRegistration {
         let id = self.mint_waker_id();
         let already_done = self.result.lock().is_some();
         if already_done {

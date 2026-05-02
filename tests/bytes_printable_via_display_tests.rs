@@ -47,11 +47,7 @@ fn bytes_is_printable_via_println() {
              println(b)\n\
          }\n",
     );
-    let output = silt_cmd()
-        .arg("run")
-        .arg(&path)
-        .output()
-        .expect("silt run");
+    let output = silt_cmd().arg("run").arg(&path).output().expect("silt run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

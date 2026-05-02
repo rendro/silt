@@ -96,8 +96,7 @@ fn data_module_does_not_leak_epoch_ms_rust_identifier_in_error() {
     );
     // Post-fix form: the canonical replacement must be present.
     assert!(
-        DATA_RS
-            .contains("time.now: epoch milliseconds * 1_000_000 overflows i64"),
+        DATA_RS.contains("time.now: epoch milliseconds * 1_000_000 overflows i64"),
         "src/builtins/data.rs missing the canonical user-facing \
          replacement for the time.now overflow message; expected \
          'time.now: epoch milliseconds * 1_000_000 overflows i64'"

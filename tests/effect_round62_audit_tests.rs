@@ -203,8 +203,7 @@ fn format_suggested_fn_header_does_not_emit_top_star_literal() {
     // effects))` without the guard. We lock the presence of the
     // explicit-set fallback string — a rough but durable shape check.
     let src = fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/typechecker/inference.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/typechecker/inference.rs"),
     )
     .expect("read inference.rs");
     assert!(
@@ -334,8 +333,7 @@ fn trait_impl_set_seeding_uses_builtin_auto_derived_constant() {
     // impl-seeding block must reference the named constant, not a
     // bare array.
     let src = fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/typechecker/mod.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/typechecker/mod.rs"),
     )
     .expect("read typechecker/mod.rs");
 

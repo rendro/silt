@@ -30,8 +30,7 @@ use std::process::Command;
 
 /// Run a Silt source program and return (stdout, stderr, success).
 fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
-    let tmp =
-        std::env::temp_dir().join(format!("silt_unsupportable_field_dispatch_{label}.silt"));
+    let tmp = std::env::temp_dir().join(format!("silt_unsupportable_field_dispatch_{label}.silt"));
     std::fs::write(&tmp, src).expect("write temp file");
     let bin = env!("CARGO_BIN_EXE_silt");
     let out = Command::new(bin)

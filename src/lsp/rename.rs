@@ -208,8 +208,7 @@ pub(crate) fn builtin_globals() -> &'static [&'static str] {
     static GLOBALS: OnceLock<Vec<&'static str>> = OnceLock::new();
     GLOBALS
         .get_or_init(|| {
-            let mut v: Vec<&'static str> =
-                module::builtin_free_function_names().to_vec();
+            let mut v: Vec<&'static str> = module::builtin_free_function_names().to_vec();
             v.extend(builtin_types::iter_all().map(|b| b.name));
             v
         })

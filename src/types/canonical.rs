@@ -314,8 +314,7 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
             // Try to find a head symbol on the canonicalised receiver.
             // Concrete heads -> impl-table lookup. None -> abstract.
             if let Some(head) = head_symbol_of_canon(&canon_recv)
-                && let Some(binding) =
-                    resolver.lookup_assoc_binding(*trait_name, head, *assoc_name)
+                && let Some(binding) = resolver.lookup_assoc_binding(*trait_name, head, *assoc_name)
             {
                 // The stored binding was canonicalised at registration
                 // time. Canonicalise again here so any nested alias /

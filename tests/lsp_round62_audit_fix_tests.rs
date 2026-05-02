@@ -318,7 +318,8 @@ fn prepare_rename_on_anon_record_destructure_binder_returns_edit() {
     // `  let { x, y } = p` -> two spaces + "let { " = 8, `x` at 8
     let mut client = LspClient::spawn();
     let uri = unique_uri("anon_rec_pr");
-    let text = "fn main() {\n  let p = { x: 10, y: 20 }\n  let { x, y } = p\n  println(\"{x} {y}\")\n}\n";
+    let text =
+        "fn main() {\n  let p = { x: 10, y: 20 }\n  let { x, y } = p\n  println(\"{x} {y}\")\n}\n";
     client.did_open_and_wait(&uri, text);
 
     let resp = client.request(
@@ -372,9 +373,7 @@ fn find_references_inside_anon_record_literal_field_value() {
         !result.is_null(),
         "find references inside anon-record literal field value must NOT return null (round-62 B10); got {resp}"
     );
-    let arr = result
-        .as_array()
-        .expect("references result is an array");
+    let arr = result.as_array().expect("references result is an array");
     assert!(
         !arr.is_empty(),
         "find references must return at least one location (round-62 B10); got {resp}"
@@ -461,9 +460,7 @@ fn repl_builtin_names_includes_primitive_types() {
     let names = silt::repl::builtin_names();
 
     // Sourced from the authoritative constant.
-    let expected: Vec<&str> = silt::types::builtins::iter_all()
-        .map(|b| b.name)
-        .collect();
+    let expected: Vec<&str> = silt::types::builtins::iter_all().map(|b| b.name).collect();
 
     for entry in &expected {
         assert!(

@@ -41,8 +41,15 @@ fn temp_silt_file(prefix: &str, content: &str) -> PathBuf {
 }
 
 fn check_stderr(path: &PathBuf) -> (bool, String) {
-    let output = silt_cmd().arg("check").arg(path).output().expect("silt check");
-    (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
+    let output = silt_cmd()
+        .arg("check")
+        .arg(path)
+        .output()
+        .expect("silt check");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
 }
 
 #[test]

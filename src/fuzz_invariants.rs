@@ -132,10 +132,7 @@ fn significant_token_count(tokens: &[SpannedToken]) -> usize {
                     j += 1;
                 }
                 if j < tokens.len()
-                    && matches!(
-                        tokens[j].0,
-                        Token::RParen | Token::RBracket | Token::RBrace
-                    )
+                    && matches!(tokens[j].0, Token::RParen | Token::RBracket | Token::RBrace)
                 {
                     return false;
                 }

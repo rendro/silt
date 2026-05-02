@@ -110,12 +110,13 @@ fn vim_and_vscode_grammars_share_operator_set() {
     // Sanity: both extractors must find the round-62 known-good set.
     // If either of these baseline asserts fails, the extractor is
     // broken — fix the extractor before debugging grammar drift.
-    let baseline: BTreeSet<&'static str> = ["|>", "->", "..", "?", "^", "&&", "||", "==", "!=",
-        "<=", ">=", "!", "+", "-", "*", "/", "%", "=", "<", ">"]
-        .into_iter()
-        .collect();
-    let baseline_strings: BTreeSet<String> =
-        baseline.iter().map(|s| s.to_string()).collect();
+    let baseline: BTreeSet<&'static str> = [
+        "|>", "->", "..", "?", "^", "&&", "||", "==", "!=", "<=", ">=", "!", "+", "-", "*", "/",
+        "%", "=", "<", ">",
+    ]
+    .into_iter()
+    .collect();
+    let baseline_strings: BTreeSet<String> = baseline.iter().map(|s| s.to_string()).collect();
     assert_eq!(
         vim_ops, baseline_strings,
         "vim operator-literal extractor diverged from the round-62 baseline.\n\
@@ -131,7 +132,8 @@ fn vim_and_vscode_grammars_share_operator_set() {
 
     // Set equality between the two grammars is the actual lock.
     assert_eq!(
-        vim_ops, vscode_ops,
+        vim_ops,
+        vscode_ops,
         "vim and vscode grammars cover different operator sets.\n\
          vim only:    {:?}\nvscode only: {:?}",
         vim_ops.difference(&vscode_ops).collect::<Vec<_>>(),

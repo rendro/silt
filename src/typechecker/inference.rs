@@ -200,9 +200,7 @@ pub(super) fn format_undefined_variable_message(
         // `while` / `for` as bare identifiers and we land here with an
         // "undefined variable" diagnostic. Wording is copied verbatim
         // from parser.rs so both paths give the user identical advice.
-        "if" => Some(
-            "silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'",
-        ),
+        "if" => Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'"),
         "while" | "for" => Some(
             "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
         ),
@@ -794,9 +792,7 @@ impl TypeChecker {
         // enforcement on those fns. Under --strict-effects the same
         // bug would land in reverse (un-annotated fn flipped to
         // EMPTY but compared via TOP-equality and excluded).
-        if !f.is_recovery_stub
-            && f.is_annotated
-            && !inferred_effects.is_subset(f.declared_effects)
+        if !f.is_recovery_stub && f.is_annotated && !inferred_effects.is_subset(f.declared_effects)
         {
             // Compute the offending bits — effects in the body that the
             // signature didn't declare. Display in alphabetic order
@@ -3598,8 +3594,7 @@ impl TypeChecker {
                 // annotation so `is_annotated` is always false there
                 // and this branch is a no-op — effects remain inferred.
                 if *is_annotated {
-                    let inferred =
-                        super::effects_infer::infer_expr_effects(body, &local_env);
+                    let inferred = super::effects_infer::infer_expr_effects(body, &local_env);
                     if !inferred.is_subset(*effects) {
                         let mut offending = crate::types::effects::EffectSet::EMPTY;
                         for e in inferred.iter() {
@@ -3616,9 +3611,7 @@ impl TypeChecker {
                         // render TOP as the explicit five-effect form
                         // rather than the `!*` "no annotation" sigil,
                         // which is not a parseable annotation.
-                        let inferred_render = if inferred
-                            == crate::types::effects::EffectSet::TOP
-                        {
+                        let inferred_render = if inferred == crate::types::effects::EffectSet::TOP {
                             "!{fs, io, net, random, time}".to_string()
                         } else {
                             format!("{inferred}")
@@ -3981,7 +3974,8 @@ impl TypeChecker {
                 if let Some(base_expr) = spread {
                     let base_ty = self.infer_expr(base_expr, env);
                     let base_ty = self.apply(&base_ty);
-                    let base_canon = crate::types::canonical::canonicalize(&self.resolver, &base_ty);
+                    let base_canon =
+                        crate::types::canonical::canonicalize(&self.resolver, &base_ty);
                     // Determine base's known fields and tail.
                     let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
                         match &base_canon {

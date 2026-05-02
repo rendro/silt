@@ -455,12 +455,7 @@ fn check_shorthand_field_binder(
     }
 }
 
-fn find_ident_in_expr(
-    expr: &Expr,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
+fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &mut Option<Symbol>) {
     if let ExprKind::Ident(name) = &expr.kind {
         let start = token_start(&expr.span);
         let name_len = crate::intern::resolve(*name).len();
@@ -490,7 +485,9 @@ fn find_ident_in_expr(
             }
         }
     }
-    visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, source, best));
+    visit_expr_children(expr, |child| {
+        find_ident_in_expr(child, cursor, source, best)
+    });
 }
 
 /// Visit all child expressions of an AST node.

@@ -29,9 +29,8 @@ fn assert_formatted_parses(source: &str) {
 
 fn assert_idempotent(source: &str) {
     let first = format(source).unwrap_or_else(|e| panic!("first format failed: {e:?}"));
-    let second = format(&first).unwrap_or_else(|e| {
-        panic!("second format failed: {e:?}\nfirst:\n{first}")
-    });
+    let second =
+        format(&first).unwrap_or_else(|e| panic!("second format failed: {e:?}\nfirst:\n{first}"));
     assert_eq!(
         first, second,
         "formatter must be idempotent\n---first---\n{first}\n---second---\n{second}"
@@ -116,7 +115,8 @@ fn test_set_multiline_with_leading_standalone_comment_preserved() {
     // the literal (either dropped or attached to the surrounding
     // statement), changing attached-comment semantics. Fix forces multi-
     // line emission and emits the comment inside the brackets.
-    let source = "fn main() {\n    let s = #[\n        -- standalone\n        1,\n        2,\n    ]\n}\n";
+    let source =
+        "fn main() {\n    let s = #[\n        -- standalone\n        1,\n        2,\n    ]\n}\n";
     let formatted = format(source).expect("format succeeds");
     assert!(
         formatted.contains("-- standalone"),
@@ -124,9 +124,7 @@ fn test_set_multiline_with_leading_standalone_comment_preserved() {
     );
     // The comment must remain INSIDE the literal: between `#[` and `]`.
     let open = formatted.find("#[").expect("has `#[`");
-    let close_offset = formatted[open..]
-        .find(']')
-        .expect("has closing `]`");
+    let close_offset = formatted[open..].find(']').expect("has closing `]`");
     let close = open + close_offset;
     let comment = formatted.find("-- standalone").expect("comment present");
     assert!(
@@ -182,20 +180,33 @@ fn test_map_repro_idempotent_two_passes() {
         "map repro must be idempotent\n---first---\n{first}\n---second---\n{second}"
     );
     // Every formatting pass must keep the comment.
-    assert!(first.contains("-- alpha"), "pass 1 lost the comment:\n{first}");
-    assert!(second.contains("-- alpha"), "pass 2 lost the comment:\n{second}");
+    assert!(
+        first.contains("-- alpha"),
+        "pass 1 lost the comment:\n{first}"
+    );
+    assert!(
+        second.contains("-- alpha"),
+        "pass 2 lost the comment:\n{second}"
+    );
 }
 
 #[test]
 fn test_set_repro_idempotent_two_passes() {
     // Verbatim shape from the round-64 audit description.
-    let source = "fn main() {\n    let s = #[\n        -- standalone\n        1,\n        2,\n    ]\n}\n";
+    let source =
+        "fn main() {\n    let s = #[\n        -- standalone\n        1,\n        2,\n    ]\n}\n";
     let first = format(source).expect("first format");
     let second = format(&first).expect("second format");
     assert_eq!(
         first, second,
         "set repro must be idempotent\n---first---\n{first}\n---second---\n{second}"
     );
-    assert!(first.contains("-- standalone"), "pass 1 lost the comment:\n{first}");
-    assert!(second.contains("-- standalone"), "pass 2 lost the comment:\n{second}");
+    assert!(
+        first.contains("-- standalone"),
+        "pass 1 lost the comment:\n{first}"
+    );
+    assert!(
+        second.contains("-- standalone"),
+        "pass 2 lost the comment:\n{second}"
+    );
 }

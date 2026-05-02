@@ -1284,9 +1284,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let epoch_ms = vm.epoch_ms()?;
             let epoch_ns = epoch_ms.checked_mul(1_000_000).ok_or_else(|| {
-                VmError::new(
-                    "time.now: epoch milliseconds * 1_000_000 overflows i64".into(),
-                )
+                VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
             })?;
             Ok(make_instant(epoch_ns))
         }

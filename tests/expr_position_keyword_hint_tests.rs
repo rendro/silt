@@ -47,8 +47,8 @@ fn main() {
     );
     // Must include the "use 'match' ..." advice
     assert!(
-        errs.iter().any(|e| e.contains("silt has no 'if' keyword")
-            && e.contains("match cond")),
+        errs.iter()
+            .any(|e| e.contains("silt has no 'if' keyword") && e.contains("match cond")),
         "expected the parser-style hint mentioning `match cond` for the `if` mistake, got:\n{}",
         errs.join("\n")
     );
@@ -66,13 +66,15 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("undefined variable 'while'")),
+        errs.iter()
+            .any(|e| e.contains("undefined variable 'while'")),
         "expected `undefined variable 'while'` diagnostic, got:\n{}",
         errs.join("\n")
     );
     assert!(
-        errs.iter().any(|e| e.contains("silt has no 'while'/'for' keywords")
-            && (e.contains("loop") || e.contains("list.each") || e.contains("list.map"))),
+        errs.iter()
+            .any(|e| e.contains("silt has no 'while'/'for' keywords")
+                && (e.contains("loop") || e.contains("list.each") || e.contains("list.map"))),
         "expected the parser-style hint mentioning loop/list.each/list.map for `while`, got:\n{}",
         errs.join("\n")
     );
@@ -94,8 +96,9 @@ fn main() {
         errs.join("\n")
     );
     assert!(
-        errs.iter().any(|e| e.contains("silt has no 'while'/'for' keywords")
-            && (e.contains("loop") || e.contains("list.each") || e.contains("list.map"))),
+        errs.iter()
+            .any(|e| e.contains("silt has no 'while'/'for' keywords")
+                && (e.contains("loop") || e.contains("list.each") || e.contains("list.map"))),
         "expected the parser-style hint mentioning loop/list.each/list.map for `for`, got:\n{}",
         errs.join("\n")
     );

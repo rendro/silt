@@ -3862,9 +3862,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         // parens (e.g. `fn man(-- inside\n) {}`). Without this, the
         // comment stays in `trailing_map` unconsumed and is silently
         // dropped.
-        if inner_trailing_on_open
-            && let Some(t) = take_trailing_for_line(fn_start_line)
-        {
+        if inner_trailing_on_open && let Some(t) = take_trailing_for_line(fn_start_line) {
             lines.push(format!("{}{}", indent(depth + 1), t));
         }
         let mut prev_line = fn_start_line;
@@ -4943,11 +4941,7 @@ fn format_map_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     for c in &tail {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
-    Some(format!(
-        "#{{\n{}\n{}}}",
-        lines.join("\n"),
-        indent(depth)
-    ))
+    Some(format!("#{{\n{}\n{}}}", lines.join("\n"), indent(depth)))
 }
 
 /// Set-literal multi-line emitter. Mirrors `format_list_expr_if_multiline`
@@ -4989,11 +4983,7 @@ fn format_set_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     for c in &tail {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
-    Some(format!(
-        "#[\n{}\n{}]",
-        lines.join("\n"),
-        indent(depth)
-    ))
+    Some(format!("#[\n{}\n{}]", lines.join("\n"), indent(depth)))
 }
 
 /// Decide whether a collection literal needs multi-line layout: true

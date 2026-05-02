@@ -82,7 +82,8 @@ fn f4_operators_md_table_does_not_list_bracket_indexing() {
     // Replacement note must be present so deletion of the row alone
     // doesn't drop the explanation.
     assert!(
-        doc.contains("postfix bracket indexing") || doc.contains("postfix indexing is not supported"),
+        doc.contains("postfix bracket indexing")
+            || doc.contains("postfix indexing is not supported"),
         "operators.md should explicitly note that silt has no postfix \
          bracket indexing"
     );
@@ -195,7 +196,8 @@ fn f6_operators_md_no_longer_shows_42_as_float() {
 #[test]
 fn f6_corrected_ascription_examples_typecheck() {
     let dir = scratch_dir("f6_as");
-    let src = "fn main() {\n  let xs = [] as List(Int)\n  let rows = [[]] as List(List(Int))\n  ()\n}\n";
+    let src =
+        "fn main() {\n  let xs = [] as List(Int)\n  let rows = [[]] as List(List(Int))\n  ()\n}\n";
     let main = write_main(&dir, src);
 
     let output = silt_bin()

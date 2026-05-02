@@ -83,8 +83,7 @@ fn run_with_timeout(args: &[&str], timeout: Duration) -> (Option<i32>, String, S
 /// the gate's error message (or, if watch feature is off, that
 /// rejection's message).
 fn assert_gate_rejection(args: &[&str]) {
-    let (code, stdout, stderr, timed_out) =
-        run_with_timeout(args, Duration::from_secs(5));
+    let (code, stdout, stderr, timed_out) = run_with_timeout(args, Duration::from_secs(5));
 
     assert!(
         !timed_out,

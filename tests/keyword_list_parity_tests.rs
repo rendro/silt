@@ -74,7 +74,8 @@ fn lexer_keywords_const_equals_expected_core_set() {
          editors/vscode/syntaxes/silt.tmLanguage.json).\n  \
          in lexer::KEYWORDS but not EXPECTED_CORE_KEYWORDS: {:?}\n  \
          in EXPECTED_CORE_KEYWORDS but not lexer::KEYWORDS: {:?}",
-        extra_in_lexer, extra_in_expected
+        extra_in_lexer,
+        extra_in_expected
     );
 }
 

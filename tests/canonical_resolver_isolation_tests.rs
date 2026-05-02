@@ -181,8 +181,8 @@ fn main() {
         .filter(|e| e.severity == Severity::Error)
         .collect();
     assert!(
-        hard.iter().all(|e| !e.message.contains("unknown type")
-            && !e.message.contains("undefined type")),
+        hard.iter()
+            .all(|e| !e.message.contains("unknown type") && !e.message.contains("undefined type")),
         "cross-module compile must resolve `ResolverShared_Mass` via the shared resolver; \
          got hard errors: {hard:?}"
     );

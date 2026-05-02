@@ -34,9 +34,7 @@ use silt::types::{RowTail, Severity, Type};
 
 fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::types::TypeError>) {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let errors = typechecker::check(&mut program);
     (program, errors)
 }
@@ -237,9 +235,7 @@ fn f10_row_tail_var_remapped_to_fresh_var_during_substitution() {
                 "row tail must re-tail on the fresh var the bound var was mapped to \
                  (round 67 F10); got Var({v}) but expected Var({fresh_var})"
             ),
-            other => panic!(
-                "expected RowTail::Var after substitution, got {other:?}"
-            ),
+            other => panic!("expected RowTail::Var after substitution, got {other:?}"),
         },
         other => panic!("expected AnonRecord after substitution, got {other:?}"),
     }

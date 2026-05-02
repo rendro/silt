@@ -56,8 +56,7 @@ fn main() {
     );
     let only = &errs[0];
     assert!(
-        only.contains("undefined variable")
-            && only.contains("nonExistent"),
+        only.contains("undefined variable") && only.contains("nonExistent"),
         "expected the diagnostic to be the undefined-variable error, got: {only}"
     );
     assert!(
@@ -82,7 +81,8 @@ fn main() {
     );
     let cascade_count = errs.iter().filter(|e| e.contains("cannot infer")).count();
     assert_eq!(
-        cascade_count, 0,
+        cascade_count,
+        0,
         "did not expect any 'cannot infer' cascade diagnostic when the \
          value already errored, but got:\n{}",
         errs.join("\n")
@@ -117,7 +117,8 @@ fn main() {
     );
     let cascade_count = errs.iter().filter(|e| e.contains("cannot infer")).count();
     assert_eq!(
-        cascade_count, 1,
+        cascade_count,
+        1,
         "expected exactly one 'cannot infer' diagnostic for an unanchored \
          polymorphic value, got {cascade_count} across:\n{}",
         errs.join("\n")

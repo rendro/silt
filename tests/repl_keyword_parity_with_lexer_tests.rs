@@ -44,11 +44,8 @@ fn repl_source_does_not_contain_handrolled_keyword_array() {
     // array literal that DUP-2 flagged has not been re-introduced.
     // Phrase chosen to be distinctive enough not to false-positive
     // against incidental occurrences.
-    let src = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/repl.rs",
-    ))
-    .expect("read src/repl.rs");
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/repl.rs",))
+        .expect("read src/repl.rs");
     assert!(
         !src.contains(r#""as", "else", "fn", "import","#),
         "src/repl.rs has re-introduced a hand-rolled keyword list — \

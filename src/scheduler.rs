@@ -1060,11 +1060,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         if let Some(handle_for_cancel) = handle_for_cancel_opt {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
-                            let reg = target_handle.register_join_waker_guard(Box::new(move || {
-                                if let Some(task) = slot.lock().take() {
-                                    requeue(&inner2, task, false);
-                                }
-                            }));
+                            let reg =
+                                target_handle.register_join_waker_guard(Box::new(move || {
+                                    if let Some(task) = slot.lock().take() {
+                                        requeue(&inner2, task, false);
+                                    }
+                                }));
                             // Re-install the cancel cleanup so it ALSO
                             // owns the `JoinWakerRegistration` guard.
                             // The guard's Drop deregisters this task's

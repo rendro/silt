@@ -88,10 +88,7 @@ pub(super) fn require_int_plain(arg: &Value, fn_label: &str) -> Result<i64, VmEr
 /// `require_string` variant that borrows the underlying `&str` instead
 /// of cloning into a `String`. Shares `tcp.rs` / `stream.rs` byte-
 /// identical implementations (round 65 dedup).
-pub(super) fn require_str_borrow<'a>(
-    arg: &'a Value,
-    fn_label: &str,
-) -> Result<&'a str, VmError> {
+pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
     match arg {
         Value::String(s) => Ok(s.as_str()),
         _ => Err(VmError::new(format!("{fn_label} requires String"))),

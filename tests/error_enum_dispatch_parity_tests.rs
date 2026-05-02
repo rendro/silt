@@ -61,8 +61,7 @@ fn dispatch_does_not_emit_unknown_module_wording() {
     for (lineno, line) in DISPATCH_SRC.lines().enumerate() {
         if line.contains("unknown module:") {
             let trimmed = line.trim_start();
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*");
+            let is_comment = trimmed.starts_with("//") || trimmed.starts_with("/*");
             if !is_comment {
                 bad_lines.push((lineno + 1, line));
             }
@@ -113,9 +112,7 @@ fn main() {
     let _ = PgError.PgConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src)
-        .tokenize()
-        .expect("lex error");
+    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
     let mut program = silt::parser::Parser::new(tokens)
         .parse_program()
         .expect("parse error");
@@ -147,9 +144,7 @@ fn main() {
     let _ = TcpError.TcpConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src)
-        .tokenize()
-        .expect("lex error");
+    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
     let mut program = silt::parser::Parser::new(tokens)
         .parse_program()
         .expect("parse error");
@@ -307,8 +302,7 @@ fn module_helpers_agree_on_error_enum_variant_names() {
 
     let mut mismatches: Vec<String> = Vec::new();
     for (enum_name, arity_variants) in with_arity {
-        let arity_names: Vec<&str> =
-            arity_variants.iter().map(|(n, _)| *n).collect();
+        let arity_names: Vec<&str> = arity_variants.iter().map(|(n, _)| *n).collect();
         let names = names_only
             .iter()
             .find(|(e, _)| e == enum_name)

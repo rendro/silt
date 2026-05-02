@@ -436,10 +436,8 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                         return;
                     }
                     let job = &jobs_ref[idx];
-                    let file = tmp_dir_ref.join(format!(
-                        "{}_line{}.silt",
-                        job.file_stem, job.opener_line
-                    ));
+                    let file =
+                        tmp_dir_ref.join(format!("{}_line{}.silt", job.file_stem, job.opener_line));
                     std::fs::write(&file, &job.src).expect("write temp silt file");
 
                     let output = silt_cmd()
@@ -580,8 +578,7 @@ fn walker_extraction_distinguishes_quoted_from_unquoted_println_output() {
     // Extraction must find exactly one println pair with the quoted
     // expected text preserved.
     let pairs = extract_println_pairs(block_body);
-    let annotated: Vec<&PrintlnPair> =
-        pairs.iter().filter(|p| p.expected.is_some()).collect();
+    let annotated: Vec<&PrintlnPair> = pairs.iter().filter(|p| p.expected.is_some()).collect();
     assert_eq!(
         annotated.len(),
         1,

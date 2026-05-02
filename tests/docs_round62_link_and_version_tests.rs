@@ -32,8 +32,7 @@ fn repo_root() -> PathBuf {
 
 fn read_doc(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// B6 lock: none of the five files that previously linked into
@@ -92,7 +91,11 @@ fn effect_rows_docs_use_v0_12_or_later_for_phase_a_to_d() {
 
     // The exact stale phrases the audit flagged. Each must be gone.
     let banned_pairs = [
-        ("docs/strict-effects-migration.md", &migration, "v0.12 ships"),
+        (
+            "docs/strict-effects-migration.md",
+            &migration,
+            "v0.12 ships",
+        ),
         (
             "docs/strict-effects-migration.md",
             &migration,
@@ -239,8 +242,7 @@ fn concurrency_md_spawn_work_join_disclaims_receive_order() {
     // the surrounding `--` comment lines.
     let end = (pos + 600).min(body.len());
     let window = &body[pos..end];
-    let has_disclaimer =
-        window.contains("in some order") || window.contains("permutation");
+    let has_disclaimer = window.contains("in some order") || window.contains("permutation");
     assert!(
         has_disclaimer,
         "docs/concurrency.md spawn-work-join example near `{needle}` \

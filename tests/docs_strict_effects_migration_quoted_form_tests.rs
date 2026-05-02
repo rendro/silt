@@ -136,29 +136,22 @@ fn migration_doc_error_block_matches_actual_diagnostic_shape() {
         .lines()
         .find(|l| {
             let trimmed = l.trim_start();
-            trimmed.starts_with('|')
-                && trimmed[1..].trim_start().starts_with('^')
+            trimmed.starts_with('|') && trimmed[1..].trim_start().starts_with('^')
         })
-        .unwrap_or_else(|| {
-            panic!("no caret line in stderr block:\n{stderr_block}")
-        });
+        .unwrap_or_else(|| panic!("no caret line in stderr block:\n{stderr_block}"));
     let stderr_caret_count = stderr_caret_line.chars().filter(|&c| c == '^').count();
 
     // 4. Pull the doc's first `error[type]:` block. Same heuristic:
     //    starts at the `error[type]:` line, runs to the next ``` fence.
-    let doc_block = extract_doc_first_error_block(DOC).unwrap_or_else(|| {
-        panic!("could not find error[type] block in migration doc")
-    });
+    let doc_block = extract_doc_first_error_block(DOC)
+        .unwrap_or_else(|| panic!("could not find error[type] block in migration doc"));
     let doc_caret_line = doc_block
         .lines()
         .find(|l| {
             let trimmed = l.trim_start();
-            trimmed.starts_with('|')
-                && trimmed[1..].trim_start().starts_with('^')
+            trimmed.starts_with('|') && trimmed[1..].trim_start().starts_with('^')
         })
-        .unwrap_or_else(|| {
-            panic!("no caret line in migration doc error block:\n{doc_block}")
-        });
+        .unwrap_or_else(|| panic!("no caret line in migration doc error block:\n{doc_block}"));
     let doc_caret_count = doc_caret_line.chars().filter(|&c| c == '^').count();
 
     // 5. Structural lock: the doc must show exactly as many `^` as
@@ -221,9 +214,7 @@ fn extract_doc_first_error_block(doc: &str) -> Option<String> {
             while j < lines.len() && lines[j].trim() != "```" {
                 j += 1;
             }
-            if body_start < lines.len()
-                && lines[body_start].starts_with("error[type]:")
-            {
+            if body_start < lines.len() && lines[body_start].starts_with("error[type]:") {
                 return Some(lines[body_start..j].join("\n"));
             }
             i = j + 1;

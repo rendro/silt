@@ -57,9 +57,7 @@ fn run_to_err(input: &str) -> String {
     let mut program = Parser::new(tokens).parse_program().expect("parser");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile");
+    let functions = compiler.compile_program(&program).expect("compile");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let err = vm.run(script).err().expect("expected VmError");

@@ -102,21 +102,13 @@ fn walk_expr(expr: &Expr, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
 
         ExprKind::FieldAccess(obj, _) => walk_expr(obj, env, aliases),
 
-        ExprKind::Binary(l, _, r) => {
-            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
-        }
+        ExprKind::Binary(l, _, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
         ExprKind::Unary(_, inner)
         | ExprKind::QuestionMark(inner)
         | ExprKind::Ascription(inner, _) => walk_expr(inner, env, aliases),
-        ExprKind::Pipe(l, r) => {
-            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
-        }
-        ExprKind::Range(l, r) => {
-            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
-        }
-        ExprKind::FloatElse(l, r) => {
-            walk_expr(l, env, aliases).union(walk_expr(r, env, aliases))
-        }
+        ExprKind::Pipe(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
+        ExprKind::Range(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
+        ExprKind::FloatElse(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
 
         ExprKind::Call(callee, args) => {
             // Effects of evaluating the callee + args + the call itself.

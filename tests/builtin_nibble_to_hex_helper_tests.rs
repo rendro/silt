@@ -194,15 +194,13 @@ fn crypto_hex_encode_routes_through_nibble_to_hex_lowercase() {
 /// changed any nibble's encoding, this test fails.
 #[test]
 fn crypto_sha256_output_is_byte_identical_pre_post_dedup() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.sha256(bytes.from_string("hello")))
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert_eq!(
         s, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
@@ -219,14 +217,12 @@ fn main() {
 fn encoding_hex_emits_uppercase() {
     // Use literal UTF-8 chars whose multi-byte encoding contains the full
     // a–f hex range. «»íï give us 0xC2 0xAB, 0xC2 0xBB, 0xC3 0xAD, 0xC3 0xAF.
-    let v = run(
-        "
+    let v = run("
 import encoding
 fn main() {
   encoding.form_encode([(\"k\", \"\u{00ab}\u{00bb}\u{00ed}\u{00ef}\")])
 }
-",
-    );
+");
     let s = expect_string(v);
     // We expect every hex digit to be uppercase.
     assert!(

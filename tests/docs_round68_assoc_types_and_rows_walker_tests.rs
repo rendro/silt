@@ -481,11 +481,7 @@ fn main() {
   ()
 }
 ";
-    let stderr = check_fails_with(
-        "f2_closed_extra",
-        src,
-        "unexpected field",
-    );
+    let stderr = check_fails_with("f2_closed_extra", src, "unexpected field");
     assert!(
         stderr.contains("'c'") || stderr.contains(": c"),
         "expected the diagnostic to name the offending field `c`; got:\n{stderr}"
@@ -502,11 +498,7 @@ fn main() {
   ()
 }
 ";
-    let stderr = check_fails_with(
-        "f2_closed_missing",
-        src,
-        "missing required field",
-    );
+    let stderr = check_fails_with("f2_closed_missing", src, "missing required field");
     assert!(
         stderr.contains("b"),
         "expected the diagnostic to name the missing field `b`; got:\n{stderr}"

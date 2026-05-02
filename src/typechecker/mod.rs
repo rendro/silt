@@ -2740,11 +2740,7 @@ impl TypeChecker {
         if self.strict_effects {
             for decl in program.decls.iter_mut() {
                 match decl {
-                    Decl::Fn(f)
-                        if !f.is_recovery_stub
-                            && f.span.line != 0
-                            && !f.is_annotated =>
-                    {
+                    Decl::Fn(f) if !f.is_recovery_stub && f.span.line != 0 && !f.is_annotated => {
                         f.declared_effects = EffectSet::EMPTY;
                         // The flip itself is what counts as the
                         // synthesized annotation; mark it so the
@@ -2754,10 +2750,7 @@ impl TypeChecker {
                     }
                     Decl::TraitImpl(ti) if !ti.is_auto_derived => {
                         for m in ti.methods.iter_mut() {
-                            if !m.is_recovery_stub
-                                && m.span.line != 0
-                                && !m.is_annotated
-                            {
+                            if !m.is_recovery_stub && m.span.line != 0 && !m.is_annotated {
                                 m.declared_effects = EffectSet::EMPTY;
                                 m.is_annotated = true;
                                 self.strict_effects_flipped.insert(m.span.offset);

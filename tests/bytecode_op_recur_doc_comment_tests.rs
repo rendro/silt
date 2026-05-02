@@ -44,9 +44,7 @@ fn op_recur_encoding_is_three_operand_bytes() {
          must stay in sync"
     );
     assert!(
-        comp.contains("Op::Recur")
-            && comp.contains("emit_u8")
-            && comp.contains("emit_u16"),
+        comp.contains("Op::Recur") && comp.contains("emit_u8") && comp.contains("emit_u16"),
         "src/compiler/mod.rs Recur emission no longer emits u8 + u16 — \
          encoding may have drifted; bytecode.rs doc-comment and compiler \
          must stay in sync"

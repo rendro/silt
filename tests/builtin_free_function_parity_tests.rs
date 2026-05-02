@@ -35,9 +35,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-use silt::module::{
-    all_builtin_constructor_names, builtin_free_function_names,
-};
+use silt::module::{all_builtin_constructor_names, builtin_free_function_names};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -125,13 +123,13 @@ fn registry_matches_typechecker_runtime() {
         .map(|(name, _)| name.clone())
         .collect();
 
-    let registry_owned: HashSet<String> =
-        builtin_free_function_names().iter().map(|s| (*s).to_string()).collect();
+    let registry_owned: HashSet<String> = builtin_free_function_names()
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
 
-    let extra_in_runtime: Vec<&String> =
-        runtime_free_fns.difference(&registry_owned).collect();
-    let extra_in_registry: Vec<&String> =
-        registry_owned.difference(&runtime_free_fns).collect();
+    let extra_in_runtime: Vec<&String> = runtime_free_fns.difference(&registry_owned).collect();
+    let extra_in_registry: Vec<&String> = registry_owned.difference(&runtime_free_fns).collect();
 
     assert!(
         extra_in_runtime.is_empty() && extra_in_registry.is_empty(),
@@ -142,7 +140,8 @@ fn registry_matches_typechecker_runtime() {
          Fix: update the registry in `src/module.rs` to match what \
          `register_builtins` in `src/typechecker/builtins.rs` actually \
          registers (or vice versa).",
-        extra_in_runtime, extra_in_registry
+        extra_in_runtime,
+        extra_in_registry
     );
 }
 
