@@ -11,7 +11,7 @@ mod runtime;
 pub use error::VmError;
 pub(crate) use execute::BuiltinIterKind;
 pub use runtime::Runtime;
-pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind};
+pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind, SuspendedBuiltin};
 
 /// Test-only: report the worker count of the I/O pool attached to this
 /// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
@@ -442,7 +442,16 @@ impl Vm {
     }
 
     /// Load a compiled top-level function and execute it.
+    ///
+    /// On the error path, the VM's frame/stack/tco-elided state is
+    /// restored to the depths recorded at entry so subsequent calls
+    /// (e.g. successive REPL evaluations sharing the same persistent VM)
+    /// don't render phantom call-stack frames from prior entries. See
+    /// `tests/repl_frame_leak_tests.rs` for the regression lock.
     pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
+        let saved_frames_len = self.frames.len();
+        let saved_stack_len = self.stack.len();
+        let saved_tco_len = self.tco_elided.len();
         let closure = Arc::new(VmClosure {
             function: script,
             upvalues: vec![],
@@ -452,7 +461,26 @@ impl Vm {
             ip: 0,
             base_slot: 0,
         });
-        self.execute().map_err(|e| self.enrich_error(e))
+        match self.execute() {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // Build the enriched error first — `enrich_error` walks
+                // `self.frames`/`self.tco_elided` to reconstruct the
+                // call stack for THIS run, which is exactly the state
+                // we're about to discard.
+                let enriched = self.enrich_error(e);
+                // Restore VM shape to the entry snapshot. Without this
+                // the call frame pushed above (and any frames the
+                // unwinding error left behind from nested calls)
+                // remain on the VM and leak into the next `run`'s
+                // call stack as phantom `-> main at <declaration>`
+                // entries.
+                self.frames.truncate(saved_frames_len);
+                self.stack.truncate(saved_stack_len);
+                self.tco_elided.truncate(saved_tco_len);
+                Err(enriched)
+            }
+        }
     }
 
     // ── Stack operations ──────────────────────────────────────────

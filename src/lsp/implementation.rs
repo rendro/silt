@@ -10,7 +10,7 @@ use lsp_types::Location;
 use lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset;
+use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::{position_to_offset, span_to_range};
 use crate::ast::Decl;
 
@@ -27,7 +27,9 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset(program, cursor)?;
+        // Source-aware so cursor on `fn`/`type` decl names resolves
+        // (round-63 B2 — match rename/hover behaviour).
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
 
         // Walk every open document and collect every TraitImpl whose
         // `trait_name` matches the clicked symbol.

@@ -285,7 +285,14 @@ pub(super) struct MethodEntry {
     /// `instantiate_method_entry` can substitute both through a shared
     /// mapping. Empty for auto-derived entries and for impls with no
     /// where clauses (which is every impl today prior to this feature).
-    pub(super) method_constraints: Vec<(TyVar, Symbol)>,
+    ///
+    /// The third tuple slot carries the trait args for parameterized
+    /// trait bounds — `where a: TryInto(Int)` stores `[Int]` so
+    /// `verify_trait_obligation` can reject mismatched impls (e.g.
+    /// `TryInto(Float) for ...` against a `where a: TryInto(Int)` bound).
+    /// Empty for parameterless traits and the legacy parameterless
+    /// where-clause path.
+    pub(super) method_constraints: Vec<(TyVar, Symbol, Vec<Type>)>,
 }
 
 /// A deferred where-clause obligation captured at a call site whose
@@ -458,7 +465,7 @@ pub(super) struct TraitImplExport {
     pub(super) trait_name: Symbol,
     pub(super) target_type: Symbol,
     pub(super) span: Span,
-    pub(super) impl_constraints: Vec<(usize, Symbol)>,
+    pub(super) impl_constraints: Vec<(usize, Symbol, Vec<Type>)>,
     pub(super) impl_trait_args: Vec<Type>,
     /// Method entries keyed by method name.
     pub(super) methods: Vec<(Symbol, MethodEntry)>,
@@ -495,15 +502,23 @@ pub struct TypeChecker {
     /// block's real source location instead of `Span::new(0, 0)`.
     pub(super) trait_impl_spans: HashMap<(Symbol, Symbol), Span>,
     /// Maps `(trait_name, target_head)` → impl-level where-clause
-    /// obligations expressed as `(target_arg_index, required_trait)`
-    /// pairs. Populated from `register_trait_impl` so that constraint
-    /// resolution at call sites can recursively verify that the
-    /// concrete type arguments of the matched impl themselves satisfy
-    /// the impl's own where clauses (e.g. `Box(Box(String)): Greet`
-    /// with `trait Greet for Box(a) where a: Greet` must reject because
+    /// obligations expressed as `(target_arg_index, required_trait,
+    /// required_trait_args)` triples. Populated from
+    /// `register_trait_impl` so that constraint resolution at call
+    /// sites can recursively verify that the concrete type arguments
+    /// of the matched impl themselves satisfy the impl's own where
+    /// clauses (e.g. `Box(Box(String)): Greet` with
+    /// `trait Greet for Box(a) where a: Greet` must reject because
     /// String does not impl Greet, even though `(Greet, Box)` is in
     /// `trait_impl_set`).
-    pub(super) impl_constraints: HashMap<(Symbol, Symbol), Vec<(usize, Symbol)>>,
+    ///
+    /// The third tuple slot carries the trait args for parameterized
+    /// bounds — `trait Use for List(a) where a: Conv(Int)` stores
+    /// `[Int]` so the recursive `verify_trait_obligation` step can
+    /// reject `Conv(String) for Int` (a mismatched impl) instead of
+    /// silently accepting any `Conv(*) for Int`. Empty for
+    /// parameterless trait bounds.
+    pub(super) impl_constraints: HashMap<(Symbol, Symbol), Vec<(usize, Symbol, Vec<Type>)>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -1676,15 +1691,31 @@ impl TypeChecker {
     pub(super) fn instantiate_method_entry(
         &mut self,
         entry: &MethodEntry,
-    ) -> (Type, Vec<(TyVar, Symbol)>) {
+    ) -> (Type, Vec<(TyVar, Symbol, Vec<Type>)>) {
         let ty = self.apply(&entry.method_type);
         let mut fvs: Vec<TyVar> = free_vars_in(&ty);
-        for (tv, _) in &entry.method_constraints {
+        for (tv, _, args) in &entry.method_constraints {
             if !fvs.contains(tv) {
                 fvs.push(*tv);
             }
+            for arg in args {
+                for v in free_vars_in(arg) {
+                    if !fvs.contains(&v) {
+                        fvs.push(v);
+                    }
+                }
+            }
         }
         if fvs.is_empty() {
+            // Side-channel propagation: even on the no-fresh-var fast
+            // path, surface the bound's args via `trait_arg_bindings`
+            // so call sites looking up `(tv, trait)` find them.
+            for (tv, trait_name, args) in &entry.method_constraints {
+                if !args.is_empty() {
+                    self.trait_arg_bindings
+                        .insert((*tv, *trait_name), args.clone());
+                }
+            }
             return (ty, entry.method_constraints.clone());
         }
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
@@ -1692,14 +1723,34 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         let new_ty = substitute_vars(&ty, &mapping);
-        let new_constraints: Vec<(TyVar, Symbol)> = entry
+        let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = entry
             .method_constraints
             .iter()
-            .map(|(tv, trait_name)| match mapping.get(tv) {
-                Some(Type::Var(new_tv)) => (*new_tv, *trait_name),
-                _ => (*tv, *trait_name),
+            .map(|(tv, trait_name, args)| {
+                let new_tv = match mapping.get(tv) {
+                    Some(Type::Var(new_tv)) => *new_tv,
+                    _ => *tv,
+                };
+                let new_args: Vec<Type> = args
+                    .iter()
+                    .map(|t| substitute_vars(t, &mapping))
+                    .collect();
+                (new_tv, *trait_name, new_args)
             })
             .collect();
+        // Round 58 soundness fix (extension): propagate the bound's
+        // trait args under the fresh tyvar key so the call-site
+        // `bound_args` lookup in `dispatch_method_entry` finds them
+        // when checking the obligation against `impl_trait_args`.
+        // Without this, impl-level / method-level where-clause
+        // bounds with trait args would silently pass when matched
+        // against a mismatched impl (the BROKEN-1 / BROKEN-2 hole).
+        for (tv, trait_name, args) in &new_constraints {
+            if !args.is_empty() {
+                self.trait_arg_bindings
+                    .insert((*tv, *trait_name), args.clone());
+            }
+        }
         (new_ty, new_constraints)
     }
 
@@ -1905,12 +1956,15 @@ impl TypeChecker {
             return;
         };
         let args = self.type_args_of(&resolved);
-        for (idx, sub_trait) in obligations {
+        for (idx, sub_trait, sub_trait_args) in obligations {
             if let Some(arg_ty) = args.get(idx).cloned() {
-                // Sub-obligations on impl target args: no trait args to
-                // thread (impl-level where clauses are `where a: Trait`,
-                // no parameterized form yet).
-                self.verify_trait_obligation(sub_trait, &[], &arg_ty, span);
+                // Thread the bound's own trait args so parameterized
+                // sub-bounds (`where a: Conv(Int)`) reject impls whose
+                // trait args don't match. Resolve any tyvars first so
+                // recursion sees concrete forms when available.
+                let resolved_sub_args: Vec<Type> =
+                    sub_trait_args.iter().map(|t| self.apply(t)).collect();
+                self.verify_trait_obligation(sub_trait, &resolved_sub_args, &arg_ty, span);
             }
         }
     }
@@ -2118,8 +2172,13 @@ impl TypeChecker {
                 for v in free_vars_in(&m.method_type) {
                     producer_tyvars.insert(v);
                 }
-                for (tv, _) in &m.method_constraints {
+                for (tv, _, args) in &m.method_constraints {
                     producer_tyvars.insert(*tv);
+                    for arg in args {
+                        for v in free_vars_in(arg) {
+                            producer_tyvars.insert(v);
+                        }
+                    }
                 }
             }
         }
@@ -2263,8 +2322,18 @@ impl TypeChecker {
             self.trait_impl_set.insert(key);
             self.trait_impl_spans.insert(key, entry.span);
             if !entry.impl_constraints.is_empty() {
-                self.impl_constraints
-                    .insert(key, entry.impl_constraints.clone());
+                let remapped_impl_constraints: Vec<(usize, Symbol, Vec<Type>)> = entry
+                    .impl_constraints
+                    .iter()
+                    .map(|(idx, t, args)| {
+                        let new_args: Vec<Type> = args
+                            .iter()
+                            .map(|a| substitute_vars(a, &ty_remap))
+                            .collect();
+                        (*idx, *t, new_args)
+                    })
+                    .collect();
+                self.impl_constraints.insert(key, remapped_impl_constraints);
             }
             if !entry.impl_trait_args.is_empty() {
                 let remapped: Vec<Type> = entry
@@ -2276,10 +2345,16 @@ impl TypeChecker {
             }
             for (mname, m) in &entry.methods {
                 let new_method_type = substitute_vars(&m.method_type, &ty_remap);
-                let new_constraints: Vec<(TyVar, Symbol)> = m
+                let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = m
                     .method_constraints
                     .iter()
-                    .map(|(tv, t)| (*tv_remap.get(tv).unwrap_or(tv), *t))
+                    .map(|(tv, t, args)| {
+                        let new_args: Vec<Type> = args
+                            .iter()
+                            .map(|a| substitute_vars(a, &ty_remap))
+                            .collect();
+                        (*tv_remap.get(tv).unwrap_or(tv), *t, new_args)
+                    })
                     .collect();
                 let new_entry = MethodEntry {
                     method_type: new_method_type,
@@ -2893,8 +2968,10 @@ impl TypeChecker {
                             entry.method_constraints = entry
                                 .method_constraints
                                 .iter()
-                                .filter_map(|(old_tv, trait_name)| {
-                                    remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                .filter_map(|(old_tv, trait_name, args)| {
+                                    remap
+                                        .get(old_tv)
+                                        .map(|&new_tv| (new_tv, *trait_name, args.clone()))
                                 })
                                 .collect();
                         }
@@ -3060,8 +3137,10 @@ impl TypeChecker {
                                     entry.method_constraints = entry
                                         .method_constraints
                                         .iter()
-                                        .filter_map(|(old_tv, trait_name)| {
-                                            remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                        .filter_map(|(old_tv, trait_name, args)| {
+                                            remap.get(old_tv).map(|&new_tv| {
+                                                (new_tv, *trait_name, args.clone())
+                                            })
                                         })
                                         .collect();
                                 }
@@ -4757,8 +4836,8 @@ impl TypeChecker {
     ///   `where a: Compare`-style clauses on every recursive call site,
     ///   plus correct propagation through `target_type_args` /
     ///   `target_param_names` / `where_clauses`. That work is mechanical
-    ///   but invasive; gated as a follow-up. See the round-62 audit
-    ///   (TBD) for the deferred-work entry.
+    ///   but invasive; gated as a follow-up. See round-62 audit notes
+    ///   for the deferred-work entry.
     /// - The `Alias` body kind (handled separately by
     ///   `register_type_alias`).
     fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
@@ -5533,13 +5612,13 @@ impl TypeChecker {
         // from parse_where_clauses_opt as separate (tv, trait) entries
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
-        let mut impl_level_constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        let mut impl_level_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = Vec::new();
         // Parallel structure indexed by target_param_names position, used to
         // populate self.impl_constraints below so that call-site constraint
         // resolution can recursively verify the impl's own where clauses
         // against the actual concrete type arguments at the call site.
-        let mut impl_obligations_by_index: Vec<(usize, Symbol)> = Vec::new();
-        for (type_param, trait_name, _trait_args) in &ti.where_clauses {
+        let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
+        for (type_param, trait_name, trait_args) in &ti.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
@@ -5552,16 +5631,36 @@ impl TypeChecker {
                 );
                 continue;
             }
+            // Resolve the bound's trait args through the impl's
+            // param_map so any lowercase tyvars from the impl header
+            // bind to the impl's fresh tyvars. For concrete args
+            // (e.g. `where a: Conv(Int)`) this is the identity walk.
+            // Empty when the bound trait has no args.
+            let resolved_bound_args: Vec<Type> = trait_args
+                .iter()
+                .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
+                .collect();
             match impl_param_map.get(type_param) {
                 Some(ty) => {
                     let resolved = self.apply(ty);
                     if let Type::Var(tv) = resolved {
-                        impl_level_constraints.push((tv, *trait_name));
+                        impl_level_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
+                        // Record the bound's args under (tv, trait) so
+                        // the call-site `bound_args` lookup in
+                        // `dispatch_method_entry` finds them when the
+                        // impl method gets dispatched. `instantiate_with_constraints`
+                        // / `instantiate_method_entry` propagate these
+                        // entries to fresh tyvars at each call site.
+                        if !resolved_bound_args.is_empty() {
+                            self.trait_arg_bindings
+                                .insert((tv, *trait_name), resolved_bound_args.clone());
+                        }
                     }
                     // If resolved is concrete (shouldn't happen — impl_param_map
                     // only inserts fresh Var entries) treat it as a tautology.
                     if let Some(idx) = ti.target_param_names.iter().position(|n| n == type_param) {
-                        impl_obligations_by_index.push((idx, *trait_name));
+                        impl_obligations_by_index
+                            .push((idx, *trait_name, resolved_bound_args));
                     }
                 }
                 None => {
@@ -5883,7 +5982,7 @@ impl TypeChecker {
             // never consulted `method.where_clauses`. The impl-level
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
-            for (type_param, trait_name, _trait_args) in &method.where_clauses {
+            for (type_param, trait_name, trait_args) in &method.where_clauses {
                 if !self.traits.contains_key(trait_name) {
                     self.error(
                         format!(
@@ -5896,11 +5995,27 @@ impl TypeChecker {
                     );
                     continue;
                 }
+                // Resolve the bound's trait args through the method's
+                // param_map (which sees both the impl-level binders
+                // and any method-local type annos). Empty for
+                // parameterless trait bounds. Without storing these
+                // alongside the (tv, trait) pair, downstream
+                // `verify_trait_obligation` would fall back to the
+                // bare "trait implemented" check — letting
+                // `where a: Conv(Int)` accept any `Conv(*) for ...`.
+                let resolved_bound_args: Vec<Type> = trait_args
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te, &mut param_map))
+                    .collect();
                 match param_map.get(type_param) {
                     Some(ty) => {
                         let resolved = self.apply(ty);
                         if let Type::Var(tv) = resolved {
-                            method_constraints.push((tv, *trait_name));
+                            method_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
+                            if !resolved_bound_args.is_empty() {
+                                self.trait_arg_bindings
+                                    .insert((tv, *trait_name), resolved_bound_args.clone());
+                            }
                         }
                     }
                     None => {
@@ -5927,11 +6042,15 @@ impl TypeChecker {
             // via instantiate_method_entry, then push the instantiated
             // constraints into pending_where_constraints for the
             // finalize-pass check.
+            // GAP-1: store the per-method span (not `ti.span`, which
+            // points at the impl block header) so the
+            // `validate_trait_impls` signature-mismatch unify error
+            // lands on the offending method's signature line.
             self.method_table.insert(
                 (target_type, method.name),
                 MethodEntry {
                     method_type: fn_type.clone(),
-                    span: ti.span,
+                    span: method.span,
                     is_auto_derived: ti.is_auto_derived,
                     trait_name: Some(ti.trait_name),
                     method_constraints: method_constraints.clone(),
@@ -5948,7 +6067,7 @@ impl TypeChecker {
             // Range receivers.
             let key = intern(&format!("{}.{}", target_type, method.name));
             let mut scheme = self.generalize(env, &fn_type);
-            for (tv, trait_name) in &method_constraints {
+            for (tv, trait_name, _trait_args) in &method_constraints {
                 if !scheme.constraints.contains(&(*tv, *trait_name)) {
                     scheme.constraints.push((*tv, *trait_name));
                 }
@@ -6233,6 +6352,8 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             body: unit_body(span),
             is_pub: true,
             span,
+            // Synthesized built-in: no source identifier — mirror `span`.
+            name_span: span,
             is_recovery_stub: false,
             is_signature_only: true,
             doc: None,
@@ -6266,6 +6387,8 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         body: error_default_body,
         is_pub: true,
         span: dummy_span,
+        // Synthesized built-in `Error.message`: no source ident — mirror span.
+        name_span: dummy_span,
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
@@ -6944,8 +7067,10 @@ impl ReplTypeContext {
                             entry.method_constraints = entry
                                 .method_constraints
                                 .iter()
-                                .filter_map(|(old_tv, trait_name)| {
-                                    remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                .filter_map(|(old_tv, trait_name, args)| {
+                                    remap
+                                        .get(old_tv)
+                                        .map(|&new_tv| (new_tv, *trait_name, args.clone()))
                                 })
                                 .collect();
                         }

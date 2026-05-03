@@ -180,8 +180,11 @@ Float, got Int`. Convert numbers explicitly with `int.to_float(42)` or
 `.` has the highest precedence of any operator. It is used for:
 
 - **Field access:** `user.name`
-- **Tuple index:** `pair.0`, `pair.1`
 - **Record update:** `user.{ age: 31 }` produces a new record with `age` replaced
+
+Tuples have no postfix index operator — destructure them with a `match`
+pattern instead, e.g. `match pair { (a, b) -> ... }`. See
+[Pattern Matching](pattern-matching.md#tuple-patterns).
 
 ```silt
 let bob = User { name: "bob", age: 30 }

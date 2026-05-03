@@ -62,6 +62,15 @@ pub(crate) enum BuiltinAcc {
     Groups(std::collections::BTreeMap<Value, Vec<Value>>),
     /// Map entries accumulator (e.g. `map.filter`, `map.map`).
     MapEntries(std::collections::BTreeMap<Value, Value>),
+    /// Best (key, item) so far for min_by/max_by; `None` until first item.
+    Best(Option<(Value, Value)>),
+    /// Scan accumulator: running value + accumulating prefix list.
+    Scan(Value, Vec<Value>),
+    /// Generic "current state" carrier (e.g. `list.unfold`'s state seed,
+    /// `stream.fold`'s running accumulator).  Items grow into the optional
+    /// `Vec<Value>` (used by `unfold` for the result list; `stream.fold`
+    /// uses just the `Value`).
+    State(Value, Vec<Value>),
 }
 
 /// State for a higher-order builtin whose callback yielded mid-iteration.

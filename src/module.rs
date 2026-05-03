@@ -23,9 +23,9 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
         }
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
         // Stdlib typed-error enums (Phase 0 of the stdlib error
-        // redesign; see `docs/proposals/stdlib-errors.md`). Each
-        // module's error variants require that module to be imported
-        // before they can be constructed.
+        // redesign; implemented and proposal removed in commit
+        // 7680536). Each module's error variants require that module
+        // to be imported before they can be constructed.
         "IoNotFound" | "IoPermissionDenied" | "IoAlreadyExists" | "IoInvalidInput"
         | "IoInterrupted" | "IoUnexpectedEof" | "IoWriteZero" | "IoUnknown" => Some("io"),
         "JsonSyntax" | "JsonTypeMismatch" | "JsonMissingField" | "JsonUnknown" => Some("json"),
@@ -92,7 +92,8 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
             &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
         ),
         // Stdlib typed-error enums (Phase 0 of the stdlib error
-        // redesign). See `docs/proposals/stdlib-errors.md`.
+        // redesign; implemented and proposal removed in commit
+        // 7680536).
         (
             "IoError",
             &[

@@ -3,7 +3,7 @@
 use lsp_types::{GotoDefinitionResponse, Location};
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset;
+use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::{binding_range, position_to_offset, span_to_range};
 use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
 
@@ -33,7 +33,9 @@ impl Server {
             )));
         }
 
-        let name = find_ident_at_offset(program, cursor)?;
+        // Source-aware so cursor on `fn`/`type` decl names resolves
+        // (round-63 B2 — match rename/hover behaviour).
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
 
         // Prefer local bindings in scope at the cursor position.
         if let Some(binding) = nearest_local_binding_for(&doc.locals, name, cursor) {

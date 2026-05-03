@@ -329,3 +329,111 @@ fn main() {
         "user-defined Hash impl should still win over the primitive fallback; got {out:?}"
     );
 }
+
+// ── Round 65 LATENT-1: ExtFloat runtime locks for Equal/Display/Hash ─
+//
+// The typechecker's auto-derive (src/typechecker/mod.rs) registers
+// Equal / Display / Hash for `ExtFloat`, mirroring the Compare arm
+// already exercised by `compare_runs_on_extfloat_via_bound` /
+// `compare_runs_on_extfloat_ordering` above. But the runtime arms
+// in `src/vm/dispatch.rs` had to grow `ExtFloat` cases too:
+//   - Equal: `*receiver == extra_args[0]` matched on `Value` discr.
+//   - Display: `display_value` had to format `ExtFloat`.
+//   - Hash: the explicit allowlist needed `Value::ExtFloat(_)`.
+// Removing any of those silently passes a typecheck-only test (e.g.
+// `tests/ext_float_trait_impls_tests.rs`) but breaks runtime. These
+// three sibling tests exercise the runtime path end-to-end.
+//
+// ExtFloat is reachable via Float-arithmetic widening: `Float / Float`
+// produces `Value::ExtFloat`, matching the pattern used by
+// `compare_runs_on_extfloat_via_bound` above.
+
+/// LATENT-1: `.equal()` on ExtFloat via an Equal trait bound must
+/// run and produce `true` for two bit-equal ExtFloat values.
+#[test]
+fn equal_runs_on_extfloat_via_bound() {
+    let out = run_silt_ok(
+        "eq_extfloat_self",
+        r#"
+fn eq(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+  let x: Float = 3.0
+  let y: Float = 2.0
+  let r1 = x / y
+  let r2 = x / y
+  println(eq(r1, r2))
+}
+"#,
+    );
+    assert_eq!(
+        out.trim(),
+        "true",
+        "two ExtFloats produced by the same Float division should be \
+         Equal-equal; got {out:?}"
+    );
+}
+
+/// LATENT-1: `.display()` on ExtFloat via a Display trait bound
+/// must run and emit a non-empty string. We don't pin the exact
+/// textual form (`1.5` vs `1.5e0` etc.) — only that Display routes
+/// to a successful runtime arm and the output is non-empty.
+#[test]
+fn display_runs_on_extfloat_via_bound() {
+    let out = run_silt_ok(
+        "display_extfloat",
+        r#"
+fn show(a: a) -> String where a: Display { a.display() }
+fn main() {
+  let x: Float = 3.0
+  let y: Float = 2.0
+  let r = x / y
+  println(show(r))
+}
+"#,
+    );
+    let trimmed = out.trim();
+    assert!(
+        !trimmed.is_empty(),
+        "Display on ExtFloat should produce a non-empty string; got {out:?}"
+    );
+    // Sanity: the rendered form should at least mention a digit. We
+    // don't pin the exact format because Float-vs-ExtFloat printing
+    // can differ across platforms (e.g. `1.5` vs `1.5e0`).
+    assert!(
+        trimmed.chars().any(|c| c.is_ascii_digit()),
+        "Display output for ExtFloat should contain at least one digit; got {out:?}"
+    );
+}
+
+/// LATENT-1: `.hash()` on ExtFloat via a Hash trait bound must run
+/// and emit a deterministic Int. Bit-equal ExtFloats must hash the
+/// same (mirrors `hash_is_deterministic_for_same_value` for Int).
+#[test]
+fn hash_runs_on_extfloat_via_bound() {
+    let out = run_silt_ok(
+        "hash_extfloat",
+        r#"
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn main() {
+  let x: Float = 3.0
+  let y: Float = 2.0
+  let r1 = x / y
+  let r2 = x / y
+  println(h(r1))
+  println(h(r2))
+}
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "expected 2 lines of output, got: {out:?}");
+    for (i, line) in lines.iter().enumerate() {
+        line.trim()
+            .parse::<i64>()
+            .unwrap_or_else(|e| panic!("line {i} {line:?} is not a parseable Int hash: {e}"));
+    }
+    assert_eq!(
+        lines[0].trim(),
+        lines[1].trim(),
+        "hash of two bit-equal ExtFloats should be deterministic; got {out:?}"
+    );
+}

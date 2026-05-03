@@ -396,6 +396,15 @@ pub struct FnDecl {
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,
+    /// Span of the declared name identifier itself (the `foo` in
+    /// `fn foo(...)`). Distinct from `span`, which currently points at
+    /// the leading `fn` keyword and is used for diagnostics / goto-def
+    /// landing zones. The LSP rename / references / definition /
+    /// document-highlight handlers need the *identifier* range so that
+    /// rename edits replace the name and not the keyword. For
+    /// synthesized FnDecls (auto-derive, recovery stubs, builtin trait
+    /// signatures) this falls back to `span`.
+    pub name_span: Span,
     /// Declared effect annotation parsed from the source.
     ///
     /// Phase B of the effect-rows proposal: a fn signature may carry an
@@ -490,6 +499,11 @@ pub struct TypeDecl {
     pub body: TypeBody,
     pub is_pub: bool,
     pub span: Span,
+    /// Span of the declared name identifier itself (the `Foo` in
+    /// `type Foo { ... }`). Mirrors `FnDecl::name_span`; see that doc
+    /// for the rationale (LSP rename / references need the name range,
+    /// not the `type` keyword range).
+    pub name_span: Span,
     /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
     pub doc: Option<String>,
 }

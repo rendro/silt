@@ -98,10 +98,17 @@ pub(crate) fn dispatch(args: &[String]) {
             eprintln!("         pass an explicit `.` or file paths to format anyway.");
             process::exit(1);
         }
-        eprintln!(
-            "silt fmt: no files specified; recursively formatting all .silt files under {}",
-            cwd.display()
-        );
+        if check_mode {
+            eprintln!(
+                "silt fmt: no files specified; recursively checking all .silt files under {}",
+                cwd.display()
+            );
+        } else {
+            eprintln!(
+                "silt fmt: no files specified; recursively formatting all .silt files under {}",
+                cwd.display()
+            );
+        }
         let preview = files.iter().take(5).collect::<Vec<_>>();
         for f in &preview {
             eprintln!("  {f}");

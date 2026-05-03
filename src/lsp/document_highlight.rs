@@ -4,7 +4,7 @@
 use lsp_types::{DocumentHighlight, DocumentHighlightKind};
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset;
+use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::position_to_offset;
 
 impl Server {
@@ -17,7 +17,9 @@ impl Server {
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset(program, cursor)?;
+        // Source-aware so cursor on `fn`/`type` decl names resolves
+        // (round-63 B2 — match rename/hover behaviour).
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
 
         // Reuse the workspace references walker but filter to current
         // document. Kind: TEXT — we don't distinguish read vs write.

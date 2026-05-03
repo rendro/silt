@@ -1,7 +1,7 @@
 //! Type signatures for the stdlib typed-error enums.
 //!
-//! Phase 0 of the stdlib error redesign (see
-//! `docs/proposals/stdlib-errors.md`): register the six per-module error
+//! Phase 0 of the stdlib error redesign (implemented and proposal
+//! removed in commit 7680536): register the six per-module error
 //! enums as ordinary silt types so user code can construct and
 //! pattern-match them in its own wrappers. No stdlib function signatures
 //! change in this phase — the enums simply become available.

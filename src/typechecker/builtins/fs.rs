@@ -14,7 +14,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // All fallible fs.* signatures now surface `Err(IoError)` so match
     // arms receive a typed enum that can be destructured. Phase 1 of
-    // the stdlib error redesign; see `docs/proposals/stdlib-errors.md`.
+    // the stdlib error redesign (implemented and proposal removed in
+    // commit 7680536).
     let io_error_ty = Type::Generic(intern("IoError"), vec![]);
 
     // fs.list_dir: (String) -> Result(List(String), IoError)

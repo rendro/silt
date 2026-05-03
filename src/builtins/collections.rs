@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
-use crate::vm::{BuiltinAcc, BuiltinIterKind, Vm, VmError};
+use crate::vm::{BuiltinAcc, BuiltinIterKind, SuspendedBuiltin, Vm, VmError};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
 enum ValueIter {
@@ -106,6 +106,47 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
             Ok((*lo..=*hi).map(Value::Int).collect())
         }
         _ => Err(VmError::new(format!("{fn_name} requires a list or range"))),
+    }
+}
+
+/// Step result for `list.unfold` callback dispatch.
+enum UnfoldStep {
+    /// Continue iterating with updated state and result.
+    Continue,
+    /// Iteration is complete; return the current result list.
+    Done,
+}
+
+/// Apply a `list.unfold` callback result to the running `(state, result)`.
+/// Mirrors the original inline logic in the `unfold` builtin.
+fn apply_unfold_result(
+    val: Value,
+    state: &mut Value,
+    result: &mut Vec<Value>,
+) -> Result<UnfoldStep, VmError> {
+    match val {
+        Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
+            if let Value::Tuple(pair) = &fields[0]
+                && pair.len() == 2
+            {
+                result.push(pair[0].clone());
+                if result.len() > MAX_RANGE_MATERIALIZE {
+                    return Err(VmError::new(format!(
+                        "list.unfold: accumulated result exceeds maximum list length of {} elements",
+                        MAX_RANGE_MATERIALIZE
+                    )));
+                }
+                *state = pair[1].clone();
+                return Ok(UnfoldStep::Continue);
+            }
+            result.push(fields[0].clone());
+            Ok(UnfoldStep::Done)
+        }
+        Value::Variant(ref tag, _) if tag == "None" => Ok(UnfoldStep::Done),
+        other => {
+            result.push(other);
+            Ok(UnfoldStep::Done)
+        }
     }
 }
 
@@ -604,36 +645,84 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.unfold takes 2 arguments".into()));
             }
-            let func = &args[1];
-            let mut state = args[0].clone();
-            let mut result = Vec::new();
-            loop {
-                let val = vm.invoke_callable(func, &[state.clone()])?;
-                match val {
-                    Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
-                        if let Value::Tuple(pair) = &fields[0]
-                            && pair.len() == 2
-                        {
-                            result.push(pair[0].clone());
-                            if result.len() > MAX_RANGE_MATERIALIZE {
-                                return Err(VmError::new(format!(
-                                    "list.unfold: accumulated result exceeds maximum list length of {} elements",
-                                    MAX_RANGE_MATERIALIZE
-                                )));
-                            }
-                            state = pair[1].clone();
-                            continue;
+            // ── Restore state from a prior yield, if any ──────────
+            // `unfold` doesn't materialize items up front (the callback drives
+            // iteration), so it can't ride on `iterate_builtin`. Instead we
+            // stash `(state, result)` in `BuiltinAcc::State` and the callback
+            // value in the `SuspendedBuiltin`. We also handle a mid-callback
+            // yield via `suspended_invoke`.
+            let (mut state, mut result, callback) = if let Some(susp) =
+                vm.take_suspended_builtin()
+            {
+                if susp.name == "list.unfold" {
+                    if let BuiltinAcc::State(s, r) = susp.acc {
+                        (s, r, susp.callback)
+                    } else {
+                        // Wrong shape — defensive: start fresh.
+                        (args[0].clone(), Vec::new(), args[1].clone())
+                    }
+                } else {
+                    // Belongs to a different builtin — put it back so its
+                    // owner can pick it up on its own re-dispatch.
+                    vm.push_suspended_builtin(susp);
+                    (args[0].clone(), Vec::new(), args[1].clone())
+                }
+            } else {
+                (args[0].clone(), Vec::new(), args[1].clone())
+            };
+
+            // ── Resume a mid-execution callback if needed ─────────
+            if vm.suspended_invoke.is_some() {
+                let cb_result = match vm.resume_suspended_invoke() {
+                    Ok(v) => v,
+                    Err(e) if e.is_yield => {
+                        // Still yielding — stash our state and re-push args.
+                        vm.push_suspended_builtin(SuspendedBuiltin {
+                            name: "list.unfold".into(),
+                            items: Vec::new(),
+                            next_index: 0,
+                            callback,
+                            acc: BuiltinAcc::State(state, result),
+                        });
+                        for a in args {
+                            vm.push(a.clone());
                         }
-                        result.push(fields[0].clone());
-                        break;
+                        return Err(e);
                     }
-                    Value::Variant(ref tag, _) if tag == "None" => {
-                        break;
+                    Err(e) => return Err(e),
+                };
+                // Apply the resumed callback's result to (state, result).
+                match apply_unfold_result(cb_result, &mut state, &mut result)? {
+                    UnfoldStep::Continue => {}
+                    UnfoldStep::Done => {
+                        return Ok(Value::List(Arc::new(result)));
                     }
-                    _ => {
-                        result.push(val);
-                        break;
+                }
+            }
+
+            // ── Main iteration ────────────────────────────────────
+            loop {
+                let invoke_result = vm.invoke_callable(&callback, &[state.clone()]);
+                let val = match invoke_result {
+                    Ok(v) => v,
+                    Err(e) if e.is_yield => {
+                        vm.push_suspended_builtin(SuspendedBuiltin {
+                            name: "list.unfold".into(),
+                            items: Vec::new(),
+                            next_index: 0,
+                            callback,
+                            acc: BuiltinAcc::State(state, result),
+                        });
+                        for a in args {
+                            vm.push(a.clone());
+                        }
+                        return Err(e);
                     }
+                    Err(e) => return Err(e),
+                };
+                match apply_unfold_result(val, &mut state, &mut result)? {
+                    UnfoldStep::Continue => continue,
+                    UnfoldStep::Done => break,
                 }
             }
             Ok(Value::List(Arc::new(result)))
@@ -689,54 +778,19 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("list.min_by takes 2 arguments".into()));
             }
             let items = materialize_iter(&args[0], "list.min_by")?;
-            let func = &args[1];
-            let mut best: Option<(Value, Value)> = None;
-            for item in items {
-                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                best = Some(match best {
-                    None => (key, item),
-                    Some((bk, bv)) => {
-                        if key.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
-                            == std::cmp::Ordering::Less
-                        {
-                            (key, item)
-                        } else {
-                            (bk, bv)
-                        }
-                    }
-                });
-            }
-            match best {
-                Some((_, v)) => Ok(Value::Variant("Some".into(), vec![v])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
-            }
+            // Route through `iterate_builtin` so that callbacks which yield
+            // (e.g. `io.read_file` inside the key-fn) re-push args and stash
+            // partial state.  Without this, restarting the iteration from
+            // scratch on resume would silently re-run the side-effecting
+            // callback for already-processed items.
+            vm.iterate_builtin(BuiltinIterKind::ListMinBy, items, args[1].clone(), args)
         }
         "max_by" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.max_by takes 2 arguments".into()));
             }
             let items = materialize_iter(&args[0], "list.max_by")?;
-            let func = &args[1];
-            let mut best: Option<(Value, Value)> = None;
-            for item in items {
-                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                best = Some(match best {
-                    None => (key, item),
-                    Some((bk, bv)) => {
-                        if key.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
-                            == std::cmp::Ordering::Greater
-                        {
-                            (key, item)
-                        } else {
-                            (bk, bv)
-                        }
-                    }
-                });
-            }
-            match best {
-                Some((_, v)) => Ok(Value::Variant("Some".into(), vec![v])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
-            }
+            vm.iterate_builtin(BuiltinIterKind::ListMaxBy, items, args[1].clone(), args)
         }
         "sum" => {
             if args.len() != 1 {
@@ -833,21 +887,19 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let items = materialize_iter(&args[0], "list.scan")?;
             let init = args[1].clone();
-            let func = &args[2];
-            let mut acc = init.clone();
-            let mut result = Vec::with_capacity(items.len() + 1);
-            result.push(acc.clone());
-            for item in items {
-                acc = vm.invoke_callable(func, &[acc.clone(), item])?;
-                result.push(acc.clone());
-                if result.len() > MAX_RANGE_MATERIALIZE {
-                    return Err(VmError::new(format!(
-                        "list.scan: accumulated result exceeds maximum list length of {} elements",
-                        MAX_RANGE_MATERIALIZE
-                    )));
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
+            // Seed the accumulator with the initial value as both the running
+            // acc AND the first element of the prefix list (matching the prior
+            // behavior).  `iterate_builtin_with_acc` will iterate over `items`
+            // and apply the callback's result to the accumulator; on yield it
+            // re-pushes args and stashes partial state in `suspended_builtin`.
+            let init_prefix = vec![init.clone()];
+            vm.iterate_builtin_with_acc(
+                BuiltinIterKind::ListScan,
+                items,
+                args[2].clone(),
+                BuiltinAcc::Scan(init, init_prefix),
+                args,
+            )
         }
         "intersperse" => {
             if args.len() != 2 {

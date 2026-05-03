@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::value::{Channel, TryReceiveResult, TrySendResult, Value};
-use crate::vm::{Vm, VmError};
+use crate::vm::{BuiltinAcc, SuspendedBuiltin, Vm, VmError};
 
 const DEFAULT_CAPACITY: usize = 16;
 const SEND_BACKOFF: Duration = Duration::from_micros(100);
@@ -1025,12 +1025,73 @@ fn fold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let ch = require_channel(&args[0], "stream.fold")?.clone();
-    let mut acc = args[1].clone();
     let fn_val = require_callable(&args[2], "stream.fold")?.clone();
+
+    // ── Restore state from a prior yield, if any ──────────────────
+    // Channels can't be materialized up front (they're potentially
+    // unbounded), so this can't ride on `iterate_builtin`. Instead we stash
+    // the running accumulator in `BuiltinAcc::Fold` and the channel value
+    // in `items` / callback in `callback`. We also pick up a half-completed
+    // callback via `suspended_invoke`.
+    let mut acc = if let Some(susp) = vm.take_suspended_builtin() {
+        if susp.name == "stream.fold" {
+            if let BuiltinAcc::Fold(v) = susp.acc {
+                v
+            } else {
+                args[1].clone()
+            }
+        } else {
+            vm.push_suspended_builtin(susp);
+            args[1].clone()
+        }
+    } else {
+        args[1].clone()
+    };
+
+    // ── Resume a mid-execution callback if needed ────────────────
+    if vm.suspended_invoke.is_some() {
+        let cb_result = match vm.resume_suspended_invoke() {
+            Ok(v) => v,
+            Err(e) if e.is_yield => {
+                vm.push_suspended_builtin(SuspendedBuiltin {
+                    name: "stream.fold".into(),
+                    items: Vec::new(),
+                    next_index: 0,
+                    callback: fn_val.clone(),
+                    acc: BuiltinAcc::Fold(acc),
+                });
+                for a in args {
+                    vm.push(a.clone());
+                }
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
+        acc = cb_result;
+    }
+
+    // ── Main loop ────────────────────────────────────────────────
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                acc = vm.invoke_callable(&fn_val, &[acc, v])?;
+                let invoke_result = vm.invoke_callable(&fn_val, &[acc.clone(), v]);
+                match invoke_result {
+                    Ok(r) => acc = r,
+                    Err(e) if e.is_yield => {
+                        vm.push_suspended_builtin(SuspendedBuiltin {
+                            name: "stream.fold".into(),
+                            items: Vec::new(),
+                            next_index: 0,
+                            callback: fn_val.clone(),
+                            acc: BuiltinAcc::Fold(acc),
+                        });
+                        for a in args {
+                            vm.push(a.clone());
+                        }
+                        return Err(e);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             TryReceiveResult::Closed => break,
             _ => {}
@@ -1047,10 +1108,58 @@ fn each(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let ch = require_channel(&args[0], "stream.each")?.clone();
     let fn_val = require_callable(&args[1], "stream.each")?.clone();
+
+    // ── Resume a mid-execution callback if needed ────────────────
+    // `stream.each` carries no accumulator across yields, so a stale
+    // `suspended_invoke` is the only state to restore.  Still: drop any
+    // matching `suspended_builtin` we may have left on prior yield so
+    // unrelated builtins don't pick it up.
+    if let Some(susp) = vm.take_suspended_builtin()
+        && susp.name != "stream.each"
+    {
+        vm.push_suspended_builtin(susp);
+    }
+    if vm.suspended_invoke.is_some() {
+        match vm.resume_suspended_invoke() {
+            Ok(_) => {}
+            Err(e) if e.is_yield => {
+                vm.push_suspended_builtin(SuspendedBuiltin {
+                    name: "stream.each".into(),
+                    items: Vec::new(),
+                    next_index: 0,
+                    callback: fn_val.clone(),
+                    acc: BuiltinAcc::Unit,
+                });
+                for a in args {
+                    vm.push(a.clone());
+                }
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                vm.invoke_callable(&fn_val, &[v])?;
+                let invoke_result = vm.invoke_callable(&fn_val, &[v]);
+                match invoke_result {
+                    Ok(_) => {}
+                    Err(e) if e.is_yield => {
+                        vm.push_suspended_builtin(SuspendedBuiltin {
+                            name: "stream.each".into(),
+                            items: Vec::new(),
+                            next_index: 0,
+                            callback: fn_val.clone(),
+                            acc: BuiltinAcc::Unit,
+                        });
+                        for a in args {
+                            vm.push(a.clone());
+                        }
+                        return Err(e);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             TryReceiveResult::Closed => break,
             _ => {}

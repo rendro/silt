@@ -20,7 +20,7 @@ to migrate an existing package.
 
 ## What strict-effects mode does
 
-By default (and through v0.13 without the flag), every
+By default (and through v0.14 without the flag), every
 unannotated user function carries the permissive `!*` ("any effect")
 declared bound. The typechecker still INFERS the body's real effect
 set — you can see it on LSP hover — but it does not enforce that the
@@ -171,7 +171,7 @@ typecheck until the bound is widened.
 
 A future major silt version may flip the default — that's the
 explicit eventual destination called out in the proposal — but the
-choice still stays with you in v0.13, per package, per invocation.
+choice still stays with you in v0.14, per package, per invocation.
 
 ## Related material
 

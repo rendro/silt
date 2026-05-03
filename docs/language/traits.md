@@ -6,8 +6,9 @@ order: 7
 
 # Traits
 
-Traits define shared behavior. No inheritance, no subclassing, no associated
-types -- just methods.
+Traits define shared behavior. No inheritance, no subclassing -- methods,
+plus associated types (a trait may declare a `type Item` member that each
+impl binds; see [Generics — Associated types](generics.md#associated-types)).
 
 ## Declaration and Implementation
 

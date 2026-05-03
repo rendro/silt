@@ -81,6 +81,9 @@ enum BindDestructKind {
     List(u8),
     ListRest(u8),
     RecordField(Symbol),
+    /// Anonymous record `...rest` capture: produces a new record containing
+    /// every field of the parent record except those listed here.
+    RecordRest(Vec<Symbol>),
     MapValue(String),
 }
 

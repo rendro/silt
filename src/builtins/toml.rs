@@ -3,7 +3,7 @@
 //!
 //! The API mirrors the `json` module in `src/builtins/data.rs`, with each
 //! fallible call returning a typed `TomlError` (Phase 1 of the stdlib error
-//! redesign — see `docs/proposals/stdlib-errors.md`):
+//! redesign; implemented and proposal removed in commit 7680536):
 //! - `toml.parse(T: Type, s: String) -> Result(T, TomlError)` — parse a top-
 //!   level TOML table into a record of type `T`.
 //! - `toml.parse_list(T: Type, s: String) -> Result(List(T), TomlError)` —

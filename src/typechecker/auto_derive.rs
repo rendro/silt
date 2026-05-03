@@ -208,6 +208,9 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
         body,
         is_pub: false,
         span: synth_span(),
+        // Synthesized: no source identifier — fall back to the
+        // synthetic span so callers don't crash on a missing field.
+        name_span: synth_span(),
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,

@@ -55,6 +55,10 @@ pub(crate) enum BuiltinIterKind {
     // ── list.* / set.* fold-style iterators ────────────────
     ListFold,
     ListFoldUntil,
+    // ── list.* min/max/scan iterators (re-entrant under yield) ──
+    ListMinBy,
+    ListMaxBy,
+    ListScan,
     // ── set.* unary-callback iterators ─────────────────────
     SetMap,
     SetFilter,
@@ -81,6 +85,9 @@ impl BuiltinIterKind {
             BuiltinIterKind::ListGroupBy => "list.group_by",
             BuiltinIterKind::ListFold => "list.fold",
             BuiltinIterKind::ListFoldUntil => "list.fold_until",
+            BuiltinIterKind::ListMinBy => "list.min_by",
+            BuiltinIterKind::ListMaxBy => "list.max_by",
+            BuiltinIterKind::ListScan => "list.scan",
             BuiltinIterKind::SetMap => "set.map",
             BuiltinIterKind::SetFilter => "set.filter",
             BuiltinIterKind::SetEach => "set.each",
@@ -129,6 +136,12 @@ fn initial_acc(kind: BuiltinIterKind) -> BuiltinAcc {
             // `iterate_builtin_with_acc` below.
             BuiltinAcc::Fold(Value::Unit)
         }
+        BuiltinIterKind::ListMinBy | BuiltinIterKind::ListMaxBy => BuiltinAcc::Best(None),
+        BuiltinIterKind::ListScan => {
+            // Placeholder — callers seed the running acc + prefix via
+            // `iterate_builtin_with_acc`.
+            BuiltinAcc::Scan(Value::Unit, Vec::new())
+        }
         BuiltinIterKind::MapFilter | BuiltinIterKind::MapMap => {
             BuiltinAcc::MapEntries(std::collections::BTreeMap::new())
         }
@@ -142,6 +155,14 @@ fn callback_args_for(kind: BuiltinIterKind, acc: &BuiltinAcc, item: &Value) -> V
             // Fold callback takes (acc, item).
             let acc_val = match acc {
                 BuiltinAcc::Fold(v) => v.clone(),
+                _ => Value::Unit,
+            };
+            vec![acc_val, item.clone()]
+        }
+        BuiltinIterKind::ListScan => {
+            // Scan callback takes (acc, item).
+            let acc_val = match acc {
+                BuiltinAcc::Scan(v, _) => v.clone(),
                 _ => Value::Unit,
             };
             vec![acc_val, item.clone()]
@@ -306,6 +327,57 @@ fn apply_callback_result(
                 Ok(ControlFlow::Continue)
             }
         },
+        BuiltinIterKind::ListMinBy => {
+            // `result` is the key returned by the callback for `item`.
+            if let BuiltinAcc::Best(slot) = acc {
+                let new_pair = match slot.take() {
+                    None => (result, item),
+                    Some((bk, bv)) => {
+                        if result.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
+                            == std::cmp::Ordering::Less
+                        {
+                            (result, item)
+                        } else {
+                            (bk, bv)
+                        }
+                    }
+                };
+                *slot = Some(new_pair);
+            }
+            Ok(ControlFlow::Continue)
+        }
+        BuiltinIterKind::ListMaxBy => {
+            if let BuiltinAcc::Best(slot) = acc {
+                let new_pair = match slot.take() {
+                    None => (result, item),
+                    Some((bk, bv)) => {
+                        if result.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
+                            == std::cmp::Ordering::Greater
+                        {
+                            (result, item)
+                        } else {
+                            (bk, bv)
+                        }
+                    }
+                };
+                *slot = Some(new_pair);
+            }
+            Ok(ControlFlow::Continue)
+        }
+        BuiltinIterKind::ListScan => {
+            let _ = item;
+            if let BuiltinAcc::Scan(running, prefix) = acc {
+                *running = result.clone();
+                prefix.push(result);
+                if prefix.len() > MAX_RANGE_MATERIALIZE {
+                    return Err(VmError::new(format!(
+                        "list.scan: accumulated result exceeds maximum list length of {} elements",
+                        MAX_RANGE_MATERIALIZE
+                    )));
+                }
+            }
+            Ok(ControlFlow::Continue)
+        }
         BuiltinIterKind::MapFilter => {
             // item is Tuple(k, v); result is truthy/falsy.
             if value_is_truthy(&result)
@@ -401,6 +473,20 @@ fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
                 v
             } else {
                 Value::Unit
+            }
+        }
+        BuiltinIterKind::ListMinBy | BuiltinIterKind::ListMaxBy => {
+            if let BuiltinAcc::Best(Some((_, v))) = acc {
+                Value::Variant("Some".into(), vec![v])
+            } else {
+                Value::Variant("None".into(), Vec::new())
+            }
+        }
+        BuiltinIterKind::ListScan => {
+            if let BuiltinAcc::Scan(_, prefix) = acc {
+                Value::List(Arc::new(prefix))
+            } else {
+                Value::List(Arc::new(Vec::new()))
             }
         }
         BuiltinIterKind::MapFilter | BuiltinIterKind::MapMap => {

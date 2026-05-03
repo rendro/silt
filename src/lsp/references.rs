@@ -3,7 +3,7 @@
 use lsp_types::Location;
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset;
+use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::position_to_offset;
 
 impl Server {
@@ -14,7 +14,10 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset(program, cursor)?;
+        // Use the source-aware variant so cursors on `fn`/`type` decl
+        // names resolve (round-63 B2: pre-fix this path returned None
+        // when cursor was on the binding-site name).
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
 
         let include_definition = params.context.include_declaration;
         let locations = self.workspace_find_references(name, include_definition);

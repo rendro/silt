@@ -197,6 +197,14 @@ pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
             .iter()
             .find(|(n, _)| *n == field_name)
             .map(|(_, t)| t.clone()),
+        // Anonymous structural record (`{ x: Int, y: Int }`). The
+        // typechecker assigns this to bindings whose annotation refers to
+        // a user-declared record type when the literal/initializer is
+        // structurally inferred — without this arm, hover/completion
+        // never see the fields. Tail status doesn't affect lookup of an
+        // explicitly listed field; if the field isn't in `fields` we
+        // simply return `None`, matching the `Type::Record` path.
+        Type::AnonRecord { fields, .. } => fields.get(&field_name).cloned(),
         Type::Tuple(elems) => resolve(field_name)
             .parse::<usize>()
             .ok()
@@ -238,6 +246,21 @@ pub(super) fn get_field_type_resolved(
 pub(super) fn record_fields_from_type(ty: &Type, program: &Program) -> Option<Vec<(String, Type)>> {
     match ty {
         Type::Record(_, fields) => Some(
+            fields
+                .iter()
+                .map(|(n, t)| (resolve(*n), t.clone()))
+                .collect(),
+        ),
+        // Anonymous structural record (`{ x: Int, y: Int }`). The
+        // typechecker assigns this shape to bindings whose initializer is
+        // a record literal — even when the binder has an explicit named
+        // type annotation like `let p: Point = { x: 1, y: 2 }`. Without
+        // this arm, dot-completion on `p.|` produces an empty list because
+        // the path falls through to `_ => None`. Listed fields are
+        // surfaced regardless of tail (`Closed` vs row variable): a row
+        // tail only signals "more fields possible", which the editor
+        // can't enumerate, so we report what is known.
+        Type::AnonRecord { fields, .. } => Some(
             fields
                 .iter()
                 .map(|(n, t)| (resolve(*n), t.clone()))

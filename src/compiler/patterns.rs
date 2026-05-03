@@ -931,16 +931,15 @@ impl Compiler {
                         }
                     }
                 }
-                self.compile_compound_bind(items, span)?;
                 if let Some(rest_name) = rest {
-                    // Compile `...rest` as: dup the parent record, drop
-                    // each named field, push a new record with the
-                    // remainder, bind to rest_name. Done via a sequence
-                    // of opcodes — for v1 we emit a dedicated runtime
-                    // helper through DestructRecordRest.
+                    // The rest-capture must run against the parent record,
+                    // not against any per-field sub-value. Funnel it through
+                    // `compile_compound_bind` so it shares the
+                    // `__bind_parent__` slot used by every other field
+                    // destructure — that way the rest opcode is fed the
+                    // actual parent on every iteration regardless of which
+                    // sub-value happens to be on TOS.
                     let names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    self.current_chunk().emit_op(Op::Dup, span);
-                    // Encode: count u8, then count name indices u16 each.
                     if names.len() > u8::MAX as usize {
                         return Err(CompileError {
                             message: "anon record pattern cannot exclude more than 255 fields"
@@ -948,18 +947,12 @@ impl Compiler {
                             span,
                         });
                     }
-                    self.current_chunk().emit_op(Op::DestructRecordRest, span);
-                    self.current_chunk().emit_u8(names.len() as u8, span);
-                    for n in &names {
-                        let idx = self.add_constant(Value::String(resolve(*n)), span)?;
-                        self.current_chunk().emit_u16(idx, span);
-                    }
-                    // Result on top of stack: new record. Bind to rest_name.
-                    self.warn_if_shadows_module(*rest_name, pattern.span);
-                    let slot = self.add_local(*rest_name);
-                    self.current_chunk().emit_op(Op::SetLocal, span);
-                    self.current_chunk().emit_u16(slot, span);
+                    items.push((
+                        BindDestructKind::RecordRest(names),
+                        Pattern::new(PatternKind::Ident(*rest_name), pattern.span),
+                    ));
                 }
+                self.compile_compound_bind(items, span)?;
             }
 
             PatternKind::Map(entries) => {
@@ -1066,6 +1059,20 @@ impl Compiler {
                     let field_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                     self.current_chunk().emit_op(Op::DestructRecordField, span);
                     self.current_chunk().emit_u16(field_idx, span);
+                }
+                BindDestructKind::RecordRest(names) => {
+                    // `Op::DestructRecordRest` pops its input and pushes the
+                    // remainder record. The surrounding loop expects each
+                    // destruct opcode to peek+push so that
+                    // `[parent_copy, sub_value]` is on the stack afterwards.
+                    // Dup the parent_copy first to bridge the contract gap.
+                    self.current_chunk().emit_op(Op::Dup, span);
+                    self.current_chunk().emit_op(Op::DestructRecordRest, span);
+                    self.current_chunk().emit_u8(names.len() as u8, span);
+                    for n in names {
+                        let idx = self.add_constant(Value::String(resolve(*n)), span)?;
+                        self.current_chunk().emit_u16(idx, span);
+                    }
                 }
                 BindDestructKind::MapValue(key) => {
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;

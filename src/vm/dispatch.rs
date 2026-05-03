@@ -140,8 +140,8 @@ impl Vm {
         }
 
         // ── Stdlib error variants ──
-        // Phase 0 of the stdlib error redesign (see
-        // `docs/proposals/stdlib-errors.md`). Each variant is globally
+        // Phase 0 of the stdlib error redesign (implemented and
+        // proposal removed in commit 7680536). Each variant is globally
         // unique (module-prefixed) so we can register it as a bare
         // global the same way other builtin variants are. N-ary variants
         // land as `VariantConstructor`; nullary variants land as

@@ -198,6 +198,7 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
 /// Without the binding-site visits, `prepareRename`/`rename`/`hover` on the
 /// LHS of a let, on a `fn` parameter, or on a `fn` declaration name would
 /// silently no-op (round-60 B8 + G4).
+#[cfg(test)]
 pub(super) fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<Symbol> {
     find_ident_at_offset_with_source(program, cursor, None)
 }

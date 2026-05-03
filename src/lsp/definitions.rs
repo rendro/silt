@@ -24,7 +24,10 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 defs.insert(
                     f.name,
                     DefInfo {
-                        span: f.span,
+                        // Use the identifier's span, not the keyword span,
+                        // so LSP rename / references / definition land on
+                        // the name token. Round-63 B1 fix.
+                        span: f.name_span,
                         ty: fn_ty,
                         params,
                         doc: f.doc.clone(),
@@ -37,7 +40,8 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 defs.insert(
                     t.name,
                     DefInfo {
-                        span: t.span,
+                        // Use the identifier's span (round-63 B1).
+                        span: t.name_span,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),

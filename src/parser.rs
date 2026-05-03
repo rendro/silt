@@ -936,7 +936,7 @@ impl Parser {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
-        let (name, _) = self.expect_ident()?;
+        let (name, name_span) = self.expect_ident()?;
         let params = self.parse_fn_params()?;
 
         let return_type = if self.peek_skip_nl() == &Token::Arrow {
@@ -989,6 +989,7 @@ impl Parser {
             body,
             is_pub: false,
             span,
+            name_span,
             is_recovery_stub: false,
             is_signature_only,
             doc,
@@ -1031,14 +1032,14 @@ impl Parser {
 
         // Name is mandatory. If the user wrote `fn (` with no name,
         // we skip stub creation: no call sites can match an unnamed stub.
-        let name = match self.expect_ident() {
-            Ok((n, _)) => n,
+        let (name, name_span) = match self.expect_ident() {
+            Ok((n, s)) => (n, s),
             Err(e) => return Err(e),
         };
 
         // From here on: errors can produce a stub.
         self.in_fn_recovery = true;
-        let result = self.parse_fn_decl_tail(name, span, doc);
+        let result = self.parse_fn_decl_tail(name, name_span, span, doc);
         self.in_fn_recovery = false;
 
         match result {
@@ -1057,6 +1058,7 @@ impl Parser {
     fn parse_fn_decl_tail(
         &mut self,
         name: Symbol,
+        name_span: Span,
         span: Span,
         doc: Option<String>,
     ) -> std::result::Result<FnDecl, Box<(FnDecl, ParseError)>> {
@@ -1065,7 +1067,7 @@ impl Parser {
             Ok(p) => p,
             Err(e) => {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, Vec::new(), None, span, doc.clone()),
+                    self.make_recovery_stub(name, name_span, Vec::new(), None, span, doc.clone()),
                     e,
                 )));
             }
@@ -1078,7 +1080,7 @@ impl Parser {
                 Ok(t) => Some(t),
                 Err(e) => {
                     return Err(Box::new((
-                        self.make_recovery_stub(name, params, None, span, doc.clone()),
+                        self.make_recovery_stub(name, name_span, params, None, span, doc.clone()),
                         e,
                     )));
                 }
@@ -1098,7 +1100,7 @@ impl Parser {
             Ok(pair) => pair,
             Err(e) => {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
                     e,
                 )));
             }
@@ -1131,7 +1133,7 @@ impl Parser {
             })();
             if let Err(e) = result {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
                     e,
                 )));
             }
@@ -1147,7 +1149,7 @@ impl Parser {
             self.skip_nl();
             if self.at(&Token::LBrace) {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
                     ParseError {
                         message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
                         span: self.span(),
@@ -1158,7 +1160,7 @@ impl Parser {
                 Ok(e) => (e, false),
                 Err(err) => {
                     return Err(Box::new((
-                        self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                        self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
                         err,
                     )));
                 }
@@ -1168,7 +1170,7 @@ impl Parser {
                 Ok(b) => (b, false),
                 Err(err) => {
                     return Err(Box::new((
-                        self.make_recovery_stub(name, params, return_type, span, doc.clone()),
+                        self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
                         err,
                     )));
                 }
@@ -1186,6 +1188,7 @@ impl Parser {
             body,
             is_pub: false,
             span,
+            name_span,
             is_recovery_stub: false,
             is_signature_only,
             doc,
@@ -1201,6 +1204,7 @@ impl Parser {
     fn make_recovery_stub(
         &self,
         name: Symbol,
+        name_span: Span,
         params: Vec<Param>,
         return_type: Option<TypeExpr>,
         span: Span,
@@ -1214,6 +1218,7 @@ impl Parser {
             body: Expr::new(ExprKind::Block(Vec::new()), span),
             is_pub: false,
             span,
+            name_span,
             is_recovery_stub: true,
             is_signature_only: false,
             doc,
@@ -1406,7 +1411,7 @@ impl Parser {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Type)?;
-        let (name, _) = self.expect_ident()?;
+        let (name, name_span) = self.expect_ident()?;
 
         // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
         let params = if self.peek_skip_nl() == &Token::LParen {
@@ -1439,6 +1444,7 @@ impl Parser {
                 body: TypeBody::Alias(target),
                 is_pub: false,
                 span,
+                name_span,
                 doc,
             });
         }
@@ -1463,6 +1469,7 @@ impl Parser {
             body,
             is_pub: false,
             span,
+            name_span,
             doc,
         })
     }

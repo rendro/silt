@@ -402,26 +402,30 @@ impl TypeChecker {
         {
             self.unify(receiver_ty, self_param, span);
         }
-        for (tv, trait_name) in constraints {
+        for (tv, trait_name, entry_bound_args) in constraints {
             let resolved = self.apply(&Type::Var(tv));
-            // Look up the caller's bound trait args for this obligation,
-            // e.g. `[Int]` for `where a: TryInto(Int)`. Try the method
-            // entry's own tv first (defensive); then probe every tyvar
-            // unified with the resolved type to find a matching binding
-            // registered by the enclosing fn's `register_fn_decl`. Empty
-            // when the trait has no parameters.
-            let bound_args = self
-                .trait_arg_bindings
-                .get(&(tv, trait_name))
-                .cloned()
-                .or_else(|| {
-                    if let Type::Var(v) = &resolved {
-                        self.trait_arg_bindings.get(&(*v, trait_name)).cloned()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
+            // Prefer the bound's own trait args carried on the
+            // MethodEntry constraint triple — they're the source of
+            // truth for impl- / method-level `where a: Conv(Int)`
+            // clauses. Fall back to the side-channel
+            // `trait_arg_bindings` map for the legacy fn-decl-level
+            // path (round 58) which populates that map directly.
+            // Empty when the trait has no parameters.
+            let bound_args = if !entry_bound_args.is_empty() {
+                entry_bound_args.clone()
+            } else {
+                self.trait_arg_bindings
+                    .get(&(tv, trait_name))
+                    .cloned()
+                    .or_else(|| {
+                        if let Type::Var(v) = &resolved {
+                            self.trait_arg_bindings.get(&(*v, trait_name)).cloned()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default()
+            };
             match &resolved {
                 Type::Error | Type::Never => {}
                 Type::Var(v) => {
