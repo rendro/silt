@@ -177,22 +177,6 @@ pub fn lookup(name: &str) -> Option<&'static BuiltinType> {
     BUILTIN_TYPES.iter().find(|b| b.name == name)
 }
 
-/// Iterate every primitive entry in [`BUILTIN_TYPES`] (preserves the
-/// authoritative order).
-pub fn iter_primitives() -> impl Iterator<Item = &'static BuiltinType> {
-    BUILTIN_TYPES
-        .iter()
-        .filter(|b| b.kind == BuiltinKind::Primitive)
-}
-
-/// Iterate every container entry in [`BUILTIN_TYPES`] (preserves the
-/// authoritative order).
-pub fn iter_containers() -> impl Iterator<Item = &'static BuiltinType> {
-    BUILTIN_TYPES
-        .iter()
-        .filter(|b| b.kind == BuiltinKind::Container)
-}
-
 /// Iterate every authoritative entry, primitives then containers, in
 /// the order declared by [`BUILTIN_TYPES`].
 pub fn iter_all() -> impl Iterator<Item = &'static BuiltinType> {
@@ -237,8 +221,12 @@ mod tests {
 
     #[test]
     fn iterators_partition_authoritative_set() {
-        let prim_count = iter_primitives().count();
-        let cont_count = iter_containers().count();
+        let prim_count = iter_all()
+            .filter(|b| b.kind == BuiltinKind::Primitive)
+            .count();
+        let cont_count = iter_all()
+            .filter(|b| b.kind == BuiltinKind::Container)
+            .count();
         let all_count = iter_all().count();
         assert_eq!(prim_count + cont_count, all_count);
         assert!(prim_count > 0);
