@@ -347,7 +347,14 @@ fn source_has_trailing_comma_at_offset(span: Span, open: char, close: char) -> b
         // Walk forward from `start`, tracking string/comment state and
         // bracket depth, to locate the target `open` at depth 0. The
         // scan state mirrors the logic of `compute_bracket_end_line`
-        // but operates at byte granularity to honor `span.offset`.
+        // (the canonical whole-line scanner) but operates at byte
+        // granularity to honor `span.offset` mid-line. The two are
+        // intentionally separate scaffolds: the line-based scanner
+        // walks `Vec<char>` per line and tracks string-interp `{}`
+        // depth across lines, while this byte scanner is a flat
+        // forward walk used for trailing-comma detection. Drift risk
+        // here means a string/comment-tracking fix to one must be
+        // mirrored in the other.
         let mut i = start;
         let mut depth: i32 = 0;
         let mut found_open_at: Option<usize> = None;
@@ -701,152 +708,13 @@ fn take_comments_between(after_line: usize, before_line: usize) -> Vec<Comment> 
 }
 
 /// Compute the 1-based line of the closing `}` for a block whose
-/// opening `{` is at `span`. Mirrors the scan logic in
-/// `resolve_decl_end_lines` but operates on a single block span.
-/// Returns `span.line` as a safe fallback when the scan cannot find a
-/// matching brace.
+/// opening `{` is at `span`. Thin wrapper over the unified
+/// [`compute_bracket_end_line`] scanner — see its body for the full
+/// state-machine rationale (string / triple-string / block-comment /
+/// interpolation tracking). Returns `span.line` as a safe fallback
+/// when the scan cannot find a matching brace.
 fn compute_block_end_line(span: Span) -> usize {
-    FMT_STATE.with(|cell| {
-        let borrowed = cell.borrow();
-        let Some(state) = borrowed.as_ref() else {
-            return span.line;
-        };
-        let source_lines = &state.source_lines;
-        if span.line == 0 || span.line > source_lines.len() {
-            return span.line;
-        }
-        let start_idx = span.line - 1;
-        let mut depth: i32 = 0;
-        let mut found_open = false;
-        // String/comment state must persist across lines so that
-        // `"""..."""` triple-quoted strings (whose content spans many
-        // lines and may contain literal `{` / `}` as raw text) do not
-        // confuse the brace counter. Without triple-string awareness,
-        // a triple-quoted string in the body silently absorbs the
-        // matching `}` of the enclosing block, the scan never reaches
-        // depth == 0, and the fallback `span.line` is returned —
-        // collapsing the close-line range so trailing comments inside
-        // the block get dropped on a later format pass. Similarly,
-        // `{- ... -}` block comments must be tracked (via `block_depth`)
-        // because they may nest AND because their content can include
-        // literal `{` / `}` / `"""` bytes that would otherwise confuse
-        // the brace counter (e.g. pretty-printer output where a line
-        // comment `-- ... -}` from the source has been hoisted above a
-        // block-comment opener, followed by real code). Without this
-        // the scanner treats a `{` inside a block comment as a nested
-        // block-open and the top-level depth never returns to 0.
-        let mut state_mode = ScanMode::Code;
-        let mut interp_depths: Vec<i32> = Vec::new();
-        let mut block_depth: usize = 0;
-        for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
-            let chars: Vec<char> = line.chars().collect();
-            let mut i = 0;
-            while i < chars.len() {
-                let ch = chars[i];
-                let nxt = chars.get(i + 1).copied();
-                let nxt2 = chars.get(i + 2).copied();
-                // Inside a block comment: only `{-` (deepen) and `-}`
-                // (close) matter. Strings, line comments, and braces
-                // are inert content.
-                if block_depth > 0 {
-                    if ch == '{' && nxt == Some('-') {
-                        block_depth += 1;
-                        i += 2;
-                        continue;
-                    }
-                    if ch == '-' && nxt == Some('}') {
-                        block_depth -= 1;
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                    continue;
-                }
-                match state_mode {
-                    ScanMode::InTriple => {
-                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
-                            state_mode = ScanMode::Code;
-                            i += 3;
-                            continue;
-                        }
-                        i += 1;
-                    }
-                    ScanMode::InRegular => {
-                        if ch == '\\' {
-                            // skip escaped char
-                            i += 2;
-                            continue;
-                        }
-                        if ch == '"' {
-                            state_mode = ScanMode::Code;
-                        } else if ch == '{' {
-                            interp_depths.push(0);
-                            state_mode = ScanMode::Code;
-                        }
-                        i += 1;
-                    }
-                    ScanMode::Code => {
-                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
-                            state_mode = ScanMode::InTriple;
-                            i += 3;
-                            continue;
-                        }
-                        if ch == '"' {
-                            state_mode = ScanMode::InRegular;
-                            i += 1;
-                            continue;
-                        }
-                        if ch == '-' && nxt == Some('-') {
-                            break; // line comment
-                        }
-                        if ch == '{' && nxt == Some('-') {
-                            block_depth = 1;
-                            i += 2;
-                            continue;
-                        }
-                        if ch == '{' {
-                            if let Some(d) = interp_depths.last_mut() {
-                                *d += 1;
-                            } else {
-                                depth += 1;
-                                found_open = true;
-                            }
-                        } else if ch == '}' {
-                            if let Some(d) = interp_depths.last_mut() {
-                                if *d == 0 {
-                                    interp_depths.pop();
-                                    state_mode = ScanMode::InRegular;
-                                } else {
-                                    *d -= 1;
-                                }
-                            } else {
-                                depth -= 1;
-                                // Early return as soon as the matching
-                                // `}` appears at top level. Without
-                                // this, a trailing `"...` later on the
-                                // same line could flip the scanner
-                                // into InRegular and the end-of-line
-                                // check below would refuse to return,
-                                // causing the scan to bleed forward
-                                // into following lines.
-                                if found_open && depth == 0 {
-                                    return line_idx + 1;
-                                }
-                            }
-                        }
-                        i += 1;
-                    }
-                }
-            }
-            // End-of-line fallback: only return if we're back to a
-            // non-string mode at depth 0. (See sibling
-            // `compute_bracket_end_line` for the rationale.)
-            if found_open && depth == 0 && interp_depths.is_empty() && block_depth == 0 {
-                return line_idx + 1;
-            }
-        }
-        span.line
-    })
+    compute_bracket_end_line(span.line, '{', '}')
 }
 
 /// String/comment scan state used by the per-block / per-bracket
@@ -870,6 +738,17 @@ enum ScanMode {
 ///
 /// `open` and `close` must be ASCII single-char delimiters such as
 /// `'['`/`']'`, `'('`/`')'`, or `'{'`/`'}'`.
+///
+/// This is the canonical whole-line scanner shared by every callsite
+/// that needs to locate a matching close on a later line; the
+/// brace-only entry point `compute_block_end_line` delegates here. A
+/// related byte-granularity variant lives in
+/// `source_has_trailing_comma_at_offset` / `scan_trailing_comma_from_open`
+/// which uses the same string / triple-string / block-comment state
+/// machine but operates on raw byte offsets within a single
+/// concatenated source string (so it can honor `Span::offset` mid-line)
+/// rather than a per-line walk; behavior is intentionally divergent
+/// for that reason and the two scaffolds are not unified.
 fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize {
     FMT_STATE.with(|cell| {
         let borrowed = cell.borrow();
@@ -887,8 +766,7 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
         // `"""..."""` triple-quoted strings (raw content that may
         // include literal `(` `)` `[` `]` `{` `}` characters) do not
         // confuse the bracket counter and prematurely terminate the
-        // scan or absorb a real matching close on a later line. See
-        // `compute_block_end_line` for the symmetric rationale.
+        // scan or absorb a real matching close on a later line.
         // `block_depth` tracks nested `{- ... -}` block comments: their
         // content is raw bytes and must not contribute to bracket
         // counting (otherwise a `{` or `}` inside a block comment would

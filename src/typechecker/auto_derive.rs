@@ -263,6 +263,170 @@ fn trait_impl(
     }
 }
 
+// ── Shared scaffolds ─────────────────────────────────────────────────
+//
+// All four enum auto-derives share the same skeletal structure:
+//
+//   1. **Uninhabited fast path.** When `variants.is_empty()`, the body
+//      is the empty match `match self { }`. The exhaustiveness checker
+//      has a documented short-circuit for uninhabited scrutinees
+//      (see tests/empty_type_match_tests.rs).
+//
+//   2. **Inhabited body.** A match expression — over the tuple
+//      `(self, other)` for binop-shaped traits (Compare, Equal) and
+//      over `self` directly for unop-shaped traits (Hash, Display).
+//      Each variant produces an arm whose body is computed by a
+//      per-trait closure. Binop traits may additionally emit a
+//      catch-all wildcard arm (only when there is more than one
+//      variant — for a single-variant enum the same-tag arm already
+//      covers every value of `(self, other)`).
+//
+//   3. **FnDecl wrap + TraitImpl wrap.** Identical for every trait,
+//      modulo method name, return type, and parameter list shape.
+//
+// The two helpers below collapse 1+2+3 into one place. The four public
+// `synth_*_impl_for_enum` entry points become small adapters that
+// supply the per-arm body computation.
+
+/// Build the synthetic `match self { }` body used by all four
+/// uninhabited-enum fast paths. Shared so that any future tweak to the
+/// uninhabited shape (e.g. adding a defensive panic call) lives in one
+/// place rather than four.
+fn empty_match_body(self_sym: Symbol) -> Expr {
+    Expr::new(
+        ExprKind::Match {
+            expr: Some(Box::new(ident_expr(self_sym))),
+            arms: Vec::new(),
+        },
+        synth_span(),
+    )
+}
+
+/// Scaffold for binop-shaped enum derives (Compare, Equal).
+///
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// body is:
+/// - `match self { }` if `variants` is empty (uninhabited fast path).
+/// - Otherwise `match (self, other) { ...same-tag arms..., (catch-all) }`.
+///
+/// `same_tag_body` is invoked once per variant. For nullary variants
+/// the `a_names`/`b_names` slices are empty. For n-ary variants they
+/// hold the n freshly-interned identifiers used in the constructor
+/// patterns; the closure builds the arm body referring to them by name.
+///
+/// `catch_all_body` is only consulted when `variants.len() > 1`: for a
+/// single-variant enum the same-tag arm is total over `(self, other)`
+/// and a wildcard arm would be unreachable. Returning `None` from
+/// `catch_all_body` (e.g. for a hypothetical trait that doesn't need
+/// one) skips the wildcard arm even with multiple variants — currently
+/// both Compare and Equal always supply one.
+#[allow(clippy::too_many_arguments)]
+fn synth_binop_match_enum(
+    trait_name: Symbol,
+    method_name: Symbol,
+    ret_ty: TypeExpr,
+    type_name: Symbol,
+    type_params: &[Symbol],
+    variants: &[EnumVariant],
+    name_prefix_a: &str,
+    name_prefix_b: &str,
+    same_tag_body: impl Fn(&EnumVariant, &[Symbol], &[Symbol]) -> Expr,
+    catch_all_body: impl FnOnce(Symbol, Symbol, &[EnumVariant]) -> Option<Expr>,
+) -> TraitImpl {
+    let self_sym = intern("self");
+    let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
+    let make_method = |body: Expr| {
+        fn_decl(
+            method_name,
+            vec![param(self_sym, self_te.clone()), param(other_sym, self_te.clone())],
+            Some(ret_ty.clone()),
+            body,
+        )
+    };
+    if variants.is_empty() {
+        let method = make_method(empty_match_body(self_sym));
+        return trait_impl(trait_name, type_name, type_params, vec![method]);
+    }
+    let scrut = tuple_expr(vec![ident_expr(self_sym), ident_expr(other_sym)]);
+    let mut arms: Vec<MatchArm> = Vec::new();
+    for variant in variants {
+        let arity = variant.fields.len();
+        let a_names: Vec<Symbol> = (0..arity)
+            .map(|i| intern(&format!("{name_prefix_a}{i}__")))
+            .collect();
+        let b_names: Vec<Symbol> = (0..arity)
+            .map(|i| intern(&format!("{name_prefix_b}{i}__")))
+            .collect();
+        let a_pat = ctor_pat(variant.name, a_names.iter().map(|n| id_pat(*n)).collect());
+        let b_pat = ctor_pat(variant.name, b_names.iter().map(|n| id_pat(*n)).collect());
+        let pat = tuple_pat(vec![a_pat, b_pat]);
+        arms.push(arm(pat, same_tag_body(variant, &a_names, &b_names)));
+    }
+    if variants.len() > 1
+        && let Some(catch) = catch_all_body(self_sym, other_sym, variants)
+    {
+        arms.push(arm(wildcard_pat(), catch));
+    }
+    let body = match_expr(scrut, arms);
+    let method = make_method(body);
+    trait_impl(trait_name, type_name, type_params, vec![method])
+}
+
+/// Scaffold for unop-shaped enum derives (Hash, Display).
+///
+/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is:
+/// - `match self { }` if `variants` is empty (uninhabited fast path).
+/// - Otherwise `match self { ...one arm per variant... }`. The match
+///   is exhaustive without a wildcard because every variant has its
+///   own arm.
+///
+/// `per_variant_body` is invoked once per variant with the variant
+/// metadata, the variant's declaration-order index (used for hash
+/// ordinals), and the freshly-interned arg-binding symbols (empty for
+/// nullary variants).
+#[allow(clippy::too_many_arguments)]
+fn synth_unop_match_enum(
+    trait_name: Symbol,
+    method_name: Symbol,
+    ret_ty: TypeExpr,
+    type_name: Symbol,
+    type_params: &[Symbol],
+    variants: &[EnumVariant],
+    name_prefix: &str,
+    per_variant_body: impl Fn(usize, &EnumVariant, &[Symbol]) -> Expr,
+) -> TraitImpl {
+    let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
+    let make_method = |body: Expr| {
+        fn_decl(
+            method_name,
+            vec![param(self_sym, self_te.clone())],
+            Some(ret_ty.clone()),
+            body,
+        )
+    };
+    if variants.is_empty() {
+        let method = make_method(empty_match_body(self_sym));
+        return trait_impl(trait_name, type_name, type_params, vec![method]);
+    }
+    let arms: Vec<MatchArm> = variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let arity = v.fields.len();
+            let arg_names: Vec<Symbol> = (0..arity)
+                .map(|j| intern(&format!("{name_prefix}{j}__")))
+                .collect();
+            let pat = ctor_pat(v.name, arg_names.iter().map(|n| id_pat(*n)).collect());
+            arm(pat, per_variant_body(i, v, &arg_names))
+        })
+        .collect();
+    let body = match_expr(ident_expr(self_sym), arms);
+    let method = make_method(body);
+    trait_impl(trait_name, type_name, type_params, vec![method])
+}
+
 // ── Compare on enum ──────────────────────────────────────────────────
 
 /// Synthesize a `trait Compare for Enum { fn compare(self: Enum, other: Enum) -> Int = ... }` impl.
@@ -277,81 +441,39 @@ pub(super) fn synth_compare_impl_for_enum(
     type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let other_sym = intern("other");
-    let self_te = type_te(type_name, type_params);
-    // Uninhabited enum: `match self { }` is vacuously exhaustive — no
-    // value of the type can reach this point, so the body never runs.
-    // The exhaustiveness checker has a documented short-circuit for
-    // uninhabited scrutinees (see tests/empty_type_match_tests.rs).
-    if variants.is_empty() {
-        let body = Expr::new(
-            ExprKind::Match {
-                expr: Some(Box::new(ident_expr(self_sym))),
-                arms: Vec::new(),
-            },
-            synth_span(),
-        );
-        let method = fn_decl(
-            intern("compare"),
-            vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-            Some(named_te(intern("Int"))),
-            body,
-        );
-        return trait_impl(intern("Compare"), type_name, type_params, vec![method]);
-    }
-    let scrut = tuple_expr(vec![ident_expr(self_sym), ident_expr(other_sym)]);
-    let mut arms: Vec<MatchArm> = Vec::new();
-
-    // Same-tag arms.
-    for variant in variants {
-        let arity = variant.fields.len();
-        if arity == 0 {
-            // (V, V) -> 0
-            let pat = tuple_pat(vec![
-                ctor_pat(variant.name, vec![]),
-                ctor_pat(variant.name, vec![]),
-            ]);
-            arms.push(arm(pat, int_expr(0)));
-        } else {
-            // (V(a1, a2, ..), V(b1, b2, ..)) -> lex compare
-            let a_names: Vec<Symbol> = (0..arity).map(|i| intern(&format!("__d_a{i}__"))).collect();
-            let b_names: Vec<Symbol> = (0..arity).map(|i| intern(&format!("__d_b{i}__"))).collect();
-            let a_pat = ctor_pat(variant.name, a_names.iter().map(|n| id_pat(*n)).collect());
-            let b_pat = ctor_pat(variant.name, b_names.iter().map(|n| id_pat(*n)).collect());
-            let pat = tuple_pat(vec![a_pat, b_pat]);
-            // Build chain: c0 = a0.compare(b0); match c0 { 0 -> c1 = ..., _ -> c0 }
-            let body = build_lex_compare_chain(&a_names, &b_names);
-            arms.push(arm(pat, body));
-        }
-    }
-
-    // Catch-all arm: ordinal compare.
-    if variants.len() > 1 {
-        let ord_self_sym = intern("__d_ord_self__");
-        let ord_other_sym = intern("__d_ord_other__");
-        let ord_self_match = build_ordinal_match(ident_expr(self_sym), variants);
-        let ord_other_match = build_ordinal_match(ident_expr(other_sym), variants);
-        let stmts = vec![
-            let_stmt(ord_self_sym, ord_self_match),
-            let_stmt(ord_other_sym, ord_other_match),
-            Stmt::Expr(method_call(
-                ident_expr(ord_self_sym),
-                intern("compare"),
-                vec![ident_expr(ord_other_sym)],
-            )),
-        ];
-        arms.push(arm(wildcard_pat(), block_expr(stmts)));
-    }
-
-    let body = match_expr(scrut, arms);
-    let method = fn_decl(
+    synth_binop_match_enum(
+        intern("Compare"),
         intern("compare"),
-        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-        Some(named_te(intern("Int"))),
-        body,
-    );
-    trait_impl(intern("Compare"), type_name, type_params, vec![method])
+        named_te(intern("Int")),
+        type_name,
+        type_params,
+        variants,
+        "__d_a",
+        "__d_b",
+        |_variant, a_names, b_names| {
+            if a_names.is_empty() {
+                int_expr(0)
+            } else {
+                build_lex_compare_chain(a_names, b_names)
+            }
+        },
+        |self_sym, other_sym, variants| {
+            let ord_self_sym = intern("__d_ord_self__");
+            let ord_other_sym = intern("__d_ord_other__");
+            let ord_self_match = build_ordinal_match(ident_expr(self_sym), variants);
+            let ord_other_match = build_ordinal_match(ident_expr(other_sym), variants);
+            let stmts = vec![
+                let_stmt(ord_self_sym, ord_self_match),
+                let_stmt(ord_other_sym, ord_other_match),
+                Stmt::Expr(method_call(
+                    ident_expr(ord_self_sym),
+                    intern("compare"),
+                    vec![ident_expr(ord_other_sym)],
+                )),
+            ];
+            Some(block_expr(stmts))
+        },
+    )
 }
 
 /// Build `let c0 = a0.compare(b0); match c0 { 0 -> let c1 = a1.compare(b1); ..., _ -> c0 }`
@@ -403,83 +525,41 @@ pub(super) fn synth_equal_impl_for_enum(
     type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let other_sym = intern("other");
-    let self_te = type_te(type_name, type_params);
-    if variants.is_empty() {
-        let body = Expr::new(
-            ExprKind::Match {
-                expr: Some(Box::new(ident_expr(self_sym))),
-                arms: Vec::new(),
-            },
-            synth_span(),
-        );
-        let method = fn_decl(
-            intern("equal"),
-            vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-            Some(named_te(intern("Bool"))),
-            body,
-        );
-        return trait_impl(intern("Equal"), type_name, type_params, vec![method]);
-    }
-    let scrut = tuple_expr(vec![ident_expr(self_sym), ident_expr(other_sym)]);
-    let mut arms: Vec<MatchArm> = Vec::new();
-
-    for variant in variants {
-        let arity = variant.fields.len();
-        if arity == 0 {
-            arms.push(arm(
-                tuple_pat(vec![
-                    ctor_pat(variant.name, vec![]),
-                    ctor_pat(variant.name, vec![]),
-                ]),
-                bool_expr(true),
-            ));
-        } else {
-            let a_names: Vec<Symbol> = (0..arity)
-                .map(|i| intern(&format!("__d_ea{i}__")))
-                .collect();
-            let b_names: Vec<Symbol> = (0..arity)
-                .map(|i| intern(&format!("__d_eb{i}__")))
-                .collect();
-            let pat = tuple_pat(vec![
-                ctor_pat(variant.name, a_names.iter().map(|n| id_pat(*n)).collect()),
-                ctor_pat(variant.name, b_names.iter().map(|n| id_pat(*n)).collect()),
-            ]);
-            // a0.equal(b0) && a1.equal(b1) && ... — left-fold
-            let mut chain: Expr = method_call(
-                ident_expr(a_names[0]),
-                intern("equal"),
-                vec![ident_expr(b_names[0])],
-            );
-            for i in 1..arity {
-                let next = method_call(
-                    ident_expr(a_names[i]),
-                    intern("equal"),
-                    vec![ident_expr(b_names[i])],
-                );
-                chain = bin(chain, BinOp::And, next);
-            }
-            arms.push(arm(pat, chain));
-        }
-    }
-
-    // Catch-all: false. Only emit when there's more than one variant
-    // (otherwise the same-tag arm above is total, and a wildcard arm
-    // would be unreachable and trigger the typechecker's
-    // unreachable-pattern guard).
-    if variants.len() > 1 {
-        arms.push(arm(wildcard_pat(), bool_expr(false)));
-    }
-
-    let body = match_expr(scrut, arms);
-    let method = fn_decl(
+    synth_binop_match_enum(
+        intern("Equal"),
         intern("equal"),
-        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-        Some(named_te(intern("Bool"))),
-        body,
-    );
-    trait_impl(intern("Equal"), type_name, type_params, vec![method])
+        named_te(intern("Bool")),
+        type_name,
+        type_params,
+        variants,
+        "__d_ea",
+        "__d_eb",
+        |_variant, a_names, b_names| {
+            if a_names.is_empty() {
+                bool_expr(true)
+            } else {
+                // a0.equal(b0) && a1.equal(b1) && ... — left-fold
+                let mut chain: Expr = method_call(
+                    ident_expr(a_names[0]),
+                    intern("equal"),
+                    vec![ident_expr(b_names[0])],
+                );
+                for i in 1..a_names.len() {
+                    let next = method_call(
+                        ident_expr(a_names[i]),
+                        intern("equal"),
+                        vec![ident_expr(b_names[i])],
+                    );
+                    chain = bin(chain, BinOp::And, next);
+                }
+                chain
+            }
+        },
+        // Catch-all: false. Only emitted when there's more than one
+        // variant (otherwise the same-tag arms are total, and the
+        // wildcard would be unreachable).
+        |_self_sym, _other_sym, _variants| Some(bool_expr(false)),
+    )
 }
 
 // ── Hash on enum ─────────────────────────────────────────────────────
@@ -507,58 +587,25 @@ pub(super) fn synth_hash_impl_for_enum(
     type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let self_te = type_te(type_name, type_params);
-    if variants.is_empty() {
-        // `match self { }` — uninhabited scrutinee.
-        let body = Expr::new(
-            ExprKind::Match {
-                expr: Some(Box::new(ident_expr(self_sym))),
-                arms: Vec::new(),
-            },
-            synth_span(),
-        );
-        let method = fn_decl(
-            intern("hash"),
-            vec![param(self_sym, self_te)],
-            Some(named_te(intern("Int"))),
-            body,
-        );
-        return trait_impl(intern("Hash"), type_name, type_params, vec![method]);
-    }
-    let arms: Vec<MatchArm> = variants
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let arity = v.fields.len();
-            if arity == 0 {
-                // Just the tag hash — `i.hash()` for ordinal i.
-                arm(
-                    ctor_pat(v.name, vec![]),
-                    method_call(int_expr(i as i64), intern("hash"), vec![]),
-                )
-            } else {
-                let arg_names: Vec<Symbol> =
-                    (0..arity).map(|j| intern(&format!("__d_h{j}__"))).collect();
-                let pat = ctor_pat(v.name, arg_names.iter().map(|n| id_pat(*n)).collect());
-                // tag = i; combine = tag.hash(); for each arg: combine = combine_hash(combine, arg.hash())
-                let mut combine: Expr = method_call(int_expr(i as i64), intern("hash"), vec![]);
-                for arg_name in &arg_names {
-                    let arg_hash = method_call(ident_expr(*arg_name), intern("hash"), vec![]);
-                    combine = combine_hash_expr(combine, arg_hash);
-                }
-                arm(pat, combine)
-            }
-        })
-        .collect();
-    let body = match_expr(ident_expr(self_sym), arms);
-    let method = fn_decl(
+    synth_unop_match_enum(
+        intern("Hash"),
         intern("hash"),
-        vec![param(self_sym, self_te)],
-        Some(named_te(intern("Int"))),
-        body,
-    );
-    trait_impl(intern("Hash"), type_name, type_params, vec![method])
+        named_te(intern("Int")),
+        type_name,
+        type_params,
+        variants,
+        "__d_h",
+        |i, _v, arg_names| {
+            // tag = i; combine = tag.hash(); for each arg:
+            //   combine = combine_hash(combine, arg.hash())
+            let mut combine: Expr = method_call(int_expr(i as i64), intern("hash"), vec![]);
+            for arg_name in arg_names {
+                let arg_hash = method_call(ident_expr(*arg_name), intern("hash"), vec![]);
+                combine = combine_hash_expr(combine, arg_hash);
+            }
+            combine
+        },
+    )
 }
 
 /// Combine two hashes into a structural hash. Silt's surface-level
@@ -600,35 +647,19 @@ pub(super) fn synth_display_impl_for_enum(
     type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let self_te = type_te(type_name, type_params);
-    if variants.is_empty() {
-        let body = Expr::new(
-            ExprKind::Match {
-                expr: Some(Box::new(ident_expr(self_sym))),
-                arms: Vec::new(),
-            },
-            synth_span(),
-        );
-        let method = fn_decl(
-            intern("display"),
-            vec![param(self_sym, self_te)],
-            Some(named_te(intern("String"))),
-            body,
-        );
-        return trait_impl(intern("Display"), type_name, type_params, vec![method]);
-    }
-    let arms: Vec<MatchArm> = variants
-        .iter()
-        .map(|v| {
-            let arity = v.fields.len();
+    synth_unop_match_enum(
+        intern("Display"),
+        intern("display"),
+        named_te(intern("String")),
+        type_name,
+        type_params,
+        variants,
+        "__d_d",
+        |_i, v, arg_names| {
             let tag_name = crate::intern::resolve(v.name);
-            if arity == 0 {
-                arm(ctor_pat(v.name, vec![]), string_expr(&tag_name))
+            if arg_names.is_empty() {
+                string_expr(&tag_name)
             } else {
-                let arg_names: Vec<Symbol> =
-                    (0..arity).map(|j| intern(&format!("__d_d{j}__"))).collect();
-                let pat = ctor_pat(v.name, arg_names.iter().map(|n| id_pat(*n)).collect());
                 // "Tag(" + a0.display() + ", " + a1.display() + ... + ")"
                 let mut acc = bin(string_expr(&tag_name), BinOp::Add, string_expr("("));
                 for (i, arg_name) in arg_names.iter().enumerate() {
@@ -641,19 +672,10 @@ pub(super) fn synth_display_impl_for_enum(
                         method_call(ident_expr(*arg_name), intern("display"), vec![]),
                     );
                 }
-                acc = bin(acc, BinOp::Add, string_expr(")"));
-                arm(pat, acc)
+                bin(acc, BinOp::Add, string_expr(")"))
             }
-        })
-        .collect();
-    let body = match_expr(ident_expr(self_sym), arms);
-    let method = fn_decl(
-        intern("display"),
-        vec![param(self_sym, self_te)],
-        Some(named_te(intern("String"))),
-        body,
-    );
-    trait_impl(intern("Display"), type_name, type_params, vec![method])
+        },
+    )
 }
 
 // ── Compare on record ────────────────────────────────────────────────

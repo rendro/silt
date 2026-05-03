@@ -3409,6 +3409,75 @@ impl Parser {
         }
     }
 
+    /// Parse the tail of an integer range pattern after the `..` token
+    /// has been consumed: `[-]N`. The caller passes the already-signed
+    /// start bound. Used by both the positive (`N..`) and negated
+    /// (`-N..`) head paths in `parse_primary_pattern` so the four
+    /// `..[-]N` exits stay in lock-step.
+    ///
+    /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
+    /// lex time (see src/lexer.rs:599-603), so `Token::Int(n)` is always
+    /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
+    /// underflows, and the caller's `-n` for the head is likewise safe.
+    /// We still spell the negation as a plain unary minus to match the
+    /// historical behavior the audit and `negate_i64_min_message_tests`
+    /// pinned.
+    fn parse_range_tail_int(&mut self, start: i64) -> Result<PatternKind> {
+        match self.peek().clone() {
+            Token::Int(m) => {
+                self.advance();
+                Ok(PatternKind::Range(start, m))
+            }
+            Token::Minus => {
+                self.advance();
+                match self.peek().clone() {
+                    Token::Int(m) => {
+                        self.advance();
+                        Ok(PatternKind::Range(start, -m))
+                    }
+                    _ => Err(ParseError {
+                        message: "expected integer after - in range pattern".into(),
+                        span: self.span(),
+                    }),
+                }
+            }
+            _ => Err(ParseError {
+                message: "expected integer end for range pattern".into(),
+                span: self.span(),
+            }),
+        }
+    }
+
+    /// Parse the tail of a float range pattern after the `..` token
+    /// has been consumed: `[-]F`. Mirrors `parse_range_tail_int` but
+    /// for `PatternKind::FloatRange`. Caller passes the already-signed
+    /// start bound.
+    fn parse_range_tail_float(&mut self, start: f64) -> Result<PatternKind> {
+        match self.peek().clone() {
+            Token::Float(m) => {
+                self.advance();
+                Ok(PatternKind::FloatRange(start, m))
+            }
+            Token::Minus => {
+                self.advance();
+                match self.peek().clone() {
+                    Token::Float(m) => {
+                        self.advance();
+                        Ok(PatternKind::FloatRange(start, -m))
+                    }
+                    _ => Err(ParseError {
+                        message: "expected float after - in range pattern".into(),
+                        span: self.span(),
+                    }),
+                }
+            }
+            _ => Err(ParseError {
+                message: "expected float end for range pattern".into(),
+                span: self.span(),
+            }),
+        }
+    }
+
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
         self.skip_nl();
         let start = self.span();
@@ -3500,29 +3569,7 @@ impl Parser {
                 // Check for range pattern: n..m
                 if self.at(&Token::DotDot) {
                     self.advance();
-                    match self.peek().clone() {
-                        Token::Int(m) => {
-                            self.advance();
-                            Ok(mk(PatternKind::Range(n, m)))
-                        }
-                        Token::Minus => {
-                            self.advance();
-                            match self.peek().clone() {
-                                Token::Int(m) => {
-                                    self.advance();
-                                    Ok(mk(PatternKind::Range(n, -m)))
-                                }
-                                _ => Err(ParseError {
-                                    message: "expected integer after - in range pattern".into(),
-                                    span: self.span(),
-                                }),
-                            }
-                        }
-                        _ => Err(ParseError {
-                            message: "expected integer end for range pattern".into(),
-                            span: self.span(),
-                        }),
-                    }
+                    self.parse_range_tail_int(n).map(mk)
                 } else {
                     Ok(mk(PatternKind::Int(n)))
                 }
@@ -3531,35 +3578,7 @@ impl Parser {
                 self.advance();
                 if self.at(&Token::DotDot) {
                     self.advance();
-                    let end = if self.at(&Token::Minus) {
-                        self.advance();
-                        match self.peek().clone() {
-                            Token::Float(m) => {
-                                self.advance();
-                                -m
-                            }
-                            _ => {
-                                return Err(ParseError {
-                                    message: "expected float after - in range pattern".into(),
-                                    span: self.span(),
-                                });
-                            }
-                        }
-                    } else {
-                        match self.peek().clone() {
-                            Token::Float(m) => {
-                                self.advance();
-                                m
-                            }
-                            _ => {
-                                return Err(ParseError {
-                                    message: "expected float end for range pattern".into(),
-                                    span: self.span(),
-                                });
-                            }
-                        }
-                    };
-                    Ok(mk(PatternKind::FloatRange(n, end)))
+                    self.parse_range_tail_float(n).map(mk)
                 } else {
                     Ok(mk(PatternKind::Float(n)))
                 }
@@ -3705,30 +3724,7 @@ impl Parser {
                         // Check for range pattern: -n..m
                         if self.at(&Token::DotDot) {
                             self.advance();
-                            match self.peek().clone() {
-                                Token::Int(m) => {
-                                    self.advance();
-                                    Ok(mk(PatternKind::Range(-n, m)))
-                                }
-                                Token::Minus => {
-                                    self.advance();
-                                    match self.peek().clone() {
-                                        Token::Int(m) => {
-                                            self.advance();
-                                            Ok(mk(PatternKind::Range(-n, -m)))
-                                        }
-                                        _ => Err(ParseError {
-                                            message: "expected integer after - in range pattern"
-                                                .into(),
-                                            span: self.span(),
-                                        }),
-                                    }
-                                }
-                                _ => Err(ParseError {
-                                    message: "expected integer end for range pattern".into(),
-                                    span: self.span(),
-                                }),
-                            }
+                            self.parse_range_tail_int(-n).map(mk)
                         } else {
                             Ok(mk(PatternKind::Int(-n)))
                         }
@@ -3737,30 +3733,7 @@ impl Parser {
                         self.advance();
                         if self.at(&Token::DotDot) {
                             self.advance();
-                            match self.peek().clone() {
-                                Token::Float(m) => {
-                                    self.advance();
-                                    Ok(mk(PatternKind::FloatRange(-n, m)))
-                                }
-                                Token::Minus => {
-                                    self.advance();
-                                    match self.peek().clone() {
-                                        Token::Float(m) => {
-                                            self.advance();
-                                            Ok(mk(PatternKind::FloatRange(-n, -m)))
-                                        }
-                                        _ => Err(ParseError {
-                                            message: "expected float after - in range pattern"
-                                                .into(),
-                                            span: self.span(),
-                                        }),
-                                    }
-                                }
-                                _ => Err(ParseError {
-                                    message: "expected float end for range pattern".into(),
-                                    span: self.span(),
-                                }),
-                            }
+                            self.parse_range_tail_float(-n).map(mk)
                         } else {
                             Ok(mk(PatternKind::Float(-n)))
                         }
