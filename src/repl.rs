@@ -21,7 +21,7 @@ use crate::typechecker;
 use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
 use crate::vm::Vm;
-use crate::vm::error::render_call_stack;
+use crate::vm::error::{VmError, render_call_stack};
 
 /// Compute the path to the REPL history file.
 ///
@@ -505,45 +505,15 @@ fn eval_declaration(
         }
     };
 
-    let Some(script) = functions.into_iter().next() else {
-        eprintln!("internal error: empty function list");
+    let Some(script) = take_first_function(functions) else {
         return;
     };
-    let script = Arc::new(script);
     if let Err(e) = vm.run(script) {
-        if let Some(span) = e.span {
-            // Declarations are compiled un-wrapped, so the span is already
-            // in `input` coordinates — no `adjust_span` needed. But if the
-            // span doesn't fit this entry's source it must have come from
-            // a chunk compiled in a *previous* REPL entry (e.g. a `let`
-            // initializer that calls a prior `fn`). Render the primary
-            // location as `<declaration>` in that case, matching the
-            // call-stack frame treatment below.
-            if span_fits_input(span, input) {
-                let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
-                eprintln!("{source_err}");
-            } else {
-                // Out-of-range span (prior-entry chunk): render with the
-                // `<declaration>` locator and split multi-line messages
-                // into `= note:`/`= help:` continuation, matching the
-                // `SourceError::Display` shape. Round-59 GAP #5.
-                eprintln!("{}", render_runtime_error_without_source(&e.message, true));
-            }
-            // Print the call stack for the non-synthetic frames. Frame line
-            // numbers come from the original REPL input buffer, so we label
-            // them `<declaration>` rather than print misleading positions.
-            for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
-            {
-                eprintln!("{line}");
-            }
-        } else {
-            // Span-less runtime error: `VmError::Display` starts with
-            // `"VM error: "`, which leaks the internal label to users.
-            // Round-59 GAP #4 — funnel through the shared helper so
-            // output renders with the canonical `error[runtime]:`
-            // header, matching the `silt run` / `silt test` paths.
-            eprintln!("{}", render_runtime_error_without_source(&e.message, false));
-        }
+        // Declarations are compiled un-wrapped, so spans are already in
+        // `input` coordinates — pass `None` for the adjust tuple. The
+        // shared helper handles the in-range / out-of-range / span-less
+        // branches plus call-stack rendering.
+        render_repl_vm_error(&e, input, None);
         return;
     }
 
@@ -614,6 +584,80 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
             }
         }
         _ => {} // Wildcard, Int, Float, Bool, StringLit, Or, Range, etc.
+    }
+}
+
+/// Render a runtime `VmError` to stderr in the REPL's canonical shape.
+///
+/// Shared between `eval_declaration` (un-wrapped input — pass `adjust = None`)
+/// and `eval_expression` (input wrapped in `fn main() { … }` — pass
+/// `adjust = Some((wrapper_prefix_len, input_line_count, input_byte_len,
+/// last_line_cols))` so spans are translated back into the user's
+/// coordinates via `adjust_span`).
+///
+/// Output exactly mirrors what the previous inline blocks emitted:
+///
+///   * If `e.span` is `Some` and the (adjusted) span fits `input`, render
+///     `SourceError::runtime_at(...)` for a caret-aligned diagnostic.
+///   * If `e.span` is `Some` but out of range (i.e. the chunk was compiled
+///     in a previous REPL entry), call
+///     `render_runtime_error_without_source(msg, true)` to get the
+///     `--> <declaration>` locator shape.
+///   * Then iterate `render_call_stack(...)` printing every frame as
+///     `<declaration>` (line numbers from earlier-entry coordinates aren't
+///     meaningful against the current entry's text).
+///   * If `e.span` is `None`, call
+///     `render_runtime_error_without_source(msg, false)` — a plain
+///     `error[runtime]:` header with no locator.
+fn render_repl_vm_error(
+    e: &VmError,
+    input: &str,
+    adjust: Option<(usize, usize, usize, usize)>,
+) {
+    if let Some(span) = e.span {
+        let resolved = match adjust {
+            Some((prefix_len, input_lines, input_bytes, last_line_cols)) => {
+                adjust_span(span, prefix_len, input_lines, input_bytes, last_line_cols)
+            }
+            None => span,
+        };
+        if span_fits_input(resolved, input) {
+            let source_err = SourceError::runtime_at(&e.message, resolved, input, "<repl>");
+            eprintln!("{source_err}");
+        } else {
+            // Out-of-range span (prior-entry chunk): render with the
+            // `<declaration>` locator and split multi-line messages
+            // into `= note:`/`= help:` continuation, matching the
+            // `SourceError::Display` shape. Round-59 GAP #5.
+            eprintln!("{}", render_runtime_error_without_source(&e.message, true));
+        }
+        // Print the call stack for the non-synthetic frames. Frame line
+        // numbers come from the original REPL input buffer (or the wrapped
+        // input for `eval_expression`) and don't carry usable positions
+        // here, so we label every frame `<declaration>`.
+        for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
+        {
+            eprintln!("{line}");
+        }
+    } else {
+        // Span-less runtime error: `VmError::Display` leaks the
+        // `"VM error: "` prefix. Route through the shared helper to render
+        // the canonical `error[runtime]:` header instead. Round-59 GAP #4.
+        eprintln!("{}", render_runtime_error_without_source(&e.message, false));
+    }
+}
+
+/// Pop the first function out of a freshly-compiled `Vec<Function>` and
+/// wrap it in `Arc`. On an empty list, both REPL paths print the same
+/// internal-error message and bail; this helper centralises that guard.
+/// Returns `None` if the list was empty (the caller should `return`).
+fn take_first_function<F>(functions: Vec<F>) -> Option<Arc<F>> {
+    match functions.into_iter().next() {
+        Some(f) => Some(Arc::new(f)),
+        None => {
+            eprintln!("internal error: empty function list");
+            None
+        }
     }
 }
 
@@ -739,11 +783,9 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
         }
     };
 
-    let Some(script) = functions.into_iter().next() else {
-        eprintln!("internal error: empty function list");
+    let Some(script) = take_first_function(functions) else {
         return;
     };
-    let script = Arc::new(script);
     match vm.run(script) {
         Ok(val) => {
             if !matches!(val, Value::Unit) {
@@ -751,49 +793,21 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
             }
         }
         Err(e) => {
-            if let Some(span) = e.span {
-                let adjusted = adjust_span(
-                    span,
+            // Expressions are compiled wrapped in `fn main() { … }`, so spans
+            // need to be translated back into the user's coordinates. Pass
+            // the wrapper metadata so the shared helper can call
+            // `adjust_span`. Branching for in-range / out-of-range spans and
+            // span-less errors lives inside `render_repl_vm_error`.
+            render_repl_vm_error(
+                &e,
+                input,
+                Some((
                     wrapper_prefix.len(),
                     input_line_count,
                     input_byte_len,
                     last_line_cols,
-                );
-                // If the adjusted span doesn't land on a real character in
-                // the current entry's source, it belongs to a chunk that
-                // was compiled in an earlier REPL entry (e.g. a `fn a() = 1/0`
-                // called from a later `c()`). Printing a caret against
-                // *this* entry's text would point into phantom whitespace,
-                // so we label the primary location `<declaration>` —
-                // matching the treatment the call-stack frames below
-                // already apply to prior-entry frames.
-                if span_fits_input(adjusted, input) {
-                    let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
-                    eprintln!("{source_err}");
-                } else {
-                    // Out-of-range span (prior-entry chunk): render with
-                    // the `<declaration>` locator and split multi-line
-                    // messages into `= note:`/`= help:` continuation,
-                    // matching `SourceError::Display`. Round-59 GAP #5.
-                    eprintln!("{}", render_runtime_error_without_source(&e.message, true));
-                }
-                // Print the filtered call stack. Frame line numbers come
-                // from the wrapped input and don't survive `adjust_span`
-                // for anything but the error site itself, so we print
-                // function names with a `<declaration>` label rather than
-                // misleading file positions.
-                for line in
-                    render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
-                {
-                    eprintln!("{line}");
-                }
-            } else {
-                // Span-less runtime error: `VmError::Display` leaks the
-                // `"VM error: "` prefix. Route through the shared helper
-                // to render the canonical `error[runtime]:` header
-                // instead. Round-59 GAP #4.
-                eprintln!("{}", render_runtime_error_without_source(&e.message, false));
-            }
+                )),
+            );
         }
     }
 }
