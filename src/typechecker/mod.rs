@@ -1290,6 +1290,21 @@ impl TypeChecker {
                 }
             }
 
+            // `trait T for Fn { ... }` registers a self_type of
+            // `Generic("Fn", [])` because `Fn` is variadic — the parser
+            // accepts only `Named`/`Generic` as impl targets, with no
+            // surface form to express "any function type". A receiver
+            // dispatched into this impl arrives as `Type::Fun(_, _)`,
+            // which has no element-level constraints to match against
+            // the empty Generic args. Treat the bare-`Fn` Generic as a
+            // wildcard for any function shape so user impls dispatch.
+            // `canonicalize_type_name` collapses `Fun → Fn` at
+            // registration time, so the deprecated surface alias is
+            // covered by the same arm.
+            (Type::Fun(_, _), Type::Generic(name, args))
+            | (Type::Generic(name, args), Type::Fun(_, _))
+                if args.is_empty() && resolve(*name) == "Fn" => {}
+
             (Type::List(a), Type::List(b)) => {
                 self.unify(a, b, span);
             }
@@ -1832,12 +1847,15 @@ impl TypeChecker {
             Type::Channel(_) => Some(intern("Channel")),
             Type::Tuple(_) => Some(intern("Tuple")),
             Type::ExtFloat => Some(intern("ExtFloat")),
-            // GAP-1: function values must resolve to a type name so that
-            // `where a: Trait` constraints are actually checked. No traits
-            // are registered for "Fun", so the lookup always fails and the
-            // user gets a real error instead of the constraint being
-            // silently dropped.
-            Type::Fun(_, _) => Some(intern("Fun")),
+            // Function values resolve to the canonical name `"Fn"` so
+            // `where a: Trait` constraints route into the same impl table
+            // the compiler emits globals for and `dispatch_name_for_value`
+            // returns at runtime. The surface keyword is `Fn` (matching
+            // `Type::Fun`'s Display impl); `"Fun"` was a transient name
+            // chosen before the canonical-name unification (round 71
+            // follow-up). `canonicalize_type_name` collapses any user
+            // `trait T for Fun` registration onto the same `"Fn"` key.
+            Type::Fun(_, _) => Some(intern("Fn")),
             Type::Var(_) => None, // unresolved
             // Range was eliminated by canonicalize above; this arm is
             // unreachable. Phase B deletion target.
@@ -5452,7 +5470,8 @@ impl TypeChecker {
         // produced no diagnostic — `silt check` reported success even
         // though the impl attached methods to a phantom type. This is
         // distinct from the round-17 `type_name_for_impl` fix (which
-        // mapped Fn→Some("Fun")): here we're validating that the target
+        // mapped Type::Fun → Some("Fn") so trait-bound verification
+        // could find user impls): here we're validating that the target
         // name refers to *something real* at all.
         //
         // The check applies only to uppercase target names. Lowercase
@@ -5525,10 +5544,20 @@ impl TypeChecker {
                     .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
                     .unwrap_or(0);
                 if user_arity == 0 {
-                    Self::type_from_name(ti.target_type)
+                    // Use the canonicalised target name so the self_type
+                    // built here matches the `method_table` registration
+                    // key (also canonicalised at line :5386). Without
+                    // this, `trait T for Fun` produces a self_type of
+                    // `Generic("Fun", [])` while the impl_key is
+                    // `("T", "Fn")` — and the dispatch unify of
+                    // `Type::Fun(_, _)` against `Generic("Fun", [])`
+                    // misses the `(Type::Fun, Generic("Fn", []))` arm
+                    // we added in `unify`. Round 71 follow-up TYPE-3
+                    // canonical-name unification.
+                    Self::type_from_name(target_type)
                 } else {
                     let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
-                    Type::Generic(ti.target_type, args)
+                    Type::Generic(target_type, args)
                 }
             }
         } else {
@@ -6093,9 +6122,20 @@ pub(super) fn canonicalize_type_name(
     resolver: &crate::types::canonical::Resolver,
     name: Symbol,
 ) -> Symbol {
+    let name_str = resolve(name);
     // Built-in collapse: `Range` is a nominal alias of `List`.
-    if resolve(name).as_str() == "Range" {
+    if name_str.as_str() == "Range" {
         return intern("List");
+    }
+    // Built-in collapse: `Fun` is a deprecated surface alias of `Fn`.
+    // Round 71 follow-up canonicalised every function-type-name dispatch
+    // site on `"Fn"` — a user `trait T for Fun` impl must register under
+    // the same `("T", "Fn")` key the compiler emits globals for and the
+    // VM dispatches under at runtime, otherwise method lookup misses.
+    // Mirror of the canonical-module copy at
+    // `src/types/canonical.rs::canonicalize_type_name`.
+    if name_str.as_str() == "Fun" {
+        return intern("Fn");
     }
     // Phase D: user-declared aliases route to the canonical head of
     // their target. `type Bytes = List(Int)` registers impls under

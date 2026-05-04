@@ -473,8 +473,20 @@ pub fn canonical_name(ty: &Type) -> String {
 /// (see also: the architectural lock test in
 /// `tests/canonical_type_arch_lock_tests.rs`).
 pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
-    if resolve(name).as_str() == "Range" {
+    let name_str = resolve(name);
+    if name_str.as_str() == "Range" {
         return intern("List");
+    }
+    // `Fun` is the deprecated surface alias for the function type. It
+    // collapses to `Fn` so a user `trait T for Fun { ... }` impl
+    // registers under the same `("T", "Fn")` key the compiler emits
+    // globals for (`canonical_name(Type::Fun) == "Fn"`) and the VM
+    // dispatches under (`dispatch_name_for_value(VmClosure) == "Fn"`).
+    // Without this collapse, `for Fun` impls would register under a
+    // different key than the runtime dispatch name, and user methods
+    // on function values would never be found.
+    if name_str.as_str() == "Fun" {
+        return intern("Fn");
     }
     // Phase D: alias names route to the canonical head of their
     // target. `type Bytes = List(Int)` registers / dispatches under
@@ -570,7 +582,13 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         Value::Set(_) => Some(canonical_name(&Type::Set(Box::new(Type::Unit)))),
         Value::Tuple(_) => Some(canonical_name(&Type::Tuple(vec![]))),
         Value::Channel(_) => Some(canonical_name(&Type::Channel(Box::new(Type::Unit)))),
-        Value::VmClosure(_) => Some("Function".to_string()),
+        // Function values dispatch under `"Fn"` — the same canonical
+        // name `canonical_name(Type::Fun)`, `head_symbol_of_canon`, and
+        // the typechecker's `type_name_for_impl` return for function
+        // types. Round 71 follow-up unified the four sites that used to
+        // disagree (`"Fun"` / `"Fn"` / `"Function"`); collapsing on
+        // `"Fn"` matches the surface keyword and `Type::Fun`'s Display.
+        Value::VmClosure(_) => Some("Fn".to_string()),
         Value::BuiltinFn(_) => Some("BuiltinFn".to_string()),
         Value::VariantConstructor(..) => Some("VariantConstructor".to_string()),
         Value::Unit => Some(canonical_name(&Type::Unit)),

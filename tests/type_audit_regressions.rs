@@ -170,8 +170,9 @@ fn main() {
 fn test_where_display_rejects_function_value() {
     // `type_name_for_impl` used to return None for Type::Fun, which
     // silently skipped the trait_impl_set check and let `show(f)`
-    // through. It now resolves to "Fun", which has no trait impls, so
-    // the error fires.
+    // through. It now resolves to "Fn" (round 71 follow-up canonical-
+    // name unification; prior rounds used "Fun"), which has no
+    // built-in Display impl, so the error fires.
     assert_type_error(
         r#"
 fn show(x: a) -> String where a: Display { "{x}" }

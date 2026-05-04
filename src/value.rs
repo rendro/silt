@@ -2075,7 +2075,11 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Tuple(_) => "Tuple",
         Value::Record(..) => "Record",
         Value::Variant(..) => "Variant",
-        Value::VmClosure(_) | Value::BuiltinFn(_) => "Function",
+        // Surface name for function-shaped values matches `Type::Fun`'s
+        // Display impl (which renders `Fn(...) -> R`) and the canonical
+        // dispatch name returned by `dispatch_name_for_value`. The
+        // round 71 follow-up unified all sites on `"Fn"`.
+        Value::VmClosure(_) | Value::BuiltinFn(_) => "Fn",
         Value::VariantConstructor(..) => "Constructor",
         Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
         Value::Channel(_) => "Channel",

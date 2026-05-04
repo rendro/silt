@@ -1944,7 +1944,21 @@ impl Parser {
             ));
         }
         // Function type: Fn(A, B) -> C
-        if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn")) {
+        //
+        // Only commit to the function-type form when `Fn` is followed by
+        // `(`. Bare `Fn` (e.g. `trait Show for Fn { ... }`) must fall
+        // through to the regular Named-type path so `Fn` lands as
+        // `TypeExprKind::Named("Fn")` and the trait-impl machinery
+        // registers under the canonical `("T", "Fn")` key. Without the
+        // peek-ahead, `for Fn { ... }` wedged the parser at `expected (`.
+        // Round 71 follow-up canonical-name unification.
+        if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn"))
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .map(|(t, _)| matches!(t, Token::LParen))
+                .unwrap_or(false)
+        {
             self.advance();
             self.expect(&Token::LParen)?;
             let mut params = Vec::new();

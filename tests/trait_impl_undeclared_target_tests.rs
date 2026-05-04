@@ -11,8 +11,10 @@
 //! (primitives, user records, user enums, and the builtin container /
 //! opaque families) and emits a hard error when the symbol matches none
 //! of them. This is distinct from the round-17 `type_name_for_impl`
-//! (`Fn → Some("Fun")`) fix — that one normalises a *known* target, this
-//! one rejects a target that doesn't exist at all.
+//! (`Type::Fun → Some("Fn")`) fix — that one normalises a *known*
+//! target, this one rejects a target that doesn't exist at all. (The
+//! round 71 follow-up canonicalised function-type sites onto `"Fn"`;
+//! prior rounds used `"Fun"`.)
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;

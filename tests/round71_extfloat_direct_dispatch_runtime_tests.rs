@@ -26,23 +26,18 @@
 //!
 //! Post-fix: the match arm includes `Type::ExtFloat`, `Type::Channel(_)`,
 //! and `Type::Fun(_, _)`, mapping each to its canonical `method_table`
-//! key ("ExtFloat", "Channel", "Fun"). The same `dispatch_method_entry`
+//! key ("ExtFloat", "Channel", "Fn" — round 71 follow-up canonicalised
+//! function-type sites onto "Fn"). The same `dispatch_method_entry`
 //! call that handles Int / Float / String / Bool / Unit now routes
 //! these three.
 //!
-//! Note on `Type::Fun(_, _)`: although the dispatch fix makes the
-//! `method_table` lookup happen, the impl-target self_type for
-//! `trait Show for Fun(a, b)` resolves to `Generic("Fun", [a, b])`
-//! while the receiver is `Type::Fun(params, ret)`. These two shapes
-//! do not unify, so a runtime end-to-end Fun test still fails at the
-//! type-checker stage. That is an orthogonal limitation outside the
-//! scope of this fix; the parent task instructions explicitly permit
-//! skipping the Fun runtime test if it isn't a valid impl target after
-//! the dispatch-arm change. We exercise dispatch coverage for
-//! `Type::Fun` indirectly via the explicit pre-fix repro proof
-//! captured here in comments — the new arm is exercised the moment a
-//! `FieldAccess` is performed on a `Type::Fun` receiver, regardless of
-//! whether the impl-target unification succeeds.
+//! The round 71 follow-up (TYPE-3 LATENT) closed the original
+//! `Type::Fun(_, _)` end-to-end limitation: `canonicalize_type_name`
+//! collapses `Fun → Fn`, the unifier accepts
+//! `Type::Fun(_, _) ↔ Generic("Fn", [])`, and the runtime dispatch
+//! name returned by `dispatch_name_for_value(VmClosure)` is now `"Fn"`.
+//! `fn_user_trait_dispatch_runtime` below exercises the end-to-end
+//! flow.
 
 use std::process::Command;
 
@@ -192,59 +187,47 @@ fn main() {
     );
 }
 
-// ── Fun direct receiver dispatch ────────────────────────────────────
+// ── Fn direct receiver dispatch ─────────────────────────────────────
 //
-// `trait Show for Fun(a, b)` does not actually unify with a concrete
-// `Type::Fun(params, ret)` at the receiver-self unify step inside
-// `dispatch_method_entry` — the impl's self_type is
-// `Generic("Fun", [a, b])` while the receiver is `Type::Fun(...)`, and
-// these do not unify. That's an orthogonal limitation in the
-// trait-impl-target machinery outside the scope of the FieldAccess
-// dispatch-arm fix.
+// Round 71 originally documented `fun_user_trait_dispatch_skipped` as
+// a deferred limitation: the FieldAccess match arm was extended to
+// route `Type::Fun(_, _)` into the `method_table`, but the impl's
+// self_type (`Generic("Fun", [...])` then) did not unify with a
+// concrete `Type::Fun(...)` receiver, so end-to-end dispatch still
+// failed at the unify step.
 //
-// Per the parent task instructions, the Fun runtime test is skipped
-// when Fun is not a valid impl-target after the dispatch-arm change.
-// Verified manually: the program below errors with "type mismatch:
-// expected Fun(_, _), got Fn() -> Int" rather than the pre-fix
-// "unknown field or method 'show' on type Fn() -> Int". The fix did
-// move dispatch past the FieldAccess match (the new error is from
-// `dispatch_method_entry`'s receiver-self unify), confirming the new
-// `Type::Fun(_, _)` arm is reached.
+// The round 71 follow-up (TYPE-3 LATENT) closed that gap by
+// canonicalising every function-type-name dispatch site on `"Fn"`
+// (`canonical_name`, `head_symbol_of_canon`, `type_name_for_impl`,
+// `dispatch_name_for_value`, the FieldAccess primitive-dispatch key)
+// AND adding two unifier-side enablers:
+//   - `canonicalize_type_name` collapses `Fun → Fn` so `trait T for
+//     Fun` and `trait T for Fn` register under one key.
+//   - The unifier accepts `Type::Fun(_, _) ↔ Generic("Fn", [])` so
+//     bare-`Fn` impls (parser rejects `Fn(...) -> ...` as a
+//     parameterised impl target — variadic, no surface form) unify
+//     with any function-shaped receiver.
 //
-// Repro (post-fix, expected to fail at the unify step):
-//   trait Show { fn show(self) -> String }
-//   trait Show for Fun(a, b) { fn show(self) -> String = "fn-impl" }
-//   fn main() {
-//     let f = fn() { 42 }
-//     println(f.show())
-//   }
-//
-// We capture the post-fix behaviour as a documented skip rather than
-// a failing assertion.
+// The end-to-end repro below now succeeds. The full lock test suite
+// for the canonical-name unification lives in
+// `tests/round71_followup_fn_canonical_name_tests.rs`.
 #[test]
-fn fun_user_trait_dispatch_skipped() {
-    // Run the program; we expect a typecheck error (NOT the pre-fix
-    // "unknown field or method" error). Confirm the error is the
-    // unify-step mismatch, proving the dispatch arm now routes
-    // `Type::Fun(_, _)` into `method_table` rather than falling
-    // through to the `_ =>` arm.
-    let (_stdout, stderr, ok) = run_silt_raw(
-        "fun_show_skip",
+fn fn_user_trait_dispatch_runtime() {
+    let out = run_silt_ok(
+        "fn_show_runtime",
         r#"
 trait Show { fn show(self) -> String }
-trait Show for Fun(a, b) { fn show(self) -> String = "fn-impl" }
+trait Show for Fn { fn show(self) -> String = "fn-impl" }
 fn main() {
   let f = fn() { 42 }
   println(f.show())
 }
 "#,
     );
-    assert!(
-        !ok,
-        "Fun impl-target unify is a known orthogonal limitation; expected failure"
-    );
-    assert!(
-        !stderr.contains("unknown field or method 'show'"),
-        "post-fix error must NOT be the pre-fix 'unknown field or method' diagnostic; got {stderr:?}"
+    assert_eq!(
+        out.trim(),
+        "fn-impl",
+        "user-defined Show for Fn should now dispatch to the impl body \
+         after the round 71 follow-up canonical-name unification; got {out:?}"
     );
 }

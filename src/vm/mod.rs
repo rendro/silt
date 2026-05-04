@@ -697,7 +697,11 @@ impl Vm {
             Value::Tuple(_) => "Tuple",
             Value::Record(..) => "Record",
             Value::Variant(..) => "Variant",
-            Value::VmClosure(_) => "Function",
+            // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
+            // and the canonical dispatch name returned by
+            // `dispatch_name_for_value`. Round 71 follow-up unified
+            // `Function` / `Fun` / `Fn` on `"Fn"`.
+            Value::VmClosure(_) => "Fn",
             Value::BuiltinFn(_) => "BuiltinFn",
             Value::VariantConstructor(..) => "VariantConstructor",
             Value::TypeDescriptor(_) => "TypeDescriptor",

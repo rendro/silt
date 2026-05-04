@@ -2550,12 +2550,15 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:6542`); Channel and Fun are not
+                    // in `src/typechecker/mod.rs:6542`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
-                    // under the canonical names "Channel" / "Fun" via
+                    // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_method_dispatch` (see `src/typechecker/mod.rs:1832`,
                     // `src/typechecker/mod.rs:1840`), so dispatch must route those
-                    // receivers through the same `method_table` lookup.
+                    // receivers through the same `method_table` lookup. The
+                    // `"Fn"` key matches `canonical_name(Type::Fun)`,
+                    // `head_symbol_of_canon`, and `dispatch_name_for_value`
+                    // — round 71 follow-up unified all four sites on `"Fn"`.
                     Type::Int
                     | Type::Float
                     | Type::ExtFloat
@@ -2572,7 +2575,7 @@ impl TypeChecker {
                             Type::String => intern("String"),
                             Type::Unit => intern("()"),
                             Type::Channel(_) => intern("Channel"),
-                            Type::Fun(_, _) => intern("Fun"),
+                            Type::Fun(_, _) => intern("Fn"),
                             _ => unreachable!(),
                         };
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
