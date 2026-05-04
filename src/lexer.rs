@@ -174,6 +174,21 @@ impl Span {
     pub fn with_offset(line: usize, col: usize, offset: usize) -> Self {
         Self { line, col, offset }
     }
+
+    /// Synthetic span for compiler-generated AST nodes that don't
+    /// correspond to any user-written source. Used by exhaustiveness
+    /// checking (witness patterns), auto-derive (synthesized impls),
+    /// and similar internal call sites. The 0-byte position signals
+    /// "compiler-synthesized" to the diagnostic renderer, which
+    /// suppresses the source-line-with-caret display.
+    ///
+    /// Single-source-of-truth for the synthetic-span shape; collapses
+    /// the previously-duplicated `synth_span` helpers in
+    /// `typechecker::exhaustiveness` and `typechecker::auto_derive`.
+    /// Lock: tests/round72_bloat_cleanup_lock_tests.rs.
+    pub fn synthetic() -> Self {
+        Self::new(0, 0)
+    }
 }
 
 impl fmt::Display for Span {

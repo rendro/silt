@@ -41,6 +41,16 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         } else if file.is_none() {
             file = Some(arg.clone());
+        } else {
+            // Reject extra positionals — `silt run` takes at most one
+            // file. Pre-fix the loop silently dropped subsequent
+            // positionals (only the first won), which made
+            // `silt run a.silt b.silt` look like it had run both files.
+            // Mirror the rejection pattern used by `silt update`,
+            // `silt repl`, `silt lsp`, and `silt add`.
+            eprintln!("silt run: unexpected extra argument '{arg}'");
+            eprintln!("Run 'silt run --help' for usage.");
+            process::exit(1);
         }
     }
     // No explicit file → look for an enclosing silt package and use
@@ -88,6 +98,17 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
                 _ => "",
             };
             eprintln!("silt run: unknown flag '{extra}'{suggestion}");
+            eprintln!("Run 'silt run --help' for usage.");
+            process::exit(1);
+        } else {
+            // Reject extra positionals on the bare-file shim — the
+            // file is already pinned by the dispatcher to args[1], so
+            // any non-flag positional here is a user mistake. Pre-fix
+            // the loop ignored these silently, so `silt foo.silt
+            // bar.silt` looked like it had run both files. Mirror the
+            // rejection pattern used by `silt update`, `silt repl`,
+            // `silt lsp`, and `silt add`.
+            eprintln!("silt run: unexpected extra argument '{extra}'");
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         }

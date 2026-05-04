@@ -8,107 +8,6 @@ use crate::bytecode::{Chunk, Function, Op};
 
 // ── Op decoding ───────────────────────────────────────────────────
 
-/// Convert a raw byte back to an `Op` variant.
-///
-/// The `Op` enum is `#[repr(u8)]` so the discriminant order is stable.
-fn op_from_byte(byte: u8) -> Option<Op> {
-    // Safety: we range-check before transmuting.
-    // We use a manual match to avoid depending on unstable transmute semantics.
-    let op = match byte {
-        b if b == Op::Constant as u8 => Op::Constant,
-        b if b == Op::Unit as u8 => Op::Unit,
-        b if b == Op::True as u8 => Op::True,
-        b if b == Op::False as u8 => Op::False,
-
-        b if b == Op::Add as u8 => Op::Add,
-        b if b == Op::Sub as u8 => Op::Sub,
-        b if b == Op::Mul as u8 => Op::Mul,
-        b if b == Op::Div as u8 => Op::Div,
-        b if b == Op::Mod as u8 => Op::Mod,
-
-        b if b == Op::Eq as u8 => Op::Eq,
-        b if b == Op::Neq as u8 => Op::Neq,
-        b if b == Op::Lt as u8 => Op::Lt,
-        b if b == Op::Gt as u8 => Op::Gt,
-        b if b == Op::Leq as u8 => Op::Leq,
-        b if b == Op::Geq as u8 => Op::Geq,
-
-        b if b == Op::Negate as u8 => Op::Negate,
-        b if b == Op::Not as u8 => Op::Not,
-
-        b if b == Op::And as u8 => Op::And,
-        b if b == Op::Or as u8 => Op::Or,
-
-        b if b == Op::StringConcat as u8 => Op::StringConcat,
-        b if b == Op::DisplayValue as u8 => Op::DisplayValue,
-
-        b if b == Op::GetLocal as u8 => Op::GetLocal,
-        b if b == Op::SetLocal as u8 => Op::SetLocal,
-        b if b == Op::GetGlobal as u8 => Op::GetGlobal,
-        b if b == Op::SetGlobal as u8 => Op::SetGlobal,
-
-        b if b == Op::GetUpvalue as u8 => Op::GetUpvalue,
-
-        b if b == Op::Call as u8 => Op::Call,
-        b if b == Op::TailCall as u8 => Op::TailCall,
-        b if b == Op::Return as u8 => Op::Return,
-        b if b == Op::CallBuiltin as u8 => Op::CallBuiltin,
-
-        b if b == Op::MakeClosure as u8 => Op::MakeClosure,
-
-        b if b == Op::MakeTuple as u8 => Op::MakeTuple,
-        b if b == Op::MakeList as u8 => Op::MakeList,
-        b if b == Op::MakeMap as u8 => Op::MakeMap,
-        b if b == Op::MakeSet as u8 => Op::MakeSet,
-        b if b == Op::MakeRecord as u8 => Op::MakeRecord,
-        b if b == Op::MakeVariant as u8 => Op::MakeVariant,
-        b if b == Op::RecordUpdate as u8 => Op::RecordUpdate,
-        b if b == Op::MakeRange as u8 => Op::MakeRange,
-        b if b == Op::ListConcat as u8 => Op::ListConcat,
-
-        b if b == Op::GetField as u8 => Op::GetField,
-        b if b == Op::GetIndex as u8 => Op::GetIndex,
-
-        b if b == Op::Jump as u8 => Op::Jump,
-        b if b == Op::JumpBack as u8 => Op::JumpBack,
-        b if b == Op::JumpIfFalse as u8 => Op::JumpIfFalse,
-        b if b == Op::JumpIfTrue as u8 => Op::JumpIfTrue,
-        b if b == Op::Pop as u8 => Op::Pop,
-        b if b == Op::PopN as u8 => Op::PopN,
-        b if b == Op::Dup as u8 => Op::Dup,
-
-        b if b == Op::TestTag as u8 => Op::TestTag,
-        b if b == Op::TestEqual as u8 => Op::TestEqual,
-        b if b == Op::TestTupleLen as u8 => Op::TestTupleLen,
-        b if b == Op::TestListMin as u8 => Op::TestListMin,
-        b if b == Op::TestListExact as u8 => Op::TestListExact,
-        b if b == Op::TestIntRange as u8 => Op::TestIntRange,
-        b if b == Op::TestFloatRange as u8 => Op::TestFloatRange,
-        b if b == Op::TestBool as u8 => Op::TestBool,
-        b if b == Op::DestructTuple as u8 => Op::DestructTuple,
-        b if b == Op::DestructVariant as u8 => Op::DestructVariant,
-        b if b == Op::DestructList as u8 => Op::DestructList,
-        b if b == Op::DestructListRest as u8 => Op::DestructListRest,
-        b if b == Op::DestructRecordField as u8 => Op::DestructRecordField,
-        b if b == Op::DestructRecordRest as u8 => Op::DestructRecordRest,
-        b if b == Op::TestRecordTag as u8 => Op::TestRecordTag,
-        b if b == Op::TestMapHasKey as u8 => Op::TestMapHasKey,
-        b if b == Op::DestructMapValue as u8 => Op::DestructMapValue,
-
-        b if b == Op::LoopSetup as u8 => Op::LoopSetup,
-        b if b == Op::Recur as u8 => Op::Recur,
-
-        b if b == Op::QuestionMark as u8 => Op::QuestionMark,
-        b if b == Op::Panic as u8 => Op::Panic,
-
-        b if b == Op::CallMethod as u8 => Op::CallMethod,
-        b if b == Op::NarrowFloat as u8 => Op::NarrowFloat,
-
-        _ => return None,
-    };
-    Some(op)
-}
-
 /// Human-readable name for an opcode.
 fn op_name(op: Op) -> &'static str {
     match op {
@@ -212,7 +111,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
     let code = &chunk.code;
     let byte = code[offset];
 
-    let Some(op) = op_from_byte(byte) else {
+    let Some(op) = Op::from_byte(byte) else {
         return (format!("{offset:04}  <unknown {byte:#04x}>"), offset + 1);
     };
 
@@ -694,90 +593,52 @@ mod tests {
 
     #[test]
     fn test_op_from_byte_roundtrip() {
-        // Every Op variant should round-trip through its u8 discriminant.
-        let all_ops = [
-            Op::Constant,
-            Op::Unit,
-            Op::True,
-            Op::False,
-            Op::Add,
-            Op::Sub,
-            Op::Mul,
-            Op::Div,
-            Op::Mod,
-            Op::Eq,
-            Op::Neq,
-            Op::Lt,
-            Op::Gt,
-            Op::Leq,
-            Op::Geq,
-            Op::Negate,
-            Op::Not,
-            Op::And,
-            Op::Or,
-            Op::StringConcat,
-            Op::DisplayValue,
-            Op::GetLocal,
-            Op::SetLocal,
-            Op::GetGlobal,
-            Op::SetGlobal,
-            Op::GetUpvalue,
-            Op::Call,
-            Op::TailCall,
-            Op::Return,
-            Op::CallBuiltin,
-            Op::MakeClosure,
-            Op::MakeTuple,
-            Op::MakeList,
-            Op::MakeMap,
-            Op::MakeSet,
-            Op::MakeRecord,
-            Op::MakeVariant,
-            Op::RecordUpdate,
-            Op::MakeRange,
-            Op::ListConcat,
-            Op::GetField,
-            Op::GetIndex,
-            Op::Jump,
-            Op::JumpBack,
-            Op::JumpIfFalse,
-            Op::JumpIfTrue,
-            Op::Pop,
-            Op::PopN,
-            Op::Dup,
-            Op::TestTag,
-            Op::TestEqual,
-            Op::TestTupleLen,
-            Op::TestListMin,
-            Op::TestListExact,
-            Op::TestIntRange,
-            Op::TestFloatRange,
-            Op::TestBool,
-            Op::DestructTuple,
-            Op::DestructVariant,
-            Op::DestructList,
-            Op::DestructListRest,
-            Op::DestructRecordField,
-            Op::TestRecordTag,
-            Op::TestMapHasKey,
-            Op::DestructMapValue,
-            Op::LoopSetup,
-            Op::Recur,
-            Op::QuestionMark,
-            Op::Panic,
-            Op::CallMethod,
-            Op::NarrowFloat,
-        ];
-        for op in all_ops {
-            let byte = op as u8;
-            let decoded = op_from_byte(byte);
-            assert_eq!(
-                decoded,
-                Some(op),
-                "round-trip failed for {op:?} (byte {byte})"
-            );
+        // Hand-locked count of Op variants. Bumping the Op enum without
+        // bumping this constant fails the test on purpose: it forces a
+        // conscious update to both `Op::from_byte` and any disassembler
+        // tables. Last verified: 72 variants (round 72 audit).
+        const EXPECTED_OP_COUNT: usize = 72;
+
+        // Sweep every possible byte value. For each one that decodes,
+        // verify the round-trip discriminant matches. This catches both
+        // (a) deletion of an arm from `Op::from_byte` (count drops) and
+        // (b) any future opcode whose discriminant doesn't survive
+        // round-tripping (unlikely with `#[repr(u8)]`, but locked in).
+        let mut decoded_count = 0usize;
+        for byte in 0u8..=255 {
+            if let Some(op) = Op::from_byte(byte) {
+                assert_eq!(
+                    op as u8, byte,
+                    "round-trip failed for byte {byte}: decoded to {op:?} but discriminant is {}",
+                    op as u8
+                );
+                decoded_count += 1;
+            }
         }
-        // Invalid byte should return None.
-        assert_eq!(op_from_byte(255), None);
+        assert_eq!(
+            decoded_count, EXPECTED_OP_COUNT,
+            "Op::from_byte decoded {decoded_count} bytes; expected {EXPECTED_OP_COUNT}. \
+             If you added/removed an Op variant, update both Op::from_byte and EXPECTED_OP_COUNT."
+        );
+        // Sanity: a byte well past the highest discriminant must not decode.
+        assert_eq!(Op::from_byte(255), None);
+    }
+
+    #[test]
+    fn test_op_name_exhaustive_via_from_byte() {
+        // For every byte that decodes to an Op, `op_name` must produce
+        // a non-empty, non-placeholder label. This guards against
+        // accidentally regressing `op_name` to a fallthrough that
+        // returns "<unknown>" or "???" for some valid opcode.
+        for byte in 0u8..=255 {
+            if let Some(op) = Op::from_byte(byte) {
+                let name = op_name(op);
+                assert!(!name.is_empty(), "op_name({op:?}) returned empty string");
+                assert!(
+                    !name.contains("unknown") && !name.contains("???"),
+                    "op_name({op:?}) returned placeholder: {name:?}"
+                );
+            }
+        }
     }
 }

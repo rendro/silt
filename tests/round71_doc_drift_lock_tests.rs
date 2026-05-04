@@ -34,7 +34,6 @@
 //!   anti-pattern wording are gone from both pages.
 
 const GENERICS_MD: &str = include_str!("../docs/language/generics.md");
-const TRAITS_MD: &str = include_str!("../docs/language/traits.md");
 const DESIGN_DECISIONS_MD: &str = include_str!("../docs/language/design-decisions.md");
 const LOOPS_AND_PIPES_MD: &str = include_str!("../docs/language/loops-and-pipes.md");
 
@@ -54,60 +53,126 @@ fn generics_md_does_not_call_map_insert() {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// DOC-2: traits.md must not redeclare the built-in `Display` trait
+// DOC-2: doc fences must not redeclare *any* built-in trait
 // ────────────────────────────────────────────────────────────────────
+//
+// Round-72 generalisation of the original DOC-2 lock (which only
+// guarded `trait Display`): the typechecker rejects redeclaration of
+// any of the five built-ins
+// (`src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES`). A `silt`-fenced
+// block that opens `trait <Name> {` (no `for` — that's an impl) for
+// any of those names cannot compile and is a doc bug. Round-71's fix
+// renamed `Display` -> `Show`; round 72's audit caught the same
+// pattern with `Equal` / `Ordered` (Ordered being a hand-rolled
+// supertrait demo whose name shadowed nothing, but whose `Equal`
+// supertrait collided with the built-in). The rename in
+// `traits.md` to `Eq2` / `Cmp2` removes both collisions.
+//
+// We walk every `.md` file under `docs/` (recursive) plus `README.md`,
+// extract every `silt`-fenced block, and reject any opening line
+// matching `trait <Built-in> {` or `trait <Built-in>:` (supertrait
+// declaration form). Impl blocks (`trait Display for Color { ... }`)
+// remain allowed — they don't *redefine* the trait.
+//
+// We deliberately do NOT scan `docs/proposals/*.md` because proposals
+// may reference future or hypothetical trait shapes during design
+// discussion.
 
 #[test]
-fn traits_md_does_not_redeclare_builtin_display_trait() {
-    // The bare token `trait Display` is fine inside impl blocks
-    // (`trait Display for Item { ... }`). The redeclaration has the
-    // shape `trait Display {` followed (later in the same block) by
-    // either `fn show(self)` or `fn debug(self)` — neither of those
-    // is a method on the built-in Display trait, which only declares
-    // `display(self) -> String`.
-    //
-    // Walk the file fence-by-fence and reject any silt-fenced block
-    // that opens with `trait Display {` (no `for`!) and contains a
-    // `fn show(` or `fn debug(` method. This is tighter than the
-    // bare name and won't false-positive on legitimate impl blocks.
-    let mut in_fence = false;
-    let mut fence_body = String::new();
-    let mut violations: Vec<String> = Vec::new();
-    for (i, line) in TRAITS_MD.lines().enumerate() {
-        let lineno = i + 1;
-        if line.trim_start().starts_with("```silt") {
-            in_fence = true;
-            fence_body.clear();
-            continue;
-        }
-        if in_fence && line.trim_start().starts_with("```") {
-            // Close fence — inspect body.
-            let opens_decl = fence_body.contains("trait Display {")
-                || fence_body.contains("trait Display\n")
-                || fence_body.contains("trait Display\r\n");
-            let has_show_or_debug =
-                fence_body.contains("fn show(self)") || fence_body.contains("fn debug(self)");
-            if opens_decl && has_show_or_debug {
-                violations.push(format!(
-                    "fence ending at traits.md:{lineno} redeclares \
-                     `trait Display` with `fn show` or `fn debug` \
-                     method — `Display` is a built-in trait and \
-                     cannot be redefined; only `display(self) -> \
-                     String` is its method."
-                ));
+fn no_doc_fence_redeclares_a_builtin_trait() {
+    use std::path::{Path, PathBuf};
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Match `src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES` exactly.
+    const BUILTINS: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for e in entries.filter_map(|e| e.ok()) {
+            let p = e.path();
+            if p.is_dir() {
+                // Skip proposals/ — they may discuss hypothetical
+                // trait shapes during design.
+                if p.file_name().and_then(|s| s.to_str()) == Some("proposals") {
+                    continue;
+                }
+                collect_md(&p, out);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(p);
             }
-            in_fence = false;
-            fence_body.clear();
-            continue;
-        }
-        if in_fence {
-            fence_body.push_str(line);
-            fence_body.push('\n');
         }
     }
+    collect_md(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for path in &targets {
+        let body = std::fs::read_to_string(path).expect("read doc");
+        let mut in_fence = false;
+        let mut fence_open_line = 0usize;
+        let mut fence_body = String::new();
+        for (i, line) in body.lines().enumerate() {
+            let lineno = i + 1;
+            if !in_fence && line.trim_start().starts_with("```silt") {
+                in_fence = true;
+                fence_open_line = lineno;
+                fence_body.clear();
+                continue;
+            }
+            if in_fence && line.trim_start().starts_with("```") {
+                // Close — scan fence_body for any built-in
+                // redeclaration.
+                for name in BUILTINS {
+                    // Open-brace form: `trait Equal {` (whole-word).
+                    let needle_brace = format!("trait {name} {{");
+                    // Supertrait form: `trait Equal: Foo` is a
+                    // redeclaration of `Equal` even without a body
+                    // brace yet.
+                    let needle_super = format!("trait {name}:");
+                    // Newline-separated body (declaration with no
+                    // brace on the same line).
+                    let needle_nl = format!("trait {name}\n");
+                    if fence_body.contains(&needle_brace)
+                        || fence_body.contains(&needle_super)
+                        || fence_body.contains(&needle_nl)
+                    {
+                        violations.push(format!(
+                            "{}:{} (```silt fence): redeclares \
+                             built-in trait `{}` — built-in traits \
+                             (`Equal`, `Compare`, `Hash`, `Display`, \
+                             `Error`) cannot be redefined per \
+                             `src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES`. \
+                             Rename the local trait or use a \
+                             distinct name.",
+                            path.display(),
+                            fence_open_line,
+                            name
+                        ));
+                    }
+                }
+                in_fence = false;
+                fence_body.clear();
+                continue;
+            }
+            if in_fence {
+                fence_body.push_str(line);
+                fence_body.push('\n');
+            }
+        }
+    }
+
     assert!(
         violations.is_empty(),
-        "traits.md must not redeclare the built-in `Display` trait:\n{}",
+        "doc fences must not redeclare any built-in trait:\n{}",
         violations.join("\n")
     );
 }

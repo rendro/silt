@@ -38,19 +38,22 @@ fn traits_md_supertrait_example_uses_match_not_if_else() {
     let path = doc_path(&["docs", "language", "traits.md"]);
     let body = read(&path);
 
-    // Specific buggy snippet: `if a.equal(b)` must be gone.
+    // Specific buggy snippet: `if a.equal(b)` and the round-72 rename
+    // `if a.eq2(b)` must both be gone. Silt has no `if` keyword.
     assert!(
-        !body.contains("if a.equal(b)"),
-        "docs/language/traits.md still contains `if a.equal(b)` — Silt has \
-         no `if` keyword. Rewrite the snippet to use `match`."
+        !body.contains("if a.equal(b)") && !body.contains("if a.eq2(b)"),
+        "docs/language/traits.md still contains an `if a.<eq>(b)` snippet \
+         — Silt has no `if` keyword. Rewrite the snippet to use `match`."
     );
 
-    // And the replacement must use `match a.equal(b)`.
+    // And the replacement must use `match a.<eq>(b)` (round 72 renamed
+    // the demo trait `Equal`/`equal` → `Eq2`/`eq2` to dodge the built-in
+    // `Equal` redeclaration error caught in round-72 BROKEN B4).
     assert!(
-        body.contains("match a.equal(b)"),
-        "docs/language/traits.md is missing the `match a.equal(b)` \
+        body.contains("match a.equal(b)") || body.contains("match a.eq2(b)"),
+        "docs/language/traits.md is missing the `match a.<eq>(b)` \
          replacement snippet (the supertrait bounds example must exercise \
-         the inherited `Equal::equal` through `match`)."
+         the inherited supertrait's equality method through `match`)."
     );
 }
 

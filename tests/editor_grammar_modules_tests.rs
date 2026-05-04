@@ -14,6 +14,7 @@
 
 use silt::module::BUILTIN_MODULES;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -122,5 +123,116 @@ fn every_builtin_module_appears_in_both_editor_grammars() {
          Add the following module name(s) to the grammar file(s) listed:\n  - {}\n\
          Authoritative source: src/module.rs (BUILTIN_MODULES).",
         missing.join("\n  - ")
+    );
+}
+
+/// Extracts the alternation tokens from the vim `siltModule` match
+/// regex. Format: `syntax match siltModule "\<\(name1\|name2\|...\)\>\ze\."`.
+/// We locate the literal opening `\(` and closing `\)` of the
+/// alternation group, then split the inner string on the vim-regex
+/// alternation operator `\|`.
+fn vim_module_tokens(line: &str) -> BTreeSet<String> {
+    let open_anchor = "\\(";
+    let close_anchor = "\\)";
+    let open = line.find(open_anchor).expect(
+        "vim siltModule line missing `\\(` opening alternation marker — \
+         this regression-lock test needs the canonical `\\<\\(...\\)\\>\\ze\\.` shape.",
+    );
+    let rest = &line[open + open_anchor.len()..];
+    let close = rest.find(close_anchor).expect(
+        "vim siltModule line missing `\\)` closing alternation marker — \
+         this regression-lock test needs the canonical `\\<\\(...\\)\\>\\ze\\.` shape.",
+    );
+    rest[..close]
+        .split("\\|")
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Extracts the alternation tokens from the VS Code `"modules"` block.
+/// In the JSON source the regex anchors appear as `\\b(` … `)\\b(?=\\.)`
+/// (the backslashes are JSON-escaped), so on the Rust side we match the
+/// literal 4-byte sequence `\\b(` written as `"\\\\b("`.
+fn vscode_module_tokens(block: &str) -> BTreeSet<String> {
+    let open_anchor = "\\\\b(";
+    let close_anchor = ")\\\\b";
+    let open = block
+        .find(open_anchor)
+        .expect("VS Code \"modules\" block missing `\\\\b(` opening anchor in JSON source");
+    let rest = &block[open + open_anchor.len()..];
+    let close = rest
+        .find(close_anchor)
+        .expect("VS Code \"modules\" block missing `)\\\\b` closing anchor in JSON source");
+    rest[..close]
+        .split('|')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+#[test]
+fn every_vim_module_entry_is_authoritative() {
+    // Reverse direction (round-72 LATENT L7): catch stale entries left
+    // in the vim grammar after a builtin module is removed from
+    // `src/module.rs::BUILTIN_MODULES`. The forward test above only
+    // catches additions; without this test, removals silently leave
+    // ghost highlighting in editors.
+    let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
+    let vim_scope = vim_module_line(&vim_raw);
+    let tokens = vim_module_tokens(vim_scope);
+
+    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok.as_str()) {
+            stray.push(format!(
+                "editors/vim/syntax/silt.vim siltModule alternation contains stray entry \
+                 `{}` not in src/module.rs::BUILTIN_MODULES",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "vim grammar lists module names not present in BUILTIN_MODULES. \
+         Either remove the stray entries from editors/vim/syntax/silt.vim, \
+         or (if the module is genuinely new) add it to \
+         src/module.rs::BUILTIN_MODULES first:\n  - {}",
+        stray.join("\n  - ")
+    );
+}
+
+#[test]
+fn every_vscode_module_entry_is_authoritative() {
+    // Reverse direction (round-72 LATENT L7): catch stale entries left
+    // in the VS Code grammar after a builtin module is removed from
+    // `src/module.rs::BUILTIN_MODULES`.
+    let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
+    let vscode_scope = vscode_modules_block(&vscode_raw);
+    let tokens = vscode_module_tokens(&vscode_scope);
+
+    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok.as_str()) {
+            stray.push(format!(
+                "editors/vscode/syntaxes/silt.tmLanguage.json \"modules\" alternation \
+                 contains stray entry `{}` not in src/module.rs::BUILTIN_MODULES",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "VS Code grammar lists module names not present in BUILTIN_MODULES. \
+         Either remove the stray entries from \
+         editors/vscode/syntaxes/silt.tmLanguage.json, or (if the module is \
+         genuinely new) add it to src/module.rs::BUILTIN_MODULES first:\n  - {}",
+        stray.join("\n  - ")
     );
 }

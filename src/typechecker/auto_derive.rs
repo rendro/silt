@@ -68,59 +68,48 @@ use crate::ast::*;
 use crate::intern::{Symbol, intern};
 use crate::lexer::Span;
 
-/// Synthetic span used by every auto-derived AST node. Pointing at
-/// `(0, 0, 0)` keeps any diagnostic raised against synthesized code
-/// distinguishable from a real user-source location: line 0 / col 0 /
-/// offset 0 is impossible for any character read by the lexer (every
-/// real token starts at line 1+). The 0-byte span signals
-/// "compiler-synthesized" to the diagnostic renderer, which suppresses
-/// the source-line-with-caret display. It is NOT unique to auto-derive
-/// — exhaustiveness, CLI helpers, bytecode/disassemble, and several
-/// other internal call sites use the same zero-span shape, so it
-/// cannot be used as a grep-sentinel to identify auto-derive
-/// diagnostics specifically.
-fn synth_span() -> Span {
-    Span {
-        line: 0,
-        col: 0,
-        offset: 0,
-    }
-}
+// Auto-derived AST nodes use the canonical `Span::synthetic()` shape
+// (line 0 / col 0 / offset 0). This signals "compiler-synthesized" to
+// the diagnostic renderer, which suppresses the source-line-with-caret
+// display. The same zero-span shape is shared with exhaustiveness, CLI
+// helpers, bytecode/disassemble and other internal call sites — it is
+// NOT unique to auto-derive, so it cannot be used as a grep-sentinel
+// to identify auto-derive diagnostics specifically.
 
 fn id_pat(name: Symbol) -> Pattern {
-    Pattern::new(PatternKind::Ident(name), synth_span())
+    Pattern::new(PatternKind::Ident(name), Span::synthetic())
 }
 
 fn wildcard_pat() -> Pattern {
-    Pattern::new(PatternKind::Wildcard, synth_span())
+    Pattern::new(PatternKind::Wildcard, Span::synthetic())
 }
 
 fn ctor_pat(name: Symbol, args: Vec<Pattern>) -> Pattern {
-    Pattern::new(PatternKind::Constructor(name, args), synth_span())
+    Pattern::new(PatternKind::Constructor(name, args), Span::synthetic())
 }
 
 fn tuple_pat(elems: Vec<Pattern>) -> Pattern {
-    Pattern::new(PatternKind::Tuple(elems), synth_span())
+    Pattern::new(PatternKind::Tuple(elems), Span::synthetic())
 }
 
 fn ident_expr(name: Symbol) -> Expr {
-    Expr::new(ExprKind::Ident(name), synth_span())
+    Expr::new(ExprKind::Ident(name), Span::synthetic())
 }
 
 fn int_expr(n: i64) -> Expr {
-    Expr::new(ExprKind::Int(n), synth_span())
+    Expr::new(ExprKind::Int(n), Span::synthetic())
 }
 
 fn bool_expr(b: bool) -> Expr {
-    Expr::new(ExprKind::Bool(b), synth_span())
+    Expr::new(ExprKind::Bool(b), Span::synthetic())
 }
 
 fn string_expr(s: &str) -> Expr {
-    Expr::new(ExprKind::StringLit(s.to_string(), false), synth_span())
+    Expr::new(ExprKind::StringLit(s.to_string(), false), Span::synthetic())
 }
 
 fn tuple_expr(elems: Vec<Expr>) -> Expr {
-    Expr::new(ExprKind::Tuple(elems), synth_span())
+    Expr::new(ExprKind::Tuple(elems), Span::synthetic())
 }
 
 /// `recv.method(args...)` — used to emit `xa.compare(xb)`,
@@ -128,18 +117,18 @@ fn tuple_expr(elems: Vec<Expr>) -> Expr {
 /// because that is what the parser produces for surface-syntax method
 /// calls.
 fn method_call(recv: Expr, method: Symbol, args: Vec<Expr>) -> Expr {
-    let fa = Expr::new(ExprKind::FieldAccess(Box::new(recv), method), synth_span());
-    Expr::new(ExprKind::Call(Box::new(fa), args), synth_span())
+    let fa = Expr::new(ExprKind::FieldAccess(Box::new(recv), method), Span::synthetic());
+    Expr::new(ExprKind::Call(Box::new(fa), args), Span::synthetic())
 }
 
 /// `recv.field` — record field access.
 fn field_access(recv: Expr, field: Symbol) -> Expr {
-    Expr::new(ExprKind::FieldAccess(Box::new(recv), field), synth_span())
+    Expr::new(ExprKind::FieldAccess(Box::new(recv), field), Span::synthetic())
 }
 
 /// `a + b` — used to combine display strings.
 fn bin(a: Expr, op: BinOp, b: Expr) -> Expr {
-    Expr::new(ExprKind::Binary(Box::new(a), op, Box::new(b)), synth_span())
+    Expr::new(ExprKind::Binary(Box::new(a), op, Box::new(b)), Span::synthetic())
 }
 
 fn match_expr(scrut: Expr, arms: Vec<MatchArm>) -> Expr {
@@ -148,7 +137,7 @@ fn match_expr(scrut: Expr, arms: Vec<MatchArm>) -> Expr {
             expr: Some(Box::new(scrut)),
             arms,
         },
-        synth_span(),
+        Span::synthetic(),
     )
 }
 
@@ -161,7 +150,7 @@ fn arm(pattern: Pattern, body: Expr) -> MatchArm {
 }
 
 fn block_expr(stmts: Vec<Stmt>) -> Expr {
-    Expr::new(ExprKind::Block(stmts), synth_span())
+    Expr::new(ExprKind::Block(stmts), Span::synthetic())
 }
 
 fn let_stmt(name: Symbol, value: Expr) -> Stmt {
@@ -173,7 +162,7 @@ fn let_stmt(name: Symbol, value: Expr) -> Stmt {
 }
 
 fn named_te(name: Symbol) -> TypeExpr {
-    TypeExpr::new(TypeExprKind::Named(name), synth_span())
+    TypeExpr::new(TypeExprKind::Named(name), Span::synthetic())
 }
 
 /// Build a `TypeExpr` for the (possibly generic) type being derived.
@@ -184,7 +173,7 @@ fn type_te(name: Symbol, params: &[Symbol]) -> TypeExpr {
         named_te(name)
     } else {
         let args: Vec<TypeExpr> = params.iter().map(|p| named_te(*p)).collect();
-        TypeExpr::new(TypeExprKind::Generic(name, args), synth_span())
+        TypeExpr::new(TypeExprKind::Generic(name, args), Span::synthetic())
     }
 }
 
@@ -207,10 +196,10 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
         where_clauses: Vec::new(),
         body,
         is_pub: false,
-        span: synth_span(),
+        span: Span::synthetic(),
         // Synthesized: no source identifier — fall back to the
         // synthetic span so callers don't crash on a missing field.
-        name_span: synth_span(),
+        name_span: Span::synthetic(),
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
@@ -258,7 +247,7 @@ fn trait_impl(
         where_clauses,
         methods,
         assoc_type_bindings: Vec::new(),
-        span: synth_span(),
+        span: Span::synthetic(),
         is_auto_derived: true,
     }
 }
@@ -298,7 +287,7 @@ fn empty_match_body(self_sym: Symbol) -> Expr {
             expr: Some(Box::new(ident_expr(self_sym))),
             arms: Vec::new(),
         },
-        synth_span(),
+        Span::synthetic(),
     )
 }
 
@@ -492,7 +481,7 @@ fn build_lex_compare_chain(a_names: &[Symbol], b_names: &[Symbol]) -> Expr {
         let c_sym = intern(&format!("__d_c{i}__"));
         let inner = chain(a_names, b_names, i + 1);
         let arms = vec![
-            arm(Pattern::new(PatternKind::Int(0), synth_span()), inner),
+            arm(Pattern::new(PatternKind::Int(0), Span::synthetic()), inner),
             arm(wildcard_pat(), ident_expr(c_sym)),
         ];
         block_expr(vec![
@@ -716,7 +705,7 @@ fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[Recor
         let c_sym = intern(&format!("__d_rc{i}__"));
         let arms = vec![
             arm(
-                Pattern::new(PatternKind::Int(0), synth_span()),
+                Pattern::new(PatternKind::Int(0), Span::synthetic()),
                 rec(self_sym, other_sym, fields, i + 1),
             ),
             arm(wildcard_pat(), ident_expr(c_sym)),

@@ -2958,28 +2958,42 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
+                                // F1 (round 72): mirror the Add/Sub arms.
+                                // Snapshot error count around `unify` so we
+                                // can suppress the operand-domain check
+                                // when `unify` already emitted a "type
+                                // mismatch" diagnostic (the second message
+                                // would be redundant noise). Also return
+                                // `Type::Error` on unify failure so an
+                                // outer ascribed-let (`let n: Int = b /
+                                // 1`) hits the cascade-suppression branch
+                                // in `unify` (`mod.rs:741`).
+                                let err_count_before = self.errors.len();
                                 self.unify(&lt, &rt, span);
-                                // B2: enforce numeric-only operand domain.
-                                let resolved = self.apply(&lt);
-                                match &resolved {
-                                    Type::Var(_) => {
-                                        self.pending_numeric_checks.push((
-                                            resolved.clone(),
-                                            "'/'",
-                                            span,
-                                        ));
+                                let unify_errored = self.errors.len() > err_count_before;
+                                if !unify_errored {
+                                    // B2: enforce numeric-only operand domain.
+                                    let resolved = self.apply(&lt);
+                                    match &resolved {
+                                        Type::Var(_) => {
+                                            self.pending_numeric_checks.push((
+                                                resolved.clone(),
+                                                "'/'",
+                                                span,
+                                            ));
+                                        }
+                                        _ if !is_valid_arith_operand(&resolved, false) => {
+                                            self.error(
+                                                format!(
+                                                    "operator '/' requires Int, Float, or ExtFloat, got '{resolved}'"
+                                                ),
+                                                span,
+                                            );
+                                        }
+                                        _ => {}
                                     }
-                                    _ if !is_valid_arith_operand(&resolved, false) => {
-                                        self.error(
-                                            format!(
-                                                "operator '/' requires Int, Float, or ExtFloat, got '{resolved}'"
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                    _ => {}
                                 }
-                                lt
+                                if unify_errored { Type::Error } else { lt }
                             }
                         }
                     }
@@ -2996,6 +3010,17 @@ impl TypeChecker {
                         };
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
+                        // F1 (round 72): snapshot error count around
+                        // `unify` so we can suppress the operand-domain
+                        // check when `unify` already emitted a "type
+                        // mismatch" diagnostic (the second message would
+                        // be redundant noise — mirrors the Add/Sub/Div
+                        // arms). For Eq/Neq this is defensive: today the
+                        // domain check passes for most cases (e.g. Bool
+                        // is a valid equality operand) so the dual
+                        // diagnostic doesn't surface, but apply
+                        // uniformly to close the latent door.
+                        let err_count_before = self.errors.len();
                         match (&resolved_l, &resolved_r) {
                             (Type::Float, Type::ExtFloat) | (Type::ExtFloat, Type::Float) => {
                                 // Accept mixed Float/ExtFloat without unification
@@ -3004,39 +3029,42 @@ impl TypeChecker {
                                 self.unify(&lt, &rt, span);
                             }
                         }
-                        // B3: enforce comparison operand domain. The VM's
-                        // compare() (src/vm/arithmetic.rs) only supports
-                        // Int/Float/ExtFloat/String/List/Range/Record/Variant
-                        // for ordering. Equality additionally supports
-                        // Tuple/Map/Set/Bool/Unit via Value's PartialEq.
-                        let resolved = self.apply(&lt);
-                        match &resolved {
-                            Type::Var(_) => {
-                                // Defer — may resolve later.
-                                self.pending_numeric_checks.push((
-                                    resolved.clone(),
-                                    if is_equality {
-                                        "'=='/'!='"
+                        let unify_errored = self.errors.len() > err_count_before;
+                        if !unify_errored {
+                            // B3: enforce comparison operand domain. The VM's
+                            // compare() (src/vm/arithmetic.rs) only supports
+                            // Int/Float/ExtFloat/String/List/Range/Record/Variant
+                            // for ordering. Equality additionally supports
+                            // Tuple/Map/Set/Bool/Unit via Value's PartialEq.
+                            let resolved = self.apply(&lt);
+                            match &resolved {
+                                Type::Var(_) => {
+                                    // Defer — may resolve later.
+                                    self.pending_numeric_checks.push((
+                                        resolved.clone(),
+                                        if is_equality {
+                                            "'=='/'!='"
+                                        } else {
+                                            "ordering comparison"
+                                        },
+                                        span,
+                                    ));
+                                }
+                                _ if !is_valid_compare_operand(&resolved, is_equality) => {
+                                    let domain = if is_equality {
+                                        "a comparable type"
                                     } else {
-                                        "ordering comparison"
-                                    },
-                                    span,
-                                ));
+                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                                    };
+                                    self.error(
+                                        format!(
+                                            "operator {op_str} requires {domain}, got '{resolved}'"
+                                        ),
+                                        span,
+                                    );
+                                }
+                                _ => {}
                             }
-                            _ if !is_valid_compare_operand(&resolved, is_equality) => {
-                                let domain = if is_equality {
-                                    "a comparable type"
-                                } else {
-                                    "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
-                                };
-                                self.error(
-                                    format!(
-                                        "operator {op_str} requires {domain}, got '{resolved}'"
-                                    ),
-                                    span,
-                                );
-                            }
-                            _ => {}
                         }
                         Type::Bool
                     }

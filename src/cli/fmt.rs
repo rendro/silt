@@ -19,7 +19,13 @@ pub(crate) fn dispatch(args: &[String]) {
         if arg == "--check" {
             check_mode = true;
         } else if arg == "--help" || arg == "-h" {
-            println!("Usage: silt fmt [--check] [files...]");
+            println!("Usage: silt fmt [--check] [files-or-dirs...]");
+            println!();
+            println!("Formats silt source files in place. Each positional may be a");
+            println!("`.silt` file or a directory; directories are expanded recursively");
+            println!("to every `.silt` descendant. Pass `.` as the sentinel to recursively");
+            println!("format the current directory, or run with no positionals inside a");
+            println!("silt package to recursively format every `.silt` under cwd.");
             println!();
             println!("Options:");
             println!("  --check    Check formatting without modifying files");

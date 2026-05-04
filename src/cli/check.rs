@@ -73,9 +73,19 @@ pub(crate) fn dispatch(args: &[String]) {
             eprintln!("silt check: unknown flag '{}'{}", args[i], suggestion);
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);
-        } else {
+        } else if file.is_none() {
             file = Some(args[i].clone());
             i += 1;
+        } else {
+            // Reject extra positionals — `silt check` takes at most
+            // one file. Pre-fix the assign was unconditional and
+            // last-wins, so `silt check a.silt b.silt` silently
+            // checked only `b.silt` while the user thought both ran.
+            // Mirror the rejection pattern used by `silt update`,
+            // `silt repl`, `silt lsp`, and `silt add`.
+            eprintln!("silt check: unexpected extra argument '{}'", args[i]);
+            eprintln!("Run 'silt check --help' for usage.");
+            process::exit(1);
         }
     }
     let path = match file {

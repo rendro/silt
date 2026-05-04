@@ -422,6 +422,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "string" => vec![
             "from",
             "split",
+            "split_at",
             "trim",
             "trim_start",
             "trim_end",
@@ -435,10 +436,13 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "to_upper",
             "to_lower",
             "starts_with",
+            "starts_with_at",
             "ends_with",
             "chars",
             "repeat",
             "index_of",
+            "last_index_of",
+            "lines",
             "slice",
             "pad_left",
             "pad_right",
@@ -482,6 +486,23 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "drop",
             "enumerate",
             "group_by",
+            // Round-72 widen: typechecker registrations these names had
+            // schemes for, but `builtin_module_functions` did not enumerate.
+            // Without these entries, `Vm::register_builtins` never seeded
+            // a global for `list.sum` (etc.), so first-class value access
+            // (`let f = list.sum`) blew up at runtime with `undefined
+            // global: list.sum` even though the call form `list.sum(xs)`
+            // worked via `Op::CallBuiltin`.
+            "sum",
+            "sum_float",
+            "product",
+            "product_float",
+            "min_by",
+            "max_by",
+            "scan",
+            "intersperse",
+            "remove_at",
+            "index_of",
         ],
         "map" => vec![
             "get",
@@ -556,6 +577,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "replace_all_with",
             "captures",
             "captures_all",
+            "captures_named",
         ],
         "json" => vec!["parse", "parse_list", "parse_map", "stringify", "pretty"],
         "toml" => vec!["parse", "parse_list", "parse_map", "stringify", "pretty"],
@@ -566,11 +588,12 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "close",
             "try_send",
             "try_receive",
+            "recv_timeout",
             "select",
             "each",
             "timeout",
         ],
-        "task" => vec!["spawn", "join", "cancel"],
+        "task" => vec!["spawn", "spawn_until", "deadline", "join", "cancel"],
         "set" => vec![
             "new",
             "from_list",
@@ -582,6 +605,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "union",
             "intersection",
             "difference",
+            "symmetric_difference",
             "is_subset",
             "map",
             "filter",
@@ -618,8 +642,29 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "is_leap_year",
             "sleep",
         ],
-        "http" => vec!["get", "request", "serve", "serve_all", "segments"],
-        "postgres" => vec!["connect", "query", "execute", "transact", "close"],
+        "http" => vec![
+            "get",
+            "request",
+            "serve",
+            "serve_all",
+            "segments",
+            "parse_query",
+        ],
+        "postgres" => vec![
+            "connect",
+            "connect_with",
+            "query",
+            "execute",
+            "transact",
+            "close",
+            "cursor",
+            "cursor_close",
+            "cursor_next",
+            "stream",
+            "listen",
+            "notify",
+            "uuidv7",
+        ],
         "fs" => vec![
             "exists",
             "is_file",
@@ -652,6 +697,10 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "concat_all",
             "get",
             "eq",
+            "starts_with",
+            "ends_with",
+            "split",
+            "index_of",
         ],
         "crypto" => vec![
             "sha256",
@@ -718,6 +767,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             {
                 fns.push("connect_tls");
                 fns.push("accept_tls");
+                fns.push("accept_tls_mtls");
             }
             fns
         }

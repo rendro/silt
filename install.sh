@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install script for silt
-# Usage: curl -fsSL https://raw.githubusercontent.com/rendro/silt/main/install.sh | sh
+# Usage: curl -fsSL https://silt-lang.com/install.sh | sh
 
 set -eu
 

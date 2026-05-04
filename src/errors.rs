@@ -410,7 +410,11 @@ pub fn eprintln_errors_with_separator(errors: &[&SourceError]) {
 }
 
 /// Compute the display width needed for a line number.
-fn line_num_width(n: usize) -> usize {
+///
+/// Exposed at `pub(crate)` so `compiler::format_module_source_error`
+/// can share the same gutter-width math instead of inlining a
+/// hand-rolled loop. Lock: tests/round72_bloat_cleanup_lock_tests.rs.
+pub(crate) fn line_num_width(n: usize) -> usize {
     if n == 0 {
         return 1;
     }

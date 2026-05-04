@@ -51,7 +51,7 @@ body, including in constructor argument types, record fields, and
 recursive self-references.
 
 At use sites, types are applied positionally: `Option(Int)`,
-`Result(String, Error)`, `Pair(User, List(Role))`.
+`Result(String, ParseError)`, `Pair(User, List(Role))`.
 
 Constructors are automatically polymorphic:
 
@@ -115,7 +115,7 @@ point to.
 Constrain a type variable to types implementing a trait with `where`:
 
 ```silt
-fn sort(xs: List(a)) -> List(a) where a: Ord {
+fn sort(xs: List(a)) -> List(a) where a: Compare {
   ...
 }
 ```
@@ -160,7 +160,7 @@ fn default(type a) -> a where a: Default {
   a.default()
 }
 
-fn parse(body: String, type a) -> Result(a, Error) where a: Decode {
+fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode {
   a.decode(body)
 }
 
@@ -196,12 +196,12 @@ are grouped contiguously when there are multiple:
 
 ```silt
 -- Correct
-fn parse(body: String, type a) -> Result(a, Error)
+fn parse(body: String, type a) -> Result(a, ParseError)
 fn cast(x: a, type b) -> b
 fn convert(x: a, type b, type c) -> (b, c)
 
 -- Incorrect — type param before data, won't parse
-fn broken(type a, body: String) -> Result(a, Error)
+fn broken(type a, body: String) -> Result(a, ParseError)
 ```
 
 The reason is **pipe ergonomics**. Silt's `|>` operator inserts the
@@ -239,8 +239,8 @@ work.
 | Function shape | Use |
 |---|---|
 | `map(xs: List(a), f: Fn(a) -> b) -> List(b)` | No `type` params; both vars from args |
-| `parse(body: String) -> Result(a, Error)` | Error — `a` unbound |
-| `parse(body: String, type a) -> Result(a, Error)` | Correct form |
+| `parse(body: String) -> Result(a, ParseError)` | Error — `a` unbound |
+| `parse(body: String, type a) -> Result(a, ParseError)` | Correct form |
 | `default(type a) -> a` | `a` is the only parameter |
 
 ## Inference, annotation, and ascription
@@ -286,7 +286,7 @@ compose naturally:
 
 ```silt
 raw_bytes
-|> string.from_utf8
+|> bytes.to_string
 |> result.map_ok(fn(s) { json.parse(s, Config) })
 |> result.flatten
 ```
@@ -311,7 +311,7 @@ A `where` clause lets a generic function call trait methods:
 
 ```silt
 fn shout(items: List(a)) -> List(String) where a: Display {
-  items |> list.map { x -> x.display() |> string.upper }
+  items |> list.map { x -> x.display() |> string.to_upper }
 }
 ```
 
@@ -344,12 +344,14 @@ trait Convertible(b) {
 }
 
 trait Convertible(Int) for String {
-  fn convert(self) -> Int { ... }
+  fn convert(self) -> Int { 0 }
 }
 
-trait Convertible(Float) for String {
-  fn convert(self) -> Float { ... }
-}
+-- Adding a second impl on the same source type with a different
+-- trait argument (e.g. `trait Convertible(Float) for String`) is
+-- a deferred limitation today: the impl key ignores trait params,
+-- so the second impl collides with the first as a duplicate. See
+-- `docs/proposals/error-from-trait.md` for the full write-up.
 ```
 
 A parameterized trait can bound its own parameters with `where`
@@ -383,9 +385,14 @@ fn use_parent(x: b, type a) -> a where b: Child(a) {
 }
 ```
 
-`Convertible(Int)` and `Convertible(Float)` are distinct impls — the
-same source type (`String`) can implement the trait multiple times
-with different target arguments.
+`Convertible(Int)` and `Convertible(Float)` would *want* to coexist
+as distinct impls keyed by their trait argument, but today this is a
+**deferred limitation**: the impl key ignores trait params, so
+`impl Convertible(Int) for String` and `impl Convertible(Float) for
+String` collide as duplicates. The same source type (`String`) cannot
+yet implement the trait multiple times with different target
+arguments. See `docs/proposals/error-from-trait.md` for the full
+analysis and the workarounds available today.
 
 In a `where` clause, trait arguments can be concrete types or
 lowercase type variables bound elsewhere in the signature:
@@ -642,8 +649,8 @@ fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f)
 ### Type-directed decoding
 
 ```silt
-fn parse(body: String, type a) -> Result(a, Error) where a: Decode
-fn from_toml(content: String, type a) -> Result(a, Error) where a: Decode
+fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode
+fn from_toml(content: String, type a) -> Result(a, ParseError) where a: Decode
 
 -- call sites
 let config = toml.from_toml(raw, AppConfig)?
@@ -652,13 +659,29 @@ body |> json.parse(Todo)
 
 ### Conversion
 
-```silt
-fn into(x: a, type b) -> b where a: Into(b)
-fn try_from(x: a, type b) -> Result(b, Error) where a: TryInto(b)
+silt does not ship a built-in `Into` / `TryInto` trait. Define your
+own conversion trait and implement it per source/target pair:
 
-let n: Int = into(small, Int)
-let result = try_from("42", Int)
+```silt
+trait Convert(b) {
+  fn convert(self) -> b
+}
+
+trait Convert(Int) for String {
+  fn convert(self) -> Int { 0 }
+}
+
+fn into(x: a, type b) -> b where a: Convert(b) {
+  x.convert()
+}
 ```
+
+The same pattern adapts to fallible conversions by changing the trait
+method's return type to `Result(b, e)` for whatever error type the
+caller wants. (`Convert(Int) for String` and `Convert(Float) for
+String` would *want* to coexist, but see the
+"Parameterized trait declarations" subsection below for the current
+deferred limitation around trait-arg-keyed impls.)
 
 ### User-defined generic container
 

@@ -172,13 +172,12 @@ fn format_module_source_error(
     span: Span,
 ) -> String {
     // Clamp a span pointing past EOF back onto the last real line so
-    // unexpected-EOF parse errors still render a snippet. Mirrors
-    // `errors::clamp_span_to_source`; duplicated here because that
-    // helper is private to errors.rs. Without this, truncated module
-    // files (e.g. `pub fn broken(\n` with an EOF on line 2) produce
-    // a header-only error with no caret line — the G1 audit finding.
+    // unexpected-EOF parse errors still render a snippet. Without this,
+    // truncated module files (e.g. `pub fn broken(\n` with an EOF on
+    // line 2) produce a header-only error with no caret line — the G1
+    // audit finding.
     // Lock: tests/modules.rs `test_module_parse_error_eof_renders_snippet`.
-    let clamped_span = clamp_span_to_module_source(span, source);
+    let clamped_span = crate::errors::clamp_span_to_source(span, source);
     let mut out = format!(
         "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
         line = clamped_span.line,
@@ -193,19 +192,10 @@ fn format_module_source_error(
         && let Some(src_line) = source.lines().nth(clamped_span.line - 1)
     {
         // Width of the line-number gutter for alignment. Matches the
-        // convention in src/errors.rs::SourceError::Display.
+        // convention in src/errors.rs::SourceError::Display by calling
+        // the shared `errors::line_num_width` helper.
         let line_num = clamped_span.line;
-        let gutter_width = {
-            // floor(log10(line_num)) + 1 — inlined to avoid pulling
-            // in the private helper from src/errors.rs.
-            let mut w = 1;
-            let mut n = line_num;
-            while n >= 10 {
-                n /= 10;
-                w += 1;
-            }
-            w
-        };
+        let gutter_width = crate::errors::line_num_width(line_num);
         let gutter_blank: String = " ".repeat(gutter_width);
         let col = if clamped_span.col > 0 {
             clamped_span.col - 1
@@ -276,18 +266,6 @@ fn normalize_module_path(p: &std::path::Path) -> String {
         }
     }
     s
-}
-
-/// Clamp a span pointing past the end of `source` back onto the last
-/// real line. Round-71 ERR-1 fix: this used to be a byte-identical
-/// copy of `errors::clamp_span_to_source`. The helper has been lifted
-/// to `pub(crate)` and this wrapper now delegates so EOF parse-error
-/// snippets stay in lockstep with the rest of the diagnostics surface.
-/// Lock: `tests/modules.rs::test_module_parse_error_eof_renders_snippet`
-/// and the source-grep lock in
-/// `tests/round71_dispatch_collapse_and_parity_tests.rs`.
-fn clamp_span_to_module_source(span: Span, source: &str) -> Span {
-    crate::errors::clamp_span_to_source(span, source)
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's

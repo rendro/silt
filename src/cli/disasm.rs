@@ -24,24 +24,38 @@ pub(crate) fn dispatch(args: &[String]) {
         process::exit(0);
     }
     // Reject unknown flags before interpreting args as filenames.
+    // Also collect the first positional so we can reject any extras
+    // — pre-fix the dispatcher only read `args[2]` and silently
+    // dropped any further positionals, so `silt disasm a.silt
+    // b.silt` looked like it had disassembled both. Mirror the
+    // rejection pattern used by `silt update`, `silt repl`,
+    // `silt lsp`, and `silt add`.
+    let mut positional: Option<String> = None;
     for arg in &args[2..] {
         if arg.starts_with('-') && arg != "--help" && arg != "-h" {
             eprintln!("silt disasm: unknown flag '{arg}'");
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
+        } else if !arg.starts_with('-') {
+            if positional.is_none() {
+                positional = Some(arg.clone());
+            } else {
+                eprintln!("silt disasm: unexpected extra argument '{arg}'");
+                eprintln!("Run 'silt disasm --help' for usage.");
+                process::exit(1);
+            }
         }
     }
-    let path = if args.len() < 3 {
-        match resolve_package_entry_point() {
+    let path = match positional {
+        Some(p) => p,
+        None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {
                 eprintln!("Usage: {}", disasm_usage_banner());
                 process::exit(1);
             }
             Err(()) => process::exit(1),
-        }
-    } else {
-        args[2].clone()
+        },
     };
     disasm_file(&path);
 }

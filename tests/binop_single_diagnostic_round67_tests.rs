@@ -1,9 +1,9 @@
-//! Round 67 BROKEN regression lock — F1.
+//! Round 67 BROKEN regression lock — F1, extended in round 72.
 //!
-//! When the operands of `+`, `-`, `*`, or `%` are of *different* types AND
-//! at least one operand is outside the operator's accepted domain (e.g.
-//! `Bool + Int`), the typechecker used to emit TWO diagnostics at the
-//! same span:
+//! When the operands of `+`, `-`, `*`, `%`, `/`, `<`, `>`, `<=`, `>=`,
+//! `==`, or `!=` are of *different* types AND at least one operand is
+//! outside the operator's accepted domain (e.g. `Bool + Int`), the
+//! typechecker used to emit TWO diagnostics at the same span:
 //!
 //!   error[type]: type mismatch: expected Int, got Bool
 //!   error[type]: operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'
@@ -14,8 +14,12 @@
 //! around `unify`; if `unify` reported a mismatch, the operand-domain
 //! check is skipped.
 //!
-//! See `src/typechecker/inference.rs` BinOp::Add and BinOp::Sub|Mul|Mod
-//! arms.
+//! Round 67 fixed Add/Sub/Mul/Mod. Round 72 extended the fix to Div,
+//! Lt/Gt/Leq/Geq (same dual-emit bug), and applied the snapshot pattern
+//! defensively to Eq/Neq to close the latent door.
+//!
+//! See `src/typechecker/inference.rs` BinOp::Add, BinOp::Sub|Mul|Mod,
+//! BinOp::Div, and BinOp::Eq|Neq|Lt|Gt|Leq|Geq arms.
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -172,5 +176,184 @@ fn main() {
         "expected operator-domain diagnostic for `Bool + Bool` (operands agree, \
          so type-mismatch wouldn't fire — domain check must still run), got:\n{}",
         errs.join("\n")
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Round 72: Div + ordering-comparison single-diagnostic regression
+// locks. Mirror the Add/Sub/Mul/Mod tests above for `/`, `<`, `>`,
+// `<=`, `>=`, `==`, `!=`.
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_bool_div_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = true / 1
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'/'");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true / 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn test_bool_lt_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true < 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'<'");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true < 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn test_bool_gt_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true > 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'>'");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true > 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn test_bool_leq_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true <= 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'<='");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true <= 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn test_bool_geq_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true >= 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'>='");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true >= 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+/// Defensive (round 72): Eq/Neq currently get away with the dual-emit
+/// because Bool is a valid equality operand and the domain check passes.
+/// But the snapshot pattern was applied uniformly — verify the
+/// type-mismatch diagnostic still appears exactly once for Bool == Int.
+#[test]
+fn test_bool_eq_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true == 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'=='");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true == 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn test_bool_neq_int_emits_single_diagnostic() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let x = (true != 1)
+    ()
+}
+"#,
+    );
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'!='");
+    assert_eq!(
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for `true != 1`, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+}
+
+/// Ascribed-let variant for Div, mirroring
+/// `tests/ascribed_let_binop_single_diagnostic_tests.rs`. Verifies the
+/// `Type::Error` cascade-suppression branch (mod.rs:741) catches the
+/// outer ascription so the mismatch isn't re-emitted.
+#[test]
+fn test_ascribed_let_div_mismatch_prints_once() {
+    let errs = type_errors(
+        r#"
+fn main() {
+    let s: String = "hello"
+    let n: Int = s / 1
+    println(n)
+}
+"#,
+    );
+    let mismatch_count = errs
+        .iter()
+        .filter(|e| {
+            e.contains("type mismatch: expected Int, got String")
+                || (e.contains("expected Int") && e.contains("got String"))
+        })
+        .count();
+    assert_eq!(
+        mismatch_count, 1,
+        "expected the 'expected Int, got String' mismatch exactly once for ascribed-let div; \
+         got {mismatch_count} across:\n{errs:?}"
     );
 }

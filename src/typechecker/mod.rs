@@ -4099,6 +4099,19 @@ impl TypeChecker {
                         // Channel without explicit type param => Channel(fresh_var)
                         Type::Channel(Box::new(self.fresh_var()))
                     }
+                    // Opaque resource / value types from builtin modules
+                    // (`bytes::register`, `tcp::register`,
+                    // `crypto::register`). Round 65 added these to
+                    // `BUILTIN_TYPES` so the trait-impl-target gate
+                    // accepted `trait T for Bytes`, but the type-annotation
+                    // path (`let x: Bytes = ...`) was not extended at the
+                    // same time, leaving these names unannotatable. Resolve
+                    // them to the same `Type::Generic(name, vec![])` shape
+                    // the builtin schemes produce so unify with the
+                    // returned values succeeds. See round 72 GAP G1.
+                    "Bytes" => Type::Generic(intern("Bytes"), vec![]),
+                    "TcpListener" => Type::Generic(intern("TcpListener"), vec![]),
+                    "TcpStream" => Type::Generic(intern("TcpStream"), vec![]),
                     _ => {
                         // Lowercase names in type annotations are type variables
                         // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
@@ -4192,6 +4205,36 @@ impl TypeChecker {
                     }
                     "Channel" if resolved_args.len() == 1 => {
                         Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    // Opaque arity-0 builtin types — accept the empty-paren
+                    // surface form `Bytes()` (mirrors `List()`/`Map()` etc.)
+                    // and emit a proper arity diagnostic for `Bytes(Int)`.
+                    // The bare-name path is handled in the `Named` arm
+                    // above. See round 72 GAP G1.
+                    "Bytes" if resolved_args.is_empty() => {
+                        Type::Generic(intern("Bytes"), vec![])
+                    }
+                    "TcpListener" if resolved_args.is_empty() => {
+                        Type::Generic(intern("TcpListener"), vec![])
+                    }
+                    "TcpStream" if resolved_args.is_empty() => {
+                        Type::Generic(intern("TcpStream"), vec![])
+                    }
+                    "Bytes" | "TcpListener" | "TcpStream" => {
+                        let err_span = self.current_type_anno_span.unwrap_or(Span {
+                            line: 0,
+                            col: 0,
+                            offset: 0,
+                        });
+                        self.error(
+                            format!(
+                                "type argument count mismatch for builtin type '{}': expected 0, got {}",
+                                name_str.as_str(),
+                                resolved_args.len()
+                            ),
+                            err_span,
+                        );
+                        Type::Error
                     }
                     _ => {
                         // B2: enforce arity for user-declared parameterized
@@ -6161,28 +6204,13 @@ pub(super) fn canonicalize_type_name(
 /// Built-in shapes route through their `canonical_name`; user-declared
 /// nominals carry their own name. Returns `None` for shapes that have
 /// no nominal head (raw type-variables, error / never sentinels).
-fn head_symbol_of(ty: &Type) -> Option<Symbol> {
-    match ty {
-        Type::Int => Some(intern("Int")),
-        Type::Float => Some(intern("Float")),
-        Type::ExtFloat => Some(intern("ExtFloat")),
-        Type::Bool => Some(intern("Bool")),
-        Type::String => Some(intern("String")),
-        Type::Unit => Some(intern("Unit")),
-        Type::List(_) | Type::Range(_) => Some(intern("List")),
-        Type::Map(_, _) => Some(intern("Map")),
-        Type::Set(_) => Some(intern("Set")),
-        Type::Channel(_) => Some(intern("Channel")),
-        Type::Tuple(_) => Some(intern("Tuple")),
-        Type::Fun(_, _) => Some(intern("Fn")),
-        Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
-        Type::Var(_)
-        | Type::Error
-        | Type::Never
-        | Type::AssocProj { .. }
-        | Type::AnonRecord { .. } => None,
-    }
-}
+///
+/// Round 72 LATENT L2: this used to be a byte-identical local copy of
+/// `crate::types::canonical::head_symbol_of_canon`. The duplicate
+/// drift class — same as the round 71 `Fn` regression — was collapsed
+/// by re-exporting the canonical-module helper here so both call sites
+/// share one definition.
+pub(crate) use crate::types::canonical::head_symbol_of_canon as head_symbol_of;
 
 /// Walk two types in parallel and build a mapping from `old` tyvars to
 /// `new` tyvars wherever they appear at the same structural position.

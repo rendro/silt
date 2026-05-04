@@ -18,6 +18,7 @@
 
 use silt::module::builtin_enum_variants;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -130,5 +131,125 @@ fn editor_grammars_include_all_builtin_constructors() {
          Add the following constructor name(s) to the grammar file(s) listed:\n  - {}\n\
          Authoritative source: src/module.rs (builtin_enum_variants).",
         missing.join("\n  - ")
+    );
+}
+
+/// Extracts whitespace-delimited tokens from each
+/// `syntax keyword siltConstructor ...` line in the vim scope, stripping
+/// the leading `syntax keyword siltConstructor` prefix on each line.
+fn vim_constructor_tokens(vim_scope: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    for line in vim_scope.lines() {
+        // Strip vim line-comment tail (vim uses `"`); the keyword
+        // declaration lines themselves never contain a `"`.
+        let code = line.split('"').next().unwrap_or("").trim();
+        for tok in code
+            .split_whitespace()
+            .skip_while(|t| *t != "siltConstructor")
+            .skip(1)
+        {
+            tokens.insert(tok.to_string());
+        }
+    }
+    tokens
+}
+
+/// Extracts the alternation tokens from the VS Code `"constructors"`
+/// block. In the JSON source the regex anchors appear as `\\b(` …
+/// `)\\b` (the backslashes are JSON-escaped), so on the Rust side we
+/// match the literal 4-byte sequence `\\b(` written as `"\\\\b("`.
+fn vscode_constructor_tokens(block: &str) -> BTreeSet<String> {
+    let open_anchor = "\\\\b(";
+    let close_anchor = ")\\\\b";
+    let open = block
+        .find(open_anchor)
+        .expect("VS Code \"constructors\" block missing `\\\\b(` opening anchor in JSON source");
+    let rest = &block[open + open_anchor.len()..];
+    let close = rest
+        .find(close_anchor)
+        .expect("VS Code \"constructors\" block missing `)\\\\b` closing anchor in JSON source");
+    rest[..close]
+        .split('|')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Authoritative set of constructor names per
+/// `src/module.rs::builtin_enum_variants`.
+fn authoritative_constructor_names() -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for (_enum_name, variants) in builtin_enum_variants() {
+        for &variant in *variants {
+            names.insert(variant.to_string());
+        }
+    }
+    names
+}
+
+#[test]
+fn every_vim_constructor_entry_is_authoritative() {
+    // Reverse direction (round-72 LATENT L7): catch stale entries left
+    // in the vim grammar after a constructor is removed from
+    // `src/module.rs::builtin_enum_variants`. The forward test above
+    // only catches additions; without this test, removals silently
+    // leave ghost highlighting in editors.
+    let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
+    let vim_scope = vim_constructor_scope(&vim_raw);
+    let tokens = vim_constructor_tokens(&vim_scope);
+
+    let authoritative = authoritative_constructor_names();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok) {
+            stray.push(format!(
+                "editors/vim/syntax/silt.vim siltConstructor keyword list contains stray \
+                 entry `{}` not in src/module.rs::builtin_enum_variants",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "vim grammar lists constructor names not present in \
+         builtin_enum_variants. Either remove the stray entries from \
+         editors/vim/syntax/silt.vim, or (if the constructor is genuinely \
+         new) add it to src/module.rs::builtin_enum_variants first:\n  - {}",
+        stray.join("\n  - ")
+    );
+}
+
+#[test]
+fn every_vscode_constructor_entry_is_authoritative() {
+    // Reverse direction (round-72 LATENT L7): catch stale entries left
+    // in the VS Code grammar after a constructor is removed from
+    // `src/module.rs::builtin_enum_variants`.
+    let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
+    let vscode_scope = vscode_constructors_block(&vscode_raw);
+    let tokens = vscode_constructor_tokens(&vscode_scope);
+
+    let authoritative = authoritative_constructor_names();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok) {
+            stray.push(format!(
+                "editors/vscode/syntaxes/silt.tmLanguage.json \"constructors\" alternation \
+                 contains stray entry `{}` not in src/module.rs::builtin_enum_variants",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "VS Code grammar lists constructor names not present in \
+         builtin_enum_variants. Either remove the stray entries from \
+         editors/vscode/syntaxes/silt.tmLanguage.json, or (if the \
+         constructor is genuinely new) add it to \
+         src/module.rs::builtin_enum_variants first:\n  - {}",
+        stray.join("\n  - ")
     );
 }

@@ -13,21 +13,27 @@ impl binds; see [Generics — Associated types](generics.md#associated-types)).
 ## Declaration and Implementation
 
 ```silt
-trait Display {
-  fn display(self) -> String
+trait Greet {
+  fn greet(self) -> String
 }
 
-trait Display for Shape {
-  fn display(self) -> String {
+trait Greet for Shape {
+  fn greet(self) -> String {
     match self {
-      Circle(r) -> "Circle(r={r})"
-      Rect(w, h) -> "Rect({w}x{h})"
+      Circle(r) -> "hi from a circle of radius {r}"
+      Rect(w, h) -> "hi from a {w}x{h} rectangle"
     }
   }
 }
 
-Circle(5.0).display()   -- "Circle(r=5)"
+Circle(5.0).greet()   -- "hi from a circle of radius 5"
 ```
+
+(`Greet` is a fresh trait local to this snippet. Silt's `Display`
+trait is built in and cannot be redeclared, so doc snippets that
+illustrate trait *declaration* use a fresh local name; impls of the
+real built-in `Display` trait look identical and are shown in
+[Built-in Traits](#built-in-traits) below.)
 
 ## Supertrait Bounds
 
@@ -37,16 +43,20 @@ implement every supertrait, and methods from the supertrait become
 callable through the subtrait constraint:
 
 ```silt
-trait Equal {
-  fn equal(self, other: Self) -> Bool
+trait Eq2 {
+  fn eq2(self, other: Self) -> Bool
 }
 
-trait Ordered: Equal {
-  fn less(self, other: Self) -> Bool
+trait Cmp2: Eq2 {
+  fn lt2(self, other: Self) -> Bool
 }
 ```
 
-Implementing `Ordered` on `Int` requires `Int` to also implement `Equal`
+(`Eq2`/`Cmp2` here are stand-in names so the snippet can declare the
+traits without colliding with the built-in `Equal` / `Compare`, which
+cannot be redefined.)
+
+Implementing `Cmp2` on a type requires that type to also implement `Eq2`
 (four of silt's five built-in traits — `Equal`, `Hash`, `Compare`,
 `Display` — are auto-derived for every type, so the obligation is
 satisfied automatically; the fifth, `Error`, is not auto-derived).
@@ -68,15 +78,15 @@ trait Printable: Display + Hash {
 
 ### Constraint expansion
 
-Inside a `where a: Ordered` body, methods from `Equal` (the supertrait)
+Inside a `where a: Cmp2` body, methods from `Eq2` (the supertrait)
 are also callable on `a`:
 
 ```silt
-fn check(a: t, b: t) -> Bool where t: Ordered {
-  -- a.equal(b) works because Equal is a supertrait of Ordered
-  match a.equal(b) {
+fn check(a: t, b: t) -> Bool where t: Cmp2 {
+  -- a.eq2(b) works because Eq2 is a supertrait of Cmp2
+  match a.eq2(b) {
     true -> true
-    false -> a.less(b)
+    false -> a.lt2(b)
   }
 }
 ```

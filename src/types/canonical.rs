@@ -505,10 +505,16 @@ pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     name
 }
 
-/// Local helper: head symbol for canonical-name resolution. Mirror of
-/// the typechecker's `head_symbol_of` (kept here so this module owns
-/// the alias-routing logic without crossing crate-internal boundaries).
-fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
+/// Head symbol for canonical-name resolution. Used both by this
+/// module's alias-routing logic and by the typechecker's trait-impl
+/// registration path (`src/typechecker/mod.rs::head_symbol_of` was
+/// the duplicate copy collapsed in round 72 LATENT L2; the source
+/// of truth lives here so future drift is structurally impossible).
+///
+/// Returns `None` for shapes that have no nominal head (raw
+/// type-variables, error / never sentinels, associated projections,
+/// anonymous records).
+pub(crate) fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
     match ty {
         Type::Int => Some(intern("Int")),
         Type::Float => Some(intern("Float")),

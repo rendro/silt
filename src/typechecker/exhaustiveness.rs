@@ -13,21 +13,15 @@ use super::*;
 /// silently assuming the match is exhaustive.
 pub(super) const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
 
-/// A synthetic span used for patterns constructed during exhaustiveness
-/// analysis. These patterns (wildcards, tuples of wildcards, witness
-/// constructors) don't correspond to any user-written source — they're
-/// internal to the Maranget usefulness algorithm — so giving them a
-/// zero-position span is harmless. Real diagnostics for pattern errors
-/// come from the user's actual patterns in match arms, which have real
-/// spans attached by the parser.
-fn synth_span() -> Span {
-    Span::new(0, 0)
-}
-
 /// Shortcut for building synthetic patterns used by the usefulness
-/// algorithm. Keeps the body of the algorithm readable.
+/// algorithm. Keeps the body of the algorithm readable. The patterns
+/// (wildcards, tuples of wildcards, witness constructors) don't
+/// correspond to any user-written source, so they get the canonical
+/// `Span::synthetic()` shape; real diagnostics for pattern errors
+/// come from the user's actual patterns in match arms, which have
+/// real spans attached by the parser.
 fn synth(kind: PatternKind) -> Pattern {
-    Pattern::new(kind, synth_span())
+    Pattern::new(kind, Span::synthetic())
 }
 
 impl TypeChecker {
