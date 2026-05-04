@@ -205,10 +205,14 @@ pub fn call_test(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
             if vm.is_truthy(&args[0]) {
                 Ok(Value::Unit)
             } else {
+                // Use `format_silt` (not Debug) so failure messages render in
+                // silt-source syntax — `1.5` rather than `ExtFloat(1.5)`,
+                // `[1, 2]` rather than `[1, 2]` debug shape, etc. Debug leaks
+                // Rust variant names (see `Value::format_silt` doc comment).
                 let msg = if args.len() == 2 {
                     format!("assertion failed: {}", args[1])
                 } else {
-                    format!("assertion failed: {:?}", args[0])
+                    format!("assertion failed: {}", args[0].format_silt())
                 };
                 Err(VmError::new(msg))
             }
@@ -222,11 +226,17 @@ pub fn call_test(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
             } else {
                 let msg = if args.len() == 3 {
                     format!(
-                        "assertion failed: {}: {:?} != {:?}",
-                        args[2], args[0], args[1]
+                        "assertion failed: {}: {} != {}",
+                        args[2],
+                        args[0].format_silt(),
+                        args[1].format_silt()
                     )
                 } else {
-                    format!("assertion failed: {:?} != {:?}", args[0], args[1])
+                    format!(
+                        "assertion failed: {} != {}",
+                        args[0].format_silt(),
+                        args[1].format_silt()
+                    )
                 };
                 Err(VmError::new(msg))
             }
@@ -240,11 +250,17 @@ pub fn call_test(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
             } else {
                 let msg = if args.len() == 3 {
                     format!(
-                        "assertion failed: {}: {:?} == {:?}",
-                        args[2], args[0], args[1]
+                        "assertion failed: {}: {} == {}",
+                        args[2],
+                        args[0].format_silt(),
+                        args[1].format_silt()
                     )
                 } else {
-                    format!("assertion failed: {:?} == {:?}", args[0], args[1])
+                    format!(
+                        "assertion failed: {} == {}",
+                        args[0].format_silt(),
+                        args[1].format_silt()
+                    )
                 };
                 Err(VmError::new(msg))
             }

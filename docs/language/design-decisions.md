@@ -6,10 +6,12 @@ order: 10
 
 # Design Trade-offs
 
-## No String Concatenation Operator
+## Interpolation Preferred for String Building
 
-Interpolation `"{a}{b}"` is the only inline way. Eliminates `"hello " + name
-+ "!"` patterns. For pipelines, use `string.join`.
+String `+` is supported (`p.first + " " + p.last`), but interpolation
+`"{a}{b}"` is the preferred inline form: it reads more naturally for the
+common case and keeps multi-fragment messages punctuation-light. For
+pipelines, use `string.concat` or `string.join`.
 
 ## Homogeneous Maps
 

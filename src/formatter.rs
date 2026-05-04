@@ -3674,6 +3674,7 @@ fn format_decl_with_comments(decl: &Decl, depth: usize) -> String {
             value,
             is_pub,
             span,
+            name_span: _,
             doc: _,
         } => {
             let indent = "  ".repeat(depth);

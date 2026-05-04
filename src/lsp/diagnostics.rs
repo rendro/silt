@@ -156,25 +156,20 @@ impl Server {
     }
 }
 
-// mirrors is_user_import_resolvable_error in src/cli/pipeline.rs.
-// The CLI helper operates on SourceError (post-wrapping); this version
-// operates on the typechecker's native TypeError so the LSP can filter
-// before converting to lsp_types::Diagnostic. Keep the two in sync; a
-// future LATENT dedupe round can lift them into a shared module.
+// Both predicates delegate the message-text matching to
+// `crate::diagnostic_filters` so the LSP and CLI stay in lock-step.
+// The CLI helpers (`is_unknown_module_warning`,
+// `is_user_import_resolvable_error` in src/cli/pipeline.rs) operate on
+// `SourceError` (post-wrapping); these versions operate on the
+// typechecker's native `TypeError` so the LSP can filter before
+// converting to `lsp_types::Diagnostic`. Severity gating stays at the
+// call site because the two error types' shapes differ.
 fn is_unknown_module_warning_te(err: &typechecker::TypeError) -> bool {
-    err.severity == typechecker::Severity::Warning && err.message.contains("unknown module")
+    err.severity == typechecker::Severity::Warning
+        && crate::diagnostic_filters::is_unknown_module_warning_message(&err.message)
 }
 
-// mirrors is_user_import_resolvable_error in src/cli/pipeline.rs.
-// Deliberately omits a `starts_with("type ")` clause: the CLI filter
-// dropped that pattern because it swallowed real type-mismatch errors
-// alongside user-module follow-ons (GAP #7). Trait-impl cascades flow
-// through the narrow `"does not implement"` substring instead.
 fn is_user_import_resolvable_error_te(err: &typechecker::TypeError) -> bool {
     err.severity == typechecker::Severity::Error
-        && (err.message.starts_with("undefined variable")
-            || err.message.starts_with("undefined constructor")
-            || err.message.starts_with("undefined type")
-            || err.message.starts_with("unknown field")
-            || err.message.contains("does not implement"))
+        && crate::diagnostic_filters::is_user_import_resolvable_error_message(&err.message)
 }

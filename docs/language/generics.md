@@ -675,7 +675,7 @@ fn get(c: Cache(k, v), key: k) -> Option(v) where k: Hash + Equal {
 fn put(c: Cache(k, v), key: k, value: v) -> Cache(k, v)
   where k: Hash + Equal
 {
-  c.{ store: map.insert(c.store, key, value) }
+  c.{ store: map.set(c.store, key, value) }
 }
 ```
 

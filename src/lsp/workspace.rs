@@ -229,10 +229,13 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
         ExprKind::Ident(n) if *n == name => {
             out.push(expr.span);
         }
-        ExprKind::FieldAccess(obj, field) if *field == name => {
-            out.push(expr.span);
-            collect_references_in_expr(obj, name, out);
-        }
+        // Round-71 DX-2 fix: do NOT match on FieldAccess by symbol equality.
+        // `FieldAccess.span` is the receiver's span (parser.rs:2369-2370),
+        // not the field's, so pushing it here would corrupt the receiver
+        // identifier on rename. Field names live in a separate namespace
+        // from let/fn names; symbol-collision matching across the two
+        // namespaces silently mangled unrelated code (e.g. renaming a
+        // top-level `let name` mangled `r.name` into `<newname>.name`).
         ExprKind::Block(stmts) => {
             for s in stmts {
                 collect_references_in_stmt(s, name, out);

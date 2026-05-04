@@ -7108,6 +7108,145 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     sigs
 }
 
+/// Return a map of builtin qualified names to their parameter-name lists,
+/// indexed in argument order. Sibling registry to
+/// `builtin_type_signatures`: signatures carry only types (the rendered
+/// `Fn(T1, T2) -> R` form has no `name:` per param), so the LSP
+/// `signatureHelp` handler — which needs `ParameterInformation` per
+/// arg to drive active-arg highlighting — has nowhere else to look up
+/// names.
+///
+/// Round-71 DX-4 fix (audit): pre-round, `signature_help.rs` emitted
+/// `parameters: vec![]` for every builtin call site, so the active-arg
+/// highlight was broken across the entire stdlib surface. This
+/// registry seeds names for the most-used `list.*`, `string.*`,
+/// `map.*`, `set.*`, `io.*` modules. Builtins not present here surface
+/// as before with empty parameter info — a follow-up round can extend
+/// the coverage.
+///
+/// Names are deliberately compact (`xs`, `f`, `k`, `v`, `s`, `path`)
+/// to mirror the doc comments in `src/typechecker/builtins/*.rs`. A
+/// follow-up audit can normalize wording.
+pub fn builtin_param_names() -> std::collections::HashMap<&'static str, &'static [&'static str]> {
+    let entries: &[(&'static str, &'static [&'static str])] = &[
+        // ── list.* ───────────────────────────────────────────────
+        ("list.map", &["xs", "f"]),
+        ("list.filter", &["xs", "pred"]),
+        ("list.fold", &["xs", "init", "f"]),
+        ("list.each", &["xs", "f"]),
+        ("list.find", &["xs", "pred"]),
+        ("list.zip", &["xs", "ys"]),
+        ("list.flatten", &["xs"]),
+        ("list.sort_by", &["xs", "key"]),
+        ("list.flat_map", &["xs", "f"]),
+        ("list.filter_map", &["xs", "f"]),
+        ("list.any", &["xs", "pred"]),
+        ("list.all", &["xs", "pred"]),
+        ("list.fold_until", &["xs", "init", "f"]),
+        ("list.unfold", &["seed", "f"]),
+        ("list.append", &["xs", "x"]),
+        ("list.prepend", &["xs", "x"]),
+        ("list.concat", &["xs", "ys"]),
+        ("list.get", &["xs", "i"]),
+        ("list.set", &["xs", "i", "x"]),
+        ("list.take", &["xs", "n"]),
+        ("list.drop", &["xs", "n"]),
+        ("list.enumerate", &["xs"]),
+        ("list.head", &["xs"]),
+        ("list.tail", &["xs"]),
+        ("list.last", &["xs"]),
+        ("list.reverse", &["xs"]),
+        ("list.sort", &["xs"]),
+        ("list.unique", &["xs"]),
+        ("list.contains", &["xs", "x"]),
+        ("list.length", &["xs"]),
+        ("list.group_by", &["xs", "key"]),
+        ("list.index_of", &["xs", "x"]),
+        ("list.remove_at", &["xs", "i"]),
+        ("list.min_by", &["xs", "key"]),
+        ("list.max_by", &["xs", "key"]),
+        ("list.sum", &["xs"]),
+        ("list.sum_float", &["xs"]),
+        ("list.product", &["xs"]),
+        ("list.product_float", &["xs"]),
+        ("list.scan", &["xs", "init", "f"]),
+        ("list.intersperse", &["xs", "sep"]),
+        // ── string.* ─────────────────────────────────────────────
+        ("string.from", &["x"]),
+        ("string.split", &["s", "sep"]),
+        ("string.join", &["xs", "sep"]),
+        ("string.trim", &["s"]),
+        ("string.trim_start", &["s"]),
+        ("string.trim_end", &["s"]),
+        ("string.char_code", &["s"]),
+        ("string.from_char_code", &["code"]),
+        ("string.contains", &["s", "needle"]),
+        ("string.replace", &["s", "from", "to"]),
+        ("string.length", &["s"]),
+        ("string.byte_length", &["s"]),
+        ("string.to_upper", &["s"]),
+        ("string.to_lower", &["s"]),
+        ("string.starts_with", &["s", "prefix"]),
+        ("string.ends_with", &["s", "suffix"]),
+        ("string.chars", &["s"]),
+        ("string.repeat", &["s", "n"]),
+        ("string.index_of", &["s", "needle"]),
+        ("string.last_index_of", &["s", "needle"]),
+        ("string.split_at", &["s", "i"]),
+        ("string.lines", &["s"]),
+        ("string.starts_with_at", &["s", "i", "prefix"]),
+        ("string.slice", &["s", "start", "end"]),
+        ("string.pad_left", &["s", "width", "pad"]),
+        ("string.pad_right", &["s", "width", "pad"]),
+        ("string.is_empty", &["s"]),
+        ("string.is_alpha", &["s"]),
+        ("string.is_digit", &["s"]),
+        ("string.is_upper", &["s"]),
+        ("string.is_lower", &["s"]),
+        ("string.is_alnum", &["s"]),
+        ("string.is_whitespace", &["s"]),
+        // ── map.* ────────────────────────────────────────────────
+        ("map.get", &["m", "k"]),
+        ("map.set", &["m", "k", "v"]),
+        ("map.delete", &["m", "k"]),
+        ("map.contains", &["m", "k"]),
+        ("map.keys", &["m"]),
+        ("map.values", &["m"]),
+        ("map.merge", &["m", "other"]),
+        ("map.length", &["m"]),
+        ("map.filter", &["m", "pred"]),
+        ("map.map", &["m", "f"]),
+        ("map.entries", &["m"]),
+        ("map.from_entries", &["entries"]),
+        ("map.each", &["m", "f"]),
+        ("map.update", &["m", "k", "default", "f"]),
+        // ── set.* ────────────────────────────────────────────────
+        ("set.new", &[]),
+        ("set.from_list", &["xs"]),
+        ("set.to_list", &["s"]),
+        ("set.contains", &["s", "x"]),
+        ("set.insert", &["s", "x"]),
+        ("set.remove", &["s", "x"]),
+        ("set.length", &["s"]),
+        ("set.union", &["s", "other"]),
+        ("set.intersection", &["s", "other"]),
+        ("set.difference", &["s", "other"]),
+        ("set.symmetric_difference", &["s", "other"]),
+        ("set.is_subset", &["s", "other"]),
+        ("set.map", &["s", "f"]),
+        ("set.filter", &["s", "pred"]),
+        ("set.each", &["s", "f"]),
+        ("set.fold", &["s", "init", "f"]),
+        // ── io.* ─────────────────────────────────────────────────
+        ("io.inspect", &["x"]),
+        ("io.read_file", &["path"]),
+        ("io.write_file", &["path", "contents"]),
+        ("io.read_line", &[]),
+        ("io.args", &[]),
+    ];
+    entries.iter().copied().collect()
+}
+
 /// Return a map of every built-in name (qualified or bare) to its
 /// markdown doc string, for the LSP to render in hover / completion /
 /// signature-help. Includes everything registered with

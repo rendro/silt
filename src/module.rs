@@ -22,10 +22,11 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
             Some("time")
         }
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
-        // Stdlib typed-error enums (Phase 0 of the stdlib error
-        // redesign; implemented and proposal removed in commit
-        // 7680536). Each module's error variants require that module
-        // to be imported before they can be constructed.
+        // Stdlib typed-error enums. Each module's error variants
+        // require that module to be imported before they can be
+        // constructed. See
+        // `module.rs::builtin_error_enum_variants_with_arity` for
+        // Phase 0 background.
         "IoNotFound" | "IoPermissionDenied" | "IoAlreadyExists" | "IoInvalidInput"
         | "IoInterrupted" | "IoUnexpectedEof" | "IoWriteZero" | "IoUnknown" => Some("io"),
         "JsonSyntax" | "JsonTypeMismatch" | "JsonMissingField" | "JsonUnknown" => Some("json"),
@@ -91,9 +92,9 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
             "Method",
             &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
         ),
-        // Stdlib typed-error enums (Phase 0 of the stdlib error
-        // redesign; implemented and proposal removed in commit
-        // 7680536).
+        // Stdlib typed-error enums. See
+        // `module.rs::builtin_error_enum_variants_with_arity` for
+        // Phase 0 background.
         (
             "IoError",
             &[
@@ -233,6 +234,11 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 /// previously hand-rolled per-family loops at dispatch.rs:142-275 into
 /// one data-driven loop.
 ///
+/// Phase 0 of the stdlib error redesign (implemented and proposal
+/// removed in commit 7680536) — this is the canonical doc-mention.
+/// Sibling registries / dispatch arms cross-reference this helper
+/// instead of repeating the wording.
+///
 /// A parity-lock test at
 /// `tests/error_enum_dispatch_parity_tests.rs` asserts the typechecker
 /// registrations in `src/typechecker/builtins/errors.rs::register`
@@ -345,6 +351,66 @@ pub fn builtin_error_enum_variants_with_arity()
         (
             "ChannelError",
             &[("ChannelTimeout", 0), ("ChannelClosed", 0)],
+        ),
+    ]
+}
+
+/// Authoritative `(variant_name, arity)` listings for every builtin
+/// non-error enum: `Result`, `Option`, `Step`, `ChannelResult`,
+/// `ChannelOp`, `Weekday`, `Method`. Single source of truth consulted
+/// by `src/vm/dispatch.rs::register_builtins` to seed the global
+/// `VariantConstructor` / `Variant` entries — collapsing the
+/// previously hand-rolled per-family blocks in `register_builtins` (an
+/// `insert()` pair per variant) into one data-driven loop, mirroring
+/// the round-64 collapse done for the typed-error enums via
+/// `builtin_error_enum_variants_with_arity`.
+///
+/// Round-71 PARALLEL-ARRAY-DRIFT fix: this helper exists so adding a
+/// new variant to e.g. `ChannelOp` no longer requires a hand-rolled
+/// `globals.insert(...)` pair next to the existing ones — the loop
+/// at dispatch.rs picks up the arity automatically.
+///
+/// A parity-lock test at
+/// `tests/round71_dispatch_collapse_and_parity_tests.rs` asserts these
+/// `(variant, arity)` tuples agree with the previous hand-rolled
+/// constructor registrations on every prelude / gated non-error enum.
+pub fn builtin_prelude_enum_variants_with_arity()
+-> &'static [(&'static str, &'static [(&'static str, usize)])] {
+    &[
+        ("Result", &[("Ok", 1), ("Err", 1)]),
+        ("Option", &[("Some", 1), ("None", 0)]),
+        ("Step", &[("Stop", 1), ("Continue", 1)]),
+        (
+            "ChannelResult",
+            &[("Message", 1), ("Closed", 0), ("Empty", 0), ("Sent", 0)],
+        ),
+        // ChannelOp constructors for `channel.select`. `Recv(ch)` and
+        // `Send(ch, value)` are the one-and-only shapes accepted by the
+        // select op list.
+        ("ChannelOp", &[("Recv", 1), ("Send", 2)]),
+        (
+            "Weekday",
+            &[
+                ("Monday", 0),
+                ("Tuesday", 0),
+                ("Wednesday", 0),
+                ("Thursday", 0),
+                ("Friday", 0),
+                ("Saturday", 0),
+                ("Sunday", 0),
+            ],
+        ),
+        (
+            "Method",
+            &[
+                ("GET", 0),
+                ("POST", 0),
+                ("PUT", 0),
+                ("PATCH", 0),
+                ("DELETE", 0),
+                ("HEAD", 0),
+                ("OPTIONS", 0),
+            ],
         ),
     ]
 }

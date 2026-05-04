@@ -112,10 +112,10 @@ regex patterns with `{N}` quantifiers that would conflict with interpolation:
 let regex = """[\w]+@[\w]+\.\w{2,}"""
 ```
 
-**Design rationale.** No string concatenation operator exists. Interpolation
-`"{a}{b}"` is the only inline way to build strings. For pipeline contexts,
-use `string.join`. This keeps the string model simple and eliminates the
-`"hello " + name + "!"` anti-pattern.
+**Design rationale.** String `+` is supported, but interpolation
+`"{a}{b}"` is the preferred inline form for building strings — it reads
+more naturally and keeps multi-fragment messages punctuation-light. For
+pipeline contexts, use `string.concat` or `string.join`.
 
 
 ## Infinite Loops

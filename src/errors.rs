@@ -172,7 +172,7 @@ fn get_source_line(source: &str, line: usize) -> Option<String> {
 /// span pointing at the end of the last real line so the caret lands at
 /// the visual "end of file" instead of disappearing. Mirrors the
 /// adjustment done by `repl.rs::adjust_span` for the REPL path.
-fn clamp_span_to_source(span: Span, source: &str) -> Span {
+pub(crate) fn clamp_span_to_source(span: Span, source: &str) -> Span {
     if span.line == 0 {
         return span;
     }

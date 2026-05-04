@@ -87,6 +87,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
             Decl::Let {
                 pattern,
                 span,
+                name_span,
                 value,
                 doc,
                 ..
@@ -100,6 +101,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 collect_let_pattern_defs(
                     pattern,
                     *span,
+                    *name_span,
                     value.ty.as_ref(),
                     doc.as_deref(),
                     true,
@@ -125,6 +127,7 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
 fn collect_let_pattern_defs(
     pattern: &Pattern,
     decl_span: Span,
+    name_span: Option<Span>,
     value_ty: Option<&Type>,
     doc: Option<&str>,
     is_top: bool,
@@ -132,18 +135,27 @@ fn collect_let_pattern_defs(
 ) {
     match &pattern.kind {
         PatternKind::Ident(name) if resolve(*name) != "_" => {
-            // For the bare `let x = ...` case the pattern IS the whole LHS
-            // ident; prefer the enclosing decl span (the `let` keyword
-            // position) to preserve the pre-fix goto-def behaviour. For
-            // leaves of a compound pattern (e.g. `a` inside `(a, b)`) use
-            // the ident's own span so goto-def lands on the identifier.
+            // For the bare top-level `let x = ...` case use the binding's
+            // name-identifier span (round-71 DX-1 fix), mirroring the
+            // FnDecl/TypeDecl name_span pattern from round-63 B1. Without
+            // this, LSP rename uses the `let` keyword span and clobbers
+            // `let` (or `pub`) instead of replacing the name. For leaves
+            // of a compound pattern (e.g. `a` inside `(a, b)`) use the
+            // ident's own span so goto-def lands on the identifier.
             // `is_top` is true at the outermost call; goes false for any
             // recursion into sub-patterns so destructured leaves get
             // their own span.
             defs.insert(
                 *name,
                 DefInfo {
-                    span: if is_top { decl_span } else { pattern.span },
+                    span: if is_top {
+                        // Prefer the parser-recorded name_span when present.
+                        // For a bare `Ident` pattern this is the same as
+                        // `pattern.span`; the `unwrap_or` is just defensive.
+                        name_span.unwrap_or(pattern.span)
+                    } else {
+                        pattern.span
+                    },
                     ty: value_ty.cloned(),
                     params: vec![],
                     // Only the bare binding inherits the let's doc; a
@@ -165,12 +177,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, decl_span, inner, None, false, defs);
+                collect_let_pattern_defs(p, decl_span, None, inner, None, false, defs);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, value_ty, None, false, defs);
+                collect_let_pattern_defs(p, decl_span, None, value_ty, None, false, defs);
             }
         }
         PatternKind::Constructor(ctor, fields) => {
@@ -181,7 +193,7 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, decl_span, inner_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, decl_span, None, inner_ty.as_ref(), None, false, defs);
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -197,7 +209,7 @@ fn collect_let_pattern_defs(
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
@@ -231,7 +243,7 @@ fn collect_let_pattern_defs(
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
@@ -253,10 +265,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, elem_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, decl_span, None, elem_ty.as_ref(), None, false, defs);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, decl_span, list_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(r, decl_span, None, list_ty.as_ref(), None, false, defs);
             }
         }
         _ => {}

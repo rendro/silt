@@ -2548,14 +2548,31 @@ impl TypeChecker {
                         self.error(msg, span);
                         Type::Error
                     }
-                    // Primitive types — check method table for trait methods
-                    Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => {
+                    // Primitive types — check method table for trait methods.
+                    // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
+                    // in `src/typechecker/mod.rs:6542`); Channel and Fun are not
+                    // auto-derived but user-defined trait impls register entries
+                    // under the canonical names "Channel" / "Fun" via
+                    // `type_name_for_method_dispatch` (see `src/typechecker/mod.rs:1832`,
+                    // `src/typechecker/mod.rs:1840`), so dispatch must route those
+                    // receivers through the same `method_table` lookup.
+                    Type::Int
+                    | Type::Float
+                    | Type::ExtFloat
+                    | Type::Bool
+                    | Type::String
+                    | Type::Unit
+                    | Type::Channel(_)
+                    | Type::Fun(_, _) => {
                         let type_name = match &obj_ty {
                             Type::Int => intern("Int"),
                             Type::Float => intern("Float"),
+                            Type::ExtFloat => intern("ExtFloat"),
                             Type::Bool => intern("Bool"),
                             Type::String => intern("String"),
                             Type::Unit => intern("()"),
+                            Type::Channel(_) => intern("Channel"),
+                            Type::Fun(_, _) => intern("Fun"),
                             _ => unreachable!(),
                         };
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {

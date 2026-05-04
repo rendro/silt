@@ -279,24 +279,15 @@ fn normalize_module_path(p: &std::path::Path) -> String {
 }
 
 /// Clamp a span pointing past the end of `source` back onto the last
-/// real line. Mirrors `errors::clamp_span_to_source`; duplicated here
-/// so `format_module_source_error` can render a snippet for EOF
-/// parse errors. Lock: tests/modules.rs
-/// `test_module_parse_error_eof_renders_snippet`.
+/// real line. Round-71 ERR-1 fix: this used to be a byte-identical
+/// copy of `errors::clamp_span_to_source`. The helper has been lifted
+/// to `pub(crate)` and this wrapper now delegates so EOF parse-error
+/// snippets stay in lockstep with the rest of the diagnostics surface.
+/// Lock: `tests/modules.rs::test_module_parse_error_eof_renders_snippet`
+/// and the source-grep lock in
+/// `tests/round71_dispatch_collapse_and_parity_tests.rs`.
 fn clamp_span_to_module_source(span: Span, source: &str) -> Span {
-    if span.line == 0 {
-        return span;
-    }
-    let line_count = source.lines().count();
-    if line_count == 0 {
-        return span;
-    }
-    if span.line <= line_count {
-        return span;
-    }
-    let last_line = source.lines().last().unwrap_or("");
-    let last_col = last_line.chars().count().saturating_add(1);
-    Span::with_offset(line_count, last_col, span.offset)
+    crate::errors::clamp_span_to_source(span, source)
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's

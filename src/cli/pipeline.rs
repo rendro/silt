@@ -278,10 +278,14 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
 /// checker emits for imports the compiler will later resolve. We gate on
 /// both the warning severity and the message prefix so a future real type
 /// error that happens to mention those words isn't swallowed.
+///
+/// Message-text matching is delegated to
+/// `silt::diagnostic_filters::is_unknown_module_warning_message` so the
+/// LSP's `TypeError`-shaped sibling stays in lock-step.
 pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
     err.is_warning
         && err.kind == silt::errors::ErrorKind::Type
-        && err.message.contains("unknown module")
+        && silt::diagnostic_filters::is_unknown_module_warning_message(&err.message)
 }
 
 /// Returns true iff `err` is the typechecker's "module 'X' is not
@@ -321,14 +325,14 @@ pub(crate) fn is_module_not_imported_typecheck_error(err: &SourceError) -> bool 
 /// `"type argument count mismatch ..."` produced by the typechecker —
 /// the old prefix silently demoted real type errors in any file that
 /// also happened to import a user module (GAP #7).
+///
+/// Message-text matching is delegated to
+/// `silt::diagnostic_filters::is_user_import_resolvable_error_message`
+/// so the LSP's `TypeError`-shaped sibling stays in lock-step.
 pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
     err.kind == silt::errors::ErrorKind::Type
         && !err.is_warning
-        && (err.message.starts_with("undefined variable")
-            || err.message.starts_with("undefined constructor")
-            || err.message.starts_with("undefined type")
-            || err.message.starts_with("unknown field")
-            || err.message.contains("does not implement"))
+        && silt::diagnostic_filters::is_user_import_resolvable_error_message(&err.message)
 }
 
 /// Compile a file end-to-end (lex → parse → typecheck → compile),

@@ -7,8 +7,10 @@
 //!   * Type decls with a body — fold the enum/record body.
 //!   * Match arms' RHS blocks and block expressions.
 //!
-//! Each fold uses `Region` kind (silt has no block comments yet; import
-//! groups and docstring spans are not currently distinguished).
+//! Each fold uses `Region` kind. silt has nested `{- -}` block comments
+//! (see `lexer::Lexer::skip_block_comment`), but the folding range
+//! handler does not currently emit folds for them; import groups and
+//! docstring spans are also not yet distinguished.
 
 use lsp_types::{FoldingRange, FoldingRangeKind};
 

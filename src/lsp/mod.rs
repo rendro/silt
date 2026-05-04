@@ -76,6 +76,14 @@ struct Server {
     documents: HashMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
+    /// Cached builtin parameter names: "module.func" → ordered argument
+    /// names. Sibling registry to `builtin_sigs`; keyed identically so
+    /// `signature_help` can populate `ParameterInformation` per arg
+    /// (see `src/typechecker/mod.rs::builtin_param_names`). Builtins
+    /// not present here get `parameters: vec![]` — round-71 DX-4 seeds
+    /// the most-used `list.*` / `string.*` / `map.*` / `set.*` / `io.*`
+    /// modules; a follow-up round can extend coverage.
+    builtin_param_names: HashMap<&'static str, &'static [&'static str]>,
     /// Cached markdown docs for every built-in name with a registered
     /// doc string. Populated once at startup from
     /// `typechecker::builtin_docs()`. Used by `hover` /
@@ -116,6 +124,7 @@ impl Server {
             builtin_sigs: typechecker::builtin_type_signatures(),
             builtin_docs: typechecker::builtin_docs(),
             builtin_effects: typechecker::builtin_effects(),
+            builtin_param_names: typechecker::builtin_param_names(),
             diagnostics_cache: HashMap::new(),
             strict_effects: false,
         }

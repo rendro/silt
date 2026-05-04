@@ -902,6 +902,7 @@ impl Parser {
                                 ty,
                                 value,
                                 doc,
+                                name_span,
                                 ..
                             } => Ok(Decl::Let {
                                 pattern,
@@ -909,6 +910,7 @@ impl Parser {
                                 value,
                                 is_pub: true,
                                 span,
+                                name_span,
                                 doc: pub_doc.or(doc),
                             }),
                             _ => unreachable!("parse_let_decl always returns Decl::Let"),
@@ -2191,6 +2193,15 @@ impl Parser {
         let doc = self.doc_for_span(span);
         self.expect(&Token::Let)?;
         let pattern = self.parse_pattern()?;
+        // Capture the binding's name-identifier span when the pattern is a
+        // bare `Ident` — needed by LSP rename / references / definition
+        // (round-71 fix: without this, the `let` keyword span gets used as
+        // the edit range and the rename clobbers `let` / `pub`).
+        // Destructuring patterns get `None`; rename through them bails.
+        let name_span = match &pattern.kind {
+            PatternKind::Ident(_) => Some(pattern.span),
+            _ => None,
+        };
         let ty = if self.peek_skip_nl() == &Token::Colon {
             self.advance();
             Some(self.parse_type_expr()?)
@@ -2206,6 +2217,7 @@ impl Parser {
             value,
             is_pub: false,
             span,
+            name_span,
             doc,
         })
     }

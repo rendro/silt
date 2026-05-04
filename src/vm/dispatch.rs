@@ -90,62 +90,33 @@ where
 impl Vm {
     /// Register all builtin functions and variant constructors in globals.
     pub(super) fn register_builtins(&mut self) {
-        // Variant constructors
-        self.globals
-            .insert("Ok".into(), Value::VariantConstructor("Ok".into(), 1));
-        self.globals
-            .insert("Err".into(), Value::VariantConstructor("Err".into(), 1));
-        self.globals
-            .insert("Some".into(), Value::VariantConstructor("Some".into(), 1));
-        self.globals
-            .insert("None".into(), Value::Variant("None".into(), Vec::new()));
-        self.globals
-            .insert("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
-        self.globals.insert(
-            "Continue".into(),
-            Value::VariantConstructor("Continue".into(), 1),
-        );
-        self.globals.insert(
-            "Message".into(),
-            Value::VariantConstructor("Message".into(), 1),
-        );
-        self.globals
-            .insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
-        self.globals
-            .insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
-        self.globals
-            .insert("Sent".into(), Value::Variant("Sent".into(), Vec::new()));
-        // ChannelOp constructors for `channel.select`. `Recv(ch)` and
-        // `Send(ch, value)` are the one-and-only shapes accepted by the
-        // select op list.
-        self.globals
-            .insert("Recv".into(), Value::VariantConstructor("Recv".into(), 1));
-        self.globals
-            .insert("Send".into(), Value::VariantConstructor("Send".into(), 2));
-        for day in [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday",
-        ] {
-            self.globals
-                .insert(day.into(), Value::Variant(day.into(), Vec::new()));
-        }
-        for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
-            self.globals
-                .insert(method.into(), Value::Variant(method.into(), Vec::new()));
+        // ── Prelude / non-error enum variants ──
+        // Round-71 PARALLEL-ARRAY-DRIFT fix: this loop is now data-driven
+        // from `module::builtin_prelude_enum_variants_with_arity()`. The
+        // previous hand-rolled per-variant `insert()` pairs (one per
+        // constructor for Result / Option / Step / ChannelResult /
+        // ChannelOp / Weekday / Method) duplicated the registry that
+        // already lives in `module::builtin_enum_variants`. The
+        // collapse mirrors the round-64 fix done below for the
+        // typed-error enums.
+        for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity() {
+            for (variant, arity) in variants.iter() {
+                let value = if *arity == 0 {
+                    Value::Variant((*variant).into(), Vec::new())
+                } else {
+                    Value::VariantConstructor((*variant).into(), *arity)
+                };
+                self.globals.insert((*variant).into(), value);
+            }
         }
 
         // ── Stdlib error variants ──
-        // Phase 0 of the stdlib error redesign (implemented and
-        // proposal removed in commit 7680536). Each variant is globally
-        // unique (module-prefixed) so we can register it as a bare
-        // global the same way other builtin variants are. N-ary variants
-        // land as `VariantConstructor`; nullary variants land as
-        // `Variant` values.
+        // See `module.rs::builtin_error_enum_variants_with_arity` for
+        // Phase 0 background. Each variant is globally unique
+        // (module-prefixed) so we can register it as a bare global the
+        // same way other builtin variants are. N-ary variants land as
+        // `VariantConstructor`; nullary variants land as `Variant`
+        // values.
         //
         // Round-64 DUP-1 fix: this loop is now data-driven from
         // `module::builtin_error_enum_variants_with_arity()`. The
@@ -327,38 +298,24 @@ impl Vm {
                 let other = &extra_args[0];
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
-                    (Value::Float(a), Value::Float(b)) => match a.partial_cmp(b) {
+                    // Round-71: collapsed four byte-identical NaN /
+                    // non-finite arms into one or-pattern, mirroring
+                    // `src/vm/arithmetic.rs:130-134`. The two pre-round
+                    // wordings ("compare() cannot compare non-finite
+                    // float values" on Float/Float and "compare() cannot
+                    // compare NaN values" on the three Float/ExtFloat
+                    // shapes) are unified to the canonical wording used
+                    // by `arithmetic.rs::compare` — NaN IS non-finite,
+                    // so the broader phrasing covers every partial_cmp
+                    // failure across both dispatch surfaces.
+                    (
+                        Value::Float(a) | Value::ExtFloat(a),
+                        Value::Float(b) | Value::ExtFloat(b),
+                    ) => match a.partial_cmp(b) {
                         Some(ord) => ord,
                         None => {
                             return Some(Err(VmError::new(
-                                "compare() cannot compare non-finite float values".into(),
-                            )));
-                        }
-                    },
-                    // ExtFloat (produced by `Float / Float`) and mixed
-                    // Float/ExtFloat: mirror the arithmetic.rs compare
-                    // path — widen to f64 and error on NaN.
-                    (Value::ExtFloat(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
-                        Some(ord) => ord,
-                        None => {
-                            return Some(Err(VmError::new(
-                                "compare() cannot compare NaN values".into(),
-                            )));
-                        }
-                    },
-                    (Value::Float(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
-                        Some(ord) => ord,
-                        None => {
-                            return Some(Err(VmError::new(
-                                "compare() cannot compare NaN values".into(),
-                            )));
-                        }
-                    },
-                    (Value::ExtFloat(a), Value::Float(b)) => match a.partial_cmp(b) {
-                        Some(ord) => ord,
-                        None => {
-                            return Some(Err(VmError::new(
-                                "compare() cannot compare NaN values".into(),
+                                "cannot compare non-finite float values".into(),
                             )));
                         }
                     },

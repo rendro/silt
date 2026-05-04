@@ -52,12 +52,33 @@ impl Server {
             let (label, params_info) = build_signature_from_def(&fn_name, def);
             (label, params_info, def.doc.clone())
         } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
-            // Show builtin type signature (no individual param info).
-            // Phase-2 builtin docs: surface stdlib markdown
-            // alongside the signature so signature-help is a real
-            // documentation surface for builtins, not just a type.
+            // Show builtin type signature with per-parameter info when
+            // the registry covers this builtin. Round-71 DX-4 fix: the
+            // pre-round implementation always emitted `vec![]` here,
+            // breaking active-arg highlighting across the entire
+            // stdlib surface. The names come from
+            // `typechecker::builtin_param_names()` — see that registry
+            // for which builtins have coverage. Builtins not in the
+            // registry continue to emit `vec![]` (sigless behavior).
+            //
+            // Phase-2 builtin docs: surface stdlib markdown alongside
+            // the signature so signature-help is a real documentation
+            // surface for builtins, not just a type.
             let doc_text = self.builtin_docs.get(&fn_name).cloned();
-            (format!("{fn_name}: {sig}"), vec![], doc_text)
+            let params_info = self
+                .builtin_param_names
+                .get(fn_name.as_str())
+                .map(|names| {
+                    names
+                        .iter()
+                        .map(|n| ParameterInformation {
+                            label: ParameterLabel::Simple((*n).to_string()),
+                            documentation: None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (format!("{fn_name}: {sig}"), params_info, doc_text)
         } else {
             return None;
         };

@@ -20,6 +20,7 @@ pub mod ast;
 pub mod builtins;
 pub mod bytecode;
 pub mod compiler;
+pub mod diagnostic_filters;
 pub mod disassemble;
 pub mod errors;
 pub mod formatter;

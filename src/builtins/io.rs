@@ -58,8 +58,9 @@ fn io_err(inner: Value) -> Value {
 /// (NotFound / PermissionDenied / AlreadyExists); pass "" when the
 /// builtin has no path context (e.g. `io.read_line`).
 ///
-/// Phase 1 of the stdlib error redesign (implemented and proposal
-/// removed in commit 7680536).
+/// See `module.rs::builtin_error_enum_variants_with_arity` for
+/// Phase 0 background; this function lives at the Phase 1 boundary
+/// (mapping native I/O failures into the typed `IoError` enum).
 pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
     let (name, arg): (&str, Option<String>) = match err.kind() {

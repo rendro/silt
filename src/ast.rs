@@ -615,6 +615,15 @@ pub enum Decl {
         value: Expr,
         is_pub: bool,
         span: Span,
+        /// Span of the binding's name identifier when `pattern` is a bare
+        /// `Ident` (e.g. the `counter` in `let counter = 42` or `pub let
+        /// counter = 42`). `None` when the binding is a destructuring
+        /// pattern (`let (a, b) = ...`, `let User { name } = ...`, etc.)
+        /// — those have no single name to point at, so LSP rename through
+        /// the let bails. Mirrors `FnDecl::name_span` / `TypeDecl::name_span`
+        /// (round-63 B1); without it, `span` (the `let` keyword) gets used
+        /// for rename / references and corrupts the keyword.
+        name_span: Option<Span>,
         /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
         doc: Option<String>,
     },

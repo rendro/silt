@@ -112,14 +112,14 @@ inherits it as if the impl had pasted the body in directly. Impls remain
 free to override the default.
 
 ```silt
-trait Display {
+trait Show {
   fn show(self) -> String { "default" }   -- default body
   fn debug(self) -> String                 -- abstract method (no body)
 }
 
 type Item { v: Int }
 
-trait Display for Item {
+trait Show for Item {
   fn debug(self) -> String { "item-debug" }
   -- show() is omitted — the default "default" is used at runtime
 }
@@ -137,7 +137,7 @@ A trait can mix default and abstract methods freely:
 Overriding a default is just writing the method in the impl as usual:
 
 ```silt
-trait Display for Item {
+trait Show for Item {
   fn show(self) -> String { "explicit-show" }   -- overrides the default
   fn debug(self) -> String { "item-debug" }
 }
