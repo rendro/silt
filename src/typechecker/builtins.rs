@@ -761,7 +761,15 @@ impl TypeChecker {
         // `Int * 2` would typecheck when `Int` is the bare descriptor
         // (T2 audit fix: the runtime represents the value as
         // `Value::PrimitiveDescriptor("Int")`, not `Value::Int(_)`).
-        for name in &["Int", "Float", "ExtFloat", "String", "Bool"] {
+        //
+        // Round-73 BLOAT-2 fix: name set hoisted to
+        // `module::BUILTIN_PRIMITIVE_NAMES` so this loop and the VM's
+        // `Value::PrimitiveDescriptor` registration loop in
+        // `src/vm/dispatch.rs::register_builtins` can never drift on
+        // the names set. The per-name `Type` mapping stays here because
+        // it's typechecker-only (the VM doesn't need to know `Int` →
+        // `Type::Int`).
+        for name in crate::module::BUILTIN_PRIMITIVE_NAMES {
             let inner = match *name {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
@@ -789,54 +797,68 @@ impl TypeChecker {
         // as `Value::TypeDescriptor(<name>)` globals. Method dispatch
         // via the descriptor routes to method_table[(<name>, method)]
         // exactly like user-defined parameterized types.
-        {
-            // `List` → forall a. TypeOf(List(a))
-            let (a, av) = self.fresh_tv();
+        //
+        // Round-73 BLOAT-2 fix: the NAME set is hoisted to
+        // `module::BUILTIN_GENERIC_CONTAINER_NAMES`, parallel to the
+        // VM's `Value::TypeDescriptor` registration loop in
+        // `src/vm/dispatch.rs::register_builtins`. The per-container
+        // construction stays a `match` because each container's type
+        // signature has a distinct generic arity (`Map(k,v)` vs the
+        // single-arg containers) and the typechecker scheme has to
+        // build the matching `Type` shape. `Tuple` is currently
+        // VM-only — it doesn't have a typechecker-side polymorphic
+        // descriptor scheme, so the loop skips it.
+        for name in crate::module::BUILTIN_GENERIC_CONTAINER_NAMES {
+            let (vars, ty) = match *name {
+                "List" => {
+                    // `List` → forall a. TypeOf(List(a))
+                    let (a, av) = self.fresh_tv();
+                    (
+                        vec![av],
+                        Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
+                    )
+                }
+                "Set" => {
+                    // `Set` → forall a. TypeOf(Set(a))
+                    let (a, av) = self.fresh_tv();
+                    (
+                        vec![av],
+                        Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
+                    )
+                }
+                "Channel" => {
+                    // `Channel` → forall a. TypeOf(Channel(a))
+                    let (a, av) = self.fresh_tv();
+                    (
+                        vec![av],
+                        Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
+                    )
+                }
+                "Map" => {
+                    // `Map` → forall k v. TypeOf(Map(k, v))
+                    let (k, kv) = self.fresh_tv();
+                    let (v, vv) = self.fresh_tv();
+                    (
+                        vec![kv, vv],
+                        Type::Generic(
+                            intern("TypeOf"),
+                            vec![Type::Map(Box::new(k), Box::new(v))],
+                        ),
+                    )
+                }
+                // `Tuple` is registered VM-side as a `TypeDescriptor`
+                // but has no typechecker polymorphic scheme today —
+                // tuples flow through the type system as `Type::Tuple`
+                // with explicit element types, not via the descriptor
+                // namespace.
+                "Tuple" => continue,
+                _ => continue,
+            };
             env.define(
-                intern("List"),
+                intern(name),
                 Scheme {
-                    vars: vec![av],
-                    ty: Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
-                    constraints: vec![],
-                    effects: EffectSet::pure(),
-                },
-            );
-        }
-        {
-            // `Set` → forall a. TypeOf(Set(a))
-            let (a, av) = self.fresh_tv();
-            env.define(
-                intern("Set"),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
-                    constraints: vec![],
-                    effects: EffectSet::pure(),
-                },
-            );
-        }
-        {
-            // `Channel` → forall a. TypeOf(Channel(a))
-            let (a, av) = self.fresh_tv();
-            env.define(
-                intern("Channel"),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
-                    constraints: vec![],
-                    effects: EffectSet::pure(),
-                },
-            );
-        }
-        {
-            // `Map` → forall k v. TypeOf(Map(k, v))
-            let (k, kv) = self.fresh_tv();
-            let (v, vv) = self.fresh_tv();
-            env.define(
-                intern("Map"),
-                Scheme {
-                    vars: vec![kv, vv],
-                    ty: Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
+                    vars,
+                    ty,
                     constraints: vec![],
                     effects: EffectSet::pure(),
                 },

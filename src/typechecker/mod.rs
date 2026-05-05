@@ -1805,9 +1805,16 @@ impl TypeChecker {
         // args and verify_trait_obligation would fall back to the bare
         // "implements trait" check, letting mismatched parameterized impls
         // silently satisfy the obligation.
+        // Round 73 LATENT (perf): hoist the `trait_arg_bindings` clone
+        // out of the inner loop. Previously cloned once per outer
+        // iteration (O(M·N) clones for M tyvars and N existing
+        // bindings); the inner loop's only reason to clone was to
+        // satisfy the borrow checker since `self.trait_arg_bindings`
+        // is mutated inside. One clone now serves all iterations.
+        let trait_arg_bindings_snapshot = self.trait_arg_bindings.clone();
         for (&old_tv, new_ty) in &mapping {
             if let Type::Var(new_tv) = new_ty {
-                for (&(tv, trait_name), args) in self.trait_arg_bindings.clone().iter() {
+                for (&(tv, trait_name), args) in trait_arg_bindings_snapshot.iter() {
                     if tv == old_tv {
                         self.trait_arg_bindings
                             .insert((*new_tv, trait_name), args.clone());
@@ -1862,6 +1869,24 @@ impl TypeChecker {
             Type::Range(_) => unreachable!(
                 "canonicalize should have collapsed Range(_) to List(_) before this match"
             ),
+            // Anonymous (structural) records are CONCRETE types — they
+            // carry a definite shape — but no user impl can ever target
+            // them (impls bind to nominal heads only). Round 73 B2:
+            // returning `None` here let `verify_trait_obligation` and
+            // its callers in inference.rs treat AnonRecord receivers as
+            // "still polymorphic, defer", which silently bypassed
+            // user-trait `where` constraints — a soundness hole.
+            // Returning a synthetic name makes the existing
+            // `trait_impl_set.contains(...)` check fire the correct
+            // "type '<anon>' does not implement trait 'X'" diagnostic.
+            // The synthetic name `"<anon>"` matches
+            // `crate::types::canonical::canonical_name`'s key for
+            // AnonRecord and starts with `<`, which is not a valid
+            // leading character for a surface-syntax type identifier
+            // (parser requires uppercase ASCII letters), so no user
+            // `impl Trait for X { ... }` registration can ever collide
+            // with this key.
+            Type::AnonRecord { .. } => Some(intern("<anon>")),
             _ => None,
         }
     }
@@ -3030,8 +3055,22 @@ impl TypeChecker {
             for (name, constrained_type) in &body_types {
                 let new_scheme = self.generalize(&env, constrained_type);
                 // Preserve where-clause constraints from the original scheme
+                //
+                // Round 73 B1 (BROKEN, soundness): the gate used to be a
+                // bare `vars.len()` count comparison, which silently
+                // missed row-poly narrowing where one tyvar (e.g. an
+                // unannotated record param) gets pinned by body
+                // inference to `AnonRecord{f: β, ...γ}` — a tyvar is
+                // consumed AND a row-tail tyvar is introduced, leaving
+                // the count equal. Without re-narrowing, deferred
+                // field-access checks resolve against the body-pass
+                // tyvar (open row) rather than the call-site type, and
+                // bogus field accesses leak into runtime as crashes.
+                // Now we also fire when the type tree narrowed
+                // structurally (Var → concrete head at any position).
                 if let Some(original_scheme) = env.lookup(*name).cloned()
-                    && original_scheme.vars.len() != new_scheme.vars.len()
+                    && (original_scheme.vars.len() != new_scheme.vars.len()
+                        || scheme_narrowed(&original_scheme.ty, &new_scheme.ty))
                 {
                     // Round 64 item 6B (annotated polymorphic recursion):
                     // a fully-annotated fn's signature is authoritative.
@@ -6274,6 +6313,111 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
     }
 }
 
+/// Round 73 B1 (BROKEN): detect whether `new` is a structural narrowing
+/// of `old`. Returns true when the body-pass scheme pinned a tyvar in
+/// `old` to a concrete shape in `new` — even when the total `vars.len()`
+/// stays equal because a row-tail variable happens to replace the
+/// unification variable that got constrained.
+///
+/// The classic miss: `fn pluck(r) = r.zzznosuchfield`. Pass-2 generalizes
+/// to `Fn(α) -> β` (vars=[α, β]); body inference unifies `α` with
+/// `AnonRecord{zzznosuchfield: β, ...γ}`, giving `Fn(AnonRecord{..}) -> β`
+/// (vars=[β, γ]). The old `vars.len()` gate compared 2 vs 2 and skipped
+/// narrowing — leaving the field-access deferral pool wired to the
+/// pass-2 tyvars instead of the pass-3 receiver type, masking the
+/// "anon record has no field" diagnostic.
+///
+/// We walk both trees in lockstep and return true at the first position
+/// where `old` is a `Type::Var` and `new` is anything other than a
+/// `Type::Var`. (Narrowing is monotone — bound-to-concrete only flows
+/// one way; we never see Var→Var rebindings here at the scheme level.)
+/// Row-tails follow the same rule: an open `RowTail::Var` narrowing to
+/// `RowTail::Closed` (or to a Var bound to a wider AnonRecord) counts
+/// as narrowing.
+pub(super) fn scheme_narrowed(old: &Type, new: &Type) -> bool {
+    match (old, new) {
+        // Var → non-Var: narrowed.
+        (Type::Var(_), Type::Var(_)) => false,
+        (Type::Var(_), _) => true,
+        // non-Var → Var: should not happen for monotone narrowing,
+        // but treat as "not narrowed" (caller's vars.len() check
+        // would have caught any genuine widening as a separate bug).
+        (_, Type::Var(_)) => false,
+        (Type::Fun(op, or_), Type::Fun(np, nr)) => {
+            if op.len() != np.len() {
+                return true;
+            }
+            op.iter().zip(np.iter()).any(|(a, b)| scheme_narrowed(a, b))
+                || scheme_narrowed(or_, nr)
+        }
+        (Type::List(o), Type::List(n)) => scheme_narrowed(o, n),
+        (Type::Range(o), Type::Range(n)) => scheme_narrowed(o, n),
+        (Type::List(o), Type::Range(n)) | (Type::Range(o), Type::List(n)) => {
+            scheme_narrowed(o, n)
+        }
+        (Type::Set(o), Type::Set(n)) => scheme_narrowed(o, n),
+        (Type::Channel(o), Type::Channel(n)) => scheme_narrowed(o, n),
+        (Type::Tuple(o), Type::Tuple(n)) => {
+            o.len() != n.len()
+                || o.iter().zip(n.iter()).any(|(a, b)| scheme_narrowed(a, b))
+        }
+        (Type::Map(ok, ov), Type::Map(nk, nv)) => {
+            scheme_narrowed(ok, nk) || scheme_narrowed(ov, nv)
+        }
+        (Type::Record(on, of), Type::Record(nn, nf)) => {
+            on != nn
+                || of.len() != nf.len()
+                || of.iter().zip(nf.iter()).any(|((_, a), (_, b))| scheme_narrowed(a, b))
+        }
+        (Type::Generic(on, oa), Type::Generic(nn, na)) => {
+            on != nn
+                || oa.len() != na.len()
+                || oa.iter().zip(na.iter()).any(|(a, b)| scheme_narrowed(a, b))
+        }
+        (
+            Type::AnonRecord {
+                fields: of,
+                tail: ot,
+            },
+            Type::AnonRecord {
+                fields: nf,
+                tail: nt,
+            },
+        ) => {
+            // Field set grew (extra row fields pinned), shrunk, or any
+            // matching field narrowed — count as narrowing.
+            if of.len() != nf.len() {
+                return true;
+            }
+            for ((on, ot_), (nn, nt_)) in of.iter().zip(nf.iter()) {
+                if on != nn || scheme_narrowed(ot_, nt_) {
+                    return true;
+                }
+            }
+            // Row tail pinned from open to closed.
+            matches!((ot, nt), (RowTail::Var(_), RowTail::Closed))
+        }
+        (
+            Type::AssocProj {
+                receiver: or_,
+                trait_name: ot,
+                assoc_name: oa,
+            },
+            Type::AssocProj {
+                receiver: nr,
+                trait_name: nt,
+                assoc_name: na,
+            },
+        ) => ot != nt || oa != na || scheme_narrowed(or_, nr),
+        // Different head constructors — structural mismatch counts as
+        // narrowing (e.g. an old `Type::Var` resolved to a Generic via
+        // unification but the comparison happens at a head where the
+        // trees diverge).
+        _ if std::mem::discriminant(old) != std::mem::discriminant(new) => true,
+        _ => false,
+    }
+}
+
 /// Collect the set of variable names bound by a pattern.
 pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
     match &pat.kind {
@@ -6647,31 +6791,25 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Record arms in `dispatch_trait_method` are dead.
 
     // Built-in enums — non-generic, all four traits.
-    register_auto_derived_impls_for(
-        checker,
-        &[
-            "Step",
-            "ChannelResult",
-            "Method",
-            "Weekday",
-            // Stdlib error enums: Display + Error are already registered
-            // in `errors.rs`; re-stamping with all_auto_traits adds the
-            // missing Equal/Compare/Hash without disturbing the existing
-            // entries (insert is idempotent).
-            "IoError",
-            "JsonError",
-            "TomlError",
-            "ParseError",
-            "HttpError",
-            "RegexError",
-            "PgError",
-            "TcpError",
-            "TimeError",
-            "BytesError",
-            "ChannelError",
-        ],
-        all_auto_traits,
-    );
+    //
+    // Round 73 L4 (LATENT, dead-code dedup): the stdlib error-enum
+    // names are no longer hand-rolled here; they're sourced from
+    // `module::builtin_error_enum_variants_with_arity()` — the
+    // single authoritative registry. Adding/renaming a typed-error
+    // enum no longer requires a parallel-array edit at this site.
+    let error_enum_names: Vec<&'static str> =
+        crate::module::builtin_error_enum_variants_with_arity()
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+    let mut all_enum_names: Vec<&'static str> =
+        vec!["Step", "ChannelResult", "Method", "Weekday"];
+    // Stdlib error enums: Display + Error are already registered in
+    // `errors.rs`; re-stamping with all_auto_traits adds the missing
+    // Equal/Compare/Hash without disturbing the existing entries
+    // (insert is idempotent).
+    all_enum_names.extend(error_enum_names);
+    register_auto_derived_impls_for(checker, &all_enum_names, all_auto_traits);
 
     // Built-in records — Date/Time/DateTime/Duration/Instant/FileStat
     // and Weekday are already stamped by `register_auto_derived_impls_for`

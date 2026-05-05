@@ -7,6 +7,41 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "crypto", "encoding", "tcp", "stream", "uuid",
 ];
 
+/// Names of the built-in primitive type descriptors (uppercase) usable
+/// as `type a` arguments and for static-style trait dispatch
+/// (`Int.parse(...)`, etc.). The runtime emits each one as a
+/// `Value::PrimitiveDescriptor("<Name>")` global; the typechecker
+/// registers each as `TypeOf(<inner>)`.
+///
+/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
+/// `src/vm/dispatch.rs::register_builtins` and
+/// `src/typechecker/builtins.rs::register_builtins` so adding a new
+/// primitive descriptor only requires touching this constant. Per-name
+/// behavior (the `Type` mapping in the typechecker, the
+/// `Value::PrimitiveDescriptor` shape in the VM) still lives at the
+/// call sites — only the NAME set is hoisted to prevent drift.
+///
+/// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
+pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "String", "Bool"];
+
+/// Names of the built-in generic container type descriptors (uppercase)
+/// usable as `type a` arguments and for static-style trait dispatch
+/// (`List.empty()`, etc.). The runtime emits each one as a
+/// `Value::TypeDescriptor("<Name>")` global; the typechecker registers
+/// each as a polymorphic `TypeOf(Container(...))` scheme with arity
+/// matching the container's generic parameter count.
+///
+/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
+/// `src/vm/dispatch.rs::register_builtins` and
+/// `src/typechecker/builtins.rs::register_builtins`. Each container
+/// still has its own per-name code path (different generic arity for
+/// `Map(k,v)` vs the others), but the NAME set is centralised so the
+/// two sites cannot drift.
+///
+/// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
+pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] =
+    &["List", "Map", "Set", "Channel", "Tuple"];
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

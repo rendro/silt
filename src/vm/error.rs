@@ -90,8 +90,11 @@ impl std::error::Error for VmError {}
 
 /// Render a filtered view of a call stack as human-readable lines, applying
 /// the same head/tail truncation used by `silt run`.  Synthetic frames
-/// (`<script>`, `<call:...>`) are dropped.  Each returned line is already
-/// prefixed with "  -> " and has no trailing newline.
+/// (`<script>`, `<call:...>`) are dropped, but `<module:...>` frames are
+/// kept because they carry useful provenance for module-init errors —
+/// the call site that triggered the module's load and the source file
+/// that owns the failing top-level statement.  Each returned line is
+/// already prefixed with "  -> " and has no trailing newline.
 ///
 /// `format_frame` turns a (name, span) pair into its location string —
 /// callers pass the exact formatting they want (e.g. `file:line:col` for
@@ -106,7 +109,7 @@ where
 {
     let meaningful: Vec<&(String, Span)> = call_stack
         .iter()
-        .filter(|(name, _)| !name.starts_with('<'))
+        .filter(|(name, _)| !name.starts_with('<') || name.starts_with("<module:"))
         .collect();
     let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
     if meaningful.len() < 2 || !any_real_span {

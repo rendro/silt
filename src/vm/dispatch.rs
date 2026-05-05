@@ -87,6 +87,47 @@ where
     }
 }
 
+/// Uniform signature shared by every `call_<x>_error_trait` helper.
+type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
+
+/// Round-73 BLOAT-3: dispatch table for built-in `trait Error` impls.
+///
+/// Each `(enum_name, fn_ptr)` entry corresponds to a previous match
+/// arm in `dispatch_builtin` of the form
+/// `"<Enum>" => catch_builtin_panic("<Enum>",
+///   AssertUnwindSafe(|| <module>::call_<x>_error_trait(func, args)))`.
+///
+/// PgError / TcpError stay cfg-gated by being conditionally included
+/// in the table — the gate must match the gate on the corresponding
+/// `call_*_error_trait` symbol.
+///
+/// Lock test: `tests/round73_error_enum_registry_parity_tests.rs`.
+static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
+    ("IoError", builtins::io::call_io_error_trait),
+    ("JsonError", builtins::data::call_json_error_trait),
+    ("TomlError", builtins::toml::call_toml_error_trait),
+    ("ParseError", builtins::numeric::call_parse_error_trait),
+    ("HttpError", builtins::data::call_http_error_trait),
+    ("RegexError", builtins::data::call_regex_error_trait),
+    #[cfg(feature = "postgres")]
+    ("PgError", builtins::postgres::call_pg_error_trait),
+    #[cfg(feature = "tcp")]
+    ("TcpError", builtins::tcp::call_tcp_error_trait),
+    ("TimeError", builtins::data::call_time_error_trait),
+    ("BytesError", builtins::bytes::call_bytes_error_trait),
+    ("ChannelError", builtins::concurrency::call_channel_error_trait),
+];
+
+/// Look up the `trait Error` dispatch helper for a given builtin enum
+/// name. Returns `None` for any name not in the table (including
+/// cfg-gated names whose feature is disabled).
+fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
+    ERROR_TRAIT_DISPATCH
+        .iter()
+        .find(|(n, _)| *n == enum_name)
+        .map(|(_, f)| *f)
+}
+
 impl Vm {
     /// Register all builtin functions and variant constructors in globals.
     pub(super) fn register_builtins(&mut self) {
@@ -165,44 +206,35 @@ impl Vm {
         // and is routed through the matching `dispatch_builtin` arm.
         // `.display()` is handled generically by `dispatch_trait_method`
         // via `display_value`, so it does not need a per-enum BuiltinFn.
-        for enum_name in &[
-            "IoError",
-            "JsonError",
-            "TomlError",
-            "ParseError",
-            "HttpError",
-            "RegexError",
-            "PgError",
-            "TcpError",
-            "TimeError",
-            "BytesError",
-            "ChannelError",
-        ] {
+        //
+        // Round-73 BLOAT-1 fix: derived from
+        // `module::builtin_error_enum_variants_with_arity` so adding a
+        // new typed-error enum no longer requires editing this list.
+        // Parity lock: `tests/round73_error_enum_registry_parity_tests.rs`.
+        for (enum_name, _variants) in module::builtin_error_enum_variants_with_arity() {
             let key = format!("{enum_name}.message");
             self.globals
                 .insert(key.clone(), Value::BuiltinFn(key.clone()));
         }
 
-        // Primitive type descriptors
-        self.globals
-            .insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
-        self.globals
-            .insert("Float".into(), Value::PrimitiveDescriptor("Float".into()));
-        self.globals.insert(
-            "ExtFloat".into(),
-            Value::PrimitiveDescriptor("ExtFloat".into()),
-        );
-        self.globals
-            .insert("String".into(), Value::PrimitiveDescriptor("String".into()));
-        self.globals
-            .insert("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
+        // Primitive type descriptors.
+        // Round-73 BLOAT-2 fix: name set hoisted to
+        // `module::BUILTIN_PRIMITIVE_NAMES`.
+        for name in module::BUILTIN_PRIMITIVE_NAMES {
+            self.globals.insert(
+                (*name).into(),
+                Value::PrimitiveDescriptor((*name).into()),
+            );
+        }
 
         // Builtin container type descriptors — uppercase names so users
         // can pass `List`, `Map`, etc. as `type a` arguments or invoke
         // static-style trait methods (`List.empty()`). These don't
         // collide with the lowercase module names (`list`, `map`) used
         // for module calls.
-        for name in &["List", "Map", "Set", "Channel", "Tuple"] {
+        // Round-73 BLOAT-2 fix: name set hoisted to
+        // `module::BUILTIN_GENERIC_CONTAINER_NAMES`.
+        for name in module::BUILTIN_GENERIC_CONTAINER_NAMES {
             self.globals
                 .insert((*name).into(), Value::TypeDescriptor((*name).into()));
         }
@@ -563,54 +595,16 @@ impl Vm {
                 // ParseError are wired up; HttpError/RegexError trait
                 // impls still return `Result(_, String)` today and
                 // will migrate in later phases.
-                "IoError" => catch_builtin_panic(
-                    "IoError",
-                    AssertUnwindSafe(|| builtins::io::call_io_error_trait(func, args)),
-                ),
-                "JsonError" => catch_builtin_panic(
-                    "JsonError",
-                    AssertUnwindSafe(|| builtins::data::call_json_error_trait(func, args)),
-                ),
-                "TomlError" => catch_builtin_panic(
-                    "TomlError",
-                    AssertUnwindSafe(|| builtins::toml::call_toml_error_trait(func, args)),
-                ),
-                "ParseError" => catch_builtin_panic(
-                    "ParseError",
-                    AssertUnwindSafe(|| builtins::numeric::call_parse_error_trait(func, args)),
-                ),
-                "HttpError" => catch_builtin_panic(
-                    "HttpError",
-                    AssertUnwindSafe(|| builtins::data::call_http_error_trait(func, args)),
-                ),
-                "RegexError" => catch_builtin_panic(
-                    "RegexError",
-                    AssertUnwindSafe(|| builtins::data::call_regex_error_trait(func, args)),
-                ),
-                #[cfg(feature = "postgres")]
-                "PgError" => catch_builtin_panic(
-                    "PgError",
-                    AssertUnwindSafe(|| builtins::postgres::call_pg_error_trait(func, args)),
-                ),
-                #[cfg(feature = "tcp")]
-                "TcpError" => catch_builtin_panic(
-                    "TcpError",
-                    AssertUnwindSafe(|| builtins::tcp::call_tcp_error_trait(func, args)),
-                ),
-                "TimeError" => catch_builtin_panic(
-                    "TimeError",
-                    AssertUnwindSafe(|| builtins::data::call_time_error_trait(func, args)),
-                ),
-                "BytesError" => catch_builtin_panic(
-                    "BytesError",
-                    AssertUnwindSafe(|| builtins::bytes::call_bytes_error_trait(func, args)),
-                ),
-                "ChannelError" => catch_builtin_panic(
-                    "ChannelError",
-                    AssertUnwindSafe(|| {
-                        builtins::concurrency::call_channel_error_trait(func, args)
-                    }),
-                ),
+                //
+                // Round-73 BLOAT-3 fix: 11 byte-near-identical
+                // `<Enum>` => catch_builtin_panic("<Enum>",
+                // AssertUnwindSafe(|| <module>::call_<x>_error_trait(...)))
+                // arms collapsed onto `ERROR_TRAIT_DISPATCH` table
+                // lookup. Every `call_*_error_trait` shares the
+                // uniform `fn(&str, &[Value]) -> Result<Value,VmError>`
+                // signature so a single function pointer suffices.
+                // PgError/TcpError stay cfg-gated by being conditionally
+                // included in the table.
                 #[cfg(test)]
                 "__test_panic_builtin" => {
                     catch_builtin_panic(
@@ -626,7 +620,9 @@ impl Vm {
                     )
                 }
                 _ => {
-                    if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
+                    if let Some(f) = error_trait_dispatch(module) {
+                        catch_builtin_panic(module, AssertUnwindSafe(|| f(func, args)))
+                    } else if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
                         invoke_foreign_fn(name, &f, args)
                     } else {
                         // Round-64 LATENT fix: previously "unknown

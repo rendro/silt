@@ -23,7 +23,7 @@ use std::process;
 
 mod cli;
 
-use crate::cli::help::usage_text;
+use crate::cli::help::{GLOBAL_FLAGS, usage_text};
 use crate::cli::watch::maybe_handle_watch;
 
 // Windows defaults to a 1 MiB main-thread stack which is too tight for
@@ -68,7 +68,33 @@ fn run_main(args: Vec<String>) {
             println!("silt {}", env!("CARGO_PKG_VERSION"));
             process::exit(0);
         }
-        "--help" | "-h" | "help" => {
+        "--help" | "-h" => {
+            print!("{}", usage_text());
+            process::exit(0);
+        }
+        // `silt help` with no extra args mirrors `silt --help`. With a
+        // trailing token (`silt help fmt`) it drills into the
+        // per-subcommand help by re-dispatching as `silt <cmd> --help`.
+        // This matches the convention from cargo / git / rustup so users
+        // who type `silt help <X>` reflexively get what they expect
+        // instead of the global banner.
+        "help" => {
+            if args.len() >= 3 {
+                let sub = args[2].clone();
+                let mut forwarded: Vec<String> = Vec::with_capacity(3 + args.len() - 3);
+                forwarded.push(args[0].clone());
+                forwarded.push(sub);
+                forwarded.push("--help".to_string());
+                // Pass through any extra trailing tokens — most
+                // subcommands ignore them after `--help`, but keeping
+                // them lets future per-subcommand `help <topic>`
+                // routing work without another touch here.
+                for extra in &args[3..] {
+                    forwarded.push(extra.clone());
+                }
+                run_main(forwarded);
+                return;
+            }
             print!("{}", usage_text());
             process::exit(0);
         }
@@ -155,13 +181,24 @@ const SUBCOMMANDS: &[&str] = &[
     "add",
 ];
 
-/// Find the closest valid subcommand to `typo` within edit distance 2.
+/// Find the closest valid token to `typo` within edit distance 2.
 /// Returns `None` if no candidate is within that distance — in which
 /// case the caller should suppress the suggestion line entirely rather
 /// than offer a wildly unrelated command.
+///
+/// If `typo` starts with `-` we search the recognized global flag
+/// list (`--version`, `--help`, …); otherwise we search the
+/// subcommand list. Mixing the two pools would let `silt run` get
+/// suggested for `silt -ru` (edit distance 2 to `--run`-shaped flags),
+/// which is more confusing than helpful.
 fn suggest_subcommand(typo: &str) -> Option<&'static str> {
+    let pool: &[&'static str] = if typo.starts_with('-') {
+        GLOBAL_FLAGS
+    } else {
+        SUBCOMMANDS
+    };
     let mut best: Option<(&'static str, usize)> = None;
-    for &candidate in SUBCOMMANDS {
+    for &candidate in pool {
         let d = edit_distance(typo, candidate);
         if d <= 2 {
             match best {

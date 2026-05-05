@@ -667,6 +667,93 @@ pub(super) fn synth_display_impl_for_enum(
     )
 }
 
+// ── Shared record-side scaffolds ─────────────────────────────────────
+//
+// The record-side mirror of the enum-side `synth_binop_match_enum` /
+// `synth_unop_match_enum` collapse (round 69). All four record-side
+// auto-derives share the same skeleton:
+//
+//   1. **Empty-body fast path.** When `fields.is_empty()`, the body is
+//      a per-trait literal: `0` for Compare, `true` for Equal, `0` for
+//      Hash, `"Name {}"` for Display.
+//
+//   2. **Inhabited body.** A per-trait expression built over the field
+//      list — typically a left-fold of `self.f.method(other.f)` /
+//      `self.f.method()` for Compare / Equal / Hash / Display.
+//
+//   3. **FnDecl wrap + TraitImpl wrap.** Identical for every trait,
+//      modulo method name, return type, and parameter list shape
+//      (`(self, other)` for the binop traits, `(self)` for the unop
+//      traits).
+//
+// The two helpers below collapse 1+2+3 into one place. The four public
+// `synth_*_impl_for_record` entry points become small adapters that
+// supply the empty-body literal and the per-trait body builder.
+
+/// Scaffold for binop-shaped record derives (Compare, Equal).
+///
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// body is `empty_body` when `fields` is empty, otherwise the result of
+/// `full_body(self_sym, other_sym, fields)`.
+#[allow(clippy::too_many_arguments)]
+fn synth_binop_record_impl(
+    trait_name: Symbol,
+    method_name: Symbol,
+    ret_ty: TypeExpr,
+    type_name: Symbol,
+    type_params: &[Symbol],
+    fields: &[RecordField],
+    empty_body: Expr,
+    full_body: impl FnOnce(Symbol, Symbol, &[RecordField]) -> Expr,
+) -> TraitImpl {
+    let self_sym = intern("self");
+    let other_sym = intern("other");
+    let self_te = type_te(type_name, type_params);
+    let body = if fields.is_empty() {
+        empty_body
+    } else {
+        full_body(self_sym, other_sym, fields)
+    };
+    let method = fn_decl(
+        method_name,
+        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
+        Some(ret_ty),
+        body,
+    );
+    trait_impl(trait_name, type_name, type_params, vec![method])
+}
+
+/// Scaffold for unop-shaped record derives (Hash, Display).
+///
+/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is
+/// `empty_body` when `fields` is empty, otherwise the result of
+/// `full_body(self_sym, fields)`.
+fn synth_unop_record_impl(
+    trait_name: Symbol,
+    method_name: Symbol,
+    ret_ty: TypeExpr,
+    type_name: Symbol,
+    type_params: &[Symbol],
+    fields: &[RecordField],
+    empty_body: Expr,
+    full_body: impl FnOnce(Symbol, &[RecordField]) -> Expr,
+) -> TraitImpl {
+    let self_sym = intern("self");
+    let self_te = type_te(type_name, type_params);
+    let body = if fields.is_empty() {
+        empty_body
+    } else {
+        full_body(self_sym, fields)
+    };
+    let method = fn_decl(
+        method_name,
+        vec![param(self_sym, self_te)],
+        Some(ret_ty),
+        body,
+    );
+    trait_impl(trait_name, type_name, type_params, vec![method])
+}
+
 // ── Compare on record ────────────────────────────────────────────────
 
 pub(super) fn synth_compare_impl_for_record(
@@ -674,22 +761,17 @@ pub(super) fn synth_compare_impl_for_record(
     type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let other_sym = intern("other");
-    let self_te = type_te(type_name, type_params);
-    let body = if fields.is_empty() {
-        // No fields → all instances are equal under Compare.
-        int_expr(0)
-    } else {
-        build_record_lex_compare(self_sym, other_sym, fields)
-    };
-    let method = fn_decl(
+    synth_binop_record_impl(
+        intern("Compare"),
         intern("compare"),
-        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-        Some(named_te(intern("Int"))),
-        body,
-    );
-    trait_impl(intern("Compare"), type_name, type_params, vec![method])
+        named_te(intern("Int")),
+        type_name,
+        type_params,
+        fields,
+        // No fields → all instances are equal under Compare.
+        int_expr(0),
+        build_record_lex_compare,
+    )
 }
 
 fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField]) -> Expr {
@@ -720,119 +802,115 @@ fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[Recor
 
 // ── Equal on record ──────────────────────────────────────────────────
 
+fn build_record_equal_chain(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField]) -> Expr {
+    // self.f0.equal(other.f0) && self.f1.equal(other.f1) && ...
+    let pair_eq = |f: &RecordField| {
+        method_call(
+            field_access(ident_expr(self_sym), f.name),
+            intern("equal"),
+            vec![field_access(ident_expr(other_sym), f.name)],
+        )
+    };
+    let mut chain: Expr = pair_eq(&fields[0]);
+    for f in &fields[1..] {
+        chain = bin(chain, BinOp::And, pair_eq(f));
+    }
+    chain
+}
+
 pub(super) fn synth_equal_impl_for_record(
     type_name: Symbol,
     type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let other_sym = intern("other");
-    let self_te = type_te(type_name, type_params);
-    let body = if fields.is_empty() {
-        bool_expr(true)
-    } else {
-        // self.f0.equal(other.f0) && self.f1.equal(other.f1) && ...
-        let mut chain: Expr = method_call(
-            field_access(ident_expr(self_sym), fields[0].name),
-            intern("equal"),
-            vec![field_access(ident_expr(other_sym), fields[0].name)],
-        );
-        for f in &fields[1..] {
-            let next = method_call(
-                field_access(ident_expr(self_sym), f.name),
-                intern("equal"),
-                vec![field_access(ident_expr(other_sym), f.name)],
-            );
-            chain = bin(chain, BinOp::And, next);
-        }
-        chain
-    };
-    let method = fn_decl(
+    synth_binop_record_impl(
+        intern("Equal"),
         intern("equal"),
-        vec![param(self_sym, self_te.clone()), param(other_sym, self_te)],
-        Some(named_te(intern("Bool"))),
-        body,
-    );
-    trait_impl(intern("Equal"), type_name, type_params, vec![method])
+        named_te(intern("Bool")),
+        type_name,
+        type_params,
+        fields,
+        bool_expr(true),
+        build_record_equal_chain,
+    )
 }
 
 // ── Hash on record ───────────────────────────────────────────────────
+
+fn build_record_hash_combine(self_sym: Symbol, fields: &[RecordField]) -> Expr {
+    // h0.combine(h1).combine(h2)... where h0 = self.f0.hash()
+    let field_hash = |f: &RecordField| {
+        method_call(
+            field_access(ident_expr(self_sym), f.name),
+            intern("hash"),
+            vec![],
+        )
+    };
+    let mut combine: Expr = field_hash(&fields[0]);
+    for f in &fields[1..] {
+        combine = combine_hash_expr(combine, field_hash(f));
+    }
+    combine
+}
 
 pub(super) fn synth_hash_impl_for_record(
     type_name: Symbol,
     type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let self_te = type_te(type_name, type_params);
-    let body = if fields.is_empty() {
-        int_expr(0)
-    } else {
-        // h0.combine(h1).combine(h2)... where h0 = self.f0.hash()
-        let mut combine: Expr = method_call(
-            field_access(ident_expr(self_sym), fields[0].name),
-            intern("hash"),
-            vec![],
-        );
-        for f in &fields[1..] {
-            let next = method_call(
-                field_access(ident_expr(self_sym), f.name),
-                intern("hash"),
-                vec![],
-            );
-            combine = combine_hash_expr(combine, next);
-        }
-        combine
-    };
-    let method = fn_decl(
+    synth_unop_record_impl(
+        intern("Hash"),
         intern("hash"),
-        vec![param(self_sym, self_te)],
-        Some(named_te(intern("Int"))),
-        body,
-    );
-    trait_impl(intern("Hash"), type_name, type_params, vec![method])
+        named_te(intern("Int")),
+        type_name,
+        type_params,
+        fields,
+        int_expr(0),
+        build_record_hash_combine,
+    )
 }
 
 // ── Display on record ────────────────────────────────────────────────
+
+fn build_record_display_concat(name_str: &str, self_sym: Symbol, fields: &[RecordField]) -> Expr {
+    // "Name { f0: " + self.f0.display() + ", f1: " + self.f1.display() + " }"
+    let mut acc = string_expr(&format!("{name_str} {{ "));
+    for (i, f) in fields.iter().enumerate() {
+        if i > 0 {
+            acc = bin(acc, BinOp::Add, string_expr(", "));
+        }
+        let field_str = crate::intern::resolve(f.name);
+        acc = bin(acc, BinOp::Add, string_expr(&format!("{field_str}: ")));
+        acc = bin(
+            acc,
+            BinOp::Add,
+            method_call(
+                field_access(ident_expr(self_sym), f.name),
+                intern("display"),
+                vec![],
+            ),
+        );
+    }
+    bin(acc, BinOp::Add, string_expr(" }"))
+}
 
 pub(super) fn synth_display_impl_for_record(
     type_name: Symbol,
     type_params: &[Symbol],
     fields: &[RecordField],
 ) -> TraitImpl {
-    let self_sym = intern("self");
-    let self_te = type_te(type_name, type_params);
     let name_str = crate::intern::resolve(type_name);
-    let body = if fields.is_empty() {
-        // "Name {}"
-        string_expr(&format!("{name_str} {{}}"))
-    } else {
-        // "Name { f0: " + self.f0.display() + ", f1: " + self.f1.display() + " }"
-        let mut acc = string_expr(&format!("{name_str} {{ "));
-        for (i, f) in fields.iter().enumerate() {
-            if i > 0 {
-                acc = bin(acc, BinOp::Add, string_expr(", "));
-            }
-            let field_str = crate::intern::resolve(f.name);
-            acc = bin(acc, BinOp::Add, string_expr(&format!("{field_str}: ")));
-            acc = bin(
-                acc,
-                BinOp::Add,
-                method_call(
-                    field_access(ident_expr(self_sym), f.name),
-                    intern("display"),
-                    vec![],
-                ),
-            );
-        }
-        acc = bin(acc, BinOp::Add, string_expr(" }"));
-        acc
-    };
-    let method = fn_decl(
+    // Empty-body literal: "Name {}". Computed up front because the
+    // unop-record scaffold takes a plain `Expr` for the empty case.
+    let empty_body = string_expr(&format!("{name_str} {{}}"));
+    synth_unop_record_impl(
+        intern("Display"),
         intern("display"),
-        vec![param(self_sym, self_te)],
-        Some(named_te(intern("String"))),
-        body,
-    );
-    trait_impl(intern("Display"), type_name, type_params, vec![method])
+        named_te(intern("String")),
+        type_name,
+        type_params,
+        fields,
+        empty_body,
+        |self_sym, fields| build_record_display_concat(&name_str, self_sym, fields),
+    )
 }

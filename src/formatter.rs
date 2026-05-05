@@ -4537,6 +4537,105 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     format_expr_inner(expr, depth)
 }
 
+/// One element-spec for the shared collection-literal emitter.
+/// `anchor_line` is used for pre-element standalone-comment drain (so
+/// keys, not values, anchor map entries). `end_line` is used both for
+/// trailing-comment lookup and as the next-iteration `prev_line` (so a
+/// `key:\n  value -- foo` map entry's trailing comment binds to the
+/// value's line). `render` is invoked LAZILY inside the per-element
+/// loop — it must remain lazy so any nested comment-state mutations
+/// happen in source order, after the pre-element standalone-comment
+/// drain for the same element.
+struct CollectionItemSpec<'a> {
+    anchor_line: usize,
+    end_line: usize,
+    render: Box<dyn FnOnce() -> String + 'a>,
+}
+
+/// Shared multi-line emitter for delimited collection literals (list,
+/// tuple, map, set). Each call site provides per-element source-line
+/// anchors plus a lazy `render` closure, picks the bracket pair the
+/// source-scanner uses (`open_char`/`close_char`) and the bracket pair
+/// the output emits (`open_str`/`close_str`), and the helper handles:
+///   - `should_layout_multiline` short-circuit (returns `None`)
+///   - source-trailing-comma probe (round 52)
+///   - per-element loop with pre-comments + element text + trailing
+///     comment + comma decision (render runs INSIDE the loop, so any
+///     nested `take_*` calls happen in source order)
+///   - post-loop tail standalone-comment drain
+///   - final wrapping with the chosen open/close strings
+///
+/// `force_last_comma` covers the single-element tuple `(x,)` case
+/// where the comma is required as a disambiguator even when the source
+/// omitted it.
+fn format_delimited_collection<'a>(
+    expr_span: Span,
+    depth: usize,
+    open_char: char,
+    close_char: char,
+    open_str: &str,
+    close_str: &str,
+    items: Vec<CollectionItemSpec<'a>>,
+    force_last_comma: bool,
+) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+    let open_line = expr_span.line;
+    let close_line = compute_bracket_end_line(open_line, open_char, close_char);
+    let elem_lines: Vec<usize> = items.iter().map(|it| it.anchor_line).collect();
+    if !should_layout_multiline(open_line, close_line, &elem_lines) {
+        return None;
+    }
+    // Round-52 trailing-comma preservation: mirror the source's
+    // last-element comma state so the fuzz invariant "significant token
+    // count unchanged" (which counts `,`) holds on re-format. Uses
+    // byte-offset anchoring so a same-line outer close-delim doesn't
+    // mis-seed the trailing scan.
+    let source_has_trailing_comma =
+        source_has_trailing_comma_at_offset(expr_span, open_char, close_char);
+    let last_idx = items.len().saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, item) in items.into_iter().enumerate() {
+        // Standalone comments between the previous boundary and this
+        // element are emitted as indented comment lines.
+        let pre = take_comments_between(prev_line, item.anchor_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        // Render the element NOW — after the pre-comment drain — so
+        // nested comment-state consumption happens in source order.
+        let elem_text = (item.render)();
+        let trailing = take_trailing_for_line(item.end_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        // Non-last elements are always separated by a comma. The LAST
+        // element only takes one iff the source wrote one, the element
+        // carries an attached trailing `-- comment` (which needs a `,`
+        // before it so the split is well-formed at re-parse), or the
+        // caller forced it (e.g. single-elem tuple disambiguator).
+        let needs_comma = i < last_idx
+            || !trailing.is_empty()
+            || source_has_trailing_comma
+            || (i == last_idx && force_last_comma);
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{elem_text}{comma}{trailing}", indent(depth + 1)));
+        prev_line = item.end_line;
+    }
+    // Drain any trailing standalone comments between the last element
+    // and the closing delimiter.
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "{open_str}\n{}\n{}{close_str}",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
 /// If `expr` is a list literal that requires multi-line formatting
 /// (because any element has a trailing comment or the literal contains
 /// interior standalone comments), render it as such and return
@@ -4546,64 +4645,23 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let ExprKind::List(elems) = &expr.kind else {
         return None;
     };
-    if elems.is_empty() {
-        return None;
-    }
-    let open_line = expr.span.line;
-    let close_line = compute_bracket_end_line(open_line, '[', ']');
-    // Compute per-element source lines. List elements are either a
-    // single expression or a spread `..expr`.
-    let elem_lines: Vec<usize> = elems
+    let items: Vec<CollectionItemSpec<'_>> = elems
         .iter()
-        .map(|e| match e {
-            ListElem::Single(x) | ListElem::Spread(x) => x.span.line,
+        .map(|e| {
+            let line = match e {
+                ListElem::Single(x) | ListElem::Spread(x) => x.span.line,
+            };
+            CollectionItemSpec {
+                anchor_line: line,
+                end_line: line,
+                render: Box::new(move || match e {
+                    ListElem::Single(x) => format_expr(x, depth + 1),
+                    ListElem::Spread(x) => format!("..{}", format_expr(x, depth + 1)),
+                }),
+            }
         })
         .collect();
-    if !should_layout_multiline(open_line, close_line, &elem_lines) {
-        return None;
-    }
-    // Round-52 trailing-comma preservation: mirror the source's
-    // last-element comma state so the fuzz invariant "significant token
-    // count unchanged" (which counts `,`) holds on re-format. Uses
-    // byte-offset anchoring so a same-line outer `]` (e.g. inside a
-    // larger outer expression) doesn't mis-seed the trailing scan.
-    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '[', ']');
-    let last_idx = elems.len().saturating_sub(1);
-    // Drain any standalone comments before the first element (inside
-    // the brackets).
-    let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
-    for (i, elem) in elems.iter().enumerate() {
-        let elem_line = elem_lines[i];
-        // Standalone comments between the previous boundary and this
-        // element are emitted as indented comment lines.
-        let pre = take_comments_between(prev_line, elem_line);
-        for c in &pre {
-            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-        }
-        let elem_str = match elem {
-            ListElem::Single(x) => format_expr(x, depth + 1),
-            ListElem::Spread(x) => format!("..{}", format_expr(x, depth + 1)),
-        };
-        let trailing = take_trailing_for_line(elem_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
-        // Non-last elements are always separated by a comma. The LAST
-        // element only takes one iff the source wrote one (or carries
-        // an attached trailing `-- comment`, which needs a `,` before
-        // it so the split is well-formed at re-parse).
-        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
-        let comma = if needs_comma { "," } else { "" };
-        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
-        prev_line = elem_line;
-    }
-    // Drain any trailing standalone comments between the last element
-    // and the closing `]`.
-    let tail = take_comments_between(prev_line, close_line);
-    for c in &tail {
-        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-    }
-    Some(format!("[\n{}\n{}]", lines.join("\n"), indent(depth)))
+    format_delimited_collection(expr.span, depth, '[', ']', "[", "]", items, false)
 }
 
 /// Tuple multi-line emitter. Mirrors `format_list_expr_if_multiline`.
@@ -4611,50 +4669,26 @@ fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let ExprKind::Tuple(elems) = &expr.kind else {
         return None;
     };
-    if elems.is_empty() {
-        return None;
-    }
-    let open_line = expr.span.line;
-    let close_line = compute_bracket_end_line(open_line, '(', ')');
-    let elem_lines: Vec<usize> = elems.iter().map(|e| e.span.line).collect();
-    if !should_layout_multiline(open_line, close_line, &elem_lines) {
-        return None;
-    }
-    // Round-52 trailing-comma preservation. Single-element tuples are
-    // a special case: `(x,)` must keep the comma as a disambiguator
-    // even when the source had none — handled by the single-line
-    // `ExprKind::Tuple` branch, which this emitter does not shadow
-    // because `should_layout_multiline` requires interior comments or
-    // an attached trailing `--`.
-    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '(', ')');
-    let last_idx = elems.len().saturating_sub(1);
     // Single-elem tuple is always `(x,)` for disambiguation.
     let force_single_tuple_comma = elems.len() == 1;
-    let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
-    for (i, elem) in elems.iter().enumerate() {
-        let elem_line = elem_lines[i];
-        let pre = take_comments_between(prev_line, elem_line);
-        for c in &pre {
-            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-        }
-        let elem_str = format_expr(elem, depth + 1);
-        let trailing = take_trailing_for_line(elem_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
-        let needs_comma = i < last_idx
-            || !trailing.is_empty()
-            || source_has_trailing_comma
-            || force_single_tuple_comma;
-        let comma = if needs_comma { "," } else { "" };
-        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
-        prev_line = elem_line;
-    }
-    let tail = take_comments_between(prev_line, close_line);
-    for c in &tail {
-        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-    }
-    Some(format!("(\n{}\n{})", lines.join("\n"), indent(depth)))
+    let items: Vec<CollectionItemSpec<'_>> = elems
+        .iter()
+        .map(|elem| CollectionItemSpec {
+            anchor_line: elem.span.line,
+            end_line: elem.span.line,
+            render: Box::new(move || format_expr(elem, depth + 1)),
+        })
+        .collect();
+    format_delimited_collection(
+        expr.span,
+        depth,
+        '(',
+        ')',
+        "(",
+        ")",
+        items,
+        force_single_tuple_comma,
+    )
 }
 
 /// Call-expression multi-line emitter. Walks the argument list and emits
@@ -4775,52 +4809,27 @@ fn format_map_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let ExprKind::Map(pairs) = &expr.kind else {
         return None;
     };
-    if pairs.is_empty() {
-        return None;
-    }
-    let open_line = expr.span.line;
-    let close_line = compute_bracket_end_line(open_line, '{', '}');
-    // Use each entry's KEY line to anchor "this entry lives on this
-    // source line" — keys appear first inside the literal so that's the
-    // correct anchor for trailing-comment lookup.
-    let entry_lines: Vec<usize> = pairs.iter().map(|(k, _)| k.span.line).collect();
-    if !should_layout_multiline(open_line, close_line, &entry_lines) {
-        return None;
-    }
-    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
-    let last_idx = pairs.len().saturating_sub(1);
-    let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
-    for (i, (k, v)) in pairs.iter().enumerate() {
-        // Use the VALUE's line as the entry's "ending" line for trailing-
-        // comment lookup — a `-- comment` after `"a": 1,` lives on the
-        // value's source line, not the key's. For multi-line entries
-        // (key on one line, value on another) the value line is the one
-        // whose tail can carry a trailing comment.
-        let entry_line = entry_lines[i];
-        let value_line = v.span.line;
-        let pre = take_comments_between(prev_line, entry_line);
-        for c in &pre {
-            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-        }
-        let entry_str = format!(
-            "{}: {}",
-            format_expr(k, depth + 1),
-            format_expr(v, depth + 1)
-        );
-        let trailing = take_trailing_for_line(value_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
-        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
-        let comma = if needs_comma { "," } else { "" };
-        lines.push(format!("{}{entry_str}{comma}{trailing}", indent(depth + 1)));
-        prev_line = value_line;
-    }
-    let tail = take_comments_between(prev_line, close_line);
-    for c in &tail {
-        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-    }
-    Some(format!("#{{\n{}\n{}}}", lines.join("\n"), indent(depth)))
+    let items: Vec<CollectionItemSpec<'_>> = pairs
+        .iter()
+        .map(|(k, v)| CollectionItemSpec {
+            // Use each entry's KEY line to anchor pre-element standalone-
+            // comment drain. Use the VALUE's line as the "ending" line for
+            // trailing-comment lookup — a `-- comment` after `"a": 1,`
+            // lives on the value's source line, not the key's. For multi-
+            // line entries (key on one line, value on another) the value
+            // line is the one whose tail can carry a trailing comment.
+            anchor_line: k.span.line,
+            end_line: v.span.line,
+            render: Box::new(move || {
+                format!(
+                    "{}: {}",
+                    format_expr(k, depth + 1),
+                    format_expr(v, depth + 1)
+                )
+            }),
+        })
+        .collect();
+    format_delimited_collection(expr.span, depth, '{', '}', "#{", "}", items, false)
 }
 
 /// Set-literal multi-line emitter. Mirrors `format_list_expr_if_multiline`
@@ -4830,39 +4839,15 @@ fn format_set_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let ExprKind::SetLit(elems) = &expr.kind else {
         return None;
     };
-    if elems.is_empty() {
-        return None;
-    }
-    let open_line = expr.span.line;
-    let close_line = compute_bracket_end_line(open_line, '[', ']');
-    let elem_lines: Vec<usize> = elems.iter().map(|e| e.span.line).collect();
-    if !should_layout_multiline(open_line, close_line, &elem_lines) {
-        return None;
-    }
-    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '[', ']');
-    let last_idx = elems.len().saturating_sub(1);
-    let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
-    for (i, elem) in elems.iter().enumerate() {
-        let elem_line = elem_lines[i];
-        let pre = take_comments_between(prev_line, elem_line);
-        for c in &pre {
-            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-        }
-        let elem_str = format_expr(elem, depth + 1);
-        let trailing = take_trailing_for_line(elem_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
-        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
-        let comma = if needs_comma { "," } else { "" };
-        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
-        prev_line = elem_line;
-    }
-    let tail = take_comments_between(prev_line, close_line);
-    for c in &tail {
-        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
-    }
-    Some(format!("#[\n{}\n{}]", lines.join("\n"), indent(depth)))
+    let items: Vec<CollectionItemSpec<'_>> = elems
+        .iter()
+        .map(|elem| CollectionItemSpec {
+            anchor_line: elem.span.line,
+            end_line: elem.span.line,
+            render: Box::new(move || format_expr(elem, depth + 1)),
+        })
+        .collect();
+    format_delimited_collection(expr.span, depth, '[', ']', "#[", "]", items, false)
 }
 
 /// Decide whether a collection literal needs multi-line layout: true

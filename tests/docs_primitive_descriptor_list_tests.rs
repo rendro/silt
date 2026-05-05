@@ -21,46 +21,22 @@
 
 use std::fs;
 
-/// Pull the source of truth out of `src/typechecker/builtins.rs`. We
-/// look for the specific slice literal used to register primitive
-/// descriptors so the test doesn't pick up unrelated string arrays. If
-/// the code is refactored to a different shape, this test's fragile-
-/// scraper error is clearer than a silent pass.
+/// Pull the source of truth out of `src/module.rs::BUILTIN_PRIMITIVE_NAMES`.
+///
+/// Round-73 BLOAT-2 hoisted the primitive-descriptor name set out of
+/// `src/typechecker/builtins.rs` (where it had been a `for name in
+/// &[...]` array literal) onto the constant
+/// `module::BUILTIN_PRIMITIVE_NAMES` in `src/module.rs`. Both the VM's
+/// dispatch loop and the typechecker's registration loop now iterate
+/// the same constant. This scraper follows the source of truth to its
+/// new home.
 fn primitive_descriptor_names() -> Vec<String> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/typechecker/builtins.rs");
-    let src =
-        fs::read_to_string(path).expect("src/typechecker/builtins.rs must exist and be readable");
-
-    // Find the slice literal: `&["Int", "Float", "ExtFloat", "String",
-    // "Bool"]` (single-line). Round 58 wrote it exactly this way; if it
-    // moves to multi-line or different form we'll need to update this
-    // scraper.
-    let marker_start = "for name in &[";
-    let idx = src.find(marker_start).expect(
-        "expected a `for name in &[...]` loop registering primitive descriptors in \
-                 src/typechecker/builtins.rs. The scraper for this test needs updating.",
-    );
-    let after = &src[idx + marker_start.len()..];
-    let end = after.find(']').expect(
-        "expected closing `]` after primitive-descriptor slice literal in \
-                 src/typechecker/builtins.rs",
-    );
-    let slice_body = &after[..end];
-
-    let mut names = Vec::new();
-    for token in slice_body.split(',') {
-        let trimmed = token.trim().trim_matches('"').trim();
-        if !trimmed.is_empty() {
-            names.push(trimmed.to_string());
-        }
-    }
-
-    assert!(
-        !names.is_empty(),
-        "expected at least one primitive descriptor name in \
-         src/typechecker/builtins.rs, got none"
-    );
-    names
+    // Use the public constant directly — no source-text scraping
+    // needed once the names are exposed as a `pub const` slice.
+    silt::module::BUILTIN_PRIMITIVE_NAMES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 fn read_doc(rel: &str) -> String {
@@ -114,16 +90,17 @@ fn bindings_and_functions_md_lists_every_primitive_descriptor() {
     }
 }
 
-/// Sanity check: this test file's own scraper actually picks up
-/// `ExtFloat` (the round-58 addition). If this fires, the scraper is
-/// looking at the wrong slice literal.
+/// Sanity check: the source of truth (`module::BUILTIN_PRIMITIVE_NAMES`,
+/// hoisted in round-73 BLOAT-2) actually contains `ExtFloat` (the
+/// round-58 addition). If this fires, the constant lost an entry —
+/// either the GAP regressed or the round-73 hoist dropped a name.
 #[test]
 fn scraper_finds_extfloat_in_builtins_rs() {
     let names = primitive_descriptor_names();
     assert!(
         names.iter().any(|n| n == "ExtFloat"),
         "scraper did not find `ExtFloat` among {names:?}; if round 58's \
-         addition is still in src/typechecker/builtins.rs, update the \
-         scraper in this test. Otherwise the GAP regressed."
+         addition is still in module::BUILTIN_PRIMITIVE_NAMES, update \
+         the scraper in this test. Otherwise the GAP regressed."
     );
 }

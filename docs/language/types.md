@@ -92,8 +92,8 @@ There are no implicit conversions between `Int` and `Float`. Convert explicitly 
 
 ```silt
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 type Color { Red, Green, Blue }
@@ -286,8 +286,8 @@ Types can reference themselves:
 
 ```silt
 type Expr {
-  Num(Int)
-  Add(Expr, Expr)
+  Num(Int),
+  Add(Expr, Expr),
 }
 ```
 

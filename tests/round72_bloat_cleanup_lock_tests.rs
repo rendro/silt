@@ -176,28 +176,40 @@ fn l5_typechecker_files_use_span_synthetic() {
 // non-exhaustive match end-to-end and asserts the diagnostic still
 // contains the expected wording without panicking.
 
+/// Source string for the L5 runtime exhaustiveness diagnostic test.
+/// Promoted to a module-level constant so the structural-syntax lock
+/// (`l5_exhaustiveness_test_source_is_valid_silt_syntax`) can grep it
+/// without re-declaring the literal.
+const L5_NONEXHAUSTIVE_SRC: &str = "\
+type Color { Red, Green, Blue }
+fn main() {
+  let c = Red
+  match c {
+    Red -> println(\"red\")
+    Green -> println(\"green\")
+  }
+}
+";
+
 #[test]
 fn l5_exhaustiveness_runtime_still_renders_diagnostic() {
     use std::process::Command;
 
-    let src = "\
-enum Color { Red, Green, Blue }
-
-pub fn main() {
-    let c = Color::Red;
-    match c {
-        Color::Red -> println(\"red\"),
-        Color::Green -> println(\"green\"),
-    }
-}
-";
     // No `tempfile` dep — match the convention used by other CLI
     // integration tests in this suite (e.g. cli_strict_effects_flag_tests).
+    //
+    // Path basename intentionally NEUTRAL ("match.silt" — not
+    // "nonexhaustive.silt"). The diagnostic renderer echoes the
+    // source-file path back into the output, so any substring that the
+    // assertion below matches against MUST NOT appear in the path —
+    // otherwise the assertion is satisfied tautologically by the path
+    // echo even if the exhaustiveness diagnostic never runs (round-73
+    // L1 finding).
     let dir = std::env::temp_dir().join("silt_round72_bloat_l5");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create tempdir");
-    let path = dir.join("nonexhaustive.silt");
-    std::fs::write(&path, src).expect("write temp source");
+    let path = dir.join("match.silt");
+    std::fs::write(&path, L5_NONEXHAUSTIVE_SRC).expect("write temp source");
 
     let out = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("run")
@@ -211,18 +223,117 @@ pub fn main() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Expect a non-exhaustive-match error mentioning the missing
-    // `Blue` variant (or generic non-exhaustive wording). Don't pin
-    // exact phrasing — just prove the diagnostic surface is alive.
+    // Path-echo guard: if the path basename ever drifts back to
+    // something that contains one of the substrings the assertion
+    // below grep for, the test would be tautological again. Pin
+    // explicitly that the path components do NOT contain any of the
+    // diagnostic substrings.
+    let path_str = path.to_string_lossy().to_lowercase();
+    for needle in [
+        "non-exhaustive",
+        "nonexhaustive",
+        "not exhaustive",
+        "blue",
+    ] {
+        assert!(
+            !path_str.contains(needle),
+            "tempfile path {path_str:?} contains substring {needle:?} \
+             that the diagnostic assertion grep for; that would make \
+             the assertion satisfied by the path echo alone (round-73 \
+             L1 lock)."
+        );
+    }
+
     let lower = combined.to_lowercase();
+    // Tightened assertion (round-73 L1 fix): require BOTH a phrase
+    // that names the exhaustiveness failure AND the missing variant
+    // name (`Blue`). Combined with `&&` so a generic lex error like
+    // `error[lex]: missing semicolon` cannot satisfy the test.
+    let mentions_exhaustiveness = lower.contains("non-exhaustive")
+        || lower.contains("nonexhaustive")
+        || lower.contains("not exhaustive");
+    let mentions_missing_variant = lower.contains("blue");
     assert!(
-        lower.contains("non-exhaustive")
-            || lower.contains("nonexhaustive")
-            || lower.contains("not exhaustive")
-            || lower.contains("missing")
-            || lower.contains("blue"),
-        "Expected an exhaustiveness diagnostic mentioning the missing \
-         `Blue` variant (or generic non-exhaustive wording). Got: \
-         {combined}"
+        mentions_exhaustiveness && mentions_missing_variant,
+        "Expected an exhaustiveness diagnostic that BOTH names the \
+         failure (e.g. `non-exhaustive`) AND names the missing variant \
+         (`Blue`). exhaustiveness={mentions_exhaustiveness} \
+         missing_variant={mentions_missing_variant}. Got: {combined}"
+    );
+}
+
+// ── Round-73 L1 structural lock ──────────────────────────────────────
+//
+// The runtime test above (`l5_exhaustiveness_runtime_still_renders_diagnostic`)
+// can only do its job if the silt source it feeds the CLI is VALID
+// silt — not Rust. The original round-72 author wrote the source in
+// Rust syntax (`enum Color`, `Color::Red`, `;` terminators, `pub fn
+// main`), so `silt run` exited at the LEX stage and the exhaustiveness
+// renderer was never exercised. The round-73 L1 fix rewrote the
+// source as valid silt; this lock pins it so a future edit cannot
+// silently drift it back to Rust.
+
+#[test]
+fn l5_exhaustiveness_test_source_is_valid_silt_syntax() {
+    // Positive markers — silt-specific tokens that MUST be present.
+    assert!(
+        L5_NONEXHAUSTIVE_SRC.contains("type Color {"),
+        "L5 test source must use silt's `type Color {{` ADT declaration, \
+         not Rust's `enum Color`. Round-73 L1 fix."
+    );
+    assert!(
+        L5_NONEXHAUSTIVE_SRC.contains("fn main()"),
+        "L5 test source must declare `fn main()` (silt has no `pub fn`). \
+         Round-73 L1 fix."
+    );
+    assert!(
+        L5_NONEXHAUSTIVE_SRC.contains("Red ->"),
+        "L5 test source must use bare variant name `Red ->` in match \
+         arms (silt has no `Color::Red` path syntax). Round-73 L1 fix."
+    );
+
+    // Negative markers — Rust-isms that MUST NOT creep back in.
+    assert!(
+        !L5_NONEXHAUSTIVE_SRC.contains("enum Color"),
+        "L5 test source must not use Rust's `enum Color` keyword \
+         (silt uses `type`). The original round-72 source did, which \
+         caused `silt run` to exit at the LEX stage and bypass the \
+         exhaustiveness renderer entirely. Round-73 L1 lock."
+    );
+    assert!(
+        !L5_NONEXHAUSTIVE_SRC.contains("Color::"),
+        "L5 test source must not use Rust's `Color::Variant` path \
+         syntax (silt uses bare variant names). Round-73 L1 lock."
+    );
+    assert!(
+        !L5_NONEXHAUSTIVE_SRC.contains(";"),
+        "L5 test source must not use `;` statement terminators \
+         (silt rejects them at lex time, which would cause the test \
+         to bypass the exhaustiveness renderer). Round-73 L1 lock."
+    );
+    assert!(
+        !L5_NONEXHAUSTIVE_SRC.contains("pub fn"),
+        "L5 test source must not use `pub fn` (silt's main is `fn main`). \
+         Round-73 L1 lock."
+    );
+
+    // Structural: the match must actually be non-exhaustive — i.e.
+    // it must list `Red` and `Green` arms but NOT a `Blue` arm. If
+    // someone "fixes" the match to be exhaustive, the runtime test
+    // becomes meaningless (no diagnostic to assert on).
+    assert!(
+        L5_NONEXHAUSTIVE_SRC.contains("Red ->"),
+        "L5 source must have a `Red ->` arm. Round-73 L1 lock."
+    );
+    assert!(
+        L5_NONEXHAUSTIVE_SRC.contains("Green ->"),
+        "L5 source must have a `Green ->` arm. Round-73 L1 lock."
+    );
+    assert!(
+        !L5_NONEXHAUSTIVE_SRC.contains("Blue ->"),
+        "L5 source must NOT have a `Blue ->` arm — the whole point of \
+         the test is that the match is non-exhaustive in the `Blue` \
+         case so the diagnostic mentions the missing variant. \
+         Round-73 L1 lock."
     );
 }

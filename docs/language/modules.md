@@ -39,8 +39,8 @@ fn helper(x) { x * 2 }       -- not exported
 
 pub type Point { x: Int, y: Int }   -- exports the type and its constructor
 pub type Shape {                     -- exports the type and all variants
-  Circle(Int)
-  Square(Int)
+  Circle(Int),
+  Square(Int),
 }
 ```
 

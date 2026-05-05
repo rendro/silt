@@ -67,8 +67,9 @@ Concrete cases in current silt code:
 ```silt
 -- Looks pure. Quietly reads $HOME, opens a file, parses TOML.
 fn load_defaults() -> Config {
-  let raw = fs.read_to_string(env.home() ++ "/.config/app.toml")
-  toml.parse(raw).unwrap()
+  let path = env.home() + "/.config/app.toml"
+  let raw = io.read_file(path).unwrap_or("")
+  toml.parse(raw).unwrap_or(default_config())
 }
 ```
 
@@ -371,8 +372,9 @@ would buy (cancellation, scope-bounded resources). Defer.
 ```silt
 -- Inferred. Hover shows: () -> Config !{io, fs}
 fn load_defaults() -> Config {
-  let raw = fs.read_to_string(env.home() ++ "/.config/app.toml")
-  toml.parse(raw).unwrap()
+  let path = env.home() + "/.config/app.toml"
+  let raw = io.read_file(path).unwrap_or("")
+  toml.parse(raw).unwrap_or(default_config())
 }
 
 -- Annotated. Compiler enforces the row.

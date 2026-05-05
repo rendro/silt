@@ -47,10 +47,12 @@ fn main() {
 }
 ```
 
-Every stdlib error enum implements the built-in `Error` trait, which has
-`Display` as a supertrait and provides `message(self) -> String`. That means
-`"{e}"` string interpolation works too — `Display` gives you the same
-rendered message.
+Every stdlib error enum implements the built-in `Error` trait, which provides
+`message(self) -> String`. Use `e.message()` for the human-readable error
+message. String interpolation `"{e}"` also works, but currently renders the
+*variant constructor form* (e.g. `IoNotFound(/etc/missing)`) rather than the
+prose message — useful for debugging the shape of an error, but not a
+substitute for `e.message()` when you want a user-facing string.
 
 ## The `?` Operator
 

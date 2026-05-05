@@ -80,9 +80,26 @@ pub(crate) fn usage_text() -> String {
         "Add a git-based dependency to silt.toml",
     ));
     out.push('\n');
+    out.push_str("Global flags:\n");
+    out.push_str(&line(
+        "--version, -V, -v",
+        "Print the silt version and exit",
+    ));
+    out.push_str(&line(
+        "--help, -h",
+        "Show this usage banner; pair with `silt help <cmd>` for per-subcommand help",
+    ));
+    out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
     out
 }
+
+/// Recognized top-level global flag tokens. Used by the unknown-command
+/// suggestion path so a typo like `silt --verison` surfaces a "did you
+/// mean '--version'" hint rather than the generic "Unknown command"
+/// noise. Keep in sync with the match arms in `run_main`.
+pub(crate) const GLOBAL_FLAGS: &[&str] =
+    &["--version", "-V", "-v", "--help", "-h", "help"];
 
 /// Single source of truth for the `silt check` usage banner line.
 /// Both the `--help` path and the "no arguments given" path render

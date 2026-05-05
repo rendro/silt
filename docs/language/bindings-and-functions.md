@@ -119,12 +119,28 @@ let x = 1
 let x = x + 1   -- x is now 2; the original 1 is untouched
 ```
 
-**Destructuring** works in `let` using the same pattern language as `match`:
+**Destructuring** works in `let` for irrefutable patterns -- tuples and
+records, which always match exactly one shape:
 
 ```silt
 let (x, y) = (1, "hello")
-let [a, b, c] = [1, 2, 3]
 let User { name, age, .. } = user
+```
+
+List patterns like `[a, b, c]` are *refutable* (they fail when the list has a
+different length), so `let [a, b, c] = xs` is rejected. Use `match` or
+`when let ... else` for those:
+
+```silt
+match xs {
+  [a, b, c] -> use(a, b, c)
+  _ -> handle_other_shape()
+}
+
+-- `when let` is a statement that binds in the surrounding scope on success;
+-- the `else` branch must diverge (return/raise) so the bindings are sound.
+when let [a, b, c] = xs else { return handle_other_shape() }
+use(a, b, c)
 ```
 
 **Type annotations** are optional (Hindley-Milner infers everything) but

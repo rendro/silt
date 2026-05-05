@@ -110,12 +110,22 @@ Returns `Unit`.
 when let Message(msg) = channel.receive(ch) else { return }
 ```
 
-`channel.receive` takes one value from the channel's buffer. It returns one of
-two variants:
+`channel.receive` takes one value from the channel's buffer. Its result type
+is the shared `ChannelResult(a)` enum, which has four variants:
 
 - `Message(value)` -- a value was available.
 - `Closed` -- the channel is closed and the buffer is empty. No more values
   will ever arrive.
+- `Empty` -- never produced by blocking `channel.receive` (it parks instead),
+  but listed here because the variant is part of the same enum and the
+  exhaustiveness checker still requires every arm. Returned by
+  `channel.try_receive`.
+- `Sent` -- never produced by `channel.receive` either; it confirms a
+  completed `Send(...)` arm in `channel.select`. Listed here for the same
+  exhaustiveness reason.
+
+Any `match` over `ChannelResult` must cover all four variants (or use a
+catch-all arm).
 
 If the buffer is empty but the channel is still open, the current task is
 parked until a value arrives. The OS thread is not blocked -- it runs other
@@ -161,11 +171,16 @@ channel.try_receive(ch)   -- Message(42)
 channel.try_receive(ch)   -- Empty
 ```
 
-Attempts to receive without blocking. Returns one of three variants:
+Attempts to receive without blocking. Returns a `ChannelResult(a)`. The
+variants `try_receive` can produce in practice are:
 
 - `Message(value)` -- a value was available.
 - `Empty` -- no data yet, but the channel is still open.
 - `Closed` -- no data and the channel is closed.
+
+The fourth `ChannelResult` variant, `Sent`, is reserved for `channel.select`
+and is never returned by `try_receive`, but the exhaustiveness checker still
+requires every `match` to cover it (or use a catch-all arm).
 
 This lets you distinguish "nothing right now" from "nothing ever again."
 
@@ -532,10 +547,15 @@ fn main() {
 ```
 
 When multiple tasks call `channel.each` on the same channel, the scheduler
-distributes messages in round-robin order. With three workers and six messages,
-each worker processes exactly two: worker 1 gets messages 1 and 4, worker 2
-gets 2 and 5, worker 3 gets 3 and 6. This happens because `channel.each`
-yields after processing each message, giving the next worker a turn.
+distributes messages fairly across them: every worker gets a turn, no worker
+starves. `channel.each` yields after processing each message, so the runtime
+can hand the next message to a different waiter.
+
+The distribution is *fair, not ordered*. With three workers and six messages
+no worker is guaranteed exactly two -- on any given run the actual split
+depends on scheduler timing, and one worker may handle several messages
+before another sees one. Treat the workers as an interchangeable pool, not a
+deterministic round-robin.
 
 ### Pipeline processing
 
@@ -616,15 +636,23 @@ fn main() {
 
   -- Merge both streams into a single handler. Over many runs, messages from
   -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
-  loop {
+  -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
+  -- without a `loop(...)` recursion runs its body only once.
+  loop _ = () {
     match channel.select([Recv(alerts), Recv(logs)]) {
-      (^alerts, Message(msg)) -> println("alert: {msg}")
-      (^logs,   Message(msg)) -> println("log: {msg}")
+      (^alerts, Message(msg)) -> {
+        println("alert: {msg}")
+        loop(())
+      }
+      (^logs,   Message(msg)) -> {
+        println("log: {msg}")
+        loop(())
+      }
       (_, Closed) -> {
         println("a channel closed")
         return ()
       }
-      _ -> ()
+      _ -> loop(())
     }
   }
 }
@@ -1007,10 +1035,10 @@ operations block synchronously, just like channel operations.
 |---|---|---|
 | Create channel | `channel.new()` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
-| Receive (blocking) | `channel.receive(ch)` | `Message(val)` or `Closed` |
+| Receive (blocking) | `channel.receive(ch)` | `ChannelResult(a)` -- `Message(val)` or `Closed` in practice; `Empty`/`Sent` are unreachable here but still required by exhaustiveness |
 | Close | `channel.close(ch)` | `Unit` |
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
-| Try receive | `channel.try_receive(ch)` | `Message(val)`, `Empty`, or `Closed` |
+| Try receive | `channel.try_receive(ch)` | `ChannelResult(a)` -- `Message(val)`, `Empty`, or `Closed` in practice; `Sent` is unreachable here but still required by exhaustiveness |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
 | Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |

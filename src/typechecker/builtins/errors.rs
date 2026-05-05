@@ -194,21 +194,29 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // when their cargo features are enabled — the trait-impl set must
     // not advertise traits for an enum the typechecker doesn't know
     // about (would diverge from the registered-enums set).
-    let mut enum_names: Vec<&'static str> = vec![
-        "IoError",
-        "JsonError",
-        "TomlError",
-        "ParseError",
-        "HttpError",
-        "RegexError",
-        "TimeError",
-        "BytesError",
-        "ChannelError",
-    ];
-    #[cfg(feature = "postgres")]
-    enum_names.push("PgError");
-    #[cfg(feature = "tcp")]
-    enum_names.push("TcpError");
+    //
+    // Round-73 BLOAT-1 fix: derived from the authoritative registry at
+    // `module::builtin_error_enum_variants_with_arity` so adding a new
+    // typed-error enum no longer requires editing this list. The
+    // cfg-aware filter is preserved by skipping `PgError`/`TcpError`
+    // when their features are off — matching what the previous
+    // hand-rolled vec literal expressed via `#[cfg(...)] vec.push(...)`.
+    let enum_names: Vec<&'static str> =
+        crate::module::builtin_error_enum_variants_with_arity()
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| {
+                #[cfg(not(feature = "postgres"))]
+                if *name == "PgError" {
+                    return false;
+                }
+                #[cfg(not(feature = "tcp"))]
+                if *name == "TcpError" {
+                    return false;
+                }
+                true
+            })
+            .collect();
     for enum_name in &enum_names {
         for trait_name in &["Error", "Display"] {
             checker

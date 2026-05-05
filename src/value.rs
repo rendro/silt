@@ -1300,8 +1300,9 @@ impl fmt::Debug for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::TypeDescriptor(name) => write!(f, "<type:{name}>"),
-            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
+                write!(f, "<type:{name}>")
+            }
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
@@ -1363,8 +1364,9 @@ impl Value {
             Value::VmClosure(_) => "<fn>".to_string(),
             Value::BuiltinFn(_) => "<fn>".to_string(),
             Value::VariantConstructor(name, _) => format!("<constructor:{name}>"),
-            Value::TypeDescriptor(name) => format!("<type:{name}>"),
-            Value::PrimitiveDescriptor(name) => format!("<type:{name}>"),
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
+                format!("<type:{name}>")
+            }
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
             Value::Bytes(b) => format_bytes_preview(b),
@@ -1582,8 +1584,9 @@ impl fmt::Display for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::TypeDescriptor(name) => write!(f, "<type:{name}>"),
-            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
+                write!(f, "<type:{name}>")
+            }
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
@@ -2176,8 +2179,7 @@ impl Hash for Value {
                 name.hash(state);
                 arity.hash(state);
             }
-            Value::TypeDescriptor(name) => name.hash(state),
-            Value::PrimitiveDescriptor(name) => name.hash(state),
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => name.hash(state),
         }
     }
 }

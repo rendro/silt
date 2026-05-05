@@ -197,20 +197,14 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
             // rather than by span — a zero-spanned frame inside an otherwise
             // good stack shouldn't cause the whole stack to be discarded.
             // Keep <module:...> frames for module-aware path resolution.
-            let meaningful: Vec<_> = e
-                .call_stack
-                .iter()
-                .filter(|(name, _)| !name.starts_with('<') || name.starts_with("<module:"))
-                .collect();
-            // Only show the stack if it adds information beyond the error
-            // site the user already sees above. A single-frame "stack"
-            // would just restate that location, which is noisy.
-            let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
-            if meaningful.len() >= 2 && any_real_span {
-                eprintln!("\ncall stack:");
-                let head = 10;
-                let tail = 5;
-                let print_frame = |name: &str, frame_span: &silt::lexer::Span| {
+            //
+            // Round-73 G1: delegate filter+truncation to the shared
+            // `render_call_stack` helper so `silt run` and `silt test` can
+            // never drift again. The helper applies the exact same
+            // `<script>` / `<call:...>` drop + `<module:...>` keep
+            // policy, plus the same head/tail truncation.
+            let stack_lines =
+                silt::vm::error::render_call_stack(&e.call_stack, |name, frame_span| {
                     // Each frame uses its own function's source file for
                     // file labels — this matters when the call crosses a
                     // module boundary.
@@ -219,27 +213,15 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
                         None => normalize_path(Path::new(path)),
                     };
                     if frame_span.line > 0 {
-                        eprintln!(
-                            "  -> {}  at {}:{}:{}",
-                            name, frame_path, frame_span.line, frame_span.col
-                        );
+                        format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
                     } else {
-                        eprintln!("  -> {name}  at {frame_path}:<unknown location>");
+                        format!("{frame_path}:<unknown location>")
                     }
-                };
-                if meaningful.len() <= head + tail {
-                    for (name, frame_span) in &meaningful {
-                        print_frame(name, frame_span);
-                    }
-                } else {
-                    for (name, frame_span) in &meaningful[..head] {
-                        print_frame(name, frame_span);
-                    }
-                    let omitted = meaningful.len() - head - tail;
-                    eprintln!("  ... ({omitted} more frames)");
-                    for (name, frame_span) in &meaningful[meaningful.len() - tail..] {
-                        print_frame(name, frame_span);
-                    }
+                });
+            if !stack_lines.is_empty() {
+                eprintln!("\ncall stack:");
+                for line in stack_lines {
+                    eprintln!("{line}");
                 }
             }
         } else if is_missing_main_error(&e) {

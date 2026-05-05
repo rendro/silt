@@ -120,15 +120,36 @@ pipeline contexts, use `string.concat` or `string.join`.
 
 ## Infinite Loops
 
-A `loop` without bindings repeats its body indefinitely. Use `return` to exit:
+`loop { body }` runs the body **once** -- it is not an implicit infinite loop.
+The `loop` form only re-enters its body when the body explicitly calls
+`loop(...)` (the labeled re-entry call). To loop indefinitely, bind a sentinel
+state variable and recur with `loop(...)` from inside the body:
 
 ```silt
-loop {
-  let msg = channel.receive(ch)
-  match msg {
-    Message(val) -> process(val)
-    Closed -> return ()
-    _ -> ()
+loop _ = () {
+  match channel.receive(ch) {
+    Message(val) -> {
+      process(val)
+      loop(())          -- re-enter to keep going
+    }
+    Closed -> ()        -- fall through; loop returns
+    _ -> loop(())
+  }
+}
+```
+
+`return` from an enclosing `fn` works as well. If you find yourself reaching
+for "infinite loop" semantics, a recursive `fn` is often clearer:
+
+```silt
+fn drain(ch) {
+  match channel.receive(ch) {
+    Message(val) -> {
+      process(val)
+      drain(ch)
+    }
+    Closed -> ()
+    _ -> drain(ch)
   }
 }
 ```
