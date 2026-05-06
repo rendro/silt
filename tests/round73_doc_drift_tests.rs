@@ -319,30 +319,28 @@ const ERR_DOC_PATH: &str = "docs/language/error-handling.md";
 const ERR_DOC_SRC: &str = include_str!("../docs/language/error-handling.md");
 
 #[test]
-fn b6_error_handling_doc_drops_false_display_message_equivalence() {
+fn b6_error_handling_doc_asserts_display_message_equivalence() {
+    // Round 73 originally rewrote this passage to acknowledge the
+    // dual shape between `"{e}"` and `e.message()`. Round 73
+    // follow-up shipped the runtime fix (collapse to one form via
+    // `vm::dispatch::render_stdlib_error_message`) so the doc reverts
+    // to the principled equivalence claim — see
+    // `tests/round73f_deferred_fixes_tests.rs::fix1_*` for the
+    // sibling locks (runtime behavior + helper presence).
     let runtime = read_doc(ERR_DOC_PATH);
     assert_eq!(ERR_DOC_SRC, runtime);
 
-    // Old false claim: `Display` gives the same rendered message as `e.message()`.
+    // Doc must claim equivalence in some honest form.
     assert!(
-        !ERR_DOC_SRC.contains("`Display` gives you the same\nrendered message"),
-        "error-handling.md must not claim `Display` gives the same rendered message as `e.message()` — \
-         stdlib error enums currently render the variant constructor form via Display."
+        ERR_DOC_SRC.contains("produce the same text"),
+        "error-handling.md should claim `\"{{e}}\"` and `e.message()` produce the same text \
+         now that the runtime fix backs the equivalence."
     );
+    // The conservative caveat from round 73 (doc-only fix) must be gone.
     assert!(
-        !ERR_DOC_SRC.contains("Display` gives you the same rendered message"),
-        "error-handling.md must not claim `Display` gives the same rendered message as `e.message()` (single line)."
-    );
-
-    // Positive shape: doc recommends `e.message()` for the human message
-    // and notes that `"{e}"` shows the variant constructor form.
-    assert!(
-        ERR_DOC_SRC.contains("Use `e.message()`"),
-        "error-handling.md should explicitly recommend `e.message()` for the human-readable message."
-    );
-    assert!(
-        ERR_DOC_SRC.contains("variant constructor form"),
-        "error-handling.md should note that `\"{{e}}\"` interpolation renders the variant constructor form."
+        !ERR_DOC_SRC.contains("variant constructor form"),
+        "error-handling.md should no longer warn about the \"variant constructor form\" \
+         divergence — the runtime now collapses the dual shape."
     );
 }
 
