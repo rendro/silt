@@ -6926,7 +6926,7 @@ import time
 fn main() {
     println(time.date(2024, 3, 15))   -- Ok(2024-03-15)
     println(time.date(2024, 2, 29))   -- Ok(2024-02-29)  (leap year)
-    println(time.date(2024, 13, 1))   -- Err(TimeOutOfRange(invalid date: 2024-13-1))
+    println(time.date(2024, 13, 1))   -- Err(time out of range: invalid date: 2024-13-1)
 }
 ```
 
@@ -6943,7 +6943,7 @@ Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
 import time
 fn main() {
     println(time.time(14, 30, 0))  -- Ok(14:30:00)
-    println(time.time(25, 0, 0))   -- Err(TimeOutOfRange(invalid time: 25:0:0))
+    println(time.time(25, 0, 0))   -- Err(time out of range: invalid time: 25:0:0)
 }
 ```
 

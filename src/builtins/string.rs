@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use super::common::{require_int, require_string, value_kind};
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
@@ -18,9 +19,8 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.split takes 2 arguments".into()));
             }
-            let (Value::String(s), Value::String(sep)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.split requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.split")?;
+            let sep = require_string(&args[1], "string.split")?;
             let parts: Vec<Value> = s
                 .split(sep.as_str())
                 .map(|p| Value::String(p.to_string()))
@@ -31,47 +31,38 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.trim takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.trim requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.trim")?;
             Ok(Value::String(s.trim().to_string()))
         }
         "trim_start" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.trim_start takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.trim_start requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.trim_start")?;
             Ok(Value::String(s.trim_start().to_string()))
         }
         "trim_end" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.trim_end takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.trim_end requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.trim_end")?;
             Ok(Value::String(s.trim_end().to_string()))
         }
         "contains" => {
             if args.len() != 2 {
                 return Err(VmError::new("string.contains takes 2 arguments".into()));
             }
-            let (Value::String(s), Value::String(sub)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.contains requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.contains")?;
+            let sub = require_string(&args[1], "string.contains")?;
             Ok(Value::Bool(s.contains(sub.as_str())))
         }
         "replace" => {
             if args.len() != 3 {
                 return Err(VmError::new("string.replace takes 3 arguments".into()));
             }
-            let (Value::String(s), Value::String(from), Value::String(to)) =
-                (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new("string.replace requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.replace")?;
+            let from = require_string(&args[1], "string.replace")?;
+            let to = require_string(&args[2], "string.replace")?;
             // Cap the worst-case result length. Without this, a call like
             // `s.replace("", long_to)` inserts `to` at every byte boundary,
             // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
@@ -111,18 +102,19 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.join takes 2 arguments".into()));
             }
-            let Value::String(sep) = &args[1] else {
-                return Err(VmError::new(
-                    "string.join separator must be a string".into(),
-                ));
-            };
+            let sep = require_string(&args[1], "string.join")?;
             let strs: Vec<String> = match &args[0] {
                 Value::List(xs) => xs.iter().map(|v| v.to_string()).collect(),
                 Value::Range(lo, hi) => {
                     checked_range_len(*lo, *hi).map_err(VmError::new)?;
                     (*lo..=*hi).map(|i| i.to_string()).collect()
                 }
-                _ => return Err(VmError::new("string.join requires a list or range".into())),
+                other => {
+                    return Err(VmError::new(format!(
+                        "string.join requires List or Range, got {}",
+                        value_kind(other)
+                    )));
+                }
             };
             Ok(Value::String(strs.join(sep.as_str())))
         }
@@ -130,63 +122,51 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.length takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.length requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.length")?;
             Ok(Value::Int(s.chars().count() as i64))
         }
         "byte_length" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.byte_length takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.byte_length requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.byte_length")?;
             Ok(Value::Int(s.len() as i64))
         }
         "to_upper" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.to_upper takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.to_upper requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.to_upper")?;
             Ok(Value::String(s.to_uppercase()))
         }
         "to_lower" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.to_lower takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.to_lower requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.to_lower")?;
             Ok(Value::String(s.to_lowercase()))
         }
         "starts_with" => {
             if args.len() != 2 {
                 return Err(VmError::new("string.starts_with takes 2 arguments".into()));
             }
-            let (Value::String(s), Value::String(prefix)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.starts_with requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.starts_with")?;
+            let prefix = require_string(&args[1], "string.starts_with")?;
             Ok(Value::Bool(s.starts_with(prefix.as_str())))
         }
         "ends_with" => {
             if args.len() != 2 {
                 return Err(VmError::new("string.ends_with takes 2 arguments".into()));
             }
-            let (Value::String(s), Value::String(suffix)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.ends_with requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.ends_with")?;
+            let suffix = require_string(&args[1], "string.ends_with")?;
             Ok(Value::Bool(s.ends_with(suffix.as_str())))
         }
         "chars" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.chars takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.chars requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.chars")?;
             let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
             Ok(Value::List(Arc::new(chars)))
         }
@@ -194,13 +174,8 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.repeat takes 2 arguments".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.repeat requires a string".into()));
-            };
-            let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("string.repeat requires an int".into()));
-            };
-            let n_val = *n;
+            let s = require_string(&args[0], "string.repeat")?;
+            let n_val = require_int(&args[1], "string.repeat")?;
             if n_val < 0 {
                 return Err(VmError::new(format!(
                     "string.repeat: negative count {n_val}"
@@ -219,9 +194,8 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.index_of takes 2 arguments".into()));
             }
-            let (Value::String(s), Value::String(needle)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.index_of requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.index_of")?;
+            let needle = require_string(&args[1], "string.index_of")?;
             match s.find(needle.as_str()) {
                 Some(byte_pos) => {
                     let char_pos = s[..byte_pos].chars().count();
@@ -239,9 +213,8 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "string.last_index_of takes 2 arguments".into(),
                 ));
             }
-            let (Value::String(s), Value::String(needle)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("string.last_index_of requires strings".into()));
-            };
+            let s = require_string(&args[0], "string.last_index_of")?;
+            let needle = require_string(&args[1], "string.last_index_of")?;
             match s.rfind(needle.as_str()) {
                 Some(byte_pos) => {
                     // Match string.index_of: return a CHARACTER index (not byte).
@@ -258,13 +231,8 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.split_at takes 2 arguments".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.split_at requires a string".into()));
-            };
-            let Value::Int(idx) = &args[1] else {
-                return Err(VmError::new("string.split_at requires an int".into()));
-            };
-            let idx_val = *idx;
+            let s = require_string(&args[0], "string.split_at")?;
+            let idx_val = require_int(&args[1], "string.split_at")?;
             if idx_val < 0 {
                 return Err(VmError::new(format!(
                     "string.split_at: negative index {idx_val}"
@@ -312,9 +280,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.lines takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.lines requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.lines")?;
             // Split on '\n' only. A trailing '\n' must NOT produce an empty
             // final element (matches user expectation: "a\nb\n".lines() ==
             // ["a", "b"]). Also strip a trailing '\r' from each line to
@@ -342,24 +308,11 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "string.starts_with_at takes 3 arguments".into(),
                 ));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "string.starts_with_at requires a string".into(),
-                ));
-            };
-            let Value::Int(offset) = &args[1] else {
-                return Err(VmError::new(
-                    "string.starts_with_at requires an int offset".into(),
-                ));
-            };
-            let Value::String(prefix) = &args[2] else {
-                return Err(VmError::new(
-                    "string.starts_with_at requires a string prefix".into(),
-                ));
-            };
+            let s = require_string(&args[0], "string.starts_with_at")?;
+            let offset_val = require_int(&args[1], "string.starts_with_at")?;
+            let prefix = require_string(&args[2], "string.starts_with_at")?;
             // Predicate: out-of-range offset returns false rather than
             // panicking (contract with string.starts_with is a boolean).
-            let offset_val = *offset;
             if offset_val < 0 {
                 return Ok(Value::Bool(false));
             }
@@ -392,22 +345,14 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 3 {
                 return Err(VmError::new("string.slice takes 3 arguments".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("first arg must be string".into()));
-            };
-            let Value::Int(start) = &args[1] else {
-                return Err(VmError::new("second arg must be int".into()));
-            };
-            let Value::Int(end) = &args[2] else {
-                return Err(VmError::new("third arg must be int".into()));
-            };
-            let start_val = *start;
+            let s = require_string(&args[0], "string.slice")?;
+            let start_val = require_int(&args[1], "string.slice")?;
+            let end_val = require_int(&args[2], "string.slice")?;
             if start_val < 0 {
                 return Err(VmError::new(format!(
                     "string.slice: negative index {start_val}"
                 )));
             }
-            let end_val = *end;
             if end_val < 0 {
                 return Err(VmError::new(format!(
                     "string.slice: negative index {end_val}"
@@ -426,15 +371,9 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 3 {
                 return Err(VmError::new("string.pad_left takes 3 arguments".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("first arg must be string".into()));
-            };
-            let Value::Int(width) = &args[1] else {
-                return Err(VmError::new("second arg must be int".into()));
-            };
-            let Value::String(pad) = &args[2] else {
-                return Err(VmError::new("third arg must be string".into()));
-            };
+            let s = require_string(&args[0], "string.pad_left")?;
+            let width_val = require_int(&args[1], "string.pad_left")?;
+            let pad = require_string(&args[2], "string.pad_left")?;
             let pad_char = {
                 let mut chars = pad.chars();
                 let Some(first) = chars.next() else {
@@ -451,7 +390,6 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 }
                 first
             };
-            let width_val = *width;
             if width_val < 0 {
                 return Err(VmError::new(format!(
                     "string.pad_left: negative index {width_val}"
@@ -474,15 +412,9 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 3 {
                 return Err(VmError::new("string.pad_right takes 3 arguments".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("first arg must be string".into()));
-            };
-            let Value::Int(width) = &args[1] else {
-                return Err(VmError::new("second arg must be int".into()));
-            };
-            let Value::String(pad) = &args[2] else {
-                return Err(VmError::new("third arg must be string".into()));
-            };
+            let s = require_string(&args[0], "string.pad_right")?;
+            let width_val = require_int(&args[1], "string.pad_right")?;
+            let pad = require_string(&args[2], "string.pad_right")?;
             let pad_char = {
                 let mut chars = pad.chars();
                 let Some(first) = chars.next() else {
@@ -499,7 +431,6 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 }
                 first
             };
-            let width_val = *width;
             if width_val < 0 {
                 return Err(VmError::new(format!(
                     "string.pad_right: negative index {width_val}"
@@ -522,9 +453,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.char_code takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.char_code requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.char_code")?;
             match s.chars().next() {
                 Some(c) => Ok(Value::Int(c as i64)),
                 None => Err(VmError::new("string.char_code: empty string".into())),
@@ -536,13 +465,11 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "string.from_char_code takes 1 argument".into(),
                 ));
             }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("string.from_char_code requires an int".into()));
-            };
+            let n = require_int(&args[0], "string.from_char_code")?;
             // Reject negatives and values outside u32 range before casting,
             // then let char::from_u32 catch surrogates and >0x10FFFF values.
             // Unchecked `as u32` would silently wrap (e.g. 4294967337 -> 41 = ')').
-            match u32::try_from(*n).ok().and_then(char::from_u32) {
+            match u32::try_from(n).ok().and_then(char::from_u32) {
                 Some(c) => Ok(Value::String(c.to_string())),
                 None => Err(VmError::new(format!("invalid code point {n}"))),
             }
@@ -551,18 +478,14 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_empty takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_empty requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_empty")?;
             Ok(Value::Bool(s.is_empty()))
         }
         "is_alpha" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_alpha takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_alpha requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_alpha")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
             ))
@@ -571,9 +494,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_digit takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_digit requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_digit")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
             ))
@@ -582,9 +503,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_upper takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_upper requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_upper")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_uppercase()),
             ))
@@ -593,9 +512,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_lower takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_lower requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_lower")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_lowercase()),
             ))
@@ -604,9 +521,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_alnum takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("string.is_alnum requires a string".into()));
-            };
+            let s = require_string(&args[0], "string.is_alnum")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()),
             ))
@@ -615,11 +530,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("string.is_whitespace takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "string.is_whitespace requires a string".into(),
-                ));
-            };
+            let s = require_string(&args[0], "string.is_whitespace")?;
             Ok(Value::Bool(
                 !s.is_empty() && s.chars().all(|c| c.is_whitespace()),
             ))

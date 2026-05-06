@@ -1568,6 +1568,16 @@ impl fmt::Display for Value {
                 }
             },
             Value::Variant(name, fields) => {
+                // Round 73 follow-up: stdlib error variants render via
+                // their `Error::message()` implementation so that
+                // `format!("{e}")` and `e.message()` produce the same
+                // text — the "one way" principle. User enums are
+                // unaffected (the registry only covers stdlib errors).
+                if let Some(msg) =
+                    crate::vm::dispatch::render_stdlib_error_message(name, fields.as_slice())
+                {
+                    return write!(f, "{msg}");
+                }
                 if fields.is_empty() {
                     write!(f, "{name}")
                 } else {

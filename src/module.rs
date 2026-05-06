@@ -390,6 +390,25 @@ pub fn builtin_error_enum_variants_with_arity()
     ]
 }
 
+/// Reverse lookup: given a variant tag (e.g. `"IoNotFound"`), return
+/// the parent stdlib error enum name (e.g. `"IoError"`), or `None` if
+/// the tag isn't a stdlib-error variant. Routes through the
+/// authoritative `builtin_error_enum_variants_with_arity` registry, so
+/// adding a new error variant requires no edit here. Used by
+/// `Value::Display` to route stdlib error variants through their
+/// `Error::message()` implementation rather than the default
+/// constructor-form render — collapses the prior dual shape between
+/// `"{e}"` and `e.message()` per the "explicit over implicit"
+/// principle.
+pub fn variant_to_error_enum(tag: &str) -> Option<&'static str> {
+    for (enum_name, variants) in builtin_error_enum_variants_with_arity() {
+        if variants.iter().any(|(v, _)| *v == tag) {
+            return Some(enum_name);
+        }
+    }
+    None
+}
+
 /// Authoritative `(variant_name, arity)` listings for every builtin
 /// non-error enum: `Result`, `Option`, `Step`, `ChannelResult`,
 /// `ChannelOp`, `Weekday`, `Method`. Single source of truth consulted

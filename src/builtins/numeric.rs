@@ -1,5 +1,6 @@
 //! Numeric builtin functions (`int.*`, `float.*`, `math.*`).
 
+use super::common::{require_int, require_string, value_kind};
 use crate::value::Value;
 use crate::vm::VmError;
 
@@ -101,14 +102,12 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("int.parse takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("int.parse requires a string".into()));
-            };
+            let s = require_string(&args[0], "int.parse")?;
             match s.trim().parse::<i64>() {
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Int(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
-                    vec![classify_int_parse_error(&e, s)],
+                    vec![classify_int_parse_error(&e, &s)],
                 )),
             }
         }
@@ -116,9 +115,7 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("int.abs takes 1 argument".into()));
             }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("int.abs requires an int".into()));
-            };
+            let n = require_int(&args[0], "int.abs")?;
             match n.checked_abs() {
                 Some(v) => Ok(Value::Int(v)),
                 None => Err(VmError::new(format!("integer overflow: abs({n})"))),
@@ -128,51 +125,44 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("int.min takes 2 arguments".into()));
             }
-            let (Value::Int(a), Value::Int(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("int.min requires ints".into()));
-            };
-            Ok(Value::Int(*a.min(b)))
+            let a = require_int(&args[0], "int.min")?;
+            let b = require_int(&args[1], "int.min")?;
+            Ok(Value::Int(a.min(b)))
         }
         "max" => {
             if args.len() != 2 {
                 return Err(VmError::new("int.max takes 2 arguments".into()));
             }
-            let (Value::Int(a), Value::Int(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("int.max requires ints".into()));
-            };
-            Ok(Value::Int(*a.max(b)))
+            let a = require_int(&args[0], "int.max")?;
+            let b = require_int(&args[1], "int.max")?;
+            Ok(Value::Int(a.max(b)))
         }
         "clamp" => {
             if args.len() != 3 {
                 return Err(VmError::new("int.clamp takes 3 arguments".into()));
             }
-            let (Value::Int(x), Value::Int(lo), Value::Int(hi)) = (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new("int.clamp requires ints".into()));
-            };
+            let x = require_int(&args[0], "int.clamp")?;
+            let lo = require_int(&args[1], "int.clamp")?;
+            let hi = require_int(&args[2], "int.clamp")?;
             if lo > hi {
                 return Err(VmError::new(format!(
                     "int.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
                 )));
             }
-            Ok(Value::Int((*x).clamp(*lo, *hi)))
+            Ok(Value::Int(x.clamp(lo, hi)))
         }
         "to_float" => {
             if args.len() != 1 {
                 return Err(VmError::new("int.to_float takes 1 argument".into()));
             }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("int.to_float requires an int".into()));
-            };
-            Ok(Value::Float(*n as f64))
+            let n = require_int(&args[0], "int.to_float")?;
+            Ok(Value::Float(n as f64))
         }
         "to_string" => {
             if args.len() != 1 {
                 return Err(VmError::new("int.to_string takes 1 argument".into()));
             }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("int.to_string requires an int".into()));
-            };
+            let n = require_int(&args[0], "int.to_string")?;
             Ok(Value::String(n.to_string()))
         }
         _ => Err(VmError::new(format!("unknown int function: {name}"))),
@@ -185,7 +175,10 @@ fn extract_float(val: &Value, fn_name: &str) -> Result<f64, VmError> {
         Value::Float(f) => Ok(*f),
         Value::ExtFloat(f) => Ok(*f),
         Value::Int(n) => Ok(*n as f64),
-        _ => Err(VmError::new(format!("{fn_name} requires a number"))),
+        other => Err(VmError::new(format!(
+            "{fn_name} requires a number, got {}",
+            value_kind(other)
+        ))),
     }
 }
 
@@ -196,9 +189,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("float.parse takes 1 argument".into()));
             }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new("float.parse requires a string".into()));
-            };
+            let s = require_string(&args[0], "float.parse")?;
             match s.trim().parse::<f64>() {
                 // NaN / Infinity string inputs (`"NaN"`, `"inf"`) parse
                 // successfully but aren't representable as a finite `Float`.
@@ -217,7 +208,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Float(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
-                    vec![classify_float_parse_error(&e, s)],
+                    vec![classify_float_parse_error(&e, &s)],
                 )),
             }
         }
@@ -231,7 +222,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.round())),
-                _ => Err(VmError::new("float.round requires a float".into())),
+                other => Err(VmError::new(format!(
+                    "float.round requires Float, got {}",
+                    value_kind(other)
+                ))),
             }
         }
         "ceil" => {
@@ -244,7 +238,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.ceil())),
-                _ => Err(VmError::new("float.ceil requires a float".into())),
+                other => Err(VmError::new(format!(
+                    "float.ceil requires Float, got {}",
+                    value_kind(other)
+                ))),
             }
         }
         "floor" => {
@@ -257,7 +254,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.floor())),
-                _ => Err(VmError::new("float.floor requires a float".into())),
+                other => Err(VmError::new(format!(
+                    "float.floor requires Float, got {}",
+                    value_kind(other)
+                ))),
             }
         }
         "abs" => {
@@ -270,7 +270,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.abs())),
-                _ => Err(VmError::new("float.abs requires a float".into())),
+                other => Err(VmError::new(format!(
+                    "float.abs requires Float, got {}",
+                    value_kind(other)
+                ))),
             }
         }
         "to_string" => {
@@ -289,7 +292,12 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let f = match &args[0] {
                 Value::Float(f) => *f,
                 Value::ExtFloat(f) => *f,
-                _ => return Err(VmError::new("float.to_string requires a float".into())),
+                other => {
+                    return Err(VmError::new(format!(
+                        "float.to_string requires Float, got {}",
+                        value_kind(other)
+                    )));
+                }
             };
             if args.len() == 1 {
                 // Shortest round-trippable representation. Force a decimal
@@ -302,12 +310,8 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 };
                 return Ok(Value::String(s));
             }
-            let Value::Int(decimals) = &args[1] else {
-                return Err(VmError::new(
-                    "float.to_string requires an int for decimals".into(),
-                ));
-            };
-            if *decimals < 0 {
+            let decimals = require_int(&args[1], "float.to_string")?;
+            if decimals < 0 {
                 return Err(VmError::new(
                     "float.to_string: decimals must be non-negative".into(),
                 ));
@@ -319,7 +323,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             // prints a noisy `thread 'main' panicked at ...` line to
             // stderr, and the surfaced message is opaque to silt users.
             // Reject out-of-range precision up front with a clean error.
-            let prec = u16::try_from(*decimals).map_err(|_| {
+            let prec = u16::try_from(decimals).map_err(|_| {
                 VmError::new(format!(
                     "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
                 ))
@@ -333,7 +337,12 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let f = match &args[0] {
                 Value::Float(f) => *f,
                 Value::ExtFloat(f) => *f,
-                _ => return Err(VmError::new("float.to_int requires a float".into())),
+                other => {
+                    return Err(VmError::new(format!(
+                        "float.to_int requires Float, got {}",
+                        value_kind(other)
+                    )));
+                }
             };
             if f.is_nan() || f.is_infinite() {
                 return Err(VmError::new(

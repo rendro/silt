@@ -1863,11 +1863,11 @@ import string
 fn main() { string.split(42, ",") }
     "#,
     );
-    // Lock the exact production message so a generic type-mismatch error
-    // with just the word "type" cannot satisfy this assertion.
+    // Round-73 follow-up: canonical "<fn> requires <Kind>, got <kind>" form.
+    // Lock substring so the test stays robust against trailing-arg-name variation.
     assert!(
-        err.contains("string.split requires strings"),
-        "expected \"string.split requires strings\", got: {err}"
+        err.contains("string.split requires String, got Int"),
+        "expected \"string.split requires String, got Int\", got: {err}"
     );
 }
 

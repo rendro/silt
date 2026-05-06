@@ -121,11 +121,31 @@ static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
 /// Look up the `trait Error` dispatch helper for a given builtin enum
 /// name. Returns `None` for any name not in the table (including
 /// cfg-gated names whose feature is disabled).
-fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
+pub(crate) fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
     ERROR_TRAIT_DISPATCH
         .iter()
         .find(|(n, _)| *n == enum_name)
         .map(|(_, f)| *f)
+}
+
+/// Render a stdlib error variant via its `Error::message()`
+/// implementation, returning `None` when the tag isn't a stdlib-error
+/// variant (or rendering fails for any reason — caller falls back to
+/// the default constructor-form render).
+///
+/// Used by `Value::Display` to collapse the dual shape between
+/// `format!("{e}")` and `e.message()` for stdlib error enums per the
+/// silt "explicit over implicit / one way" principle. User-defined
+/// enums are not affected — the registry only covers stdlib error
+/// enums.
+pub fn render_stdlib_error_message(tag: &str, fields: &[Value]) -> Option<String> {
+    let enum_name = crate::module::variant_to_error_enum(tag)?;
+    let dispatch_fn = error_trait_dispatch(enum_name)?;
+    let variant_value = Value::Variant(tag.into(), fields.to_vec());
+    match dispatch_fn("message", &[variant_value]).ok()? {
+        Value::String(s) => Some(s),
+        _ => None,
+    }
 }
 
 impl Vm {

@@ -81,7 +81,10 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
 pub(super) fn require_int_plain(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
     match arg {
         Value::Int(n) => Ok(*n),
-        _ => Err(VmError::new(format!("{fn_label} requires Int"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires Int, got {}",
+            value_kind(other)
+        ))),
     }
 }
 
@@ -91,7 +94,10 @@ pub(super) fn require_int_plain(arg: &Value, fn_label: &str) -> Result<i64, VmEr
 pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
     match arg {
         Value::String(s) => Ok(s.as_str()),
-        _ => Err(VmError::new(format!("{fn_label} requires String"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires String, got {}",
+            value_kind(other)
+        ))),
     }
 }
 

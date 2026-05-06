@@ -1071,6 +1071,8 @@ impl TypeChecker {
                 };
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
+                } else {
+                    self.error("infinite type".to_string(), span);
                 }
             }
             (RowTail::Closed, RowTail::Var(v)) => {
@@ -1094,6 +1096,8 @@ impl TypeChecker {
                 };
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
+                } else {
+                    self.error("infinite type".to_string(), span);
                 }
             }
             (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
@@ -1122,9 +1126,13 @@ impl TypeChecker {
                 };
                 if !occurs_in(v1, &to_v1) {
                     self.subst[v1] = Some(to_v1);
+                } else {
+                    self.error("infinite type".to_string(), span);
                 }
                 if !occurs_in(v2, &to_v2) {
                     self.subst[v2] = Some(to_v2);
+                } else {
+                    self.error("infinite type".to_string(), span);
                 }
             }
         }
@@ -1198,6 +1206,8 @@ impl TypeChecker {
                 };
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
+                } else {
+                    self.error("infinite type".to_string(), span);
                 }
             }
         }
