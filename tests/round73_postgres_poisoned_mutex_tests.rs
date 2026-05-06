@@ -35,10 +35,17 @@
 use std::fs;
 use std::path::PathBuf;
 
-/// Forbidden pattern: bare `into_inner().unwrap()` on a `Mutex`. Every
-/// occurrence must be rewritten as
+/// Forbidden pattern: any `into_inner()` tail that panics on a
+/// poisoned mutex. Every occurrence must be rewritten as
 /// `into_inner().unwrap_or_else(|e| e.into_inner())` so that consuming
 /// a poisoned mutex recovers the inner value instead of re-panicking.
+///
+/// Round-74 tightening: the original lock only rejected bare
+/// `into_inner().unwrap()`. A future refactor that switched to
+/// `into_inner().expect("poisoned")` or
+/// `into_inner().unwrap_or_else(|_| panic!(...))` would preserve the
+/// bug class (panic on poison) but slip past the negative grep. The
+/// rejection list now covers all known panic-on-poison shapes.
 #[test]
 fn postgres_source_has_no_bare_into_inner_unwrap() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -57,22 +64,29 @@ fn postgres_source_has_no_bare_into_inner_unwrap() {
         if trimmed.starts_with("//") {
             continue;
         }
-        // `.into_inner()` followed by `.unwrap()` with no intervening
-        // `unwrap_or_else` / `expect` / map. We deliberately accept
-        // `.into_inner().unwrap_or_else(...)` and
-        // `.into_inner().expect(...)` — only the bare `.unwrap()` tail
-        // is forbidden.
-        if line.contains(".into_inner().unwrap()") {
+        // `.into_inner()` followed by any panic-on-error tail. We
+        // accept ONLY `.into_inner().unwrap_or_else(|e| e.into_inner())`
+        // (and shapes that recover the value rather than panicking).
+        // The forbidden tails are:
+        //   * `.into_inner().unwrap()`               — bare unwrap
+        //   * `.into_inner().expect(`                — message + panic
+        //   * `.into_inner().unwrap_or_else(|_| panic!`  — clever panic
+        if line.contains(".into_inner().unwrap()")
+            || line.contains(".into_inner().expect(")
+            || line.contains(".into_inner().unwrap_or_else(|_| panic!")
+        {
             offenders.push((idx + 1, line.to_string()));
         }
     }
 
     assert!(
         offenders.is_empty(),
-        "src/builtins/postgres.rs must not contain `.into_inner().unwrap()` \
-         (use `.into_inner().unwrap_or_else(|e| e.into_inner())` to \
-         recover from a poisoned mutex cleanly — see round-73 L2 fix). \
-         Offending lines:\n{}",
+        "src/builtins/postgres.rs must not contain any panic-on-poison \
+         tail after `.into_inner()` (forbidden tails: `.unwrap()`, \
+         `.expect(...)`, `.unwrap_or_else(|_| panic!...)`). Use \
+         `.into_inner().unwrap_or_else(|e| e.into_inner())` to recover \
+         from a poisoned mutex cleanly — see round-73 L2 fix and \
+         round-74 lock tightening. Offending lines:\n{}",
         offenders
             .iter()
             .map(|(n, l)| format!("  line {n}: {l}"))

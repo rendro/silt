@@ -2,6 +2,24 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-process counter that uniquely tags each REPL `eval_expression`
+/// call site. The wrapper name `__repl_eval_<n>` derived from this is
+/// guaranteed not to collide with any name a user could realistically
+/// declare (and even if they did, each new expression gets a fresh `n`),
+/// which prevents the round-74 BROKEN bug where `fn main()` defined in
+/// the REPL would shadow the wrapper and cause infinite self-recursion
+/// on every subsequent expression. See
+/// `tests/round74_repl_main_no_hang_tests.rs`.
+static REPL_EVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Produce the next unique synthetic wrapper name for an expression
+/// being evaluated by the REPL.
+fn next_repl_wrapper_name() -> String {
+    let n = REPL_EVAL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("__repl_eval_{n}")
+}
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -670,7 +688,11 @@ fn eval_expression_value(
     type_ctx: &mut ReplTypeContext,
     input: &str,
 ) -> Result<Value, String> {
-    let wrapper_prefix = "fn main() {\n";
+    // Mirror the synthetic-wrapper-name convention used by the live
+    // `eval_expression` so tests exercise the same dispatch path.
+    let wrapper_name = next_repl_wrapper_name();
+    let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
+    let wrapper_prefix = wrapper_prefix_owned.as_str();
     let wrapped = format!("{wrapper_prefix}{input}\n}}");
     let tokens = Lexer::new(&wrapped)
         .tokenize()
@@ -688,7 +710,7 @@ fn eval_expression_value(
     let mut compiler = Compiler::new();
     compiler.import_all_builtins();
     let functions = compiler
-        .compile_program(&program)
+        .compile_program_with_entry(&program, &wrapper_name)
         .map_err(|e| format!("compile error: {}", e.message))?;
     let script = functions
         .into_iter()
@@ -700,8 +722,15 @@ fn eval_expression_value(
 }
 
 fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
-    // Wrap the expression in a fn main() so the compiler can handle it.
-    let wrapper_prefix = "fn main() {\n";
+    // Wrap the expression in a synthetic top-level function so the
+    // compiler can handle it. Round-74 BROKEN fix: this used to be
+    // `fn main()`, which silently shadowed any user-defined `fn main()`
+    // and caused an infinite self-recursion when the user's expression
+    // was `main()`. We now use a unique per-eval name that user code
+    // cannot realistically collide with.
+    let wrapper_name = next_repl_wrapper_name();
+    let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
+    let wrapper_prefix = wrapper_prefix_owned.as_str();
     let wrapped = format!("{wrapper_prefix}{input}\n}}");
     // Total lines in the user's real input (minimum 1), used to clamp errors
     // that land on synthetic tokens past the user's text.
@@ -763,11 +792,14 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
         return;
     }
 
-    // Use compile_program which emits GetGlobal "main"; Call 0; Return
+    // Use compile_program_with_entry so `<script>` calls *our* synthetic
+    // wrapper (not the user's `main`, if any). This is the load-bearing
+    // half of the round-74 BROKEN fix — if we passed `"main"` here a
+    // user-defined `fn main()` would still be the one we called.
     let mut compiler = Compiler::new();
     compiler.set_repl_mode(true);
     compiler.import_all_builtins();
-    let functions = match compiler.compile_program(&program) {
+    let functions = match compiler.compile_program_with_entry(&program, &wrapper_name) {
         Ok(f) => f,
         Err(e) => {
             let adjusted = adjust_error_span_compile(
@@ -931,11 +963,12 @@ pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
 
 /// Adjust a span from `wrapped` coordinates to `input` coordinates.
 ///
-/// The wrapper adds one line (`fn main() {\n`) before the user input, so line
-/// numbers are off by 1 and byte offsets are off by `prefix_len`. When an
-/// error lands on the synthetic closing `}` — i.e. past the last line of the
-/// user's real input — we clamp it to the last line (and end-of-line column)
-/// so the error pointer stays inside the user's text rather than printing a
+/// The wrapper adds one line (`fn __repl_eval_<n>() {\n`, formerly
+/// `fn main() {\n`) before the user input, so line numbers are off by 1
+/// and byte offsets are off by `prefix_len`. When an error lands on the
+/// synthetic closing `}` — i.e. past the last line of the user's real
+/// input — we clamp it to the last line (and end-of-line column) so the
+/// error pointer stays inside the user's text rather than printing a
 /// phantom line.
 fn adjust_span(
     span: Span,

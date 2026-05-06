@@ -15,9 +15,11 @@ let default_file = "examples/sample_text.txt"
 let top_n = 10
 
 fn get_filename() {
-  let user_args = io.args()
-  |> list.drop(3)
-  match user_args {
+  -- `io.args()` now returns ONLY the user-supplied program args
+  -- forwarded after `--` (e.g. `silt run text_stats.silt -- file.txt`).
+  -- Pre round-74 it returned the silt binary's full argv, forcing a
+  -- `|> list.drop(3)` dance to skip `["silt", "run", "this_file.silt"]`.
+  match io.args() {
     [file, ..rest] -> file
     _ -> default_file
   }

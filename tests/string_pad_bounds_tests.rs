@@ -179,8 +179,8 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("pad_left") && err.contains("negative"),
-        "error should mention pad_left and negative, got: {err}"
+        err.contains("pad_left") && err.contains("negative width"),
+        "error should mention pad_left and negative width, got: {err}"
     );
 }
 
@@ -195,7 +195,7 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("pad_right") && err.contains("negative"),
-        "error should mention pad_right and negative, got: {err}"
+        err.contains("pad_right") && err.contains("negative width"),
+        "error should mention pad_right and negative width, got: {err}"
     );
 }

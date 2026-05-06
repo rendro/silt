@@ -43,7 +43,7 @@ spawn `silt lsp` as the language server.
 
 ## What works
 
-Matches the capabilities advertised by `silt lsp` (see `src/lsp.rs`):
+Matches the capabilities advertised by `silt lsp` (see `src/lsp/mod.rs`):
 
 - Syntax highlighting (keywords, builtins, strings with `{interpolation}`,
   triple-quoted strings, `--` and nestable `{- -}` comments, numbers, operators)

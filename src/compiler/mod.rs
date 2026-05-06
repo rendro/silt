@@ -578,6 +578,28 @@ impl Compiler {
     /// The first function in the returned `Vec` is the top-level `<script>`,
     /// which ends with `GetGlobal "main" ; Call 0 ; Return`.
     pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
+        self.compile_program_with_entry(program, "main")
+    }
+
+    /// Compile a full program, dispatching `<script>` to call the global
+    /// named `entry_point` (instead of the default `"main"`).
+    ///
+    /// Round-74 BROKEN fix: the REPL's expression-eval path wraps user
+    /// input in a synthetic function so it can be compiled. Previously
+    /// that wrapper was named `main`, which meant a user-defined
+    /// `fn main()` would be silently shadowed by the wrapper on every
+    /// subsequent expression — and because the wrapper's body was the
+    /// user's input (e.g. `main()`), the wrapper would self-recurse
+    /// forever. The REPL now passes a unique synthetic name per
+    /// expression (`__repl_eval_<n>`) through this entry, so user code
+    /// can never collide with the wrapper. The non-REPL `silt run` path
+    /// still goes through `compile_program` and continues to require
+    /// `fn main`.
+    pub fn compile_program_with_entry(
+        &mut self,
+        program: &Program,
+        entry_point: &str,
+    ) -> Result<Vec<Function>, CompileError> {
         // Push a top-level script context.
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
@@ -586,9 +608,9 @@ impl Compiler {
             self.compile_decl(decl)?;
         }
 
-        // Emit: GetGlobal "main", Call 0, Return
+        // Emit: GetGlobal <entry_point>, Call 0, Return
         let span = Span::new(0, 0);
-        let name_idx = self.add_constant(Value::String("main".into()), span)?;
+        let name_idx = self.add_constant(Value::String(entry_point.into()), span)?;
         self.current_chunk().emit_op(Op::GetGlobal, span);
         self.current_chunk().emit_u16(name_idx, span);
         self.current_chunk().emit_op(Op::Call, span);

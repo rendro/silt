@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use super::common::value_kind;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{BuiltinAcc, BuiltinIterKind, SuspendedBuiltin, Vm, VmError};
 
@@ -492,7 +493,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("list.get takes 2 arguments".into()));
             }
             let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("list.get index must be int".into()));
+                return Err(VmError::new(format!(
+                    "list.get requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let n_val = *n;
             if n_val < 0 {
@@ -524,7 +528,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let mut v = ValueIter::try_from(&args[0], "list.set")?.collect_vec()?;
             let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("list.set index must be int".into()));
+                return Err(VmError::new(format!(
+                    "list.set requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let n_val = *n;
             if n_val < 0 {
@@ -542,11 +549,14 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("list.take takes 2 arguments".into()));
             }
             let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("list.take requires int".into()));
+                return Err(VmError::new(format!(
+                    "list.take requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let n_val = *n;
             if n_val < 0 {
-                return Err(VmError::new(format!("list.take: negative index {n_val}")));
+                return Err(VmError::new(format!("list.take: negative count {n_val}")));
             }
             match &args[0] {
                 Value::List(xs) => {
@@ -582,11 +592,14 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("list.drop takes 2 arguments".into()));
             }
             let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("list.drop requires int".into()));
+                return Err(VmError::new(format!(
+                    "list.drop requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let n_val = *n;
             if n_val < 0 {
-                return Err(VmError::new(format!("list.drop: negative index {n_val}")));
+                return Err(VmError::new(format!("list.drop: negative count {n_val}")));
             }
             match &args[0] {
                 Value::List(xs) => {
@@ -757,7 +770,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("list.remove_at takes 2 arguments".into()));
             }
             let Value::Int(n) = &args[1] else {
-                return Err(VmError::new("list.remove_at index must be int".into()));
+                return Err(VmError::new(format!(
+                    "list.remove_at requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let n_val = *n;
             if n_val < 0 {

@@ -103,7 +103,7 @@ fn require_channel<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<Channel
 // preserve the local function names so existing call sites stay
 // unchanged; the bodies live in `super::common`.
 fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    super::common::require_int_plain(arg, fn_label)
+    super::common::require_int(arg, fn_label)
 }
 
 fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {

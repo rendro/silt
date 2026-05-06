@@ -980,6 +980,21 @@ impl TypeChecker {
         }
     }
 
+    /// Round 74 Fix #5: canonical wording for the occurs-check
+    /// diagnostic emitted from every unification site (main `Var(v) ↔ t`
+    /// arm at line ~1270, plus the five row-unif arms in
+    /// `unify_anon_anon` / `unify_anon_nominal`). Pre-fix: the row-unif
+    /// arms emitted the terse `"infinite type"` while the main arm
+    /// emitted `"infinite type: the type variable appears inside {t}"`.
+    /// Routing all six sites through this helper keeps the diagnostic
+    /// shape uniform — "collapse equivalent dual shapes to one unified
+    /// form" applies to diagnostic wording too. A future user
+    /// debugging an occurs-check failure shouldn't see two different
+    /// messages depending on which arm tripped.
+    pub(super) fn infinite_type_message(t: &Type) -> String {
+        format!("infinite type: the type variable appears inside {t}")
+    }
+
     /// Unify two anon records. See module-level row-poly notes.
     fn unify_anon_anon(
         &mut self,
@@ -1072,7 +1087,7 @@ impl TypeChecker {
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
                 } else {
-                    self.error("infinite type".to_string(), span);
+                    self.error(Self::infinite_type_message(&leftover), span);
                 }
             }
             (RowTail::Closed, RowTail::Var(v)) => {
@@ -1097,7 +1112,7 @@ impl TypeChecker {
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
                 } else {
-                    self.error("infinite type".to_string(), span);
+                    self.error(Self::infinite_type_message(&leftover), span);
                 }
             }
             (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
@@ -1127,12 +1142,14 @@ impl TypeChecker {
                 if !occurs_in(v1, &to_v1) {
                     self.subst[v1] = Some(to_v1);
                 } else {
-                    self.error("infinite type".to_string(), span);
+                    let msg = Self::infinite_type_message(&to_v1);
+                    self.error(msg, span);
                 }
                 if !occurs_in(v2, &to_v2) {
                     self.subst[v2] = Some(to_v2);
                 } else {
-                    self.error("infinite type".to_string(), span);
+                    let msg = Self::infinite_type_message(&to_v2);
+                    self.error(msg, span);
                 }
             }
         }
@@ -1207,7 +1224,7 @@ impl TypeChecker {
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
                 } else {
-                    self.error("infinite type".to_string(), span);
+                    self.error(Self::infinite_type_message(&leftover), span);
                 }
             }
         }
@@ -1266,10 +1283,7 @@ impl TypeChecker {
                             span,
                         );
                     } else {
-                        self.error(
-                            format!("infinite type: the type variable appears inside {t}"),
-                            span,
-                        );
+                        self.error(Self::infinite_type_message(t), span);
                     }
                 } else {
                     self.subst[*v] = Some(t.clone());
@@ -3933,6 +3947,18 @@ impl TypeChecker {
         self.type_aliases.insert(td.name);
         self.type_alias_arity.insert(td.name, td.params.len());
 
+        // Round 74 Fix #3: snapshot the declared parameter names BEFORE
+        // resolving the target so we can detect undeclared free tyvars
+        // — `resolve_type_expr_inner` lazily inserts a fresh `Type::Var`
+        // into `param_vars` for any lowercase identifier it encounters,
+        // including ones the user forgot to declare in `td.params`.
+        // Without this guard, `type AnyList = List(a)` (no `(a)` after
+        // `AnyList`) silently allocated one shared TyVar reused across
+        // every use site, breaking polymorphism (each site would unify
+        // with the FIRST use's element type and reject every other).
+        let declared_params: std::collections::HashSet<Symbol> =
+            td.params.iter().copied().collect();
+
         // Resolve the target with this alias's params bound. We use
         // `resolve_type_expr_inner` here (not the public canonicalising
         // wrapper): canonicalisation would eagerly expand any alias
@@ -3945,6 +3971,29 @@ impl TypeChecker {
         // stores the un-expanded target — canonicalisation expands at
         // every use site instead.
         let target_ty = self.resolve_type_expr_inner(target_te, param_vars);
+
+        // Round 74 Fix #3: any name `param_vars` gained during
+        // resolution that wasn't in `declared_params` is an undeclared
+        // free tyvar in the alias target. Emit a clear diagnostic that
+        // names the offending identifier and suggests adding it to the
+        // alias header. Multiple undeclared names produce one
+        // diagnostic per name (sorted for stable output).
+        let mut undeclared: Vec<Symbol> = param_vars
+            .keys()
+            .copied()
+            .filter(|name| !declared_params.contains(name))
+            .collect();
+        undeclared.sort_by_key(|s| resolve(*s));
+        for name in undeclared {
+            let name_str = resolve(name);
+            self.error(
+                format!(
+                    "undeclared type parameter '{name_str}' in alias target — did you mean `type {}({name_str}) = ...`?",
+                    resolve(td.name)
+                ),
+                target_te.span,
+            );
+        }
 
         // Detect cycles before registering. Build a chain that names
         // every alias visited; if `td.name` appears, report it.
@@ -4901,13 +4950,22 @@ impl TypeChecker {
     // ── Register trait implementations ──────────────────────────────
 
     /// Convert a type name Symbol to a Type.
+    ///
+    /// Round 74 Fix #1: include `ExtFloat` and `Unit`/`()` arms so a
+    /// user-declared `trait T for ExtFloat { ... }` impl receives a
+    /// `Type::ExtFloat` self_type rather than the `Type::Generic("ExtFloat", [])`
+    /// fallback (which never unifies with the canonical `Type::ExtFloat`
+    /// receiver produced by, e.g., `1.0 / 1.0`). Round 71 fixed only the
+    /// auto-derived path; user impls fell through here.
     fn type_from_name(name: Symbol) -> Type {
         let name_str = resolve(name);
         match name_str.as_str() {
             "Int" => Type::Int,
             "Float" => Type::Float,
+            "ExtFloat" => Type::ExtFloat,
             "Bool" => Type::Bool,
             "String" => Type::String,
+            "Unit" | "()" => Type::Unit,
             _ => Type::Generic(name, vec![]),
         }
     }
@@ -5668,6 +5726,18 @@ impl TypeChecker {
                 crate::types::builtins::lookup(name_str_for_arity.as_str())
                     .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
                     .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+            // Round 74 Fix #2: include user-declared type aliases in the
+            // arity table. Without this, `trait Show for Pair(a)` where
+            // `type Pair(a) = (a, a)` skipped the arity check (the alias
+            // is not a record / enum / builtin container) and fell
+            // through to the `_ => Type::Generic("Pair", [tv])` arm at
+            // the bottom — producing an impl whose self_type never
+            // unifies with any concrete `(Int, Int)` receiver.
+            let alias_arity: Option<(usize, &'static str)> = self
+                .type_alias_arity
+                .get(&ti.target_type)
+                .copied()
+                .map(|a| (a, "alias"));
             let expected_arity = self
                 .record_param_var_ids
                 .get(&ti.target_type)
@@ -5677,6 +5747,7 @@ impl TypeChecker {
                         .get(&ti.target_type)
                         .map(|e| (e.params.len(), "enum"))
                 })
+                .or(alias_arity)
                 .or(builtin_arity);
             if let Some((expected, kind)) = expected_arity
                 && expected != ti.target_type_args.len()
@@ -5697,28 +5768,55 @@ impl TypeChecker {
                 .iter()
                 .map(|arg_te| self.resolve_type_expr(arg_te, &mut impl_param_map))
                 .collect();
-            let name_str = resolve(ti.target_type);
-            match name_str.as_str() {
-                "List" if resolved_args.len() == 1 => {
-                    Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+            // Round 74 Fix #2: parametric alias as trait-impl target —
+            // expand the alias by substituting `resolved_args` through
+            // the alias's stored target. Mirrors the non-parametric
+            // alias path at line ~5617 (which calls
+            // `self.resolver.lookup_alias(ti.target_type)` and walks
+            // `info.target` with each `param_var_ids[i]` mapped to a
+            // fresh tyvar). Here we map `param_var_ids[i]` → the
+            // user-supplied type-arg at the same index.
+            //
+            // Without this, `trait Show for Pair(a)` (with
+            // `type Pair(a) = (a, a)`) produced
+            // `Type::Generic("Pair", [tv])` as the self_type. A
+            // concrete `(1, 2)` receiver typed as `(Int, Int)` —
+            // canonicalised by `resolve_type_expr` of the annotation
+            // `Pair(Int)` to `(Int, Int)` — would not unify with the
+            // phantom `Generic("Pair", _)`.
+            if let Some(info) = self.resolver.lookup_alias(ti.target_type) {
+                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                for (i, &var_id) in info.param_var_ids.iter().enumerate() {
+                    if let Some(arg_ty) = resolved_args.get(i) {
+                        mapping.insert(var_id, arg_ty.clone());
+                    }
                 }
-                "Range" if resolved_args.len() == 1 => {
-                    Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
+                let substituted = crate::types::substitute_vars(&info.target, &mapping);
+                crate::types::canonical::canonicalize(&self.resolver, &substituted)
+            } else {
+                let name_str = resolve(ti.target_type);
+                match name_str.as_str() {
+                    "List" if resolved_args.len() == 1 => {
+                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Range" if resolved_args.len() == 1 => {
+                        Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Set" if resolved_args.len() == 1 => {
+                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Channel" if resolved_args.len() == 1 => {
+                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Map" if resolved_args.len() == 2 => {
+                        let mut iter = resolved_args.into_iter();
+                        Type::Map(
+                            Box::new(iter.next().unwrap()),
+                            Box::new(iter.next().unwrap()),
+                        )
+                    }
+                    _ => Type::Generic(ti.target_type, resolved_args),
                 }
-                "Set" if resolved_args.len() == 1 => {
-                    Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
-                }
-                "Channel" if resolved_args.len() == 1 => {
-                    Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
-                }
-                "Map" if resolved_args.len() == 2 => {
-                    let mut iter = resolved_args.into_iter();
-                    Type::Map(
-                        Box::new(iter.next().unwrap()),
-                        Box::new(iter.next().unwrap()),
-                    )
-                }
-                _ => Type::Generic(ti.target_type, resolved_args),
             }
         };
 
@@ -6228,6 +6326,20 @@ pub(super) fn canonicalize_type_name(
     // `src/types/canonical.rs::canonicalize_type_name`.
     if name_str.as_str() == "Fun" {
         return intern("Fn");
+    }
+    // Round 74 Fix #4: collapse the surface name `"Unit"` onto `"()"`
+    // so a user `trait T for Unit { ... }` impl registers under the
+    // same `("T", "()")` key the FieldAccess-arm dispatch uses
+    // (`src/typechecker/inference.rs:2576` keys Unit lookups under
+    // `intern("()")`) and the auto-derive registration uses
+    // (`mod.rs:6764` registers `&[..., "()"]`). Pre-fix: three names
+    // for one shape (`"Unit"` from `head_symbol_of_canon` /
+    // `dispatch_name_for_value` / parser-captured impl target;
+    // `"()"` from FieldAccess dispatch + auto-derive). User impls
+    // for Unit registered under `"Unit"` and never matched the
+    // `"()"`-keyed dispatch path.
+    if name_str.as_str() == "Unit" {
+        return intern("()");
     }
     // Phase D: user-declared aliases route to the canonical head of
     // their target. `type Bytes = List(Int)` registers impls under

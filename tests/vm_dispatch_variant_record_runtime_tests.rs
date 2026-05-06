@@ -143,7 +143,8 @@ fn main() {
 /// arithmetic — see `combine_hash_expr` in
 /// `src/typechecker/auto_derive.rs`. The concrete value observed for
 /// `Point { x: 1, y: 2 }` on this build is locked below; any change
-/// to the combine function will flag here.
+/// to the combine function or the per-variant tag in
+/// `impl Hash for Value` (round 74) will flag here.
 #[test]
 fn hash_runs_on_user_record() {
     let out = run_silt_ok(
@@ -157,5 +158,5 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "16900348");
+    assert_eq!(out.trim(), "-18907436");
 }

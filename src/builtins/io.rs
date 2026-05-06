@@ -1,12 +1,47 @@
 //! IO and filesystem builtin functions (`io.*`, `fs.*`).
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::builtins::data::make_datetime;
 use crate::value::Value;
 use crate::vm::{BlockReason, Vm, VmError};
+
+/// Program arguments forwarded by the CLI for `io.args()`.
+///
+/// The CLI subcommands (`silt run`, `silt check`, `silt disasm`, plus the
+/// bare-file shim) recognize `--` as a separator; everything after `--` is
+/// forwarded here verbatim and surfaced to silt programs via `io.args()`.
+///
+/// Round-74 audit fix: prior to this round `io.args()` returned the raw
+/// `std::env::args()` of the silt binary itself (`["silt", "run",
+/// "file.silt", ...]`), forcing programs to know they had to drop the
+/// first 3 positions to recover their own user-supplied args. That coupling
+/// to the binary's argv layout was both fragile and undocumented; it also
+/// broke entirely when round-72 started rejecting bare extras after the
+/// script file (the only previous way to pass user args). The `--` form
+/// makes the contract explicit and preserves the forwarding path.
+fn program_args_lock() -> &'static RwLock<Vec<String>> {
+    static ARGS: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
+    ARGS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Set the program arguments returned by `io.args()`. Called by the CLI
+/// after parsing positionals out of `argv` and locating the `--` separator.
+pub fn set_program_args(args: Vec<String>) {
+    if let Ok(mut guard) = program_args_lock().write() {
+        *guard = args;
+    }
+}
+
+/// Read a snapshot of the currently-set program arguments.
+pub fn program_args() -> Vec<String> {
+    program_args_lock()
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
 
 /// Convert a `SystemTime` into a Silt `Option(DateTime)`. A missing /
 /// unsupported timestamp (the OS returned `Err`, or the value predates
@@ -241,7 +276,15 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "args" => {
-            let args_list: Vec<Value> = std::env::args().map(Value::String).collect();
+            // Round-74: return only the program args explicitly forwarded
+            // by the CLI past a `--` separator (e.g.
+            // `silt run script.silt -- foo bar` → `["foo", "bar"]`).
+            // Pre-fix this returned `std::env::args()` directly, leaking
+            // the silt binary's own argv (`["silt", "run", "script.silt",
+            // ...]`) to user programs, which then had to know to drop the
+            // first 3. The `--` separator + dedicated forwarding channel
+            // collapses that to one obvious shape.
+            let args_list: Vec<Value> = program_args().into_iter().map(Value::String).collect();
             Ok(Value::List(Arc::new(args_list)))
         }
         _ => Err(VmError::new(format!("unknown io function: {name}"))),

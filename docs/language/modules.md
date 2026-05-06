@@ -85,7 +85,41 @@ import channel
 Stdlib documentation is delivered through the LSP — hover any
 qualified built-in name (`list.map`, `math.cos`, `Result`, …) in your
 editor to see the reference for that name. The list of built-in
-modules is enumerated by `silt::module::BUILTIN_MODULES`.
+modules is enumerated by `silt::module::BUILTIN_MODULES`:
+
+| Module | Purpose |
+| --- | --- |
+| `io` | File I/O and stdout (`io.read_file`, `io.write_file`, `println`) |
+| `string` | String inspection, slicing, and conversion helpers |
+| `int` | Integer parsing, formatting, and bounded arithmetic |
+| `float` | Floating-point parsing, classification, and numeric helpers |
+| `list` | List construction, traversal, and transformation |
+| `map` | Hash-map insertion, lookup, and iteration |
+| `result` | `Result` combinators (`map_ok`, `map_err`, `unwrap_or`, …) |
+| `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
+| `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
+| `channel` | Bounded MPMC channels for CSP-style messaging |
+| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.scope` |
+| `regex` | Compiled regular expressions and replacement helpers |
+| `json` | Type-directed JSON parsing and emission |
+| `toml` | TOML parsing and emission |
+| `set` | Hash-set construction and bulk operations |
+| `math` | Trigonometry, exponentials, and numeric constants |
+| `time` | Instants, durations, calendar dates, and weekdays |
+| `http` | HTTP client (`http.get`, `http.post`, `http.request`) |
+| `fs` | Filesystem queries (`fs.list_dir`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`) |
+| `env` | Process environment access (`env.get`, `env.set`, `env.remove`, `env.vars`) |
+| `postgres` | PostgreSQL client with typed parameters |
+| `bytes` | Byte-buffer construction, slicing, and conversion |
+| `crypto` | Hashing, HMAC, and constant-time comparison |
+| `encoding` | Hex / base64 / URL encoding helpers |
+| `tcp` | TCP listener and stream primitives |
+| `stream` | Lazy iterators backed by tasks and channels |
+| `uuid` | UUID generation and parsing |
+
+The order of rows matches the order of entries in `BUILTIN_MODULES`; a
+parity-lock test in `tests/round74_modules_doc_lists_all_builtins_tests.rs`
+asserts that every entry appears in this listing.
 
 ## Circular imports
 

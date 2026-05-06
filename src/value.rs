@@ -1782,8 +1782,13 @@ impl Ord for Value {
                 Value::Unit => 0,
                 Value::Bool(_) => 1,
                 Value::Int(_) => 2,
-                Value::Float(_) => 3,
-                Value::ExtFloat(_) => 4,
+                // Float and ExtFloat share a discriminant so the Eq/Ord
+                // contract holds: `Float(x) == ExtFloat(x)` (widened to
+                // f64) ⇒ `cmp == Equal`. Without unification, `disc` would
+                // short-circuit at the `d1 != d2` test below and return
+                // `Less`/`Greater` for two values that PartialEq considers
+                // equal — violating the Ord contract.
+                Value::Float(_) | Value::ExtFloat(_) => 3,
                 Value::String(_) => 5,
                 Value::List(_) => 6,
                 Value::Range(..) => 6, // same discriminant as List for ordering
@@ -1821,6 +1826,22 @@ impl Ord for Value {
                 a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits().cmp(&b.to_bits()),
+            // Cross-arms: Float ↔ ExtFloat. PartialEq widens both to `f64`
+            // and uses the standard `f64` PartialEq (line ~1705), so Ord
+            // must agree. We use `partial_cmp` (not `total_cmp`) so finite
+            // Float vs ExtFloat 1.0 returns `Equal` exactly when PartialEq
+            // returns `true`. NaN cases (only possible from ExtFloat) fall
+            // back to bit ordering — PartialEq returns `false` there, so
+            // Ord must NOT return `Equal`. `total_cmp` on the bits side
+            // satisfies that distinctness contract.
+            (Value::Float(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
+                Some(o) => o,
+                None => a.to_bits().cmp(&b.to_bits()),
+            },
+            (Value::ExtFloat(a), Value::Float(b)) => match a.partial_cmp(b) {
+                Some(o) => o,
+                None => a.to_bits().cmp(&b.to_bits()),
+            },
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
             (Value::Range(a1, a2), Value::Range(b1, b2)) => {
@@ -2106,13 +2127,33 @@ fn value_type_name(v: &Value) -> &'static str {
 
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
+        // Explicit per-category tags (NOT `std::mem::discriminant(self)`):
+        // the Hash/Eq contract requires that `a == b ⇒ hash(a) == hash(b)`,
+        // and `PartialEq` admits two cross-discriminant equal pairs:
+        //   - `Float(x) == ExtFloat(x)` when widened to `f64` (line ~1705)
+        //   - `List(xs) == Range(lo, hi)` when xs materializes the range
+        //     (lines ~1729-1730)
+        // Therefore Float and ExtFloat MUST share a tag, and List and Range
+        // MUST share a tag AND hash the same materialized sequence.
         match self {
-            Value::Unit => {}
-            Value::Bool(b) => b.hash(state),
-            Value::Int(n) => n.hash(state),
+            Value::Unit => {
+                state.write_u8(0);
+            }
+            Value::Bool(b) => {
+                state.write_u8(1);
+                b.hash(state);
+            }
+            Value::Int(n) => {
+                state.write_u8(2);
+                n.hash(state);
+            }
+            // Float and ExtFloat share tag 3 (any-float-shape). Both
+            // canonicalize -0.0 → 0.0 so that 0.0/-0.0 (which compare equal
+            // for Float/Float and Float/ExtFloat) hash equally. ExtFloat NaN
+            // round-trips its raw bits (matches PartialEq's `to_bits()`
+            // self-equality for ExtFloat-vs-ExtFloat).
             Value::Float(f) => {
-                // Canonicalize -0.0 to 0.0 for consistent hashing
+                state.write_u8(3);
                 let bits = if *f == 0.0 {
                     0.0_f64.to_bits()
                 } else {
@@ -2121,7 +2162,7 @@ impl Hash for Value {
                 bits.hash(state);
             }
             Value::ExtFloat(f) => {
-                // Canonicalize -0.0 to 0.0 for consistent hashing
+                state.write_u8(3);
                 let bits = if *f == 0.0 {
                     0.0_f64.to_bits()
                 } else {
@@ -2129,24 +2170,40 @@ impl Hash for Value {
                 };
                 bits.hash(state);
             }
-            Value::String(s) => s.hash(state),
+            Value::String(s) => {
+                state.write_u8(4);
+                s.hash(state);
+            }
+            // List and Range share tag 5 (any-list-shape). Range hashes its
+            // materialized `[Int(lo), Int(lo+1), ..., Int(hi)]` sequence so
+            // the contract holds: a `List` and a `Range` that compare equal
+            // produce the same byte stream into the hasher.
             Value::List(xs) => {
+                state.write_u8(5);
                 xs.len().hash(state);
                 for x in xs.iter() {
                     x.hash(state);
                 }
             }
             Value::Range(lo, hi) => {
-                lo.hash(state);
-                hi.hash(state);
+                state.write_u8(5);
+                let len = range_len(*lo, *hi);
+                (len as usize).hash(state);
+                if len > 0 {
+                    for n in *lo..=*hi {
+                        Value::Int(n).hash(state);
+                    }
+                }
             }
             Value::Tuple(vs) => {
+                state.write_u8(6);
                 vs.len().hash(state);
                 for v in vs {
                     v.hash(state);
                 }
             }
             Value::Map(m) => {
+                state.write_u8(7);
                 m.len().hash(state);
                 for (k, v) in m.iter() {
                     k.hash(state);
@@ -2154,12 +2211,14 @@ impl Hash for Value {
                 }
             }
             Value::Set(s) => {
+                state.write_u8(8);
                 s.len().hash(state);
                 for v in s.iter() {
                     v.hash(state);
                 }
             }
             Value::Record(name, fields) => {
+                state.write_u8(9);
                 name.hash(state);
                 for (k, v) in fields.iter() {
                     k.hash(state);
@@ -2167,29 +2226,58 @@ impl Hash for Value {
                 }
             }
             Value::Variant(name, fields) => {
+                state.write_u8(10);
                 name.hash(state);
                 fields.len().hash(state);
                 for f in fields {
                     f.hash(state);
                 }
             }
-            Value::Channel(ch) => ch.id.hash(state),
-            Value::Handle(h) => h.id.hash(state),
+            Value::Channel(ch) => {
+                state.write_u8(11);
+                ch.id.hash(state);
+            }
+            Value::Handle(h) => {
+                state.write_u8(12);
+                h.id.hash(state);
+            }
             // Content-hash bytes — Eq/Hash contract requires the same
             // structural treatment as PartialEq.
             Value::Bytes(b) => {
+                state.write_u8(13);
                 b.len().hash(state);
                 state.write(b.as_slice());
             }
-            Value::TcpListener(t) => t.id.hash(state),
-            Value::TcpStream(t) => t.id.hash(state),
-            Value::VmClosure(_) => {} // not meaningfully hashable
-            Value::BuiltinFn(name) => name.hash(state),
+            Value::TcpListener(t) => {
+                state.write_u8(14);
+                t.id.hash(state);
+            }
+            Value::TcpStream(t) => {
+                state.write_u8(15);
+                t.id.hash(state);
+            }
+            Value::VmClosure(_) => {
+                state.write_u8(16);
+                // not meaningfully hashable
+            }
+            Value::BuiltinFn(name) => {
+                state.write_u8(17);
+                name.hash(state);
+            }
             Value::VariantConstructor(name, arity) => {
+                state.write_u8(18);
                 name.hash(state);
                 arity.hash(state);
             }
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => name.hash(state),
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
+                let tag = if matches!(self, Value::TypeDescriptor(_)) {
+                    19u8
+                } else {
+                    20u8
+                };
+                state.write_u8(tag);
+                name.hash(state);
+            }
         }
     }
 }

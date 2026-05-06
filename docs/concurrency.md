@@ -427,17 +427,21 @@ You do not always care which channel fired. Use `_` to match any channel:
 match channel.select([Recv(ch1), Recv(ch2)]) {
   (_, Message(val)) -> println("got {val} from somewhere")
   (_, Closed)       -> println("all done")
+  _                 -> ()
 }
 ```
 
 ### Variable binding
 
-You can also bind the channel to a new variable to inspect it later:
+You can also bind the channel to a new variable to inspect it later. Channels
+do not auto-derive `Display`, so log the payload (or a counter) instead of the
+channel itself:
 
 ```silt
 match channel.select([Recv(ch1), Recv(ch2)]) {
-  (source, Message(val)) -> println("got {val} from channel {source}")
-  (_, Closed)            -> println("all done")
+  (_source, Message(val)) -> println("got {val}")
+  (_, Closed)             -> println("all done")
+  _                       -> ()
 }
 ```
 

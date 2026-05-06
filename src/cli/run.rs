@@ -15,7 +15,7 @@ use crate::cli::package::resolve_package_entry_point;
 use crate::cli::pipeline::{compile_file_with_options, resolve_strict_effects};
 use crate::cli::source_scan::{is_missing_main_error, looks_like_test_file};
 
-/// Dispatch `silt run [--disassemble] [--strict-effects] [<file>]`.
+/// Dispatch `silt run [--disassemble] [--strict-effects] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
     if args[2..].iter().any(|a| a == "--help" || a == "-h") {
         print!("{}", run_help_text());
@@ -24,8 +24,22 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut disasm = false;
     let mut file: Option<String> = None;
     let mut strict_effects: Option<bool> = None;
-    for arg in &args[2..] {
-        if arg == "--disassemble" {
+    // Round-74: positionals after `--` are forwarded to the running
+    // program (surfaced via `io.args()`), not interpreted as silt CLI
+    // flags / files. This restores the ability to pass user args to
+    // scripts (e.g. `silt run text_stats.silt -- input.txt`) which
+    // round-72's bare-extra-positional rejection had broken — there
+    // was no other channel to reach `io.args()`.
+    let mut program_args: Vec<String> = Vec::new();
+    let mut iter = args[2..].iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            // Everything past the separator is verbatim program args.
+            for rest in iter.by_ref() {
+                program_args.push(rest.clone());
+            }
+            break;
+        } else if arg == "--disassemble" {
             disasm = true;
         } else if arg == "--strict-effects" {
             strict_effects = Some(true);
@@ -48,11 +62,21 @@ pub(crate) fn dispatch(args: &[String]) {
             // `silt run a.silt b.silt` look like it had run both files.
             // Mirror the rejection pattern used by `silt update`,
             // `silt repl`, `silt lsp`, and `silt add`.
+            //
+            // Round-74: to forward args to the running program, use
+            // `--` as a separator (`silt run a.silt -- foo bar`).
             eprintln!("silt run: unexpected extra argument '{arg}'");
+            eprintln!(
+                "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
+            );
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         }
     }
+    // Publish the forwarded args before compile/run so `io.args()`
+    // sees them. Always set (even when empty) so a stale snapshot
+    // from a prior in-process invocation doesn't leak through.
+    silt::builtins::io::set_program_args(program_args);
     // No explicit file → look for an enclosing silt package and use
     // its `src/main.silt`. If we're not inside a package, preserve
     // the legacy "missing argument" error so non-package users
@@ -82,8 +106,16 @@ pub(crate) fn dispatch(args: &[String]) {
 pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
     let mut disasm = false;
     let mut strict_effects: Option<bool> = None;
-    for extra in &args[2..] {
-        if extra == "--help" || extra == "-h" {
+    // Round-74: same `--` forwarding as the explicit `silt run` form.
+    let mut program_args: Vec<String> = Vec::new();
+    let mut iter = args[2..].iter();
+    while let Some(extra) = iter.next() {
+        if extra == "--" {
+            for rest in iter.by_ref() {
+                program_args.push(rest.clone());
+            }
+            break;
+        } else if extra == "--help" || extra == "-h" {
             print!("{}", run_help_text());
             process::exit(0);
         } else if extra == "--disassemble" {
@@ -108,11 +140,18 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
             // bar.silt` looked like it had run both files. Mirror the
             // rejection pattern used by `silt update`, `silt repl`,
             // `silt lsp`, and `silt add`.
+            //
+            // Round-74: to forward args to the running program, use
+            // `--` as a separator (`silt foo.silt -- arg1 arg2`).
             eprintln!("silt run: unexpected extra argument '{extra}'");
+            eprintln!(
+                "If '{extra}' is meant for the program, separate it with '--' (e.g. 'silt {file} -- {extra}')."
+            );
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         }
     }
+    silt::builtins::io::set_program_args(program_args);
     let strict = resolve_strict_effects(file, strict_effects);
     if disasm {
         crate::cli::disasm::disasm_file(file);

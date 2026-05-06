@@ -80,6 +80,37 @@ fn silt_run_rejects_two_file_positionals() {
     );
 }
 
+/// Round-74 follow-up: round-72 over-fired by rejecting EVERY non-`.silt`
+/// positional after the script, which made program args unreachable.
+/// Post-fix, `--` switches the parser into "forward to program" mode and
+/// extras after `--` succeed (and reach `io.args()`).
+#[test]
+fn silt_run_accepts_extras_after_double_dash() {
+    let dir = fresh_dir("run_dd");
+    let a = dir.join("a.silt");
+    write_trivial(&a);
+
+    let out = silt_cmd()
+        .args([
+            "run",
+            a.to_str().unwrap(),
+            "--",
+            "extra1",
+            "extra2",
+        ])
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        out.status.success(),
+        "silt run a.silt -- extra1 extra2 must succeed; \
+         exit={:?}\nstdout={}\nstderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
 #[test]
 fn silt_check_rejects_two_file_positionals() {
     let dir = fresh_dir("check");
@@ -108,6 +139,35 @@ fn silt_check_rejects_two_file_positionals() {
     assert!(
         stderr.contains("silt check") && stderr.contains("unexpected extra argument"),
         "stderr must mention the rejection; got: {stderr}"
+    );
+}
+
+/// Round-74 follow-up: extras after `--` are accepted by `silt check`
+/// (silently ignored — `check` doesn't execute, but `--` parses as the
+/// program-args separator so CI scripts can swap subcommands cleanly).
+#[test]
+fn silt_check_accepts_extras_after_double_dash() {
+    let dir = fresh_dir("check_dd");
+    let a = dir.join("a.silt");
+    write_trivial(&a);
+
+    let out = silt_cmd()
+        .args([
+            "check",
+            a.to_str().unwrap(),
+            "--",
+            "extra1",
+            "extra2",
+        ])
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        out.status.success(),
+        "silt check a.silt -- extra1 extra2 must succeed; \
+         exit={:?}\nstderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
     );
 }
 
@@ -142,6 +202,34 @@ fn silt_disasm_rejects_two_file_positionals() {
     );
 }
 
+/// Round-74 follow-up: extras after `--` are accepted by `silt disasm`
+/// (silently ignored — disasm doesn't execute, but `--` parses cleanly).
+#[test]
+fn silt_disasm_accepts_extras_after_double_dash() {
+    let dir = fresh_dir("disasm_dd");
+    let a = dir.join("a.silt");
+    write_trivial(&a);
+
+    let out = silt_cmd()
+        .args([
+            "disasm",
+            a.to_str().unwrap(),
+            "--",
+            "extra1",
+            "extra2",
+        ])
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        out.status.success(),
+        "silt disasm a.silt -- extra1 extra2 must succeed; \
+         exit={:?}\nstderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
 #[test]
 fn silt_bare_file_shim_rejects_two_file_positionals() {
     // `silt a.silt b.silt` — bare-file convenience shim. The shim
@@ -170,6 +258,28 @@ fn silt_bare_file_shim_rejects_two_file_positionals() {
     assert!(
         stderr.contains("silt run") && stderr.contains("unexpected extra argument"),
         "stderr must mention the rejection; got: {stderr}"
+    );
+}
+
+/// Round-74 follow-up: bare-file shim also accepts `--` as the
+/// program-args separator.
+#[test]
+fn silt_bare_file_shim_accepts_extras_after_double_dash() {
+    let dir = fresh_dir("bare_dd");
+    let a = dir.join("a.silt");
+    write_trivial(&a);
+
+    let out = silt_cmd()
+        .args([a.to_str().unwrap(), "--", "extra1", "extra2"])
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        out.status.success(),
+        "silt a.silt -- extra1 extra2 must succeed; \
+         exit={:?}\nstderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
     );
 }
 

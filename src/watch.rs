@@ -3,6 +3,15 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
+/// Banner printed after every (re)run so the user knows the watcher is
+/// armed for the next save. Round 74 hoisted this out of three
+/// duplicate `eprintln!` call sites — the previous shape risked the
+/// banner wording diverging silently if only some sites were edited.
+/// Test suites grep for `[watch] Watching for changes` (substring) to
+/// detect the watcher's signature output, so any future tweak should
+/// preserve that substring.
+const WATCH_BANNER: &str = "\n[watch] Watching for changes...";
+
 /// Returns true if any of the given paths has a `.silt` extension.
 /// Extracted so the filtering logic can be unit-tested in isolation
 /// from the `notify` event stream and the subprocess rerun loop.
@@ -78,7 +87,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     // Initial run
     eprint!("\x1B[2J\x1B[H");
     let _ = std::process::Command::new(&exe).args(args).status();
-    eprintln!("\n[watch] Watching for changes...");
+    eprintln!("{WATCH_BANNER}");
 
     let debounce = Duration::from_millis(500);
     let mut last_run = Instant::now();
@@ -124,7 +133,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
                 last_run_system = SystemTime::now();
                 eprint!("\x1B[2J\x1B[H");
                 let _ = std::process::Command::new(&exe).args(args).status();
-                eprintln!("\n[watch] Watching for changes...");
+                eprintln!("{WATCH_BANNER}");
             }
             Ok(Some(Ok(event))) => {
                 if !any_silt_path_changed(&event.paths) {
@@ -150,7 +159,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
                     last_run_system = SystemTime::now();
                     eprint!("\x1B[2J\x1B[H");
                     let _ = std::process::Command::new(&exe).args(args).status();
-                    eprintln!("\n[watch] Watching for changes...");
+                    eprintln!("{WATCH_BANNER}");
                 } else {
                     // Inside the debounce window: mark a pending rerun. The
                     // next loop iteration will wait out the remainder of the

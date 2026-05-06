@@ -46,38 +46,57 @@ const ERROR_HANDLING_DOC: &str = include_str!("../docs/language/error-handling.m
 fn fix2_occurs_check_emits_infinite_type_not_silent_drop() {
     // Every `if !occurs_in(v, &leftover) { self.subst[v] = Some(leftover); }`
     // in row unification must have a paired `else` arm emitting the
-    // canonical `"infinite type"` diagnostic. Reverting the fix would
-    // restore silent drops, which violates the "explicit over implicit
-    // / silent wrong answers are worse than crashes" principle.
+    // canonical occurs-check diagnostic via `infinite_type_message`.
+    // Reverting the fix would restore silent drops, which violates the
+    // "explicit over implicit / silent wrong answers are worse than
+    // crashes" principle.
+    //
+    // Round 74 Fix #5: the five row-unif arms now route through the
+    // shared helper `Self::infinite_type_message(...)` so the
+    // diagnostic wording matches the main `Var(v) ↔ t` arm
+    // (`"infinite type: the type variable appears inside {t}"`).
+    // We pin the helper-call shape rather than the raw string so the
+    // canonical-form lock is enforced at every site.
     let occurs_sites = TYPECHECKER_MOD_RS.matches("if !occurs_in(").count();
     assert!(
         occurs_sites >= 5,
         "expected at least 5 occurs_in row-unification sites; found {occurs_sites}"
     );
-    // Each must emit the canonical "infinite type" diagnostic on the
-    // failure branch. The matching `else { self.error("infinite type"...` arms.
-    let infinite_else_arms = TYPECHECKER_MOD_RS
-        .matches("self.error(\"infinite type\".to_string(), span);")
+    // Each must call into the canonical helper on the failure branch.
+    let canonical_helper_calls = TYPECHECKER_MOD_RS
+        .matches("Self::infinite_type_message(")
         .count();
     assert!(
-        infinite_else_arms >= 5,
-        "expected at least 5 `else self.error(\"infinite type\")` arms paired \
-         with occurs_in checks in row unification; found {infinite_else_arms}. \
-         A future row-var-thru-fields feature would otherwise hit a silent drop."
+        canonical_helper_calls >= 6,
+        "expected at least 6 `Self::infinite_type_message(...)` call sites \
+         (5 row-unif arms + 1 main `Var(v) ↔ t` arm); found {canonical_helper_calls}. \
+         A future row-var-thru-fields feature would otherwise hit a silent drop \
+         OR diverge in wording from the main arm."
     );
 }
 
 #[test]
 fn fix2_canonical_wording_matches_main_unify_arm() {
-    // The main `Var(v) ... t` arm at mod.rs:1240 emits `"infinite type"`
-    // when the user returns a `type a` parameter as a value. Round-73
-    // follow-up uses the IDENTICAL wording in the new row-unification
-    // arms — "collapse equivalent dual shapes" applies to diagnostic
-    // wording too (a future user shouldn't see two different
-    // diagnostics for the same underlying class of error).
+    // Round 74 Fix #5: every occurs-check site (main `Var(v) ↔ t` arm
+    // plus the five row-unif arms) emits the canonical
+    // `"infinite type: the type variable appears inside {t}"` form
+    // through the shared helper `infinite_type_message`. The lock
+    // pins the suffix since it is the discriminating part — the
+    // prefix `"infinite type"` was the pre-fix wording and would
+    // give a false-pass if the suffix were ever dropped.
     assert!(
-        TYPECHECKER_MOD_RS.contains("\"infinite type\""),
-        "main occurs-check arm must continue using the canonical \"infinite type\" wording"
+        TYPECHECKER_MOD_RS.contains("the type variable appears inside"),
+        "canonical occurs-check wording must include the \"the type variable \
+         appears inside\" suffix — Round 74 Fix #5 routes all 6 sites through \
+         `infinite_type_message` so the diagnostic shape is uniform"
+    );
+    // Helper definition itself must exist, otherwise the call sites
+    // above would not compile and we'd get a different (and louder)
+    // failure mode — but the explicit assertion makes the intent clear.
+    assert!(
+        TYPECHECKER_MOD_RS.contains("fn infinite_type_message("),
+        "Round 74 Fix #5 requires a `fn infinite_type_message(...)` helper \
+         that all six occurs-check sites route through"
     );
 }
 
@@ -122,6 +141,56 @@ fn main() {
     assert!(
         stdout.lines().any(|l| l.trim() == "EQUIV"),
         "expected `\"{{e}}\" == e.message()` for stdlib error enums. Got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn fix1_display_method_equals_message_for_stdlib_io_error_runtime() {
+    // Round-74 lock-gap closure: round-73f's `Display ≡ message` fix
+    // routed `format!("{e}")` through `render_stdlib_error_message` in
+    // `value.rs::Display`, but the trait-method form `e.display()` was
+    // serviced by the auto-derived constructor-form impl in
+    // `auto_derive::synth_display_impl_for_enum` and produced the
+    // constructor form (`IoNotFound(nope)`) instead of the message
+    // form. This regression test exercises the trait-method dispatch
+    // path specifically — the round-73f test only covered
+    // `format!("{e}")`. Without the round-74 fix this test fails
+    // because the synthesized `IoError.display` body emits the
+    // constructor-form match arms.
+    let src = r#"
+import io
+fn main() {
+    match io.read_file("nope_round74_lock_does_not_exist.txt") {
+        Ok(_) -> ()
+        Err(e) -> {
+            let display_method_form = e.display()
+            let message_form = e.message()
+            match display_method_form == message_form {
+                true -> println("EQUIV")
+                false -> {
+                    println("DRIFT")
+                    println(display_method_form)
+                    println(message_form)
+                }
+            }
+        }
+    }
+}
+"#;
+    let dir = std::env::temp_dir().join("silt_round74_display_method_eq_message");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let path = dir.join("repro.silt");
+    std::fs::write(&path, src).expect("write source");
+    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("invoke silt run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.lines().any(|l| l.trim() == "EQUIV"),
+        "expected `e.display() == e.message()` for stdlib error enums. Got stdout: {stdout}"
     );
 }
 

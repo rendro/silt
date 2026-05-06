@@ -31,8 +31,17 @@ pub(crate) fn dispatch(args: &[String]) {
     // rejection pattern used by `silt update`, `silt repl`,
     // `silt lsp`, and `silt add`.
     let mut positional: Option<String> = None;
-    for arg in &args[2..] {
-        if arg.starts_with('-') && arg != "--help" && arg != "-h" {
+    let mut iter = args[2..].iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            // Round-74: positionals after `--` are program args. Disasm
+            // doesn't execute, so these are silently skipped — but we
+            // accept the separator so `silt disasm` parses identically
+            // to `silt run`/`silt check` and CI scripts can swap one
+            // subcommand for another without rewriting argv.
+            for _ in iter.by_ref() {}
+            break;
+        } else if arg.starts_with('-') && arg != "--help" && arg != "-h" {
             eprintln!("silt disasm: unknown flag '{arg}'");
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
@@ -41,6 +50,9 @@ pub(crate) fn dispatch(args: &[String]) {
                 positional = Some(arg.clone());
             } else {
                 eprintln!("silt disasm: unexpected extra argument '{arg}'");
+                eprintln!(
+                    "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt disasm <file>.silt -- {arg}')."
+                );
                 eprintln!("Run 'silt disasm --help' for usage.");
                 process::exit(1);
             }

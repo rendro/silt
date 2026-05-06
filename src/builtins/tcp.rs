@@ -539,7 +539,7 @@ fn err_closed() -> Value {
 
 // Round 65 dedup (DC2): the byte-identical bodies of these helpers
 // previously lived in both `tcp.rs` and `stream.rs`. They now delegate
-// to `super::common::{require_str_borrow, require_int_plain}`. The
+// to `super::common::{require_str_borrow, require_int}`. The
 // thin wrappers preserve the local function names so the dozens of
 // existing call sites in this module stay unchanged.
 fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
@@ -547,7 +547,7 @@ fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError
 }
 
 fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    super::common::require_int_plain(arg, fn_label)
+    super::common::require_int(arg, fn_label)
 }
 
 #[cfg(feature = "tcp-tls")]

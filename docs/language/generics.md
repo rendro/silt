@@ -285,10 +285,18 @@ the right. With the "type params last" rule, type-directed functions
 compose naturally:
 
 ```silt
-raw_bytes
-|> bytes.to_string
-|> result.map_ok(fn(s) { json.parse(s, Config) })
-|> result.flatten
+-- `bytes.to_string` returns `Result(String, BytesError)`, while
+-- `json.parse` returns `Result(_, JsonError)`. Wrap each step's error
+-- in a shared enum so the chain composes through `?`:
+type LoadError {
+  Decode(BytesError),
+  Parse(JsonError),
+}
+
+fn load_config(raw_bytes) -> Result(Config, LoadError) {
+  let s = raw_bytes |> bytes.to_string |> result.map_err(Decode)?
+  json.parse(s, Config) |> result.map_err(Parse)
+}
 ```
 
 For functions where the piped value should land somewhere other than

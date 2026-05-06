@@ -631,11 +631,49 @@ fn combine_hash_expr(a: Expr, b: Expr) -> Expr {
 
 // ── Display on enum ──────────────────────────────────────────────────
 
+/// Detect whether `type_name` is one of the stdlib error enums whose
+/// `Error::message()` is the canonical user-facing rendering. The
+/// authoritative registry lives in `module.rs` (same one consulted by
+/// `vm::dispatch::render_stdlib_error_message`), so this stays in
+/// lock-step with the runtime-side `Value::Display` arm.
+///
+/// Round-74 follow-up: prior to this gate, the synthesized
+/// `<EnumName>.display` body for stdlib error enums was the constructor
+/// form (e.g. `IoNotFound(nope)`), but `format!("{e}")` for the same
+/// variant was already routed through `Error::message()` (round-73f),
+/// so `e.display()` and `format!("{e}")` printed different text — the
+/// dual-shape bug the round-73f fix was meant to close. By delegating
+/// `display(self)` to `self.message()` for stdlib error enums, both
+/// shapes converge on the same rendering.
+fn is_stdlib_error_enum(type_name: Symbol) -> bool {
+    let name = crate::intern::resolve(type_name);
+    crate::module::builtin_error_enum_variants_with_arity()
+        .iter()
+        .any(|(enum_name, _)| *enum_name == name.as_str())
+}
+
 pub(super) fn synth_display_impl_for_enum(
     type_name: Symbol,
     type_params: &[Symbol],
     variants: &[EnumVariant],
 ) -> TraitImpl {
+    // Round-74 fix: stdlib error enums route `display(self)` through
+    // `self.message()` so `e.display()` matches `format!("{e}")` (which
+    // is also routed through `message()` via the
+    // `render_stdlib_error_message` arm in `value.rs::Display`). User
+    // enums keep the constructor-form body.
+    if is_stdlib_error_enum(type_name) {
+        let self_sym = intern("self");
+        let self_te = type_te(type_name, type_params);
+        let body = method_call(ident_expr(self_sym), intern("message"), vec![]);
+        let method = fn_decl(
+            intern("display"),
+            vec![param(self_sym, self_te)],
+            Some(named_te(intern("String"))),
+            body,
+        );
+        return trait_impl(intern("Display"), type_name, type_params, vec![method]);
+    }
     synth_unop_match_enum(
         intern("Display"),
         intern("display"),

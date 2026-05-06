@@ -33,6 +33,26 @@ impl VmError {
     }
 }
 
+/// The canonical "frame location" formatter used by `VmError::Display`.
+///
+/// Production CLIs (`silt run`, `silt test`, REPL) supply their own
+/// `format_frame` closure to `render_call_stack` so they can use absolute
+/// file paths.  `VmError::Display` has no access to such paths (it's a
+/// fallback formatter that may be invoked from arbitrary sinks), so it
+/// uses a path-free `"line N, column M"` shape — but it MUST go through
+/// the same `render_call_stack` helper as the production paths, applying
+/// the same `<module:...>`-keep filter and the same `"  -> name  at …"`
+/// line layout.  Any drift between this helper and `render_call_stack`
+/// would re-introduce the round-74 GAP (Display dropping module frames
+/// silently, plus a one-vs-two-space `at` separator divergence).
+pub fn vm_error_display_frame(_name: &str, span: &Span) -> String {
+    if span.line > 0 {
+        format!("line {}, column {}", span.line, span.col)
+    } else {
+        "<unknown location>".to_string()
+    }
+}
+
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Canonicalize to the same `error[runtime]: <msg>` shape produced
@@ -46,9 +66,14 @@ impl std::fmt::Display for VmError {
         // dialect. (Audit LATENT L3.)
         //
         // No span → no `-->` locator line; no source snippet (we don't
-        // hold the source here). Call-stack rendering follows the same
-        // `  -> name at line N, column M` shape used previously so
-        // operator-side logging keeps the context.
+        // hold the source here). Call-stack rendering delegates to the
+        // shared `render_call_stack` helper so the filter + line shape
+        // can never drift from `silt run` / `silt test` / REPL output.
+        // Round-74 GAP: previously this method had its own filter
+        // (`!name.starts_with('<')`, dropping `<module:...>` frames) and
+        // its own format string (one space before `at`), so a bare
+        // `format!("{e}")` would silently lose module-init provenance
+        // and use a different line shape than the production CLIs.
         //
         // NOTE: this Display intentionally does NOT do ANSI coloring —
         // SourceError::Display gates color on `isatty(stderr)`, but a
@@ -61,25 +86,11 @@ impl std::fmt::Display for VmError {
         {
             write!(f, "\n --> <input>:{}:{}", span.line, span.col)?;
         }
-        // Only show the call stack if it has at least two meaningful (non-synthetic)
-        // frames — a single-frame "stack" would just restate the error site above.
-        let meaningful: Vec<_> = self
-            .call_stack
-            .iter()
-            .filter(|(name, _)| !name.starts_with('<'))
-            .collect();
-        if meaningful.len() >= 2 {
+        let stack_lines = render_call_stack(&self.call_stack, vm_error_display_frame);
+        if !stack_lines.is_empty() {
             write!(f, "\ncall stack:")?;
-            for (name, frame_span) in &meaningful {
-                if frame_span.line > 0 {
-                    write!(
-                        f,
-                        "\n  -> {} at line {}, column {}",
-                        name, frame_span.line, frame_span.col
-                    )?;
-                } else {
-                    write!(f, "\n  -> {name}")?;
-                }
+            for line in &stack_lines {
+                write!(f, "\n{line}")?;
             }
         }
         Ok(())

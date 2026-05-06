@@ -572,17 +572,32 @@ fn l3_effect_rows_doc_uses_current_silt_syntax() {
         "effect-rows.md must not call bare `.unwrap()` (silt only exposes `.unwrap_or`)."
     );
 
-    // Positive shape: the corrected snippet uses the current syntax.
+    // Round-74 follow-up: `env.home()` does not exist in silt's stdlib
+    // (only `env.get`, `env.set`, `env.remove`, `env.vars`), and bare
+    // `.unwrap_or(...)` is not a method (the stdlib uses module-qualified
+    // `option.unwrap_or` / `result.unwrap_or`). The corrected snippet
+    // pipes `env.get("HOME")` into `option.unwrap_or` and the result
+    // values into `result.unwrap_or`.
     assert!(
-        EFFECT_DOC_SRC.contains("env.home() + \""),
-        "effect-rows.md should use `+` for String concat."
+        !EFFECT_DOC_SRC.contains("env.home("),
+        "effect-rows.md must not call the non-existent `env.home()` — \
+         use `env.get(\"HOME\") |> option.unwrap_or(...)` instead."
+    );
+    assert!(
+        EFFECT_DOC_SRC.contains("env.get(\"HOME\")"),
+        "effect-rows.md should call `env.get(\"HOME\")` (the actual stdlib function)."
     );
     assert!(
         EFFECT_DOC_SRC.contains("io.read_file(path)"),
         "effect-rows.md should call `io.read_file` (the actual stdlib function)."
     );
     assert!(
-        EFFECT_DOC_SRC.contains(".unwrap_or("),
-        "effect-rows.md should use `.unwrap_or(...)` instead of bare `.unwrap()`."
+        EFFECT_DOC_SRC.contains("option.unwrap_or("),
+        "effect-rows.md should use `option.unwrap_or(...)` for the `env.get` Option."
+    );
+    assert!(
+        EFFECT_DOC_SRC.contains("result.unwrap_or("),
+        "effect-rows.md should use `result.unwrap_or(...)` for Result values \
+         (silt has no bare `.unwrap_or` method)."
     );
 }
