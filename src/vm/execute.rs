@@ -2164,22 +2164,26 @@ impl Vm {
                         self.stack[receiver_slot..].to_vec()
                     };
                     self.stack.truncate(receiver_slot);
-                    match self.invoke_callable(&func, &args) {
+                    // Use the resumable variant so that if the method
+                    // body yields (e.g. inside `task.spawn`), resuming
+                    // restores the suspended invoke state rather than
+                    // re-running the method body from ip=0 — which would
+                    // duplicate side effects like println, mutation, and
+                    // foreign-fn calls. The "original args" we re-push
+                    // on yield must reproduce the stack layout that
+                    // `Op::CallMethod` will consume when this same
+                    // instruction re-executes after resume: descriptor
+                    // (if any) at the bottom, then `args`.
+                    let original_args: Vec<Value> = if descriptor_receiver {
+                        let mut v = Vec::with_capacity(1 + args.len());
+                        v.push(receiver.clone());
+                        v.extend(args.iter().cloned());
+                        v
+                    } else {
+                        args.clone()
+                    };
+                    match self.invoke_callable_resumable(&func, &args, &original_args) {
                         Ok(result) => self.push(result),
-                        Err(e) if e.is_yield => {
-                            // Re-push the stack frame this CallMethod read
-                            // so the instruction re-executes cleanly on
-                            // resume. For descriptor receivers we also
-                            // push the descriptor back so the next read
-                            // of argc slots finds it at the bottom.
-                            if descriptor_receiver {
-                                self.push(receiver.clone());
-                            }
-                            for arg in &args {
-                                self.push(arg.clone());
-                            }
-                            return Err(e);
-                        }
                         Err(e) => return Err(e),
                     }
                 } else {
@@ -2194,17 +2198,23 @@ impl Vm {
                         if let Some(field_val) = fields.get(&method_name) {
                             let callable = field_val.clone();
                             self.stack.truncate(receiver_slot);
-                            match self.invoke_callable(&callable, &extra_args) {
+                            // Resumable invoke: see qualified-global arm
+                            // above. On yield the original args we re-push
+                            // are receiver + extra_args, so the same
+                            // CallMethod instruction reads them again on
+                            // resume and re-enters this arm — which then
+                            // resumes via `suspended_invoke` instead of
+                            // re-running the callable from scratch.
+                            let mut original_args: Vec<Value> =
+                                Vec::with_capacity(1 + extra_args.len());
+                            original_args.push(receiver.clone());
+                            original_args.extend(extra_args.iter().cloned());
+                            match self.invoke_callable_resumable(
+                                &callable,
+                                &extra_args,
+                                &original_args,
+                            ) {
                                 Ok(result) => self.push(result),
-                                Err(e) if e.is_yield => {
-                                    // Re-push receiver first, then extra_args
-                                    // so CallMethod can re-read them on resume.
-                                    self.push(receiver.clone());
-                                    for arg in &extra_args {
-                                        self.push(arg.clone());
-                                    }
-                                    return Err(e);
-                                }
                                 Err(e) => return Err(e),
                             }
                         } else {

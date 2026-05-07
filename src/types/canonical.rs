@@ -746,15 +746,34 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         Value::Set(_) => Some(canonical_name(&Type::Set(Box::new(Type::Unit)))),
         Value::Tuple(_) => Some(canonical_name(&Type::Tuple(vec![]))),
         Value::Channel(_) => Some(canonical_name(&Type::Channel(Box::new(Type::Unit)))),
-        // Function values dispatch under `"Fn"` — the same canonical
-        // name `canonical_name(Type::Fun)`, `head_symbol_of_canon`, and
-        // the typechecker's `type_name_for_impl` return for function
-        // types. Round 71 follow-up unified the four sites that used to
-        // disagree (`"Fun"` / `"Fn"` / `"Function"`); collapsing on
-        // `"Fn"` matches the surface keyword and `Type::Fun`'s Display.
+        // All function-shaped values dispatch under `"Fn"` — the same
+        // canonical name that `canonical_name(Type::Fun)`,
+        // `head_symbol_of_canon(Type::Fun)`, and the typechecker's
+        // `type_name_for_impl` produce. The typechecker types every
+        // function-shaped value as `Type::Fun(..)`, so a user
+        // `trait T for Fn { ... }` impl registers under the
+        // `("T", "Fn")` key. Round 71 follow-up unified the four
+        // sites that used to disagree (`"Fun"` / `"Fn"` /
+        // `"Function"`) and migrated `VmClosure` to `"Fn"`; round 77
+        // closed the gap by routing the `BuiltinFn` and
+        // `VariantConstructor` siblings through the same name. Pre-fix,
+        // those two arms returned their own variant tags
+        // (`"BuiltinFn"` / `"VariantConstructor"`), so binding a builtin
+        // (`let h = println`) or a variant constructor (`let h = May`)
+        // and then calling `h.describe()` surfaced
+        // `no method 'describe' for type 'BuiltinFn'` even though the
+        // `for Fn` impl was registered.
+        //
+        // Each arm is written out long-hand (rather than collapsed
+        // via `|`-patterns) so the round-71 source-grep lock in
+        // `tests/round71_followup_fn_canonical_name_tests.rs` —
+        // which asserts the exact literal
+        // `Value::VmClosure(_) => Some("Fn".to_string())` — keeps
+        // matching. Round-77 lock:
+        // `tests/round77_for_fn_builtinfn_dispatch_tests.rs`.
         Value::VmClosure(_) => Some("Fn".to_string()),
-        Value::BuiltinFn(_) => Some("BuiltinFn".to_string()),
-        Value::VariantConstructor(..) => Some("VariantConstructor".to_string()),
+        Value::BuiltinFn(_) => Some("Fn".to_string()),
+        Value::VariantConstructor(..) => Some("Fn".to_string()),
         Value::Unit => Some(canonical_name(&Type::Unit)),
 
         // Resource types with no Type variant (yet): keep their

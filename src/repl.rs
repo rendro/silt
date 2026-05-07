@@ -29,7 +29,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-use crate::ast::{Decl, Pattern, PatternKind};
+use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
 use crate::compiler::{CompileError, Compiler};
 use crate::errors::SourceError;
 use crate::intern;
@@ -536,8 +536,39 @@ fn eval_declaration(
     }
 
     // After successful evaluation, add newly defined names to the completion list.
+    let new_names = collect_decl_completion_names(&program.decls);
+    if !new_names.is_empty() {
+        let mut names_ref = names.borrow_mut();
+        for name in new_names {
+            if !names_ref.contains(&name) {
+                names_ref.push(name);
+            }
+        }
+    }
+}
+
+/// Collect every name a list of top-level decls introduces into the
+/// REPL's completion namespace.
+///
+/// Includes:
+/// - `fn` decl names
+/// - `let` pattern bindings (recursively)
+/// - `type` decl names AND, for enum bodies, every variant constructor
+///   name. Without the variant pass, user-defined enum constructors
+///   (e.g. `Active`/`Idle` in `type Status { Active, Idle }`) silently
+///   fall out of tab completion even though the typechecker accepts
+///   them and builtin enum variants (`Ok`/`Some`/`Recv`/`Monday`/...)
+///   from `module::all_builtin_constructor_names()` DO appear. This
+///   was REPL-1 in the round-77 audit.
+/// - `trait` decl names
+///
+/// (Trait method names and record field names are intentionally NOT
+/// surfaced here: completion at the unqualified-name layer offers the
+/// trait/type itself, and method/field access goes through the
+/// `module.member` / receiver-dispatch completion path.)
+pub fn collect_decl_completion_names(decls: &[Decl]) -> Vec<String> {
     let mut new_names = Vec::new();
-    for decl in &program.decls {
+    for decl in decls {
         match decl {
             Decl::Fn(f) => {
                 new_names.push(intern::resolve(f.name));
@@ -547,6 +578,15 @@ fn eval_declaration(
             }
             Decl::Type(t) => {
                 new_names.push(intern::resolve(t.name));
+                if let TypeBody::Enum(variants) = &t.body {
+                    // Mirror the builtin side
+                    // (`module::all_builtin_constructor_names`): every
+                    // enum variant is a callable constructor and must
+                    // be surfaced unqualified for tab-completion.
+                    for v in variants {
+                        new_names.push(intern::resolve(v.name));
+                    }
+                }
             }
             Decl::Trait(t) => {
                 new_names.push(intern::resolve(t.name));
@@ -554,14 +594,7 @@ fn eval_declaration(
             _ => {}
         }
     }
-    if !new_names.is_empty() {
-        let mut names_ref = names.borrow_mut();
-        for name in new_names {
-            if !names_ref.contains(&name) {
-                names_ref.push(name);
-            }
-        }
-    }
+    new_names
 }
 
 /// Collect bound names from a pattern (for let bindings).

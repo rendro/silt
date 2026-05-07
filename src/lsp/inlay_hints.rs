@@ -93,6 +93,17 @@ fn walk_decl(decl: &Decl, out: &mut Vec<HintRecord>) {
                 collect_fn_hints(method, out);
             }
         }
+        Decl::Trait(td) => {
+            // Default-method bodies inside trait declarations: same
+            // shape as `Decl::TraitImpl`. Methods with no body (pure
+            // signatures) yield no hints because `walk_expr` walks an
+            // empty body. Round-77 LSP-L1: previously fell into the
+            // `_ => {}` arm and silently dropped hints for default
+            // bodies, even when typechecking succeeded.
+            for method in &td.methods {
+                collect_fn_hints(method, out);
+            }
+        }
         _ => {}
     }
 }

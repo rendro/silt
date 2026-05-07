@@ -370,6 +370,95 @@ typically want one of two patterns when cancellation is an expected outcome:
 
 Returns `Unit`.
 
+### Scoped deadlines: `task.deadline(dur, fn)`
+
+```silt
+let outcome = task.deadline(time.ms(200), fn() {
+  io.read_file("/var/log/slow.log")
+})
+```
+
+`task.deadline(dur, f)` runs `f` with a scoped I/O deadline and returns
+whatever `f` returns. If any blocking I/O builtin inside `f` (see
+[Blocking operations](#blocking-operations)) runs longer than `dur`, the
+builtin returns **the module's own typed timeout variant** instead of its
+normal result — surrounding silt code handles it through the usual
+`Result` match on the typed `IoError`, `TcpError`, or `HttpError` enum
+that builtin already declares. No exception is raised, and the deadline
+does not preempt pure CPU work; it only applies to I/O.
+
+Specifically (matching the [`SILT_IO_TIMEOUT`](#io-timeouts-silt_io_timeout)
+table):
+
+- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(TcpTimeout)`.
+- `http.*` surfaces `Err(HttpTimeout)`.
+
+The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
+or a surrounding `task.deadline`, whichever elapses first fires. The
+embedded message on the `IoUnknown` variant distinguishes the source so
+silt code can tell scoped timeouts from the global one.
+
+```silt
+import io
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(200), fn() {
+    io.read_file("/var/log/slow.log")
+  })
+  match outcome {
+    Ok(contents) -> println(contents)
+    Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+    Err(_) -> println("other io error")
+  }
+}
+```
+
+Signature: `task.deadline(dur: Duration, f: () -> a) -> a`.
+
+### Bounded spawn: `task.spawn_until(dur, fn)`
+
+```silt
+let h = task.spawn_until(time.seconds(2), fn() {
+  io.read_file("/tmp/maybe_slow.txt")
+})
+```
+
+`task.spawn_until(dur, f)` spawns `f` as a task with a bounded
+wall-clock deadline. It is equivalent to
+`task.spawn(fn() { task.deadline(dur, f) })` but with one less closure
+wrapper. The returned `Handle(a)` resolves to the function's result if
+it finishes in time, or to the deadline error inside any I/O builtin
+the task was blocked on when the deadline fired — the same typed
+timeout shapes as `task.deadline`:
+
+- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(TcpTimeout)`.
+- `http.*` surfaces `Err(HttpTimeout)`.
+
+Useful for fan-out patterns where each child task must bound its own
+runtime — e.g. racing N replicas and dropping stragglers.
+
+```silt
+import io
+import task
+import time
+
+fn main() {
+  let h = task.spawn_until(time.seconds(2), fn() {
+    io.read_file("/tmp/maybe_slow.txt")
+  })
+  match task.join(h) {
+    Ok(contents) -> println(contents)
+    Err(msg) -> println("io error or timeout")
+  }
+}
+```
+
+Signature: `task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)`.
+
 
 ## 4. Select
 
@@ -945,8 +1034,8 @@ SILT_IO_TIMEOUT=5s silt run server.silt
 ```
 
 For scoped, per-call deadlines rather than a process-wide cap, use
-`task.deadline(dur, fn)` or `task.spawn_until(dur, fn)` (hover either
-in your editor for the LSP docs).
+[`task.deadline(dur, fn)`](#scoped-deadlines-taskdeadlinedur-fn) or
+[`task.spawn_until(dur, fn)`](#bounded-spawn-taskspawn_untildur-fn).
 Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
 fires, and the caller sees the same typed variant as the module's normal
 timeout path.
@@ -1057,6 +1146,8 @@ operations block synchronously, just like channel operations.
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` |
+| Scoped deadline | `task.deadline(dur, fn() { ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
+| Bounded spawn | `task.spawn_until(dur, fn() { ... })` | `Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization

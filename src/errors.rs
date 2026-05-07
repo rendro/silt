@@ -184,9 +184,13 @@ pub(crate) fn clamp_span_to_source(span: Span, source: &str) -> Span {
         return span;
     }
     // Past EOF — clamp onto the last real line, caret just after its last char.
+    // Also clamp the byte offset so it doesn't dangle past the end of `source`;
+    // downstream consumers (e.g. LSP byte-offset → UTF-16 column conversion)
+    // assume `offset <= source.len()`. Lock: tests/round77_errors_clamp_offset_tests.rs.
     let last_line = source.lines().last().unwrap_or("");
     let last_col = last_line.chars().count().saturating_add(1);
-    Span::with_offset(line_count, last_col, span.offset)
+    let clamped_offset = span.offset.min(source.len());
+    Span::with_offset(line_count, last_col, clamped_offset)
 }
 
 /// Check whether stderr is a terminal (for ANSI color support).
@@ -328,15 +332,14 @@ impl fmt::Display for SourceError {
             // Build spacing to align caret under the error position.
             let spacing: String = caret_spacing(src_line, col);
 
-            // If `self.message` is a multi-line blob (e.g. a
-            // module-import error that already embeds a nested
-            // `--> file | ^` snippet into its message text), only
-            // echo the first line under the outer caret — otherwise
-            // the nested snippet would render twice: once inside
-            // the header at the top of the block, and once again
-            // here after the outer caret. Lock: tests/modules.rs
+            // Echo only `header_msg` (the first line of `self.message`,
+            // already split off at the top of `fmt`) under the outer
+            // caret. Multi-line bodies — e.g. a module-import error
+            // that embeds a nested `--> file | ^` snippet into its
+            // message text — continue as `  = note:` lines below the
+            // caret block, so the nested snippet doesn't render twice.
+            // Lock: tests/modules.rs
             // `test_module_parse_error_inner_snippet_rendered_once`.
-            // Multi-line body continues as `  = note:` lines below.
             write!(
                 f,
                 "\n {cyan}{gutter:>width$} |{reset} {spacing}{label_color}{bold}^ {msg}{reset}",

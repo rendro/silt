@@ -1177,6 +1177,56 @@ impl TypeChecker {
                     "not all patterns are covered".into()
                 }
             }
+            // EXHAUST-L1 (round 77): produce a record-aware witness rather
+            // than the bare catch-all. Walk the record's declared fields,
+            // build a per-field column matrix mirroring the decomposition
+            // performed by `is_record_useful_with_query`, and recursively
+            // ask `missing_description` what each column is missing. The
+            // first field whose column yields a substantive (non-bare)
+            // child message becomes the witness — formatted with the
+            // record name and field name so the user can locate the gap.
+            //
+            // This is intentionally a partial witness: we do not attempt
+            // to construct a full multi-field witness (which would
+            // require enumerating cartesian products and is a much larger
+            // undertaking). Mentioning the record name and at least one
+            // missing field is acceptable per the round-77 issue.
+            Type::Record(rec_name, rec_fields) => {
+                for (fname, fty) in rec_fields {
+                    // Build the field-column matrix: for each row in
+                    // `patterns`, contribute the sub-pattern bound to
+                    // this field (or wildcard if the row doesn't pin
+                    // the field down — wildcards, idents, and record/
+                    // anon-record patterns that omit the field).
+                    let col_pats: Vec<Pattern> = patterns
+                        .iter()
+                        .filter_map(|p| match &p.kind {
+                            PatternKind::Wildcard | PatternKind::Ident(_) => {
+                                Some(synth(PatternKind::Wildcard))
+                            }
+                            PatternKind::Record { fields: r_fields, .. }
+                            | PatternKind::AnonRecord { fields: r_fields, .. } => {
+                                let sub = r_fields
+                                    .iter()
+                                    .find(|(n, _)| n == fname)
+                                    .and_then(|(_, sp)| sp.clone())
+                                    .unwrap_or(synth(PatternKind::Wildcard));
+                                Some(sub)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let col_refs: Vec<&Pattern> = col_pats.iter().collect();
+                    let child = self.missing_description(&col_refs, fty);
+                    if child != "not all patterns are covered" {
+                        return format!("in {rec_name}.{fname}: {child}");
+                    }
+                }
+                // No single field produced a substantive witness — fall
+                // back to a record-aware bare message so the user at
+                // least sees the record name.
+                format!("not all patterns of {rec_name} are covered")
+            }
             _ => "not all patterns are covered".into(),
         }
     }

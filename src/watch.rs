@@ -84,17 +84,23 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
         std::process::exit(1);
     });
 
-    // Initial run
-    eprint!("\x1B[2J\x1B[H");
-    let _ = std::process::Command::new(&exe).args(args).status();
-    eprintln!("{WATCH_BANNER}");
-
     let debounce = Duration::from_millis(500);
+    // Capture timestamps BEFORE the initial subprocess so any save during
+    // the initial compile is not silently dropped. The rerun branches
+    // below set these timestamps before running the subprocess for the
+    // same reason; the initial branch must match that ordering. See
+    // `tests/round77_watch_initial_mtime_ordering_tests.rs` for the lock.
     let mut last_run = Instant::now();
     // Wall-clock timestamp of the most recent rerun (or startup). Used
     // to reject false-positive watcher events whose paths don't
     // actually have a newer mtime — see `any_silt_path_mtime_newer`.
     let mut last_run_system = SystemTime::now();
+
+    // Initial run
+    eprint!("\x1B[2J\x1B[H");
+    let _ = std::process::Command::new(&exe).args(args).status();
+    eprintln!("{WATCH_BANNER}");
+
     let mut pending_rerun = false;
 
     loop {

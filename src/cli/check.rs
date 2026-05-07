@@ -216,20 +216,50 @@ fn print_json_errors(errors: &[&SourceError]) {
             // rest, which meant `--format json` consumers (editors,
             // LSP front-ends, CI scripts) never saw the hints. We now
             // preserve the first line as `message` (backward compat) and
-            // add a `hints` array extracted from the remaining lines,
-            // filtered to diagnostic hint prefixes (`help:`, `note:`).
+            // add a `hints` array extracted from the remaining lines.
+            //
+            // Round-77 fix (GAP ERR-1): the human renderer (`SourceError::
+            // Display` at `src/errors.rs:366-389`) prepends `= note:` to
+            // ANY unprefixed first body line, so structural notes like
+            // `add one as the entry point` (emitted alongside
+            // `program has no main() function`) showed in stderr but
+            // were silently dropped from JSON output. We now mirror the
+            // renderer: an unprefixed first body line is emitted as a
+            // `note:` hint, and subsequent unprefixed lines (continuation
+            // of an existing note/help) are appended verbatim — matching
+            // the human form's `       <line>` continuation indent.
             let mut lines = e.message.lines();
             let head = lines.next().unwrap_or(&e.message);
-            let hints: Vec<String> = lines
-                .filter_map(|ln| {
-                    let t = ln.trim_start();
-                    if t.starts_with("help:") || t.starts_with("note:") {
-                        Some(t.to_string())
+            let mut hints: Vec<String> = Vec::new();
+            let mut first_body_line = true;
+            for ln in lines {
+                let t = ln.trim_start();
+                if t.starts_with("help:") || t.starts_with("note:") {
+                    // Already prefixed — keep as-is (after trimming
+                    // leading whitespace, matching the prior behavior).
+                    hints.push(t.to_string());
+                    first_body_line = false;
+                } else if first_body_line {
+                    // Unprefixed first body line: human renderer treats
+                    // this as `= note: <line>`. Mirror that here so JSON
+                    // consumers see the same hint.
+                    hints.push(format!("note: {t}"));
+                    first_body_line = false;
+                } else {
+                    // Unprefixed continuation of a prior hint: append to
+                    // the most recent hint so multi-line notes round-trip
+                    // as a single logical entry (matching the renderer's
+                    // 7-space continuation indent under `= note:`).
+                    if let Some(last) = hints.last_mut() {
+                        last.push('\n');
+                        last.push_str(t);
                     } else {
-                        None
+                        // No prior hint to attach to — fall back to a
+                        // bare `note:` so the line isn't dropped.
+                        hints.push(format!("note: {t}"));
                     }
-                })
-                .collect();
+                }
+            }
             serde_json::json!({
                 "file": e.file.as_deref().unwrap_or("<unknown>"),
                 "line": e.span.line,

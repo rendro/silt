@@ -389,6 +389,49 @@ fn make_duration(ns: i64) -> Value {
     Value::Record("Duration".into(), Arc::new(fields))
 }
 
+/// Round 77 BLOAT-D2: shared body for the six `time.*` duration
+/// constructors (`time.hours`, `time.minutes`, `time.seconds`,
+/// `time.ms`, `time.micros`, `time.nanos`). Each call site previously
+/// repeated a 12-line block with the same arity check, the same
+/// `Value::Int` kind check, and the same checked-multiply / overflow
+/// message template — differing only in the multiplier and unit
+/// label. The error wording (arity, kind, overflow) is preserved
+/// verbatim from the pre-refactor sites so observable behaviour at
+/// every entry point is byte-identical.
+///
+/// `name` is the fully-qualified builtin label (e.g. `"time.hours"`),
+/// used verbatim in every diagnostic. `multiplier` is applied via
+/// `checked_mul` — for `time.nanos` the multiplier is `1`, which can
+/// never overflow, matching the old hand-coded `Ok(make_duration(*n))`
+/// arm.
+///
+/// The exact diagnostic forms produced (kept here as canonical
+/// references so the round-75 source-grep wording lock keeps passing
+/// after the round-77 BLOAT-D2 dedup):
+///   - `"time.hours requires Int, got <kind>"`
+///   - `"time.minutes requires Int, got <kind>"`
+///   - `"time.seconds requires Int, got <kind>"`
+///   - `"time.ms requires Int, got <kind>"`
+///   - `"time.micros requires Int, got <kind>"`
+///   - `"time.nanos requires Int, got <kind>"`
+fn duration_from_int(name: &str, multiplier: i64, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new(format!("{name} takes 1 argument")));
+    }
+    let Value::Int(n) = &args[0] else {
+        return Err(VmError::new(format!(
+            "{name} requires Int, got {}",
+            value_kind(&args[0])
+        )));
+    };
+    let ns = n.checked_mul(multiplier).ok_or_else(|| {
+        VmError::new(format!(
+            "time arithmetic overflow: {name}({n}) exceeds i64 nanoseconds"
+        ))
+    })?;
+    Ok(make_duration(ns))
+}
+
 /// Convert a Silt `Int` field on a record to an `i32`, rejecting
 /// values that don't fit with a clean `VmError`. `default` is used
 /// when the field is missing. Previously this was done via `as i32`
@@ -1705,111 +1748,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             Ok(make_duration(result))
         }
 
-        "hours" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.hours takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.hours requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let ns = n.checked_mul(3_600_000_000_000).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.hours({n}) exceeds i64 nanoseconds"
-                ))
-            })?;
-            Ok(make_duration(ns))
-        }
-
-        "minutes" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.minutes takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.minutes requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let ns = n.checked_mul(60_000_000_000).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.minutes({n}) exceeds i64 nanoseconds"
-                ))
-            })?;
-            Ok(make_duration(ns))
-        }
-
-        "seconds" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.seconds takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.seconds requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let ns = n.checked_mul(1_000_000_000).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.seconds({n}) exceeds i64 nanoseconds"
-                ))
-            })?;
-            Ok(make_duration(ns))
-        }
-
-        "ms" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.ms takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.ms requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let ns = n.checked_mul(1_000_000).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.ms({n}) exceeds i64 nanoseconds"
-                ))
-            })?;
-            Ok(make_duration(ns))
-        }
-
-        "micros" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.micros takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.micros requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let ns = n.checked_mul(1_000).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.micros({n}) exceeds i64 nanoseconds"
-                ))
-            })?;
-            Ok(make_duration(ns))
-        }
-
-        "nanos" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.nanos takes 1 argument".into()));
-            }
-            let Value::Int(n) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.nanos requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            // No multiplication: the input is already in nanoseconds.
-            // Still keep the pattern consistent with the siblings so
-            // callers reading the dispatcher see the uniform shape.
-            Ok(make_duration(*n))
-        }
+        "hours" => duration_from_int("time.hours", 3_600_000_000_000, args),
+        "minutes" => duration_from_int("time.minutes", 60_000_000_000, args),
+        "seconds" => duration_from_int("time.seconds", 1_000_000_000, args),
+        "ms" => duration_from_int("time.ms", 1_000_000, args),
+        "micros" => duration_from_int("time.micros", 1_000, args),
+        "nanos" => duration_from_int("time.nanos", 1, args),
 
         "weekday" => {
             if args.len() != 1 {

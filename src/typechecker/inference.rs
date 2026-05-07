@@ -2620,9 +2620,28 @@ impl TypeChecker {
                     // the dispatch-time redirect (formerly
                     // `Type::List(_) | Type::Range(_)`) is reduced to a
                     // single List arm. Range no longer reaches here.
-                    Type::List(_) => {
+                    //
+                    // Round 77 BLOAT D3: the four container arms (List,
+                    // Tuple, Map, Set) are line-for-line identical
+                    // except for the literal type-name string. They
+                    // collapse onto a single arm that asks
+                    // `type_name_for_impl` for the canonical name.
+                    // Adding a fifth container head only requires
+                    // extending the match pattern below — not cloning
+                    // a fourth body. The unknown-method error wording
+                    // matches the pre-fix form (`unknown method 'X' on
+                    // List` — without the `type` prefix used by the
+                    // primitive arm above), preserving observable
+                    // behavior across all four heads.
+                    ref t @ (Type::List(_)
+                    | Type::Tuple(_)
+                    | Type::Map(_, _)
+                    | Type::Set(_)) => {
+                        let type_name = self
+                            .type_name_for_impl(t)
+                            .expect("container head has canonical name");
                         if let Some(entry) =
-                            self.method_table.get(&(intern("List"), field)).cloned()
+                            self.method_table.get(&(type_name, field)).cloned()
                         {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
@@ -2630,73 +2649,13 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
+                        let display = resolve(type_name).to_string();
                         self.error(
                             format_unknown_method_message(
                                 field,
-                                "List",
+                                &display,
                                 &self.method_table,
-                                intern("List"),
-                            ),
-                            span,
-                        );
-                        Type::Error
-                    }
-                    Type::Tuple(_) => {
-                        if let Some(entry) =
-                            self.method_table.get(&(intern("Tuple"), field)).cloned()
-                        {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        self.error(
-                            format_unknown_method_message(
-                                field,
-                                "Tuple",
-                                &self.method_table,
-                                intern("Tuple"),
-                            ),
-                            span,
-                        );
-                        Type::Error
-                    }
-                    Type::Map(_, _) => {
-                        if let Some(entry) = self.method_table.get(&(intern("Map"), field)).cloned()
-                        {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        self.error(
-                            format_unknown_method_message(
-                                field,
-                                "Map",
-                                &self.method_table,
-                                intern("Map"),
-                            ),
-                            span,
-                        );
-                        Type::Error
-                    }
-                    Type::Set(_) => {
-                        if let Some(entry) = self.method_table.get(&(intern("Set"), field)).cloned()
-                        {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        self.error(
-                            format_unknown_method_message(
-                                field,
-                                "Set",
-                                &self.method_table,
-                                intern("Set"),
+                                type_name,
                             ),
                             span,
                         );

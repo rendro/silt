@@ -109,7 +109,7 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `http` | HTTP client (`http.get`, `http.post`, `http.request`) |
 | `fs` | Filesystem queries (`fs.list_dir`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`) |
 | `env` | Process environment access (`env.get`, `env.set`, `env.remove`, `env.vars`) |
-| `postgres` | PostgreSQL client with typed parameters |
+| `postgres` | PostgreSQL client with typed parameters (opt-in feature; build with `cargo build --features postgres`, not enabled in the default release binary) |
 | `bytes` | Byte-buffer construction, slicing, and conversion |
 | `crypto` | Hashing, HMAC, and constant-time comparison |
 | `encoding` | Hex / base64 / URL encoding helpers |
