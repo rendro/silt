@@ -55,7 +55,24 @@ pub(super) fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>,
     }
 }
 
-pub(super) fn value_kind(v: &Value) -> &'static str {
+/// Surface a `Value`'s kind as a TitleCase `&'static str`. Used by the
+/// canonical `"<fn> requires <Kind>, got <kind>"` diagnostic shape that
+/// round 73f / 74 / 75 standardised across `numeric.rs`, `string.rs`,
+/// `collections.rs`, `bytes.rs`, `crypto.rs`, `encoding.rs`, and `uuid.rs`.
+///
+/// **Round 75 — "name the offending kind" exhaustiveness.** Pre-fix the
+/// arm list covered eight variants and collapsed every other shape with a
+/// `_ => "value"` fallthrough. That fallthrough hid Map/Set/Range/Variant/
+/// Record/Unit/Channel/Handle/etc. behind a generic word in the diagnostic
+/// — exactly the silent-wrong-answer mode round 73f opposed. Each variant
+/// is now enumerated explicitly, with naming mirrored from
+/// `vm::Vm::type_name` (the canonical type-name oracle).
+///
+/// `pub(crate)` so a test-only re-export at `silt::builtins::value_kind`
+/// can pin the matrix from an integration test
+/// (`tests/round75_kind_naming_canonical_tests.rs`). `mod common` itself
+/// remains private — only this single helper crosses the module wall.
+pub(crate) fn value_kind(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "Int",
         Value::Float(_) => "Float",
@@ -63,9 +80,25 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::Bool(_) => "Bool",
         Value::String(_) => "String",
         Value::List(_) => "List",
-        Value::Bytes(_) => "Bytes",
+        Value::Range(..) => "Range",
+        Value::Map(_) => "Map",
+        Value::Set(_) => "Set",
         Value::Tuple(_) => "Tuple",
-        _ => "value",
+        Value::Record(..) => "Record",
+        Value::Variant(..) => "Variant",
+        // VmClosure surfaces as "Fn" (matches `Type::Fun` Display and the
+        // canonical dispatch name) — round 71 follow-up unification.
+        Value::VmClosure(_) => "Fn",
+        Value::BuiltinFn(_) => "BuiltinFn",
+        Value::VariantConstructor(..) => "VariantConstructor",
+        Value::TypeDescriptor(_) => "TypeDescriptor",
+        Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
+        Value::Channel(_) => "Channel",
+        Value::Handle(_) => "Handle",
+        Value::Bytes(_) => "Bytes",
+        Value::TcpListener(_) => "TcpListener",
+        Value::TcpStream(_) => "TcpStream",
+        Value::Unit => "Unit",
     }
 }
 

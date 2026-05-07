@@ -99,7 +99,7 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.scope` |
+| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline`, `task.spawn_until` |
 | `regex` | Compiled regular expressions and replacement helpers |
 | `json` | Type-directed JSON parsing and emission |
 | `toml` | TOML parsing and emission |

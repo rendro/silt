@@ -12,8 +12,8 @@
 //!   `docs/concurrency.md` — `println` on a `Value::String` calls
 //!   `display_value` which prints the bare string (no quotes), so the
 //!   expectation must be `-- hello` (no quotes).
-//! - G2: stale `v0.12 ships` / `for v0.12` prose lingering in v0.13.
-//!   The phases shipped in v0.12; v0.13 keeps the permissive default.
+//! - G2: stale `v0.12 ships` / `for v0.12` prose lingering in v0.13+.
+//!   The phases shipped in v0.13; v0.14 keeps the permissive default.
 //! - G3: builtin count drift between the proposal (~400 / 401) and
 //!   the actual count (388 per commit `0c72f41`).
 //! - L9: a non-deterministic concurrency example that printed a
@@ -82,10 +82,10 @@ fn concurrency_md_println_does_not_quote_string_output() {
 }
 
 /// G2 lock: the effect-rows materials must not present-tense ship a
-/// v0.12-only world. v0.13 is the current crate version; the phases
-/// shipped in v0.12 and the default is still permissive in v0.13.
+/// v0.12-only world. v0.14 is the current crate version; the phases
+/// shipped in v0.13 and the default is still permissive in v0.14.
 #[test]
-fn effect_rows_docs_use_v0_12_or_later_for_phase_a_to_d() {
+fn effect_rows_docs_use_v0_13_or_later_for_phase_a_to_d() {
     let migration = read_doc("docs/strict-effects-migration.md");
     let proposal = read_doc("docs/proposals/effect-rows.md");
 
@@ -121,7 +121,28 @@ fn effect_rows_docs_use_v0_12_or_later_for_phase_a_to_d() {
         assert!(
             !body.contains(banned),
             "{path} still contains stale prose `{banned}`. Reword to \
-             reflect that v0.13 keeps the permissive default."
+             reflect that v0.14 keeps the permissive default."
+        );
+    }
+
+    // Round-75 strengthening: also forbid the round-74 misclaim that
+    // the phases shipped in v0.12. Verified against git tags: v0.12
+    // (`4bb2e9d`) was tagged BEFORE phase A landed (`768c74d`); v0.13
+    // (`9e533cf`) is the first release that includes all four phases.
+    let v0_12_banned = [
+        ("docs/strict-effects-migration.md", &migration),
+        ("docs/proposals/effect-rows.md", &proposal),
+    ];
+    for (path, body) in v0_12_banned {
+        assert!(
+            !body.contains("Phase D of the effect-row tracking proposal in v0.12"),
+            "{path} still claims Phase D shipped in v0.12. \
+             The phases shipped in v0.13 (see git tag `9e533cf`)."
+        );
+        assert!(
+            !body.contains("Phases A→D shipped in v0.12"),
+            "{path} still claims Phases A→D shipped in v0.12. \
+             The phases shipped in v0.13 (see git tag `9e533cf`)."
         );
     }
 }

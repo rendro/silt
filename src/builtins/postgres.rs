@@ -35,6 +35,7 @@ use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
+use super::common::value_kind;
 use crate::value::{Channel, IoCompletion, TrySendResult, Value};
 use crate::vm::{BlockReason, Vm, VmError};
 
@@ -704,7 +705,8 @@ impl ToSql for NoneText {
 fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
     let Value::Variant(tag, payload) = v else {
         return Err(format!(
-            "postgres: param must be a Value variant (VInt/VStr/...), got {v:?}"
+            "postgres requires Value variant (VInt/VStr/...), got {}",
+            value_kind(v)
         ));
     };
     match tag.as_str() {
@@ -866,11 +868,14 @@ fn make_cursor_handle(id: u64) -> Value {
 
 fn extract_cursor_id(v: &Value) -> Result<u64, Value> {
     let Value::Variant(tag, payload) = v else {
-        return Err(other_error("postgres: expected a PgCursor variant"));
+        return Err(other_error(format!(
+            "postgres requires PgCursor, got {}",
+            value_kind(v)
+        )));
     };
     if tag != "PgCursor" {
         return Err(other_error(format!(
-            "postgres: expected PgCursor variant, got {tag}"
+            "postgres requires PgCursor, got {tag}"
         )));
     }
     match payload.first() {
@@ -883,11 +888,14 @@ fn extract_cursor_id(v: &Value) -> Result<u64, Value> {
 
 fn extract_pool_id(v: &Value) -> Result<u64, VmError> {
     let Value::Variant(tag, payload) = v else {
-        return Err(VmError::new("postgres: expected a PgPool variant".into()));
+        return Err(VmError::new(format!(
+            "postgres requires PgPool, got {}",
+            value_kind(v)
+        )));
     };
     if tag != "PgPool" {
         return Err(VmError::new(format!(
-            "postgres: expected PgPool variant, got {tag}"
+            "postgres requires PgPool, got {tag}"
         )));
     }
     match payload.first() {
@@ -900,11 +908,14 @@ fn extract_pool_id(v: &Value) -> Result<u64, VmError> {
 
 fn extract_tx_id(v: &Value) -> Result<u64, VmError> {
     let Value::Variant(tag, payload) = v else {
-        return Err(VmError::new("postgres: expected a PgTx variant".into()));
+        return Err(VmError::new(format!(
+            "postgres requires PgTx, got {}",
+            value_kind(v)
+        )));
     };
     if tag != "PgTx" {
         return Err(VmError::new(format!(
-            "postgres: expected PgTx variant, got {tag}"
+            "postgres requires PgTx, got {tag}"
         )));
     }
     match payload.first() {
@@ -936,9 +947,10 @@ enum ExecutorRef {
 /// `Err` value ready to be wrapped by the caller.
 fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
     let Value::Variant(tag, _) = v else {
-        return Err(other_error(
-            "postgres: expected a PgPool or PgTx variant".to_string(),
-        ));
+        return Err(other_error(format!(
+            "postgres requires PgPool or PgTx, got {}",
+            value_kind(v)
+        )));
     };
     match tag.as_str() {
         "PgPool" => extract_pool(v).map(ExecutorRef::Pool),
@@ -952,7 +964,7 @@ fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
             }
         }
         other => Err(other_error(format!(
-            "postgres: expected PgPool or PgTx, got {other}"
+            "postgres requires PgPool or PgTx, got {other}"
         ))),
     }
 }
@@ -1750,9 +1762,10 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let Value::String(url) = &args[0] else {
-        return Err(VmError::new(
-            "postgres.connect: url must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.connect requires String, got {}",
+            value_kind(&args[0])
+        )));
     };
 
     if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
@@ -1800,17 +1813,26 @@ pub fn read_max_pool_size_for_tests(opts: &Value) -> Result<Option<u32>, String>
 /// additions stay backwards-compatible.
 fn parse_connect_opts(v: &Value) -> Result<ConnectOpts, String> {
     let Value::Map(m) = v else {
-        return Err("postgres.connect_with: opts must be a Map (e.g. #{})".to_string());
+        return Err(format!(
+            "postgres.connect_with requires Map, got {} (e.g. #{{}})",
+            value_kind(v)
+        ));
     };
     let mut out = ConnectOpts::default();
     for (k, val) in m.iter() {
         let Value::String(key) = k else {
-            return Err("postgres.connect_with: opts key must be a String".to_string());
+            return Err(format!(
+                "postgres.connect_with requires String, got {}",
+                value_kind(k)
+            ));
         };
         match key.as_str() {
             "max_pool_size" => {
                 let Value::Int(n) = val else {
-                    return Err("postgres.connect_with: max_pool_size must be an Int".to_string());
+                    return Err(format!(
+                        "postgres.connect_with requires Int, got {}",
+                        value_kind(val)
+                    ));
                 };
                 if *n <= 0 {
                     return Err(format!(
@@ -1837,9 +1859,10 @@ fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let Value::String(url) = &args[0] else {
-        return Err(VmError::new(
-            "postgres.connect_with: url must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.connect_with requires String, got {}",
+            value_kind(&args[0])
+        )));
     };
     let opts = match parse_connect_opts(&args[1]) {
         Ok(o) => o,
@@ -1877,10 +1900,16 @@ fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
     let Value::String(sql) = &args[1] else {
-        return Err(VmError::new("postgres.query: sql must be a String".into()));
+        return Err(VmError::new(format!(
+            "postgres.query requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new("postgres.query: params must be a List".into()));
+        return Err(VmError::new(format!(
+            "postgres.query requires List, got {}",
+            value_kind(&args[2])
+        )));
     };
     let params: Vec<SqlParam> = match params_list
         .iter()
@@ -1921,14 +1950,16 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
     let Value::String(sql) = &args[1] else {
-        return Err(VmError::new(
-            "postgres.execute: sql must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.execute requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(
-            "postgres.execute: params must be a List".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.execute requires List, got {}",
+            value_kind(&args[2])
+        )));
     };
     let params: Vec<SqlParam> = match params_list
         .iter()
@@ -2156,12 +2187,16 @@ fn stream(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
     let Value::String(sql) = &args[1] else {
-        return Err(VmError::new("postgres.stream: sql must be a String".into()));
+        return Err(VmError::new(format!(
+            "postgres.stream requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(
-            "postgres.stream: params must be a List".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.stream requires List, got {}",
+            value_kind(&args[2])
+        )));
     };
     let params: Vec<SqlParam> = match params_list
         .iter()
@@ -2205,13 +2240,15 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         },
         Value::Variant(tag, _) if tag == "PgPool" => {
             return Ok(err(other_error(
-                "postgres.cursor: requires a PgTx (cursors live inside a transaction)".to_string(),
+                "postgres.cursor requires PgTx, got PgPool (cursors live inside a transaction)"
+                    .to_string(),
             )));
         }
-        _ => {
-            return Ok(err(other_error(
-                "postgres.cursor: first argument must be a PgTx".to_string(),
-            )));
+        other => {
+            return Ok(err(other_error(format!(
+                "postgres.cursor requires PgTx, got {}",
+                value_kind(other)
+            ))));
         }
     };
     let cell = match lookup_tx(tx_id) {
@@ -2223,12 +2260,16 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         }
     };
     let Value::String(sql) = &args[1] else {
-        return Err(VmError::new("postgres.cursor: sql must be a String".into()));
+        return Err(VmError::new(format!(
+            "postgres.cursor requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(
-            "postgres.cursor: params must be a List".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.cursor requires List, got {}",
+            value_kind(&args[2])
+        )));
     };
     let batch_size = match &args[3] {
         Value::Int(n) if *n >= 1 => *n as u64,
@@ -2237,10 +2278,11 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 "postgres.cursor: batch_size must be >= 1".to_string(),
             )));
         }
-        _ => {
-            return Err(VmError::new(
-                "postgres.cursor: batch_size must be an Int".into(),
-            ));
+        other => {
+            return Err(VmError::new(format!(
+                "postgres.cursor requires Int, got {}",
+                value_kind(other)
+            )));
         }
     };
     let params: Vec<SqlParam> = match params_list
@@ -2372,9 +2414,10 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
     let Value::String(channel_name) = &args[1] else {
-        return Err(VmError::new(
-            "postgres.listen: channel_name must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.listen requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     if !is_valid_ident(channel_name) {
         return Ok(err(other_error(format!(
@@ -2450,14 +2493,16 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
     let Value::String(channel_name) = &args[1] else {
-        return Err(VmError::new(
-            "postgres.notify: channel_name must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.notify requires String, got {}",
+            value_kind(&args[1])
+        )));
     };
     let Value::String(payload) = &args[2] else {
-        return Err(VmError::new(
-            "postgres.notify: payload must be a String".into(),
-        ));
+        return Err(VmError::new(format!(
+            "postgres.notify requires String, got {}",
+            value_kind(&args[2])
+        )));
     };
 
     if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {

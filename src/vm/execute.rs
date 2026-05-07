@@ -1280,36 +1280,32 @@ impl Vm {
                 }
             }
             Op::And => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Bool(a_val), Value::Bool(b_val)) => {
-                        self.push(Value::Bool(*a_val && *b_val))
-                    }
-                    _ => {
-                        return Err(VmError::new(format!(
-                            "`and` requires two Bool operands, got {} and {}",
-                            self.user_facing_type_name(&a),
-                            self.user_facing_type_name(&b)
-                        )));
-                    }
-                }
+                // Round-75 VM-2: the compiler always lowers `BinOp::And`
+                // to a `JumpIfFalse` short-circuit (see
+                // `src/compiler/mod.rs:2010`); the
+                // `BinOp::And | BinOp::Or => unreachable!()` at
+                // `compiler/mod.rs:2047` confirms no other emission
+                // path exists. Match the LoopSetup precedent
+                // (execute.rs:Op::LoopSetup) and crash loudly on
+                // accidental re-emission rather than silently
+                // executing eager-eval semantics that would break
+                // short-circuiting. The variant stays in the Op enum
+                // because the bytecode discriminants are a
+                // serialization format — removing it would shift
+                // every later opcode's `as u8` value.
+                unreachable!(
+                    "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \
+                     short-circuit; Op::And/Or should never be emitted"
+                );
             }
             Op::Or => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Bool(a_val), Value::Bool(b_val)) => {
-                        self.push(Value::Bool(*a_val || *b_val))
-                    }
-                    _ => {
-                        return Err(VmError::new(format!(
-                            "`or` requires two Bool operands, got {} and {}",
-                            self.user_facing_type_name(&a),
-                            self.user_facing_type_name(&b)
-                        )));
-                    }
-                }
+                // See Op::And above — same rationale. Compiler emits
+                // `JumpIfTrue` short-circuit at compiler/mod.rs:2021;
+                // `Op::Or` is reserved-but-never-emitted.
+                unreachable!(
+                    "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \
+                     short-circuit; Op::And/Or should never be emitted"
+                );
             }
             Op::DisplayValue => {
                 let val = self.pop()?;

@@ -77,6 +77,26 @@ const MAX_TASKS: usize = 100_000;
 #[doc(hidden)]
 pub static F10_PARK_SETUP_PAUSE_US: AtomicU64 = AtomicU64::new(0);
 
+/// Process-wide instrumentation counters for `WatchdogRegistry::add` /
+/// `remove`. Tests in `tests/round75_io_watchdog_f10_race_tests.rs`
+/// observe `WATCHDOG_ADD_COUNT - WATCHDOG_REMOVE_COUNT` to detect
+/// leaks across the I/O Blocked arm's F10 race window — i.e. an
+/// add() that no remove() ever balances. Reset to zero by the test
+/// harness at the start of each scenario.
+///
+/// Gated on `cfg(any(test, feature = "test-hooks"))` along with the
+/// hook macro; the release `WatchdogRegistry::add` / `remove` paths
+/// compile the increment out entirely.
+///
+/// Marked `#[doc(hidden)]` so downstream crates do not depend on this
+/// internal test knob.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub static WATCHDOG_ADD_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub static WATCHDOG_REMOVE_COUNT: AtomicU64 = AtomicU64::new(0);
+
 /// Inline helper: sleep for `F10_PARK_SETUP_PAUSE_US` microseconds if
 /// the atomic is set. Called at the top of every Blocked-arm branch
 /// (Receive / Send / Select) before the per-arm handle clone, so the
@@ -180,12 +200,16 @@ impl WatchdogRegistry {
             deadline,
             source,
         });
+        #[cfg(any(test, feature = "test-hooks"))]
+        WATCHDOG_ADD_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 
     fn remove(&self, task_id: usize) {
         let mut entries = self.entries.lock();
         if let Some(pos) = entries.iter().position(|e| e.task_id == task_id) {
             entries.swap_remove(pos);
+            #[cfg(any(test, feature = "test-hooks"))]
+            WATCHDOG_REMOVE_COUNT.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -1132,6 +1156,17 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     }
                     Some(BlockReason::Io(completion)) => {
                         fire_hook!(on_park, "blocked_arm_entry_io");
+                        // F10 regression-test widener (round-75): sleep
+                        // for `F10_PARK_SETUP_PAUSE_US` µs at the top of
+                        // the Io arm, mirroring the Recv/Send/Select arm
+                        // pause. Used by
+                        // `tests/round75_io_watchdog_f10_race_tests.rs`
+                        // to deterministically reproduce the
+                        // cancel-during-Io-arm-setup race that previously
+                        // leaked a `WatchdogRegistry` entry on the
+                        // F10-cancelled-mid-setup else branch below.
+                        // No-op when the atomic is zero.
+                        f10_park_setup_pause();
                         // Register with the watchdog if anything imposes
                         // a deadline: either SILT_IO_TIMEOUT (global) or
                         // a scoped task.deadline (per-task). The earlier
@@ -1208,10 +1243,27 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                         } else {
                             // F10 cancelled-mid-setup: see the Receive/
-                            // Join arms for the full rationale. The
-                            // watchdog entry installed above is removed
-                            // by the initial cleanup at :669 (which
-                            // sets `was_io == true`).
+                            // Join arms for the full rationale. Round-75
+                            // VM-1 fix: the comment that previously
+                            // claimed "the watchdog entry installed
+                            // above is removed by the initial cleanup
+                            // at :669" was wrong. The initial cleanup
+                            // at :669 calls `watchdog.remove(id)` —
+                            // but if the cancel races such that the
+                            // cleanup fires BEFORE this arm reaches
+                            // the `watchdog.add` above, the remove
+                            // is a no-op (registry empty), and then
+                            // the add() inserts an entry no later
+                            // remove() balances. Defend by removing
+                            // here on the F10 path — `remove` is a
+                            // no-op when the entry is absent (the
+                            // common race-A case where the cancel
+                            // fires AFTER the add and the cleanup
+                            // already drained the entry), so it is
+                            // safe in either ordering.
+                            if effective.is_some() {
+                                inner.watchdog.remove(id);
+                            }
                             inner.wake_graph.on_wake(NodeId::Task(id));
                             signal_progress(&inner);
                         }

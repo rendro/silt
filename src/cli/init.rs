@@ -108,6 +108,25 @@ fn init_project() {
             process::exit(1);
         }
     };
+    // Reject package names that collide with a builtin module (`io`,
+    // `string`, …). Routed through the manifest module's
+    // `validate_package_name` so init / add / Manifest::load share one
+    // acceptance rule. Mirrors `silt add`'s wording for builtin
+    // collisions on dep names — see `src/cli/add.rs:273-279`.
+    // Round-75 DX-5 GAP fix: previously `mkdir io && cd io && silt init`
+    // silently wrote `name = "io"`, producing a package whose top-level
+    // name shadowed the stdlib `io` module.
+    if let Err(msg) = silt::manifest::validate_package_name(&package_name) {
+        eprintln!("silt init: {msg}");
+        eprintln!(
+            "       (the package name was derived from the directory name `{dirname}`;"
+        );
+        eprintln!(
+            "        rename the directory or run `silt init` from a directory whose name"
+        );
+        eprintln!("        is not a stdlib module).");
+        process::exit(1);
+    }
 
     let manifest_contents = format!("[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n");
     let main_contents = "fn main() {\n  println(\"hello, silt!\")\n}\n";

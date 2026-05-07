@@ -89,7 +89,10 @@ pub(super) fn format_suggested_fn_header(
     }
     if !f.where_clauses.is_empty() {
         let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
-        for (n, t, args) in &f.where_clauses {
+        for wc in &f.where_clauses {
+            let n = &wc.type_param;
+            let t = &wc.trait_name;
+            let args = &wc.trait_args;
             let rendered = if args.is_empty() {
                 resolve(*t)
             } else {
@@ -621,7 +624,10 @@ impl TypeChecker {
         let mut local_env = env.child();
 
         // Validate where clauses
-        for (type_param, trait_name, trait_args) in &f.where_clauses {
+        for wc in &f.where_clauses {
+            let type_param = &wc.type_param;
+            let trait_name = &wc.trait_name;
+            let trait_args = &wc.trait_args;
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
@@ -2573,7 +2579,13 @@ impl TypeChecker {
                             Type::ExtFloat => intern("ExtFloat"),
                             Type::Bool => intern("Bool"),
                             Type::String => intern("String"),
-                            Type::Unit => intern("()"),
+                            // Round 75 TYPE-3 LATENT: canonical key is
+                            // "Unit" (matches canonical_name(Type::Unit)
+                            // and dispatch_name_for_value(Value::Unit)).
+                            // canonicalize_type_name collapses the "()"
+                            // alias onto "Unit" — a user `trait T for ()`
+                            // registers under method_table[("T","Unit")].
+                            Type::Unit => intern("Unit"),
                             Type::Channel(_) => intern("Channel"),
                             Type::Fun(_, _) => intern("Fn"),
                             _ => unreachable!(),

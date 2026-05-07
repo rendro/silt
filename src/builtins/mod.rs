@@ -26,6 +26,16 @@ pub mod uuid;
 use crate::value::Value;
 use crate::vm::VmError;
 
+/// Re-export the canonical kind-name oracle used by the
+/// `"<fn> requires <Kind>, got <kind>"` diagnostic shape. The underlying
+/// helper lives in the private `common` submodule; this thin wrapper
+/// gives integration tests
+/// (`tests/round75_kind_naming_canonical_tests.rs`) access without
+/// widening the visibility of every other helper in `common.rs`.
+pub fn value_kind(v: &Value) -> &'static str {
+    common::value_kind(v)
+}
+
 /// Shared scaffolding for every `trait Error for <FooError>` builtin
 /// dispatch helper (e.g. `call_io_error_trait`,
 /// `call_json_error_trait`, …). Round-36 collapsed eleven copy-pasted

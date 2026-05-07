@@ -1117,12 +1117,22 @@ impl Parser {
                     self.skip_nl();
                     let (type_param, _) = self.expect_ident()?;
                     self.expect(&Token::Colon)?;
-                    let (trait_name, trait_args) = self.parse_trait_ref()?;
-                    clauses.push((type_param, trait_name, trait_args));
+                    let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
+                    clauses.push(WhereClause {
+                        type_param,
+                        trait_name,
+                        trait_args,
+                        trait_name_span,
+                    });
                     while self.at(&Token::Plus) {
                         self.advance();
-                        let (trait_name, trait_args) = self.parse_trait_ref()?;
-                        clauses.push((type_param, trait_name, trait_args));
+                        let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
+                        clauses.push(WhereClause {
+                            type_param,
+                            trait_name,
+                            trait_args,
+                            trait_name_span,
+                        });
                     }
                     self.skip_nl();
                     if self.at(&Token::Comma) {
@@ -1549,18 +1559,28 @@ impl Parser {
             return Ok(Vec::new());
         }
         self.advance(); // consume 'where'
-        let mut clauses = Vec::new();
+        let mut clauses: Vec<WhereClause> = Vec::new();
         loop {
             self.skip_nl();
             let (type_param, _) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
-            let (trait_name, trait_args) = self.parse_trait_ref()?;
-            clauses.push((type_param, trait_name, trait_args));
+            let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
+            clauses.push(WhereClause {
+                type_param,
+                trait_name,
+                trait_args,
+                trait_name_span,
+            });
             // Multi-trait bounds: `where a: Equal + Hash`
             while self.at(&Token::Plus) {
                 self.advance();
-                let (trait_name, trait_args) = self.parse_trait_ref()?;
-                clauses.push((type_param, trait_name, trait_args));
+                let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
+                clauses.push(WhereClause {
+                    type_param,
+                    trait_name,
+                    trait_args,
+                    trait_name_span,
+                });
             }
             self.skip_nl();
             if self.at(&Token::Comma) {
@@ -1575,8 +1595,8 @@ impl Parser {
     /// Parse a trait reference inside a where clause: either a bare
     /// identifier (`Display`) or a parameterized form
     /// (`TryInto(Int)`, `Convert(a, b)`).
-    fn parse_trait_ref(&mut self) -> Result<(Symbol, Vec<TypeExpr>)> {
-        let (name, _) = self.expect_ident()?;
+    fn parse_trait_ref(&mut self) -> Result<(Symbol, Vec<TypeExpr>, Span)> {
+        let (name, name_span) = self.expect_ident()?;
         let args = if self.at(&Token::LParen) {
             self.advance();
             let mut args = Vec::new();
@@ -1590,14 +1610,14 @@ impl Parser {
         } else {
             Vec::new()
         };
-        Ok((name, args))
+        Ok((name, args, name_span))
     }
 
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Trait)?;
-        let (name, _) = self.expect_ident()?;
+        let (name, name_span) = self.expect_ident()?;
 
         // Parse optional trait-level parameters: `trait Foo(a, b) { ... }`
         // on the declaration side, or `trait Foo(Int, String) for T { ... }`
@@ -1626,15 +1646,15 @@ impl Parser {
         // or parameterized forms `trait Sub(a): Super(a) + Other(Int)`.
         // Disambiguation: `:` after the trait name is unambiguous because impls
         // use `for` and decls use `{` or `fn`.
-        let supertraits: Vec<(Symbol, Vec<TypeExpr>)> = if self.at(&Token::Colon) {
+        let supertraits: Vec<(Symbol, Vec<TypeExpr>, Span)> = if self.at(&Token::Colon) {
             self.advance();
             let mut traits = Vec::new();
-            let (t, args) = self.parse_trait_ref()?;
-            traits.push((t, args));
+            let (t, args, t_span) = self.parse_trait_ref()?;
+            traits.push((t, args, t_span));
             while self.at(&Token::Plus) {
                 self.advance();
-                let (t, args) = self.parse_trait_ref()?;
-                traits.push((t, args));
+                let (t, args, t_span) = self.parse_trait_ref()?;
+                traits.push((t, args, t_span));
             }
             traits
         } else {
@@ -1714,6 +1734,7 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(Decl::Trait(TraitDecl {
                 name,
+                name_span,
                 params,
                 supertraits,
                 param_where_clauses,
@@ -1737,6 +1758,10 @@ impl Parser {
             self.expect(&Token::Ident(intern::intern("for")))?;
             let target_span = self.span();
             let target_te = self.parse_type_expr()?;
+            // The target's head-name span: for `for Int` it's `Int`'s
+            // span; for `for Box(a)` it's `Box`'s span. `parse_type_expr`
+            // records the head name's span as the TypeExpr's overall span.
+            let target_type_span = target_te.span;
 
             // Accept only `Named(head)` or `Generic(head, args)` as the
             // impl target. Reject tuple/fn/Unit targets — those have no
@@ -1824,8 +1849,10 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_name: name,
+                trait_name_span: name_span,
                 trait_args,
                 target_type: target,
+                target_type_span,
                 target_type_args,
                 target_param_names,
                 where_clauses,
@@ -1879,11 +1906,11 @@ impl Parser {
         let mut bounds: Vec<(Symbol, Vec<TypeExpr>)> = Vec::new();
         if self.at(&Token::Colon) {
             self.advance();
-            let (tn, args) = self.parse_trait_ref()?;
+            let (tn, args, _) = self.parse_trait_ref()?;
             bounds.push((tn, args));
             while self.at(&Token::Plus) {
                 self.advance();
-                let (tn, args) = self.parse_trait_ref()?;
+                let (tn, args, _) = self.parse_trait_ref()?;
                 bounds.push((tn, args));
             }
         }
@@ -4016,10 +4043,10 @@ fn main() {
         );
         if let Decl::Fn(f) = &prog.decls[0] {
             assert_eq!(f.where_clauses.len(), 1);
-            let (var, trait_name, args) = &f.where_clauses[0];
-            assert_eq!(*var, intern::intern("x"));
-            assert_eq!(*trait_name, intern::intern("Display"));
-            assert!(args.is_empty());
+            let wc = &f.where_clauses[0];
+            assert_eq!(wc.type_param, intern::intern("x"));
+            assert_eq!(wc.trait_name, intern::intern("Display"));
+            assert!(wc.trait_args.is_empty());
         } else {
             panic!("expected fn decl");
         }
@@ -5181,10 +5208,10 @@ fn main() {
             assert_eq!(f.name, intern::intern("show"));
             assert!(f.return_type.is_some());
             assert_eq!(f.where_clauses.len(), 1);
-            let (var, trait_name, args) = &f.where_clauses[0];
-            assert_eq!(*var, intern::intern("x"));
-            assert_eq!(*trait_name, intern::intern("Display"));
-            assert!(args.is_empty());
+            let wc = &f.where_clauses[0];
+            assert_eq!(wc.type_param, intern::intern("x"));
+            assert_eq!(wc.trait_name, intern::intern("Display"));
+            assert!(wc.trait_args.is_empty());
         } else {
             panic!("expected fn decl");
         }

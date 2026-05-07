@@ -78,14 +78,8 @@ fn is_match_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("is_match", vec![Value::Int(1), s("text")]),
-        "regex.is_match requires string arguments"
-    );
-    assert_eq!(
-        err_msg("is_match", vec![s("pat"), Value::Int(1)]),
-        "regex.is_match requires string arguments"
-    );
+    { let _e = err_msg("is_match", vec![Value::Int(1), s("text")]); assert!(_e.starts_with("regex.is_match requires String, got"), "got: {_e}"); }
+    { let _e = err_msg("is_match", vec![s("pat"), Value::Int(1)]); assert!(_e.starts_with("regex.is_match requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -122,10 +116,7 @@ fn find_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("find", vec![Value::Bool(true), s("text")]),
-        "regex.find requires string arguments"
-    );
+    { let _e = err_msg("find", vec![Value::Bool(true), s("text")]); assert!(_e.starts_with("regex.find requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -155,10 +146,7 @@ fn find_all_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("find_all", vec![s("pat"), Value::Float(1.0)]),
-        "regex.find_all requires string arguments"
-    );
+    { let _e = err_msg("find_all", vec![s("pat"), Value::Float(1.0)]); assert!(_e.starts_with("regex.find_all requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -190,10 +178,7 @@ fn split_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("split", vec![Value::Int(0), s("text")]),
-        "regex.split requires string arguments"
-    );
+    { let _e = err_msg("split", vec![Value::Int(0), s("text")]); assert!(_e.starts_with("regex.split requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -224,10 +209,7 @@ fn captures_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("captures", vec![s("pat"), Value::Bool(false)]),
-        "regex.captures requires string arguments"
-    );
+    { let _e = err_msg("captures", vec![s("pat"), Value::Bool(false)]); assert!(_e.starts_with("regex.captures requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -251,10 +233,7 @@ fn captures_all_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("captures_all", vec![Value::Int(7), s("text")]),
-        "regex.captures_all requires string arguments"
-    );
+    { let _e = err_msg("captures_all", vec![Value::Int(7), s("text")]); assert!(_e.starts_with("regex.captures_all requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -296,10 +275,7 @@ fn captures_named_valid_and_parity_errors() {
     );
 
     // Wrong type.
-    assert_eq!(
-        err_msg("captures_named", vec![s("pat"), Value::Int(42)]),
-        "regex.captures_named requires string arguments"
-    );
+    { let _e = err_msg("captures_named", vec![s("pat"), Value::Int(42)]); assert!(_e.starts_with("regex.captures_named requires String, got"), "got: {_e}"); }
 }
 
 // ── 3-arg ops ────────────────────────────────────────────────────────
@@ -323,18 +299,9 @@ fn replace_valid_and_parity_errors() {
     );
 
     // Wrong type (on any of the three positions).
-    assert_eq!(
-        err_msg("replace", vec![Value::Int(0), s("text"), s("repl")]),
-        "regex.replace requires string arguments"
-    );
-    assert_eq!(
-        err_msg("replace", vec![s("pat"), Value::Int(0), s("repl")]),
-        "regex.replace requires string arguments"
-    );
-    assert_eq!(
-        err_msg("replace", vec![s("pat"), s("text"), Value::Int(0)]),
-        "regex.replace requires string arguments"
-    );
+    { let _e = err_msg("replace", vec![Value::Int(0), s("text"), s("repl")]); assert!(_e.starts_with("regex.replace requires String, got"), "got: {_e}"); }
+    { let _e = err_msg("replace", vec![s("pat"), Value::Int(0), s("repl")]); assert!(_e.starts_with("regex.replace requires String, got"), "got: {_e}"); }
+    { let _e = err_msg("replace", vec![s("pat"), s("text"), Value::Int(0)]); assert!(_e.starts_with("regex.replace requires String, got"), "got: {_e}"); }
 }
 
 #[test]
@@ -356,18 +323,9 @@ fn replace_all_valid_and_parity_errors() {
     );
 
     // Wrong type (on any of the three positions).
-    assert_eq!(
-        err_msg("replace_all", vec![Value::Bool(true), s("text"), s("repl")]),
-        "regex.replace_all requires string arguments"
-    );
-    assert_eq!(
-        err_msg("replace_all", vec![s("pat"), Value::Bool(true), s("repl")]),
-        "regex.replace_all requires string arguments"
-    );
-    assert_eq!(
-        err_msg("replace_all", vec![s("pat"), s("text"), Value::Bool(true)]),
-        "regex.replace_all requires string arguments"
-    );
+    { let _e = err_msg("replace_all", vec![Value::Bool(true), s("text"), s("repl")]); assert!(_e.starts_with("regex.replace_all requires String, got"), "got: {_e}"); }
+    { let _e = err_msg("replace_all", vec![s("pat"), Value::Bool(true), s("repl")]); assert!(_e.starts_with("regex.replace_all requires String, got"), "got: {_e}"); }
+    { let _e = err_msg("replace_all", vec![s("pat"), s("text"), Value::Bool(true)]); assert!(_e.starts_with("regex.replace_all requires String, got"), "got: {_e}"); }
 }
 
 // ── arity vs type precedence ─────────────────────────────────────────

@@ -31,6 +31,12 @@
 //!   `"<fn> requires <Kind>, got <kind>"` form.
 
 use std::process::Command;
+use std::sync::Arc;
+
+use silt::compiler::Compiler;
+use silt::lexer::Lexer;
+use silt::parser::Parser;
+use silt::vm::Vm;
 
 const NUMERIC_RS: &str = include_str!("../src/builtins/numeric.rs");
 const STRING_RS: &str = include_str!("../src/builtins/string.rs");
@@ -51,27 +57,36 @@ fn fix2_occurs_check_emits_infinite_type_not_silent_drop() {
     // "explicit over implicit / silent wrong answers are worse than
     // crashes" principle.
     //
-    // Round 74 Fix #5: the five row-unif arms now route through the
-    // shared helper `Self::infinite_type_message(...)` so the
-    // diagnostic wording matches the main `Var(v) ↔ t` arm
+    // Round 74 Fix #5: the row-unif arms route through the shared
+    // helper `Self::infinite_type_message(...)` so the diagnostic
+    // wording matches the main `Var(v) ↔ t` arm
     // (`"infinite type: the type variable appears inside {t}"`).
-    // We pin the helper-call shape rather than the raw string so the
-    // canonical-form lock is enforced at every site.
+    // Round 75 DEAD-5: the symmetric Open×Closed and Closed×Open
+    // arms were collapsed into one shared `unify_open_closed` helper,
+    // dropping the distinct-site count from 5 to 4 (the helper is
+    // the single occurs_in site for both arms). The pinned shape is
+    // still each-site-routes-through-helper; the count is the
+    // post-dedup minimum.
     let occurs_sites = TYPECHECKER_MOD_RS.matches("if !occurs_in(").count();
     assert!(
-        occurs_sites >= 5,
-        "expected at least 5 occurs_in row-unification sites; found {occurs_sites}"
+        occurs_sites >= 4,
+        "expected at least 4 occurs_in row-unification sites \
+         (post-DEAD-5 dedup; pre-dedup was 5 separate sites); found {occurs_sites}"
     );
     // Each must call into the canonical helper on the failure branch.
+    // Post-DEAD-5 the count is 4 row-unif sites (one helper covers
+    // Open×Closed and Closed×Open) + 1 main `Var(v) ↔ t` arm = 5.
     let canonical_helper_calls = TYPECHECKER_MOD_RS
         .matches("Self::infinite_type_message(")
         .count();
     assert!(
-        canonical_helper_calls >= 6,
-        "expected at least 6 `Self::infinite_type_message(...)` call sites \
-         (5 row-unif arms + 1 main `Var(v) ↔ t` arm); found {canonical_helper_calls}. \
-         A future row-var-thru-fields feature would otherwise hit a silent drop \
-         OR diverge in wording from the main arm."
+        canonical_helper_calls >= 5,
+        "expected at least 5 `Self::infinite_type_message(...)` call sites \
+         (4 row-unif arms + 1 main `Var(v) ↔ t` arm; round-75 DEAD-5 \
+         dedup'd the symmetric Open×Closed / Closed×Open arms into a \
+         single helper); found {canonical_helper_calls}. \
+         A future row-var-thru-fields feature would otherwise hit a \
+         silent drop OR diverge in wording from the main arm."
     );
 }
 
@@ -333,33 +348,54 @@ fn fix3_string_rs_drops_terse_requires_form() {
 fn fix3_runtime_emits_canonical_kind_named_form() {
     // Behavioral lock: passing the wrong kind to a converted builtin
     // produces the canonical "requires <Kind>, got <kind>" form.
+    //
+    // Round 75 lock tightening: the previous shape used the `silt run`
+    // binary, which runs the full pipeline (typechecker → compiler →
+    // VM). The typechecker rejects `int.abs("not-an-int")` with
+    // "type mismatch: expected Int, got String" before the runtime
+    // ever fires, so the original assertion (absence of pre-fix
+    // wording) passed vacuously even if the runtime had silently
+    // regressed. We restructure to drive parser → compiler → VM
+    // directly while ignoring typechecker diagnostics — exactly the
+    // pattern round 74's `collections_canonical_kind_wording_tests.rs`
+    // uses to genuinely exercise the runtime guard. A positive
+    // assertion on `int.abs requires Int, got` then locks the
+    // canonical shape (and its presence catches a regression).
     let src = r#"
 import int
 fn main() { int.abs("not-an-int") }
 "#;
-    let dir = std::env::temp_dir().join("silt_round73f_int_abs_kind");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
-    let path = dir.join("int_abs.silt");
-    std::fs::write(&path, src).expect("write source");
-    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
-        .arg("run")
-        .arg(&path)
-        .output()
-        .expect("invoke silt run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    // The typechecker may reject this before runtime — that's also fine
-    // (silt's "explicit over implicit" with type inference covers many
-    // FFI/dynamic-dispatch leakage cases). Either way: the runtime
-    // shouldn't surface the terse pre-fix wording.
+    let tokens = Lexer::new(src).tokenize().expect("lexer error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    // Discard typechecker diagnostics; the runtime is what we want to
+    // exercise. The compiler still consumes the AST and produces
+    // bytecode that the VM runs.
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::new();
+    let functions = compiler
+        .compile_program(&program)
+        .expect("expected the compiler to accept the program when typechecker errors are dropped");
+    let script = Arc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    let err = vm
+        .run(script)
+        .expect_err("expected a runtime error from int.abs(\"not-an-int\")");
+    let err_str = format!("{err}");
+    // Positive lock: canonical `<fn> requires <Kind>, got <kind>` form.
     assert!(
-        !combined.contains("int.abs requires an int")
-            && !combined.contains("int.abs requires a int"),
-        "terse pre-fix wording must not surface anywhere. Got: {combined}"
+        err_str.contains("int.abs requires Int, got"),
+        "expected int.abs runtime to emit the canonical \
+         `int.abs requires Int, got <kind>` wording; got: {err_str}"
+    );
+    assert!(
+        err_str.contains("String"),
+        "expected the offending kind `String` in the canonical wording; got: {err_str}"
+    );
+    // Negative locks: pre-fix terse wording must not return.
+    assert!(
+        !err_str.contains("int.abs requires an int")
+            && !err_str.contains("int.abs requires a int"),
+        "terse pre-fix wording must not surface anywhere. Got: {err_str}"
     );
 }
 

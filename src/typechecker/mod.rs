@@ -991,7 +991,7 @@ impl TypeChecker {
     /// form" applies to diagnostic wording too. A future user
     /// debugging an occurs-check failure shouldn't see two different
     /// messages depending on which arm tripped.
-    pub(super) fn infinite_type_message(t: &Type) -> String {
+    pub fn infinite_type_message(t: &Type) -> String {
         format!("infinite type: the type variable appears inside {t}")
     }
 
@@ -1066,54 +1066,15 @@ impl TypeChecker {
             (RowTail::Var(v), RowTail::Closed) => {
                 // Open × Closed: open must be a subset of closed; bind
                 // v to a closed record carrying the leftover closed fields.
-                if !only_in_1.is_empty() {
-                    let names: Vec<String> = only_in_1
-                        .keys()
-                        .map(|s| crate::intern::resolve(*s))
-                        .collect();
-                    self.error(
-                        format!(
-                            "record open side has fields not present in closed target: {}",
-                            names.join(", ")
-                        ),
-                        span,
-                    );
-                    return;
-                }
-                let leftover = Type::AnonRecord {
-                    fields: only_in_2,
-                    tail: RowTail::Closed,
-                };
-                if !occurs_in(v, &leftover) {
-                    self.subst[v] = Some(leftover);
-                } else {
-                    self.error(Self::infinite_type_message(&leftover), span);
-                }
+                // Round 75 DEAD-5: shared with the symmetric
+                // Closed×Open arm via `unify_open_closed`.
+                self.unify_open_closed(&only_in_1, only_in_2, v, span);
             }
             (RowTail::Closed, RowTail::Var(v)) => {
-                if !only_in_2.is_empty() {
-                    let names: Vec<String> = only_in_2
-                        .keys()
-                        .map(|s| crate::intern::resolve(*s))
-                        .collect();
-                    self.error(
-                        format!(
-                            "record open side has fields not present in closed target: {}",
-                            names.join(", ")
-                        ),
-                        span,
-                    );
-                    return;
-                }
-                let leftover = Type::AnonRecord {
-                    fields: only_in_1,
-                    tail: RowTail::Closed,
-                };
-                if !occurs_in(v, &leftover) {
-                    self.subst[v] = Some(leftover);
-                } else {
-                    self.error(Self::infinite_type_message(&leftover), span);
-                }
+                // Closed × Open: symmetric — open side (only_in_2) must
+                // not have extras; bind v to leftover from the closed
+                // side (only_in_1). Round 75 DEAD-5.
+                self.unify_open_closed(&only_in_2, only_in_1, v, span);
             }
             (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
                 // Same row var, but field disagreement: impossible to
@@ -1152,6 +1113,52 @@ impl TypeChecker {
                     self.error(msg, span);
                 }
             }
+        }
+    }
+
+    /// Round 75 DEAD-5: dedupe of the byte-symmetric Open×Closed and
+    /// Closed×Open arms in `unify_anon_anon`. Bind a row-tail var
+    /// `v` from the open side to a closed-tailed leftover record made
+    /// of the closed side's extra fields. Reject if the open side has
+    /// fields the closed side does not declare. The occurs-check
+    /// barrier is preserved (round-73f Fix #2 lock); the canonical
+    /// `Self::infinite_type_message` wording stays in lockstep with
+    /// the other 4 occurs-check sites in this module.
+    ///
+    /// `open_extras` are fields present on the open side but missing
+    /// from the closed side (rejected — they cannot be added to a
+    /// closed shape). `closed_extras` are fields present on the
+    /// closed side but missing from the open side (these become the
+    /// row-tail leftover the open's row var binds to).
+    fn unify_open_closed(
+        &mut self,
+        open_extras: &std::collections::BTreeMap<Symbol, Type>,
+        closed_extras: std::collections::BTreeMap<Symbol, Type>,
+        v: TyVar,
+        span: Span,
+    ) {
+        if !open_extras.is_empty() {
+            let names: Vec<String> = open_extras
+                .keys()
+                .map(|s| crate::intern::resolve(*s))
+                .collect();
+            self.error(
+                format!(
+                    "record open side has fields not present in closed target: {}",
+                    names.join(", ")
+                ),
+                span,
+            );
+            return;
+        }
+        let leftover = Type::AnonRecord {
+            fields: closed_extras,
+            tail: RowTail::Closed,
+        };
+        if !occurs_in(v, &leftover) {
+            self.subst[v] = Some(leftover);
+        } else {
+            self.error(Self::infinite_type_message(&leftover), span);
         }
     }
 
@@ -1840,8 +1847,23 @@ impl TypeChecker {
             if let Type::Var(new_tv) = new_ty {
                 for (&(tv, trait_name), args) in trait_arg_bindings_snapshot.iter() {
                     if tv == old_tv {
+                        // Round 75 TYPE-1 LATENT: substitute through args
+                        // using the same mapping so a polymorphic arg
+                        // like `Convertible(b)` carrying a still-quantified
+                        // tyvar `b` from the scheme is rewritten to the
+                        // FRESH `b'` allocated above. Without this
+                        // substitution, two instantiations of the same
+                        // scheme would share the scheme's quantified
+                        // tyvars across distinct call sites — the
+                        // sibling at `:1773-1776` already does this on
+                        // the method-table path; the trait-arg
+                        // side-channel did not.
+                        let new_args: Vec<Type> = args
+                            .iter()
+                            .map(|t| substitute_vars(t, &mapping))
+                            .collect();
                         self.trait_arg_bindings
-                            .insert((*new_tv, trait_name), args.clone());
+                            .insert((*new_tv, trait_name), new_args);
                     }
                 }
             }
@@ -1869,7 +1891,12 @@ impl TypeChecker {
             Type::Float => Some(intern("Float")),
             Type::Bool => Some(intern("Bool")),
             Type::String => Some(intern("String")),
-            Type::Unit => Some(intern("()")),
+            // Round 75 TYPE-3: canonical name for Unit is "Unit" (not
+            // "()"). The canonical direction is `() → Unit`, set by
+            // `crate::types::canonical::canonicalize_type_name` so VM
+            // dispatch (`dispatch_name_for_value(&Value::Unit) = "Unit"`)
+            // and trait-impl registration agree on the same key.
+            Type::Unit => Some(intern("Unit")),
             Type::Record(name, _) => Some(*name),
             Type::Generic(name, _) => Some(*name),
             Type::List(_) => Some(intern("List")),
@@ -2145,6 +2172,28 @@ impl TypeChecker {
             span,
             severity: Severity::Warning,
         });
+    }
+
+    /// Round 75 DEAD-3: emit the canonical "duplicate top-level
+    /// definition" error if `name` is already registered, then
+    /// register it. Three byte-identical call sites (top-level `let`
+    /// in `check_program`, top-level `fn` in `register_fn_decl`, and
+    /// the REPL `let` path in `eval_declaration`) share this exact
+    /// shape; centralising the message + insert keeps the wording
+    /// pinned in one place. Tests that asserted on the old wording
+    /// `"duplicate top-level definition of '<n>'; names must be
+    /// unique at module scope"` continue to match — the helper emits
+    /// the same string.
+    pub(super) fn define_top_level_unique(&mut self, name: Symbol, span: Span) {
+        if self.top_level_names.contains(&name) {
+            self.error(
+                format!(
+                    "duplicate top-level definition of '{name}'; names must be unique at module scope"
+                ),
+                span,
+            );
+        }
+        self.top_level_names.insert(name);
     }
 
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
@@ -2959,17 +3008,10 @@ impl TypeChecker {
                 // TOP.
                 inference::propagate_alias_effects(&value.kind, &env, &mut scheme);
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: top-level duplicate let binding.
-                    if self.top_level_names.contains(name) {
-                        self.error(
-                            format!(
-                                "duplicate top-level definition of '{}'; names must be unique at module scope",
-                                name
-                            ),
-                            span,
-                        );
-                    }
-                    self.top_level_names.insert(*name);
+                    // G1: top-level duplicate let binding (round 75
+                    // DEAD-3: shared with `register_fn_decl` and the
+                    // REPL `let` path via `define_top_level_unique`).
+                    self.define_top_level_unique(*name, span);
                     env.define(*name, scheme);
                 } else {
                     // B1: reject refutable Constructor patterns in
@@ -3215,12 +3257,31 @@ impl TypeChecker {
                             {
                                 if !entry.method_constraints.is_empty() {
                                     let remap = align_tyvars(&entry.method_type, &ty);
+                                    // Round 75 TYPE-1 LATENT: build a
+                                    // Var-typed mapping so `args` (which
+                                    // may contain tyvar references to
+                                    // the constrained method's old vars)
+                                    // is also substituted, not just the
+                                    // bare `(tv, trait_name)` key. The
+                                    // sibling at `:1773-1776` does the
+                                    // same thing in `instantiate_method`;
+                                    // this loop must too, or trait-arg
+                                    // remapping post-narrowing leaves
+                                    // stale ids in `args`.
+                                    let ty_remap: HashMap<TyVar, Type> = remap
+                                        .iter()
+                                        .map(|(old, new)| (*old, Type::Var(*new)))
+                                        .collect();
                                     entry.method_constraints = entry
                                         .method_constraints
                                         .iter()
                                         .filter_map(|(old_tv, trait_name, args)| {
                                             remap.get(old_tv).map(|&new_tv| {
-                                                (new_tv, *trait_name, args.clone())
+                                                let new_args: Vec<Type> = args
+                                                    .iter()
+                                                    .map(|t| substitute_vars(t, &ty_remap))
+                                                    .collect();
+                                                (new_tv, *trait_name, new_args)
                                             })
                                         })
                                         .collect();
@@ -4565,17 +4626,8 @@ impl TypeChecker {
             // G1: Detect duplicate top-level function definitions. We only report
             // a hard error when the name collides with another user-registered
             // top-level name. Collisions with builtins are handled elsewhere as
-            // a shadow warning.
-            if self.top_level_names.contains(&f.name) {
-                self.error(
-                    format!(
-                        "duplicate top-level definition of '{}'; names must be unique at module scope",
-                        f.name
-                    ),
-                    f.span,
-                );
-            }
-            self.top_level_names.insert(f.name);
+            // a shadow warning. Round 75 DEAD-3: shared helper.
+            self.define_top_level_unique(f.name, f.span);
         }
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
@@ -4680,7 +4732,10 @@ impl TypeChecker {
         // Trait args (for parameterized traits like `a: TryInto(b)`) are
         // resolved through `param_map` and stashed in `trait_arg_bindings`
         // so descriptor method resolution can substitute them later.
-        for (type_param, trait_name, trait_args) in &f.where_clauses {
+        for wc in &f.where_clauses {
+            let type_param = &wc.type_param;
+            let trait_name = &wc.trait_name;
+            let trait_args = &wc.trait_args;
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
                 if let Type::Var(tv) = resolved {
@@ -4793,7 +4848,7 @@ impl TypeChecker {
                 span: a.span,
             })
             .collect();
-        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _)| *n).collect();
+        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
         let pkg = self.defining_package();
         self.traits.insert(
             t.name,
@@ -4898,12 +4953,12 @@ impl TypeChecker {
         let param_where_clauses: Vec<(Symbol, Symbol)> = t
             .param_where_clauses
             .iter()
-            .map(|(var, tr, _args)| (*var, *tr))
+            .map(|wc| (wc.type_param, wc.trait_name))
             .collect();
 
-        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|(n, _)| *n).collect();
+        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
         let supertrait_args: Vec<Vec<TypeExpr>> =
-            t.supertraits.iter().map(|(_, a)| a.clone()).collect();
+            t.supertraits.iter().map(|(_, a, _)| a.clone()).collect();
 
         // Reject duplicate assoc-type names within the same trait.
         // Mirrors the duplicate-method check above.
@@ -5837,7 +5892,10 @@ impl TypeChecker {
         // resolution can recursively verify the impl's own where clauses
         // against the actual concrete type arguments at the call site.
         let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
-        for (type_param, trait_name, trait_args) in &ti.where_clauses {
+        for wc in &ti.where_clauses {
+            let type_param = &wc.type_param;
+            let trait_name = &wc.trait_name;
+            let trait_args = &wc.trait_args;
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
@@ -6201,7 +6259,10 @@ impl TypeChecker {
             // never consulted `method.where_clauses`. The impl-level
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
-            for (type_param, trait_name, trait_args) in &method.where_clauses {
+            for wc in &method.where_clauses {
+                let type_param = &wc.type_param;
+                let trait_name = &wc.trait_name;
+                let trait_args = &wc.trait_args;
                 if !self.traits.contains_key(trait_name) {
                     self.error(
                         format!(
@@ -6327,19 +6388,23 @@ pub(super) fn canonicalize_type_name(
     if name_str.as_str() == "Fun" {
         return intern("Fn");
     }
-    // Round 74 Fix #4: collapse the surface name `"Unit"` onto `"()"`
-    // so a user `trait T for Unit { ... }` impl registers under the
-    // same `("T", "()")` key the FieldAccess-arm dispatch uses
-    // (`src/typechecker/inference.rs:2576` keys Unit lookups under
-    // `intern("()")`) and the auto-derive registration uses
-    // (`mod.rs:6764` registers `&[..., "()"]`). Pre-fix: three names
-    // for one shape (`"Unit"` from `head_symbol_of_canon` /
-    // `dispatch_name_for_value` / parser-captured impl target;
-    // `"()"` from FieldAccess dispatch + auto-derive). User impls
-    // for Unit registered under `"Unit"` and never matched the
-    // `"()"`-keyed dispatch path.
-    if name_str.as_str() == "Unit" {
-        return intern("()");
+    // Round 74 Fix #4 + Round 75 TYPE-3 LATENT correction:
+    // collapse the surface alias `"()"` onto `"Unit"` (the canonical
+    // direction matching `canonical_name(Type::Unit) = "Unit"` and
+    // the VM dispatch oracle `dispatch_name_for_value(Value::Unit)
+    // = "Unit"`). Round 74's original direction (Unit → ()) made
+    // typecheck pass but emitted compiler globals under `()` while
+    // the VM dispatched under `Unit`, leaving runtime lookups
+    // missing. Flipping to `() → Unit` lets the FieldAccess arm
+    // (inference.rs:2582) and auto-derive (`mod.rs:6983`) — both
+    // updated in this round — converge with the runtime side.
+    // The typechecker's `register_trait_impl` therefore registers a
+    // user `trait T for Unit { ... }` (or `trait T for ()`) impl
+    // under method_table[("T","Unit")], the compiler emits a global
+    // keyed `Unit.<method>`, and the VM dispatches under `Unit`.
+    // Mirror of `src/types/canonical.rs::canonicalize_type_name`.
+    if name_str.as_str() == "()" {
+        return intern("Unit");
     }
     // Phase D: user-declared aliases route to the canonical head of
     // their target. `type Bytes = List(Int)` registers impls under
@@ -6381,7 +6446,7 @@ pub(crate) use crate::types::canonical::head_symbol_of_canon as head_symbol_of;
 /// body inference. Structurally divergent positions are skipped — the
 /// caller only uses the mapping for entries whose new tyvar is still
 /// free in the narrowed scheme, so spurious matches are harmless.
-pub(super) fn align_tyvars(old: &Type, new: &Type) -> HashMap<TyVar, TyVar> {
+pub fn align_tyvars(old: &Type, new: &Type) -> HashMap<TyVar, TyVar> {
     let mut map = HashMap::new();
     align_tyvars_into(old, new, &mut map);
     map
@@ -6430,6 +6495,52 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
             for (a, b) in oa.iter().zip(na.iter()) {
                 align_tyvars_into(a, b, map);
             }
+        }
+        // Round 75 TYPE-2 LATENT: anonymous (structural) records and
+        // associated-type projections must walk parallel structure to
+        // record old→new tyvar mappings, mirroring the
+        // `scheme_narrowed` arms below. Without these arms a method
+        // body whose constrained scheme contains a row-poly receiver
+        // (`{...r}`) or an `AssocProj` would have its where-clause
+        // tyvars stranded on the pre-narrowing ids — the call-site
+        // pass-3 remap loop at the trait-impl recheck site (around
+        // mod.rs:3217) would then drop those constraints because
+        // `remap.get(old_tv)` returns `None`, silently losing the
+        // constraint at the narrowed scheme.
+        (
+            Type::AnonRecord {
+                fields: of,
+                tail: ot,
+            },
+            Type::AnonRecord {
+                fields: nf,
+                tail: nt,
+            },
+        ) => {
+            for ((on, ot_), (nn, nt_)) in of.iter().zip(nf.iter()) {
+                if on == nn {
+                    align_tyvars_into(ot_, nt_, map);
+                }
+            }
+            // Open row tail (`...r`) renaming: pre-narrowed `r` ↦
+            // post-narrowed row var if both sides still carry one.
+            if let (RowTail::Var(o), RowTail::Var(n)) = (ot, nt) {
+                map.entry(*o).or_insert(*n);
+            }
+        }
+        (
+            Type::AssocProj {
+                receiver: or_,
+                trait_name: ot,
+                assoc_name: oa,
+            },
+            Type::AssocProj {
+                receiver: nr,
+                trait_name: nt,
+                assoc_name: na,
+            },
+        ) if ot == nt && oa == na => {
+            align_tyvars_into(or_, nr, map);
         }
         _ => {}
     }
@@ -6738,6 +6849,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         // trait Display { fn display(self) -> String }
         TraitDecl {
             name: intern("Display"),
+            name_span: dummy_span,
             params: Vec::new(),
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
@@ -6754,6 +6866,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         // trait Compare { fn compare(self, other) -> Int }
         TraitDecl {
             name: intern("Compare"),
+            name_span: dummy_span,
             params: Vec::new(),
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
@@ -6773,6 +6886,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         // trait Equal { fn equal(self, other) -> Bool }
         TraitDecl {
             name: intern("Equal"),
+            name_span: dummy_span,
             params: Vec::new(),
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
@@ -6792,6 +6906,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         // trait Hash { fn hash(self) -> Int }
         TraitDecl {
             name: intern("Hash"),
+            name_span: dummy_span,
             params: Vec::new(),
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
@@ -6808,8 +6923,9 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         // trait Error: Display { fn message(self) -> String = self.display() }
         TraitDecl {
             name: intern("Error"),
+            name_span: dummy_span,
             params: Vec::new(),
-            supertraits: vec![(intern("Display"), Vec::new())],
+            supertraits: vec![(intern("Display"), Vec::new(), dummy_span)],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
             assoc_types: Vec::new(),
@@ -6873,7 +6989,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // "type 'ExtFloat' does not implement trait ..." rejection.
     register_auto_derived_impls_for(
         checker,
-        &["Int", "Float", "ExtFloat", "Bool", "String", "()"],
+        // Round 75 TYPE-3 LATENT: canonical key for the unit type is
+        // "Unit" (matches canonical_name(Type::Unit) and
+        // dispatch_name_for_value(Value::Unit)). The "()" alias
+        // collapses onto "Unit" via canonicalize_type_name.
+        &["Int", "Float", "ExtFloat", "Bool", "String", "Unit"],
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
@@ -7215,6 +7335,24 @@ impl ReplTypeContext {
                             self.env.define(*item, scheme);
                         }
                     }
+                } else if self
+                    .checker
+                    .merge_imported_module_exports(*module, *module, &mut self.env)
+                {
+                    // Round 75 DEAD-DRIFT: route through the same
+                    // helper as `check_program` so the REPL sees
+                    // producer-side exports for non-builtin modules
+                    // (the `module_exports` path used by cross-module
+                    // typecheck). Pre-fix, the REPL only honored the
+                    // bare-prefix env lookup, missing schemes registered
+                    // exclusively in `module_exports`.
+                    self.checker.imported_modules.insert(*module);
+                    for item in items {
+                        let qualified = intern(&format!("{module}.{item}"));
+                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
+                            self.env.define(*item, scheme);
+                        }
+                    }
                 } else {
                     self.checker.warning(
                         format!(
@@ -7248,6 +7386,14 @@ impl ReplTypeContext {
                     for (aliased, scheme) in to_alias {
                         self.env.define(aliased, scheme);
                     }
+                } else if self
+                    .checker
+                    .merge_imported_module_exports(*module, *alias, &mut self.env)
+                {
+                    // Round 75 DEAD-DRIFT: parallel REPL path —
+                    // schemes registered under `alias.name` matching
+                    // the user-written prefix.
+                    self.checker.imported_modules.insert(*alias);
                 } else {
                     self.checker.warning(
                         format!(
@@ -7259,6 +7405,14 @@ impl ReplTypeContext {
             } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    self.checker.imported_modules.insert(*module);
+                } else if self
+                    .checker
+                    .merge_imported_module_exports(*module, *module, &mut self.env)
+                {
+                    // Round 75 DEAD-DRIFT: parallel REPL path —
+                    // producer-side exports merged for non-builtin
+                    // bare-module imports.
                     self.checker.imported_modules.insert(*module);
                 } else {
                     self.checker.warning(
@@ -7335,17 +7489,10 @@ impl ReplTypeContext {
                     Scheme::mono(self.checker.apply(&val_ty))
                 };
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: duplicate top-level let binding within a single REPL input.
-                    if self.checker.top_level_names.contains(name) {
-                        self.checker.error(
-                            format!(
-                                "duplicate top-level definition of '{}'; names must be unique at module scope",
-                                name
-                            ),
-                            span,
-                        );
-                    }
-                    self.checker.top_level_names.insert(*name);
+                    // G1: duplicate top-level let binding within a single
+                    // REPL input. Round 75 DEAD-3: shared helper with
+                    // the non-REPL `let`/`fn` paths.
+                    self.checker.define_top_level_unique(*name, span);
                     self.env.define(*name, scheme);
                 } else {
                     self.checker

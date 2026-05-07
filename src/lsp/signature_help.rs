@@ -164,9 +164,24 @@ pub(super) fn build_signature_from_def(
 ///
 /// Skips string literals (`"..."`, `""" ... """`), line comments (`--`), and
 /// block comments (`{- ... -}`) so commas and parens inside them are ignored.
+///
+/// Bracket-aware: `[`/`]` (list/array literals) and `{`/`}` (record/set
+/// literals, blocks) are tracked on the same stack as `(`/`)` so commas
+/// nested inside list/record/map literals are not credited to the
+/// enclosing call's argument count. Round-75 DX-1 fix — without this,
+/// `foo([1, 2], cursor)` reported active_param=2 (inflated by the inner
+/// list's comma) instead of 1.
 pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
-    // Stack of (paren_byte_offset, comma_count) for each nesting depth.
-    let mut stack: Vec<(usize, u32)> = Vec::new();
+    // Stack entry per nesting depth. `kind` is `b'('`, `b'['`, or `b'{'`
+    // — only `(` levels participate in the call-site lookup at the end.
+    // `comma_count` is incremented on `,` at this level only.
+    #[derive(Clone, Copy)]
+    struct Frame {
+        kind: u8,
+        paren_pos: usize,
+        comma_count: u32,
+    }
+    let mut stack: Vec<Frame> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
@@ -194,7 +209,9 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
                     }
                 }
             }
-            // ── Block comments {- ... -} (with nesting) ─────────
+            // ── Block comments {- ... -} (with nesting). MUST run
+            //    BEFORE the `{` literal arm so `{- comment -}` is
+            //    not misread as opening a record literal. ──────────
             b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
                 i += 2;
                 let mut cd = 1u32;
@@ -218,16 +235,58 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
             }
             // ── Brackets ────────────────────────────────────────
             b'(' => {
-                stack.push((i, 0));
+                stack.push(Frame {
+                    kind: b'(',
+                    paren_pos: i,
+                    comma_count: 0,
+                });
                 i += 1;
             }
             b')' => {
-                stack.pop();
+                // Pop only matching `(`. Mismatches just drop the
+                // stack head (best-effort against malformed source).
+                if let Some(top) = stack.last()
+                    && top.kind == b'('
+                {
+                    stack.pop();
+                }
+                i += 1;
+            }
+            b'[' => {
+                stack.push(Frame {
+                    kind: b'[',
+                    paren_pos: i,
+                    comma_count: 0,
+                });
+                i += 1;
+            }
+            b']' => {
+                if let Some(top) = stack.last()
+                    && top.kind == b'['
+                {
+                    stack.pop();
+                }
+                i += 1;
+            }
+            b'{' => {
+                stack.push(Frame {
+                    kind: b'{',
+                    paren_pos: i,
+                    comma_count: 0,
+                });
+                i += 1;
+            }
+            b'}' => {
+                if let Some(top) = stack.last()
+                    && top.kind == b'{'
+                {
+                    stack.pop();
+                }
                 i += 1;
             }
             b',' => {
                 if let Some(top) = stack.last_mut() {
-                    top.1 += 1;
+                    top.comma_count += 1;
                 }
                 i += 1;
             }
@@ -236,9 +295,12 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
             }
         }
     }
-    // The top of the stack is the innermost unclosed `(` — that's our call site.
-    let (paren_pos, comma_count) = stack.last()?;
-    Some((*comma_count, *paren_pos))
+    // The innermost unclosed `(` is the active call site. Walk the stack
+    // top-down to find the deepest `(` frame, ignoring `[` / `{` levels
+    // that may sit above it (e.g. cursor inside a list literal that's an
+    // argument to the call).
+    let frame = stack.iter().rev().find(|f| f.kind == b'(')?;
+    Some((frame.comma_count, frame.paren_pos))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

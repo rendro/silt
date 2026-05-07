@@ -6049,7 +6049,7 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("http.segments requires a String"),
+        err.contains("http.segments requires String, got"),
         "got: {err}"
     );
 }
@@ -6249,7 +6249,7 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("http.parse_query requires a String"),
+        err.contains("http.parse_query requires String, got"),
         "got: {err}"
     );
 }
@@ -6290,7 +6290,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("http.get requires a String"), "got: {err}");
+    assert!(err.contains("http.get requires String, got"), "got: {err}");
 }
 
 #[test]
@@ -6317,7 +6317,7 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("first argument must be a Method"),
+        err.contains("http.request requires Method, got"),
         "got: {err}"
     );
 }
@@ -6332,7 +6332,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("url must be a String"), "got: {err}");
+    assert!(err.contains("http.request requires String, got"), "got: {err}");
 }
 
 #[test]
@@ -6345,7 +6345,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("body must be a String"), "got: {err}");
+    assert!(err.contains("http.request requires String, got"), "got: {err}");
 }
 
 #[test]
@@ -6358,7 +6358,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("headers must be a Map"), "got: {err}");
+    assert!(err.contains("http.request requires Map, got"), "got: {err}");
 }
 
 #[test]
@@ -6384,7 +6384,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("port must be an Int"), "got: {err}");
+    assert!(err.contains("http.serve requires Int, got"), "got: {err}");
 }
 
 #[test]

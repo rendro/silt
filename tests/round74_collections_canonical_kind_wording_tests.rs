@@ -102,11 +102,19 @@ fn collections_emits_canonical_requires_int_got_form() {
 
 #[test]
 fn list_get_non_int_index_runtime_says_requires_int_got_kind() {
-    // Pass a String where Int is required. The typechecker accepts
-    // this when the list element type is unconstrained or when we
-    // bypass via untyped expression — here we use string literal as
-    // index; if the typechecker rejects pre-runtime, the message is
-    // still canonical.
+    // Pass a String where Int is required. `run_err` ignores typechecker
+    // diagnostics (the call discards the `check(&mut program)` result)
+    // and forwards the AST to the compiler/VM — so the runtime guard
+    // `Value::Int(n) = &args[1] else { ... }` in `collections.rs::get`
+    // fires and produces the canonical `<fn> requires Int, got <kind>`
+    // wording, exercised by this test.
+    //
+    // Round 75 lock tightening: pin the full canonical substring (incl.
+    // `, got`) and the offending kind. The previous OR-arm
+    // `err.contains("Int")` passed vacuously — any error mentioning
+    // "Int" satisfied it (including the typechecker's
+    // "type mismatch: expected Int, got String"), nullifying the
+    // behavioral check.
     let err = run_err(
         r#"
 import list
@@ -114,9 +122,14 @@ fn main() { list.get([1, 2, 3], "x") }
 "#,
     );
     assert!(
-        err.contains("requires Int") || err.contains("Int"),
-        "expected list.get to reject non-Int index with canonical \
-         'requires Int' wording, got: {err}"
+        err.contains("list.get requires Int, got"),
+        "expected list.get runtime to emit the canonical \
+         `list.get requires Int, got <kind>` wording; got: {err}"
+    );
+    assert!(
+        err.contains("String"),
+        "expected the offending kind `String` to appear in the \
+         canonical wording; got: {err}"
     );
 }
 
@@ -129,9 +142,14 @@ fn main() { list.take([1, 2, 3], "x") }
 "#,
     );
     assert!(
-        err.contains("requires Int") || err.contains("Int"),
-        "expected list.take to reject non-Int count with canonical \
-         'requires Int' wording, got: {err}"
+        err.contains("list.take requires Int, got"),
+        "expected list.take runtime to emit the canonical \
+         `list.take requires Int, got <kind>` wording; got: {err}"
+    );
+    assert!(
+        err.contains("String"),
+        "expected the offending kind `String` to appear in the \
+         canonical wording; got: {err}"
     );
 }
 
@@ -144,8 +162,13 @@ fn main() { list.drop([1, 2, 3], "x") }
 "#,
     );
     assert!(
-        err.contains("requires Int") || err.contains("Int"),
-        "expected list.drop to reject non-Int count with canonical \
-         'requires Int' wording, got: {err}"
+        err.contains("list.drop requires Int, got"),
+        "expected list.drop runtime to emit the canonical \
+         `list.drop requires Int, got <kind>` wording; got: {err}"
+    );
+    assert!(
+        err.contains("String"),
+        "expected the offending kind `String` to appear in the \
+         canonical wording; got: {err}"
     );
 }

@@ -1647,6 +1647,276 @@ fn all_doc_fn_main_blocks_run_if_safe() {
     );
 }
 
+/// Round-75 DOC-3 GAP lock: the file-level walkers above only exercise
+/// `silt check` (typecheck) on every example. That misses regressions
+/// where an example compiles cleanly but panics, errors, or otherwise
+/// fails to run end-to-end. We can't safely run *every* example —
+/// `http_server.silt` listens on a real port, `concurrent.silt` and
+/// friends spawn long-running tasks, `todo.silt` blocks on stdin —
+/// but a curated subset of examples is genuinely runtime-pure: pure
+/// compute + `println` + (in one case) `time.today` for non-blocking
+/// clock reads. This test runs that subset under a wall-clock cap and
+/// asserts each one terminates successfully.
+///
+/// Each entry was hand-verified to:
+///   * Declare a `fn main()`.
+///   * Use no networked / interactive / blocking-IO modules
+///     (`http`, `tcp`, `io.read_line`, `time.sleep`).
+///   * Never enter an unbounded `loop { ... }` or `while true`.
+///   * Terminate in well under a second on an unloaded box.
+///
+/// Adding a new example to the safe list is a deliberate choice — do
+/// not add an example just because it passes today; verify it
+/// satisfies every bullet above first. If a future change to one of
+/// these examples introduces I/O / networking / unbounded looping,
+/// the `// noexec` opt-out from `all_doc_fn_main_blocks_run_if_safe`
+/// is *not* available here (these are first-class user-shipped
+/// programs, not doc snippets); the right fix is to remove the file
+/// from the safe list.
+///
+/// The wall-clock cap is enforced via a worker thread + `recv_timeout`,
+/// matching the pattern in `src/scheduler/test_support.rs` so a hung
+/// example cannot wedge the test process. We pick 10s per example to
+/// absorb CI runner contention; all current entries finish in <100ms
+/// on a developer box, so the cap is roughly 100× headroom.
+#[test]
+fn runtime_pure_examples_run_to_completion() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    /// The curated safe-to-run subset. Each entry is a relative path
+    /// from `examples/` (no leading slash). Inspecting and editing
+    /// any of these files MUST keep them runtime-pure — see the
+    /// docstring above.
+    const SAFE_TO_RUN: &[&str] = &[
+        // Single-line "hello, world". Smallest possible case.
+        "hello.silt",
+        // FizzBuzz over 1..21 via list.each + pipeline. Pure compute.
+        "fizzbuzz.silt",
+        // JSON literal parse + age/days-until-birthday math using
+        // `time.today` / `time.weekday` / `time.date` /
+        // `time.days_between`. None of those builtins block; they
+        // just read the system clock or do calendar math.
+        "birthdays.silt",
+        // ADT pattern match showcase: eval / simplify / RPN / depth
+        // / node_count / complexity over hand-built `Expr` values.
+        // Pure compute + `println`.
+        "expr_eval.silt",
+        // Record traversal demo: filter / map / fold over a
+        // hard-coded `User` list.
+        "records.silt",
+        // List pattern + `^`-pin showcase. Pure compute.
+        "list_patterns.silt",
+        // Custom `Display` trait over `Shape`. Pure compute.
+        "traits.silt",
+        // Bigger trait showcase: `Display` / `Area` / `Perimeter` +
+        // sort_by + math.pi / math.sqrt. Pure compute.
+        "trait_zoo.silt",
+        // Vending-machine state machine fold over a fixed event
+        // list. Pure compute, no I/O beyond `println`.
+        "state_machine.silt",
+        // Note: `math_test.silt` is intentionally NOT in this list.
+        // It declares `fn test_*` functions only, no `fn main`, so
+        // `silt run` cannot drive it. The companion typecheck
+        // walker `every_example_type_checks_and_has_no_warnings`
+        // already covers it.
+    ];
+
+    let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    assert!(
+        examples_dir.is_dir(),
+        "expected examples directory at {}",
+        examples_dir.display()
+    );
+
+    // Per-example wall-clock cap. The task brief calls for ~3s; we
+    // budget 10s to absorb CI contention while keeping the test
+    // overall fast (10 entries × happy-path ~50ms ≈ 0.5s typical).
+    let cap = Duration::from_secs(10);
+
+    // Examples whose `fn main` always emits at least one `println`
+    // / `print` line. We assert their stdout is non-empty as an
+    // extra layer of evidence that the VM actually advanced past
+    // the prelude. Keep this list tight — every entry MUST print
+    // unconditionally on a clean run.
+    const MUST_PRINT: &[&str] = &[
+        "hello.silt",
+        "fizzbuzz.silt",
+        "expr_eval.silt",
+        "records.silt",
+        "list_patterns.silt",
+        "traits.silt",
+        "trait_zoo.silt",
+        "state_machine.silt",
+        // birthdays prints per-person lines on a clean run, but
+        // depends on `time.today` succeeding. Conservatively keep
+        // it out of the must-print list so a clock-availability
+        // hiccup on a CI runner does not flip a green test red.
+    ];
+
+    let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let ran_names: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    par_for_each(SAFE_TO_RUN, |name| {
+        let path = examples_dir.join(name);
+        if !path.is_file() {
+            failures.lock().unwrap().push(format!(
+                "{}: file does not exist (safe-list drift — \
+                 update SAFE_TO_RUN in tests/examples_check.rs)",
+                path.display()
+            ));
+            return;
+        }
+
+        // Spawn the silt subprocess on a worker thread so we can
+        // bound the wall-clock independently of `Command::output`
+        // (which has no timeout API on stable Rust). The worker
+        // sends the captured `Output` over a channel; we
+        // `recv_timeout(cap)` to enforce the cap.
+        let (tx, rx) = mpsc::channel::<std::io::Result<std::process::Output>>();
+        let path_for_worker = path.clone();
+        let handle = std::thread::Builder::new()
+            .name(format!("silt-runtime-pure-{}", name))
+            .spawn(move || {
+                let result = silt_cmd().arg("run").arg(&path_for_worker).output();
+                let _ = tx.send(result);
+            })
+            .expect("spawn silt-runtime-pure worker thread");
+
+        let started = Instant::now();
+        let outcome = rx.recv_timeout(cap);
+        let elapsed = started.elapsed();
+        match outcome {
+            Ok(Ok(output)) => {
+                // Worker thread is essentially done at this point;
+                // join it to release the OS handle. Bounded by a
+                // tiny join window because the work is finished.
+                let _ = handle.join();
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+
+                if stderr.contains("panicked at") {
+                    failures.lock().unwrap().push(format!(
+                        "{}: silt panicked while running the example.\n\
+                         elapsed: {:?}\nstderr:\n{}\nstdout:\n{}",
+                        path.display(),
+                        elapsed,
+                        stderr,
+                        stdout
+                    ));
+                    return;
+                }
+
+                let error_lines: Vec<&str> =
+                    stderr.lines().filter(|l| l.contains("error[")).collect();
+                if !error_lines.is_empty() {
+                    failures.lock().unwrap().push(format!(
+                        "{}: runtime error(s):\n{}\nelapsed: {:?}\n\
+                         stderr:\n{}\nstdout:\n{}",
+                        path.display(),
+                        error_lines.join("\n"),
+                        elapsed,
+                        stderr,
+                        stdout
+                    ));
+                    return;
+                }
+
+                if !output.status.success() {
+                    failures.lock().unwrap().push(format!(
+                        "{}: exit={:?}\nelapsed: {:?}\nstdout:\n{}\n\
+                         stderr:\n{}",
+                        path.display(),
+                        output.status.code(),
+                        elapsed,
+                        stdout,
+                        stderr
+                    ));
+                    return;
+                }
+
+                if MUST_PRINT.contains(name) && stdout.trim().is_empty() {
+                    failures.lock().unwrap().push(format!(
+                        "{}: stdout was empty but the example is on \
+                         the MUST_PRINT list (it should always emit at \
+                         least one println).\nstderr:\n{}",
+                        path.display(),
+                        stderr
+                    ));
+                    return;
+                }
+
+                ran_names.lock().unwrap().push((*name).to_string());
+            }
+            Ok(Err(e)) => {
+                let _ = handle.join();
+                failures.lock().unwrap().push(format!(
+                    "{}: failed to spawn silt: {}",
+                    path.display(),
+                    e
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Detach the worker thread; the silt subprocess is
+                // still running but we cannot wait on it without
+                // adding a sysdep (kill on Unix vs Windows). The OS
+                // will reap it when the test process exits. A
+                // timeout here is a hard test failure either way.
+                std::mem::forget(handle);
+                failures.lock().unwrap().push(format!(
+                    "{}: TIMED OUT after {:?} (cap={:?}). The example \
+                     is no longer runtime-pure — either fix it to \
+                     terminate quickly, or remove it from SAFE_TO_RUN \
+                     in tests/examples_check.rs.",
+                    path.display(),
+                    elapsed,
+                    cap
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = handle.join();
+                failures.lock().unwrap().push(format!(
+                    "{}: worker thread disconnected before sending an outcome",
+                    path.display()
+                ));
+            }
+        }
+    });
+
+    let failures = failures.into_inner().unwrap();
+    let mut ran_names = ran_names.into_inner().unwrap();
+    ran_names.sort();
+
+    assert!(
+        failures.is_empty(),
+        "{} runtime-pure example(s) failed to run cleanly:\n\n{}\n\n\
+         Examples that ran successfully ({}): {:?}",
+        failures.len(),
+        failures.join("\n---\n"),
+        ran_names.len(),
+        ran_names
+    );
+
+    // Sanity check: the safe list is non-trivial. If a future edit
+    // empties it, the test would silently pass — turn that into a
+    // loud failure here.
+    assert!(
+        !ran_names.is_empty(),
+        "SAFE_TO_RUN was empty; this walker must run at least one \
+         example to be a regression lock"
+    );
+    assert_eq!(
+        ran_names.len(),
+        SAFE_TO_RUN.len(),
+        "ran {} of {} safe-to-run examples (some failed silently?). \
+         ran: {:?}",
+        ran_names.len(),
+        SAFE_TO_RUN.len(),
+        ran_names
+    );
+}
+
 // ─── Round-23 audit (agent G): doc presence lock-in tests ────────────────
 //
 // The walker tests above exercise any fn-main block inside a silt code

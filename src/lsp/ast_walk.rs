@@ -227,6 +227,13 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             for param in &f.params {
                 find_ident_in_pattern(&param.pattern, cursor, source, best);
             }
+            // Round-75 DX-4: where-clause trait references must be
+            // walkable so cursor on a `where a: Greet` trait name
+            // resolves to the trait — without this, rename of `Greet`
+            // skipped every where-clause reference.
+            for wc in &f.where_clauses {
+                check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
+            }
             find_ident_in_expr(&f.body, cursor, source, best);
         }
         Decl::Let { pattern, value, .. } => {
@@ -237,10 +244,25 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             if ti.is_auto_derived {
                 return;
             }
+            // Round-75 DX-4: TraitImpl's trait_name and target_type are
+            // user-written references that LSP rename / references /
+            // goto-def must resolve. Without these, cursor on `Greet`
+            // or `Int` in `trait Greet for Int { ... }` returned None.
+            check_span_match(ti.trait_name, ti.trait_name_span, cursor, best);
+            check_span_match(ti.target_type, ti.target_type_span, cursor, best);
+            // Impl-level where-clause trait refs.
+            for wc in &ti.where_clauses {
+                check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
+            }
             for method in &ti.methods {
                 check_fn_decl_name(method, cursor, source, best);
                 for param in &method.params {
                     find_ident_in_pattern(&param.pattern, cursor, source, best);
+                }
+                // Method-level where-clause trait refs (rare today but
+                // legal: `fn foo(self, x: a) where a: Compare` in an impl).
+                for wc in &method.where_clauses {
+                    check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
                 }
                 find_ident_in_expr(&method.body, cursor, source, best);
             }
@@ -252,7 +274,20 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             check_decl_name_after_keyword(t.name, t.span, "type", cursor, source, best);
         }
         Decl::Trait(t) => {
+            // Round-75 DX-2: prefer the parser-recorded name_span when
+            // available (more precise than the source-scan fallback).
+            check_span_match(t.name, t.name_span, cursor, best);
+            // Fallback: keyword-scan path retained for synthesized trait
+            // decls that fall back to `span`.
             check_decl_name_after_keyword(t.name, t.span, "trait", cursor, source, best);
+            // Round-75 DX-4: supertrait references and trait-level
+            // where-clause trait refs.
+            for (super_name, _, super_span) in &t.supertraits {
+                check_span_match(*super_name, *super_span, cursor, best);
+            }
+            for wc in &t.param_where_clauses {
+                check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
+            }
             // Trait method binders + default method bodies — round-62 B11.
             // `Decl::Fn` and `Decl::TraitImpl` walk param patterns AND the
             // method body so hover/rename works on default-method param
@@ -263,10 +298,38 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
                 for param in &method.params {
                     find_ident_in_pattern(&param.pattern, cursor, source, best);
                 }
+                for wc in &method.where_clauses {
+                    check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
+                }
                 find_ident_in_expr(&method.body, cursor, source, best);
             }
         }
         _ => {}
+    }
+}
+
+/// Match the cursor against an identifier whose span is known precisely.
+/// Used by trait-name / target-type / supertrait references where the
+/// parser records the name's span directly (no source-scan fallback
+/// needed). Sentinel `Span::synthetic()` (line=0, col=0, offset=0)
+/// frames are skipped — they represent synthesized AST nodes that have
+/// no user-renameable source location.
+fn check_span_match(
+    name: Symbol,
+    span: crate::lexer::Span,
+    cursor: usize,
+    best: &mut Option<Symbol>,
+) {
+    // Synthetic spans (auto-derive, builtin trait decls) have offset 0
+    // and would spuriously match cursor 0 on a fresh document.
+    if span.line == 0 && span.col == 0 && span.offset == 0 {
+        return;
+    }
+    let name_str = crate::intern::resolve(name);
+    let start = span.offset;
+    let end = start + name_str.len();
+    if cursor >= start && cursor < end {
+        *best = Some(name);
     }
 }
 

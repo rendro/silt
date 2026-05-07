@@ -194,23 +194,65 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
             for param in &f.params {
                 collect_references_in_pattern(&param.pattern, name, out);
             }
+            // Round-75 DX-4: where-clause trait references.
+            for wc in &f.where_clauses {
+                if wc.trait_name == name {
+                    push_named_span(out, wc.trait_name_span);
+                }
+            }
             collect_references_in_expr(&f.body, name, out);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
                 return;
             }
+            // Round-75 DX-4: impl's trait_name and target_type are
+            // user-written references — rename of either must update them.
+            if ti.trait_name == name {
+                push_named_span(out, ti.trait_name_span);
+            }
+            if ti.target_type == name {
+                push_named_span(out, ti.target_type_span);
+            }
+            for wc in &ti.where_clauses {
+                if wc.trait_name == name {
+                    push_named_span(out, wc.trait_name_span);
+                }
+            }
             for method in &ti.methods {
                 for param in &method.params {
                     collect_references_in_pattern(&param.pattern, name, out);
+                }
+                for wc in &method.where_clauses {
+                    if wc.trait_name == name {
+                        push_named_span(out, wc.trait_name_span);
+                    }
                 }
                 collect_references_in_expr(&method.body, name, out);
             }
         }
         Decl::Trait(t) => {
+            // Round-75 DX-4: supertrait references (`trait Sub: Super`)
+            // and trait-level where-clause refs must be tracked so a
+            // rename of `Super` updates the supertrait reference too.
+            for (super_name, _, super_span) in &t.supertraits {
+                if *super_name == name {
+                    push_named_span(out, *super_span);
+                }
+            }
+            for wc in &t.param_where_clauses {
+                if wc.trait_name == name {
+                    push_named_span(out, wc.trait_name_span);
+                }
+            }
             for method in &t.methods {
                 for param in &method.params {
                     collect_references_in_pattern(&param.pattern, name, out);
+                }
+                for wc in &method.where_clauses {
+                    if wc.trait_name == name {
+                        push_named_span(out, wc.trait_name_span);
+                    }
                 }
                 // Default method bodies, if any.
                 collect_references_in_expr(&method.body, name, out);
@@ -222,6 +264,15 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
         }
         _ => {}
     }
+}
+
+/// Push a span to the references list, skipping synthesized (auto-derive,
+/// builtin) spans whose offset is 0 — those are not user-renameable.
+fn push_named_span(out: &mut Vec<Span>, span: Span) {
+    if span.line == 0 && span.col == 0 && span.offset == 0 {
+        return;
+    }
+    out.push(span);
 }
 
 fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {

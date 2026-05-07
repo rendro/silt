@@ -424,16 +424,27 @@ supplied arguments when resolving method types at the call site.
 
 ### Supertrait expansion
 
-Constraints transitively include supertraits. A `where a: Ordered`
-bound makes methods from `Equal` (the supertrait of `Ordered`)
-callable on `a` as well:
+Constraints transitively include supertraits. Given a user-defined
+`Ordered` trait whose declaration names `Equal` as a supertrait
+(hypothetical user-defined trait, not built-in), a `where a: Ordered`
+bound makes methods from `Equal` callable on `a` as well:
 
 ```silt
+trait Ordered: Equal {
+  fn less(self, other: Self) -> Bool
+}
+
 fn sorted_unique(xs: List(a)) -> List(a) where a: Ordered {
-  -- Both a.less(b) and a.equal(b) are callable here
+  -- Both a.less(b) (from Ordered) and a.equal(b) (from the
+  -- transitively-included Equal supertrait) are callable here.
   ...
 }
 ```
+
+The four built-in auto-derived traits (`Equal`, `Hash`, `Compare`,
+`Display`) are independent — none of them lists another as a
+supertrait — so this example uses a user-defined `Ordered` to show the
+supertrait edge being established.
 
 ### The four auto-derived traits
 

@@ -75,7 +75,11 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 defs.insert(
                     t.name,
                     DefInfo {
-                        span: t.span,
+                        // Round-75 DX-2: use the trait-name identifier
+                        // span, not the `trait` keyword span, so LSP
+                        // rename / references / goto-def replace the
+                        // name and not the keyword.
+                        span: t.name_span,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),

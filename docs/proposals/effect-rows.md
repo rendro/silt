@@ -9,7 +9,7 @@ status: implemented
 **tl;dr:** Recommend a coarse, inferred, tracking-only effect system.
 Skip handlers and user-defined effects in v1.
 
-**Status:** implemented (Phases A→D shipped in v0.12; default still
+**Status:** implemented (Phases A→D shipped in v0.13; default still
 permissive as of v0.14). See `docs/strict-effects-migration.md` for
 the user-facing guide.
 **Scope:** a fixed set of 5 named effects (`!io`, `!fs`, `!net`,

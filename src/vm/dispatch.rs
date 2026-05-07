@@ -151,42 +151,27 @@ pub fn render_stdlib_error_message(tag: &str, fields: &[Value]) -> Option<String
 impl Vm {
     /// Register all builtin functions and variant constructors in globals.
     pub(super) fn register_builtins(&mut self) {
-        // ── Prelude / non-error enum variants ──
-        // Round-71 PARALLEL-ARRAY-DRIFT fix: this loop is now data-driven
-        // from `module::builtin_prelude_enum_variants_with_arity()`. The
-        // previous hand-rolled per-variant `insert()` pairs (one per
-        // constructor for Result / Option / Step / ChannelResult /
-        // ChannelOp / Weekday / Method) duplicated the registry that
-        // already lives in `module::builtin_enum_variants`. The
-        // collapse mirrors the round-64 fix done below for the
-        // typed-error enums.
-        for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity() {
-            for (variant, arity) in variants.iter() {
-                let value = if *arity == 0 {
-                    Value::Variant((*variant).into(), Vec::new())
-                } else {
-                    Value::VariantConstructor((*variant).into(), *arity)
-                };
-                self.globals.insert((*variant).into(), value);
-            }
-        }
-
-        // ── Stdlib error variants ──
-        // See `module.rs::builtin_error_enum_variants_with_arity` for
-        // Phase 0 background. Each variant is globally unique
-        // (module-prefixed) so we can register it as a bare global the
-        // same way other builtin variants are. N-ary variants land as
-        // `VariantConstructor`; nullary variants land as `Variant`
-        // values.
-        //
-        // Round-64 DUP-1 fix: this loop is now data-driven from
-        // `module::builtin_error_enum_variants_with_arity()`. The
-        // previous hand-rolled per-family loops (one per error enum)
-        // duplicated the registry that already lives in
-        // `src/typechecker/builtins/errors.rs::register`. The parity
-        // test at `tests/error_enum_dispatch_parity_tests.rs` keeps the
-        // two registries in lockstep on `(variant, arity)`.
-        for (_enum_name, variants) in module::builtin_error_enum_variants_with_arity() {
+        // ── Prelude + stdlib-error enum variants ──
+        // Round-71 PARALLEL-ARRAY-DRIFT fix made the prelude loop
+        // data-driven from `module::builtin_prelude_enum_variants_with_arity()`,
+        // mirroring the round-64 DUP-1 fix that already drove the
+        // stdlib-error variants from
+        // `module::builtin_error_enum_variants_with_arity()`. Both loops
+        // had byte-identical bodies (`Variant` for nullary, otherwise
+        // `VariantConstructor`); round-75 DEAD-7 collapses them via
+        // `chain()`. The two registries are still authored separately
+        // (the prelude registry mirrors `module::builtin_enum_variants`
+        // minus the error enums; the error registry parallels
+        // `src/typechecker/builtins/errors.rs::register`), and the
+        // parity tests at `tests/error_enum_dispatch_parity_tests.rs`
+        // and `tests/round71_dispatch_collapse_and_parity_tests.rs`
+        // keep them in lockstep on `(variant, arity)`. Each variant is
+        // globally unique (module-prefixed for error enums) so we
+        // register every entry as a bare global.
+        for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity()
+            .iter()
+            .chain(module::builtin_error_enum_variants_with_arity().iter())
+        {
             for (variant, arity) in variants.iter() {
                 let value = if *arity == 0 {
                     Value::Variant((*variant).into(), Vec::new())

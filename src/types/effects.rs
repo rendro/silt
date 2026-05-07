@@ -218,6 +218,14 @@ impl EffectSet {
     }
 
     /// Count of distinct effects in the set.
+    ///
+    /// Round-75 DEAD-6 fix: gated behind `cfg(any(test, feature =
+    /// "test-hooks"))` because every production caller has been
+    /// retired — the only callers live in this module's own
+    /// `#[cfg(test)] mod tests`. Keeping the helper available under
+    /// `test-hooks` lets downstream lock tests still introspect the
+    /// set's cardinality without bloating the public production API.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[inline]
     pub fn len(self) -> usize {
         self.0.count_ones() as usize

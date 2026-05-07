@@ -67,7 +67,10 @@ fn primitives_get_all_four_traits() {
     // built-in traits registered. If policy shifts, this test makes
     // the change visible.
     let (impls, _) = __trait_init_fingerprint_check_program();
-    for type_name in ["Int", "Float", "Bool", "String", "()", "List"] {
+    // Round 75 TYPE-3 flipped the Unit canonical direction from
+    // `Unit → ()` to `() → Unit`, aligning with the VM dispatch
+    // oracle. The trait_impl_set keys now use "Unit" not "()".
+    for type_name in ["Int", "Float", "Bool", "String", "Unit", "List"] {
         for trait_name in ["Equal", "Compare", "Hash", "Display"] {
             let key = format!("{trait_name}:{type_name}");
             assert!(

@@ -350,11 +350,24 @@ pub enum Stmt {
 
 // ── Declarations ─────────────────────────────────────────────────────
 
-/// A where-clause constraint. `(type_var, trait_name, trait_args)` —
+/// A where-clause constraint. `where a: Display` records the bound
+/// type variable, the trait name, and the trait's supplied arguments.
+///
 /// `trait_args` is empty for parameter-less traits (`where a: Display`)
 /// and carries the supplied args for parameterized traits
 /// (`where a: TryInto(Int)` yields `[TypeExpr::Named("Int")]`).
-pub type WhereClause = (Symbol, Symbol, Vec<TypeExpr>);
+///
+/// `trait_name_span` points at the trait-name identifier in source so
+/// LSP rename / references / goto-def can land precisely on the trait
+/// reference (round-75 DX-4 fix). For synthesized clauses (auto-derive)
+/// it falls back to a sentinel `Span::synthetic()`.
+#[derive(Debug, Clone)]
+pub struct WhereClause {
+    pub type_param: Symbol,
+    pub trait_name: Symbol,
+    pub trait_args: Vec<TypeExpr>,
+    pub trait_name_span: Span,
+}
 
 /// An associated-type declaration inside a trait body.
 ///
@@ -511,19 +524,29 @@ pub struct TypeDecl {
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: Symbol,
+    /// Span of the trait-name identifier (the `Foo` in
+    /// `trait Foo { ... }`). Distinct from `span`, which points at the
+    /// `trait` keyword. Round-75 DX-2: LSP rename / references / goto-def
+    /// need the *identifier* range so rename edits replace the name and
+    /// not the keyword. For synthesized TraitDecls (built-in trait
+    /// signatures) this falls back to `span`.
+    pub name_span: Span,
     /// Type parameters on the trait itself: `trait TryInto(b) { ... }`
     /// yields `[b]`. Each lowercase ident binds a fresh type variable
     /// that is in scope throughout the trait's method signatures.
     /// Empty for parameter-less traits (the common case).
     pub params: Vec<Symbol>,
     /// Supertrait references (e.g. `trait Ordered: Equal + Hash` yields
-    /// `[(Equal, []), (Hash, [])]`). Implementing this trait on a type
-    /// requires the type to also implement every supertrait. Inside a
-    /// `where a: Ordered` context, methods from supertraits are also
-    /// callable on `a`. Parameterized supertraits carry type
-    /// expressions that may reference the enclosing trait's own params:
-    /// `trait Sub(a): Super(a)` yields `[(Super, [TypeExpr::Named("a")])]`.
-    pub supertraits: Vec<(Symbol, Vec<TypeExpr>)>,
+    /// `[(Equal, [], <span>), (Hash, [], <span>)]`). Implementing this
+    /// trait on a type requires the type to also implement every
+    /// supertrait. Inside a `where a: Ordered` context, methods from
+    /// supertraits are also callable on `a`. Parameterized supertraits
+    /// carry type expressions that may reference the enclosing trait's
+    /// own params: `trait Sub(a): Super(a)` yields
+    /// `[(Super, [TypeExpr::Named("a")], <span>)]`. The trailing `Span`
+    /// points at the supertrait-name identifier in source so LSP rename
+    /// / references can edit the supertrait reference (round-75 DX-4).
+    pub supertraits: Vec<(Symbol, Vec<TypeExpr>, Span)>,
     /// Where bounds on the trait's own type parameters, e.g.
     /// `trait HashTable(k) where k: Hash + Equal { ... }`. Every impl
     /// is required to supply type args that satisfy each bound;
@@ -543,6 +566,11 @@ pub struct TraitDecl {
 #[derive(Debug, Clone)]
 pub struct TraitImpl {
     pub trait_name: Symbol,
+    /// Span of the trait-name identifier in `trait <Name> for ...`.
+    /// Used by LSP rename / references so cursor on the impl's trait
+    /// reference resolves to the trait declaration (round-75 DX-4).
+    /// For synthesized impls (auto-derive) this falls back to `span`.
+    pub trait_name_span: Span,
     /// Arguments supplied to the trait at impl time:
     /// `trait TryInto(Int) for String { ... }` yields `[Int]`.
     /// Empty for traits declared without parameters.
@@ -553,6 +581,11 @@ pub struct TraitImpl {
     /// the compiler, and coherence checks can reference the impl by head
     /// name without having to inspect the type arguments.
     pub target_type: Symbol,
+    /// Span of the target-type head-name identifier in `... for <Target>`
+    /// (e.g. `Int` in `for Int`, `Box` in `for Box(a)`). Used by LSP
+    /// rename / references on the impl-target reference. For synthesized
+    /// impls (auto-derive) this falls back to `span`.
+    pub target_type_span: Span,
     /// Type arguments on the target, if any. `trait X for Box(a)` yields
     /// `[TypeExpr::Named("a")]`; the bare `trait X for Int` yields `[]`.
     /// Each lowercase `Named` entry binds a fresh type variable in the

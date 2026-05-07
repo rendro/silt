@@ -76,19 +76,6 @@ pub(super) fn attach_module_docs_filtered(env: &mut TypeEnv, md: &str, prefix: &
     }
 }
 
-/// Attach a module-level markdown blob to EVERY existing binding
-/// whose name starts with `<prefix>.`. Used by modules whose
-/// `docs/stdlib/*.md` source took a single-document approach (one
-/// summary table + one big example, no per-function `## name`
-/// sections) — `bytes`, `crypto`, `uuid`, and `stream`. Without
-/// this helper, hover on `bytes.from_hex` would surface no doc at
-/// all, even though the module has plenty of prose; with it,
-/// hovering on any `bytes.*` name shows the whole module guide.
-///
-/// Per-name `## bytes.from_hex` sections (if added later) take
-/// priority because callers should run `attach_module_docs` AFTER
-/// `attach_module_overview` — section-specific bodies overwrite the
-/// blanket overview.
 /// For each `(enum_name, variants)` tuple, find the section in `md`
 /// keyed `enum_name` and attach its body to every name in `variants`.
 /// Used by `errors.rs` so hover on `IoNotFound` surfaces the
@@ -123,6 +110,19 @@ pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&s
     }
 }
 
+/// Attach a module-level markdown blob to EVERY existing binding
+/// whose name starts with `<prefix>.`. Used by modules whose
+/// `docs/stdlib/*.md` source took a single-document approach (one
+/// summary table + one big example, no per-function `## name`
+/// sections) — `bytes`, `crypto`, `uuid`, and `stream`. Without
+/// this helper, hover on `bytes.from_hex` would surface no doc at
+/// all, even though the module has plenty of prose; with it,
+/// hovering on any `bytes.*` name shows the whole module guide.
+///
+/// Per-name `## bytes.from_hex` sections (if added later) take
+/// priority because callers should run `attach_module_docs` AFTER
+/// `attach_module_overview` — section-specific bodies overwrite the
+/// blanket overview.
 pub(super) fn attach_module_overview(env: &mut TypeEnv, md: &str, prefix: &str) {
     let dot = format!("{prefix}.");
     let names: Vec<crate::intern::Symbol> = env
@@ -809,6 +809,11 @@ signal — treat it as a cooperative request, not a hard stop:
   cooperative yield point or natural completion. Any side effects the slice
   performs before it next parks — writes, spawns, channel sends, I/O — run to
   completion. Its own final result is then discarded (first-writer-wins).
+- If the task is **queued but not yet running** (spawned but not yet
+  scheduled), the behaviour matches the running case: the handle's result
+  is set immediately, but if the scheduler later picks up the task it may
+  run a slice before its result is discarded. This is the same documented
+  first-writer-wins behaviour — `task.cancel` is not a hard stop.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form

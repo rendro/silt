@@ -677,7 +677,7 @@ impl Vm {
     /// Do NOT use this for method-dispatch keys — use
     /// `value_type_name_for_dispatch` (which routes through the
     /// canonical name oracle in `crate::types::canonical`) instead.
-    fn type_name(&self, val: &Value) -> &'static str {
+    pub fn type_name(&self, val: &Value) -> &'static str {
         match val {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
@@ -718,18 +718,36 @@ impl Vm {
     /// Human-readable type name for error messages. Renders descriptor
     /// and function-shaped values in surface-syntax terms rather than
     /// leaking internal `Value` variant names.
-    pub(crate) fn user_facing_type_name(&self, val: &Value) -> String {
+    ///
+    /// **Round 75 — TitleCase alignment with `type_name`.** Pre-fix this
+    /// helper drifted from its sibling `type_name`: it returned lowercase
+    /// surface words ("range", "tuple") and indefinite-article forms
+    /// ("a function", "a channel", "a TCP listener") while `type_name`
+    /// returned TitleCase ("Range", "Tuple", "Fn", "Channel",
+    /// "TcpListener"). Two error-rendering paths produced different
+    /// strings for the same value — exactly the dual-shape drift that
+    /// "one way to do things" forbids.
+    ///
+    /// Post-fix the helper mirrors `type_name` exactly except for the
+    /// **deliberate aliases** that carry semantic content into the
+    /// diagnostic:
+    ///   - `Record(name, _)` → the record's own type name
+    ///   - `Variant(tag, _)` → resolves to the parent enum type via the
+    ///     `__type_of__<tag>` global registered by the compiler, falling
+    ///     back to the bare tag.
+    ///   - `VariantConstructor(name, _)` → ``"VariantConstructor `name`"``
+    ///     (TitleCase, no "a " article).
+    ///   - `TypeDescriptor(name)` / `PrimitiveDescriptor(name)` →
+    ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
+    ///
+    /// All other variants delegate to `type_name` so the two paths
+    /// produce byte-identical output. The `pub` visibility is required
+    /// by `tests/round75_kind_naming_canonical_tests.rs`, which pins
+    /// the alignment matrix.
+    pub fn user_facing_type_name(&self, val: &Value) -> String {
         match val {
-            Value::Int(_) => "Int".to_string(),
-            Value::Float(_) => "Float".to_string(),
-            Value::ExtFloat(_) => "ExtFloat".to_string(),
-            Value::Bool(_) => "Bool".to_string(),
-            Value::String(_) => "String".to_string(),
-            Value::List(_) => "List".to_string(),
-            Value::Range(..) => "range".to_string(),
-            Value::Map(_) => "Map".to_string(),
-            Value::Set(_) => "Set".to_string(),
-            Value::Tuple(_) => "tuple".to_string(),
+            // Variants that carry semantic content into the user-facing
+            // diagnostic. Each is a deliberate alias documented above.
             Value::Record(name, _) => name.clone(),
             Value::Variant(tag, _) => {
                 let key = format!("__type_of__{tag}");
@@ -739,19 +757,19 @@ impl Vm {
                     tag.clone()
                 }
             }
-            Value::VmClosure(_) | Value::BuiltinFn(_) => "a function".to_string(),
             Value::VariantConstructor(name, _) => {
-                format!("a constructor `{name}`")
+                format!("VariantConstructor `{name}`")
             }
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
-                format!("type `{name}`")
+            Value::TypeDescriptor(name) => {
+                format!("TypeDescriptor `{name}`")
             }
-            Value::Channel(_) => "a channel".to_string(),
-            Value::Handle(_) => "a task handle".to_string(),
-            Value::Bytes(_) => "Bytes".to_string(),
-            Value::TcpListener(_) => "a TCP listener".to_string(),
-            Value::TcpStream(_) => "a TCP stream".to_string(),
-            Value::Unit => "Unit".to_string(),
+            Value::PrimitiveDescriptor(name) => {
+                format!("PrimitiveDescriptor `{name}`")
+            }
+            // All other variants delegate to `type_name` for canonical
+            // TitleCase wording. Drift is impossible because the same
+            // arms are read from the same source.
+            _ => self.type_name(val).to_string(),
         }
     }
 

@@ -3828,7 +3828,10 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         // any): `Display` for a plain trait, `TryInto(Int)` for a
         // parameterized one.
         let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
-        for (name, trait_name, trait_args) in &f.where_clauses {
+        for wc in &f.where_clauses {
+            let name = &wc.type_param;
+            let trait_name = &wc.trait_name;
+            let trait_args = &wc.trait_args;
             let rendered = if trait_args.is_empty() {
                 format!("{trait_name}")
             } else {
@@ -4243,10 +4246,47 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     }
 }
 
+/// Render a list of `WhereClause` constraints in the canonical
+/// `where a: Display, b: Hash + Compare` form, grouping multi-trait
+/// bounds on the same type-var via `+` and preserving insertion order.
+/// Returns an empty string for no clauses, or ` where ...` (leading
+/// space) for non-empty input. Mirrors the FnDecl formatter's
+/// where-clause renderer so trait/impl/fn signatures format identically.
+fn format_where_clauses(clauses: &[crate::ast::WhereClause]) -> String {
+    if clauses.is_empty() {
+        return String::new();
+    }
+    let mut grouped: Vec<(crate::intern::Symbol, Vec<String>)> = Vec::new();
+    for wc in clauses {
+        let rendered = if wc.trait_args.is_empty() {
+            format!("{}", wc.trait_name)
+        } else {
+            let args: Vec<String> = wc.trait_args.iter().map(format_type_expr).collect();
+            format!("{}({})", wc.trait_name, args.join(", "))
+        };
+        if let Some(entry) = grouped.iter_mut().find(|(n, _)| *n == wc.type_param) {
+            entry.1.push(rendered);
+        } else {
+            grouped.push((wc.type_param, vec![rendered]));
+        }
+    }
+    let parts: Vec<String> = grouped
+        .iter()
+        .map(|(name, traits)| format!("{name}: {}", traits.join(" + ")))
+        .collect();
+    format!(" where {}", parts.join(", "))
+}
+
 fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
+    let params = if t.params.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<String> = t.params.iter().map(|p| resolve(*p)).collect();
+        format!("({})", names.join(", "))
+    };
     let supers = if t.supertraits.is_empty() {
         String::new()
     } else {
@@ -4254,7 +4294,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
             ": {}",
             t.supertraits
                 .iter()
-                .map(|(name, args)| {
+                .map(|(name, args, _)| {
                     if args.is_empty() {
                         name.to_string()
                     } else {
@@ -4266,6 +4306,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
                 .join(" + ")
         )
     };
+    let where_clause = format_where_clauses(&t.param_where_clauses);
     // Associated-type declarations render before methods inside the
     // body, matching the typical Rust trait-body convention. Each entry
     // is `type Name` or `type Name: Bound + Bound2`. The parser keeps
@@ -4303,10 +4344,13 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
             .collect::<String>()
     };
     if assoc_lines.is_empty() {
-        format!("{prefix}trait {}{supers} {{\n{}\n{prefix}}}", t.name, body)
+        format!(
+            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}\n{prefix}}}",
+            t.name, body
+        )
     } else {
         format!(
-            "{prefix}trait {}{supers} {{\n{}{}\n{prefix}}}",
+            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}{}\n{prefix}}}",
             t.name, assoc_lines, body
         )
     }
@@ -4316,6 +4360,13 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     let prefix = indent(depth);
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
+    let trait_args_str = if t.trait_args.is_empty() {
+        String::new()
+    } else {
+        let rendered: Vec<String> = t.trait_args.iter().map(format_type_expr).collect();
+        format!("({})", rendered.join(", "))
+    };
+    let where_clause = format_where_clauses(&t.where_clauses);
     // Render parameterized target as `Head(a, b, ...)`, bare target as
     // just `Head`. Reuses format_type_expr so nested tuple/fn/generic
     // targets (unreachable today per parser rules but cheap future-proof)
@@ -4349,12 +4400,12 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     };
     if assoc_lines.is_empty() {
         format!(
-            "{prefix}trait {} for {target} {{\n{}\n{prefix}}}",
+            "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}\n{prefix}}}",
             t.trait_name, body
         )
     } else {
         format!(
-            "{prefix}trait {} for {target} {{\n{}{}\n{prefix}}}",
+            "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}{}\n{prefix}}}",
             t.trait_name, assoc_lines, body
         )
     }

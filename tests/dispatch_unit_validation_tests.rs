@@ -155,12 +155,19 @@ fn type_name_for_impl_maps_unit_to_some_symbol() {
     let src = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
 
-    // The mapping we rely on.
-    let expected = r#"Type::Unit => Some(intern("()"))"#;
+    // The mapping we rely on. Round-75 TYPE-3 flipped the Unit
+    // canonical direction from `Unit → ()` to `() → Unit` so VM
+    // dispatch (`dispatch_name_for_value(&Value::Unit) = "Unit"`)
+    // and trait-impl registration agree on the same key. The
+    // round-24 LATENT semantics are unchanged: type_name_for_impl
+    // must return Some(_) for Type::Unit so the constraint check
+    // does not silently no-op; only the canonical name is "Unit"
+    // now (post-canonicalize, not "()").
+    let expected = r#"Type::Unit => Some(intern("Unit"))"#;
     assert!(
         src.contains(expected),
         "src/typechecker/mod.rs no longer contains the expected \
-         Type::Unit => Some(intern(\"()\")) mapping in \
+         Type::Unit => Some(intern(\"Unit\")) mapping in \
          type_name_for_impl. Round-24 LATENT fix relies on this \
          mapping: once Unit falls through dispatch_method_entry's \
          match, the trait-constraint check for a concrete Unit \

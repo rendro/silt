@@ -488,6 +488,22 @@ pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     if name_str.as_str() == "Fun" {
         return intern("Fn");
     }
+    // Round 75 TYPE-3 LATENT: collapse the surface alias `"()"`
+    // onto `"Unit"`. This direction (NOT `Unit → ()`) is mandated
+    // by the runtime dispatch oracle: `dispatch_name_for_value(
+    // &Value::Unit)` returns `canonical_name(&Type::Unit) = "Unit"`,
+    // so the VM looks up `Unit.<method>` in `globals`. Compiler-side
+    // qualified-global emission goes through this function; flipping
+    // the direction would break VM dispatch (round 75 audit fix #3
+    // CAUTION). The typechecker's `inference.rs` FieldAccess arm and
+    // auto-derive registration also key on `"Unit"` post-fix; the
+    // round-74 in-tree mirror at `src/typechecker/mod.rs` collapsed
+    // `Unit → ()` which was inconsistent with the runtime path —
+    // round-75 flips both sites to `() → Unit` (the canonical
+    // direction).
+    if name_str.as_str() == "()" {
+        return intern("Unit");
+    }
     // Phase D: alias names route to the canonical head of their
     // target. `type Bytes = List(Int)` registers / dispatches under
     // `"List"`; `type Pair(a) = (a, a)` under `"Tuple"`. Chained

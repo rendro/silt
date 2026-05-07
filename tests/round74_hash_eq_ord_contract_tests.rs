@@ -16,12 +16,14 @@
 
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use silt::value::Value;
+use silt::bytecode::{Function, VmClosure};
+use silt::value::{TaskHandle, Value};
 
 fn hash_of(v: &Value) -> u64 {
     let mut h = DefaultHasher::new();
@@ -255,5 +257,181 @@ fn main() {
     assert!(
         lines.iter().filter(|l| **l == "true").count() >= 2,
         "expected two `true` lines (a == b AND a.hash() == b.hash()); got stdout={stdout:?}"
+    );
+}
+
+// ── Round 75 lock tightenings: reflexivity arms for opaque values ──
+//
+// The original round-74 contract tests covered Float↔ExtFloat and
+// List↔Range — the cross-discriminant equality cases that motivated
+// the round-74 audit fix. They did NOT cover Handle, VmClosure,
+// BuiltinFn, or VariantConstructor reflexivity. The PartialEq impl
+// at value.rs:1759-1762 declares:
+//   - Handle(a) == Handle(b) iff a.id == b.id
+//   - VmClosure(a) == VmClosure(b) iff Arc::ptr_eq(a, b)
+//   - BuiltinFn(a) == BuiltinFn(b) iff a == b
+//   - VariantConstructor(na, aa) == VariantConstructor(nb, ab) iff
+//     na == nb && aa == ab
+// Without reflexivity locks, a future regression that special-cases
+// these arms (e.g. always returning false) wouldn't trip the test
+// suite. Use a HashSet insertion-dedup probe (round-74 style) so
+// Hash/Eq are exercised together — `s.insert(h); s.insert(h);
+// assert size == 1` is the canonical contract probe.
+
+#[test]
+fn handle_reflexive_eq_hash_dedup() {
+    // TaskHandle id 42 — same id ⇒ eq ⇒ hash equal ⇒ HashSet dedups.
+    let h = Arc::new(TaskHandle::new(42));
+    let a = Value::Handle(h.clone());
+    let b = Value::Handle(h);
+    assert_eq!(a, b, "Handle(a) == Handle(a) (same id) must hold");
+    assert_eq!(
+        hash_of(&a),
+        hash_of(&b),
+        "Hash/Eq contract: equal Handles must hash equal"
+    );
+    assert_eq!(
+        a.cmp(&b),
+        Ordering::Equal,
+        "Ord/Eq contract: a == b ⇒ a.cmp(&b) == Equal"
+    );
+    let mut s: HashSet<Value> = HashSet::new();
+    s.insert(a);
+    s.insert(b);
+    assert_eq!(
+        s.len(),
+        1,
+        "HashSet must dedup two Value::Handle wrappers around the same TaskHandle Arc"
+    );
+}
+
+#[test]
+fn vm_closure_reflexive_eq_hash_dedup() {
+    // VmClosure equality is by Arc::ptr_eq — same Arc, same identity.
+    let func = Arc::new(Function::new("test_fn".into(), 0));
+    let closure = Arc::new(VmClosure {
+        function: func,
+        upvalues: Vec::new(),
+    });
+    let a = Value::VmClosure(closure.clone());
+    let b = Value::VmClosure(closure);
+    assert_eq!(
+        a, b,
+        "VmClosure(arc) == VmClosure(arc) (same Arc) must hold"
+    );
+    assert_eq!(
+        hash_of(&a),
+        hash_of(&b),
+        "Hash/Eq contract: equal VmClosures must hash equal"
+    );
+    assert_eq!(
+        a.cmp(&b),
+        Ordering::Equal,
+        "Ord/Eq contract: a == b ⇒ a.cmp(&b) == Equal"
+    );
+    let mut s: HashSet<Value> = HashSet::new();
+    s.insert(a);
+    s.insert(b);
+    assert_eq!(
+        s.len(),
+        1,
+        "HashSet must dedup two Value::VmClosure wrappers around the same Arc"
+    );
+}
+
+#[test]
+fn builtin_fn_reflexive_eq_hash_dedup() {
+    // BuiltinFn equality is by name string.
+    let a = Value::BuiltinFn("println".into());
+    let b = Value::BuiltinFn("println".into());
+    assert_eq!(
+        a, b,
+        "BuiltinFn(name) == BuiltinFn(name) (same name) must hold"
+    );
+    assert_eq!(
+        hash_of(&a),
+        hash_of(&b),
+        "Hash/Eq contract: equal BuiltinFns must hash equal"
+    );
+    assert_eq!(
+        a.cmp(&b),
+        Ordering::Equal,
+        "Ord/Eq contract: a == b ⇒ a.cmp(&b) == Equal"
+    );
+    let mut s: HashSet<Value> = HashSet::new();
+    s.insert(a);
+    s.insert(b);
+    assert_eq!(
+        s.len(),
+        1,
+        "HashSet must dedup two Value::BuiltinFn(\"println\") values"
+    );
+}
+
+#[test]
+fn variant_constructor_reflexive_eq_hash_dedup() {
+    // VariantConstructor equality is by (name, arity).
+    let a = Value::VariantConstructor("Some".into(), 1);
+    let b = Value::VariantConstructor("Some".into(), 1);
+    assert_eq!(
+        a, b,
+        "VariantConstructor(name, arity) == VariantConstructor(name, arity) must hold"
+    );
+    assert_eq!(
+        hash_of(&a),
+        hash_of(&b),
+        "Hash/Eq contract: equal VariantConstructors must hash equal"
+    );
+    assert_eq!(
+        a.cmp(&b),
+        Ordering::Equal,
+        "Ord/Eq contract: a == b ⇒ a.cmp(&b) == Equal"
+    );
+    let mut s: HashSet<Value> = HashSet::new();
+    s.insert(a);
+    s.insert(b);
+    assert_eq!(
+        s.len(),
+        1,
+        "HashSet must dedup two Value::VariantConstructor(\"Some\", 1) values"
+    );
+}
+
+// Cross-discriminant negative locks: opaque values must NOT collapse
+// across discriminants. Without these, a regression that hashed every
+// opaque variant to the same bucket would still pass the reflexivity
+// tests above. (We assert hash inequality probabilistically via the
+// HashSet len check — collisions are possible but the inserted Values
+// are inequal so dedup must NOT fire regardless.)
+
+#[test]
+fn opaque_values_distinct_across_discriminants() {
+    let h = Arc::new(TaskHandle::new(1));
+    let func = Arc::new(Function::new("f".into(), 0));
+    let closure = Arc::new(VmClosure {
+        function: func,
+        upvalues: Vec::new(),
+    });
+    let handle = Value::Handle(h);
+    let vm_closure = Value::VmClosure(closure);
+    let builtin = Value::BuiltinFn("f".into());
+    let ctor = Value::VariantConstructor("F".into(), 0);
+    // Pairwise: must all be unequal.
+    assert_ne!(handle, vm_closure);
+    assert_ne!(handle, builtin);
+    assert_ne!(handle, ctor);
+    assert_ne!(vm_closure, builtin);
+    assert_ne!(vm_closure, ctor);
+    assert_ne!(builtin, ctor);
+    // HashSet length must be 4 — no false collapses.
+    let mut s: HashSet<Value> = HashSet::new();
+    s.insert(handle);
+    s.insert(vm_closure);
+    s.insert(builtin);
+    s.insert(ctor);
+    assert_eq!(
+        s.len(),
+        4,
+        "four distinct opaque values must NOT dedup across discriminants"
     );
 }

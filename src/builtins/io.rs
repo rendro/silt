@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::common::value_kind;
 use crate::builtins::data::make_datetime;
 use crate::value::Value;
 use crate::vm::{BlockReason, Vm, VmError};
@@ -170,7 +171,10 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("io.read_file takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("io.read_file requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "io.read_file requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             if let Some(r) = vm.io_entry_guard(args)? {
                 return Ok(r);
@@ -204,9 +208,11 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("io.write_file takes 2 arguments".into()));
             }
             let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "io.write_file requires string arguments".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "io.write_file requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
 
             if let Some(r) = vm.io_entry_guard(args)? {
@@ -299,7 +305,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.exists takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.exists requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.exists requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             Ok(Value::Bool(std::path::Path::new(path).exists()))
         }
@@ -308,7 +317,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.is_file takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.is_file requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.is_file requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             Ok(Value::Bool(std::path::Path::new(path).is_file()))
         }
@@ -317,7 +329,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.is_dir takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.is_dir requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.is_dir requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             Ok(Value::Bool(std::path::Path::new(path).is_dir()))
         }
@@ -326,7 +341,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.list_dir takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.list_dir requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.list_dir requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             match std::fs::read_dir(path) {
                 Ok(entries) => {
@@ -356,7 +374,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.mkdir takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.mkdir requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.mkdir requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             match std::fs::create_dir_all(path) {
                 Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
@@ -368,7 +389,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.remove takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.remove requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.remove requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let p = std::path::Path::new(path);
             let result = if p.is_dir() {
@@ -386,7 +410,11 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.rename takes 2 arguments".into()));
             }
             let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("fs.rename requires string arguments".into()));
+                return Err(VmError::new(format!(
+                    "fs.rename requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             match std::fs::rename(from, to) {
                 Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
@@ -398,7 +426,11 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.copy takes 2 arguments".into()));
             }
             let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("fs.copy requires string arguments".into()));
+                return Err(VmError::new(format!(
+                    "fs.copy requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             match std::fs::copy(from, to) {
                 Ok(_) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
@@ -410,7 +442,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.stat takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.stat requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.stat requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // Use symlink_metadata so the returned stat describes the path
             // itself (and `is_symlink` reflects that), rather than the
@@ -478,7 +513,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.is_symlink takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.is_symlink requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.is_symlink requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // Must use symlink_metadata here: `Path::is_symlink` would do
             // the same thing, but std has made it stable only recently.
@@ -493,7 +531,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.read_link takes 1 argument".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("fs.read_link requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.read_link requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             match std::fs::read_link(path) {
                 Ok(target) => Ok(fs_ok(Value::String(target.to_string_lossy().into_owned()))),
@@ -505,7 +546,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.walk takes 1 argument".into()));
             }
             let Value::String(root) = &args[0] else {
-                return Err(VmError::new("fs.walk requires a string path".into()));
+                return Err(VmError::new(format!(
+                    "fs.walk requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // Default: do NOT follow symlinks. This avoids infinite loops
             // on cyclic trees and matches the principle of least surprise
@@ -553,7 +597,10 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.glob takes 1 argument".into()));
             }
             let Value::String(pattern) = &args[0] else {
-                return Err(VmError::new("fs.glob requires a string pattern".into()));
+                return Err(VmError::new(format!(
+                    "fs.glob requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             match glob::glob(pattern) {
                 Ok(paths) => {
@@ -593,7 +640,10 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("env.get takes 1 argument".into()));
             }
             let Value::String(key) = &args[0] else {
-                return Err(VmError::new("env.get requires a string key".into()));
+                return Err(VmError::new(format!(
+                    "env.get requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             match std::env::var(key) {
                 Ok(val) => Ok(Value::Variant("Some".into(), vec![Value::String(val)])),
@@ -610,7 +660,11 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             }
             let (Value::String(key), Value::String(val)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("env.set requires string arguments".into()));
+                return Err(VmError::new(format!(
+                    "env.set requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             // SAFETY: Only reachable from the main thread (guarded above).
             unsafe { std::env::set_var(key, val) };
@@ -630,7 +684,10 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             }
             let Value::String(key) = &args[0] else {
-                return Err(VmError::new("env.remove requires a string key".into()));
+                return Err(VmError::new(format!(
+                    "env.remove requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // Idempotent by contract: std::env::remove_var does not
             // error when the variable was not set, so we don't need to

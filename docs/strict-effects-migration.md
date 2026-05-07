@@ -6,7 +6,7 @@ status: stable
 
 # `--strict-effects` migration guide
 
-`silt` shipped Phase D of the effect-row tracking proposal in v0.12: an
+`silt` shipped Phase D of the effect-row tracking proposal in v0.13: an
 opt-in mode that promotes the gradual-rollout `EffectSet::TOP`
 default for unannotated user functions to `EffectSet::EMPTY` (pure)
 and asks the typechecker to enforce it. The result is a

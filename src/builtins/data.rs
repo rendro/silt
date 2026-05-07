@@ -12,6 +12,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, 
 
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
+use super::common::value_kind;
 use crate::value::{IoCompletion, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
@@ -532,7 +533,10 @@ fn validate_strftime_pattern(
 /// Extract a NaiveDate from a Silt Date record.
 fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
     let Value::Record(name, fields) = v else {
-        return Err(VmError::new("expected a Date record".into()));
+        return Err(VmError::new(format!(
+            "extract_date requires Date, got {}",
+            value_kind(v)
+        )));
     };
     if name != "Date" {
         return Err(VmError::new(format!("expected Date, got {name}")));
@@ -547,7 +551,10 @@ fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
 /// Extract a NaiveTime from a Silt Time record.
 fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
     let Value::Record(name, fields) = v else {
-        return Err(VmError::new("expected a Time record".into()));
+        return Err(VmError::new(format!(
+            "extract_time requires Time, got {}",
+            value_kind(v)
+        )));
     };
     if name != "Time" {
         return Err(VmError::new(format!("expected Time, got {name}")));
@@ -563,7 +570,10 @@ fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
 /// Extract a NaiveDateTime from a Silt DateTime record.
 fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
     let Value::Record(name, fields) = v else {
-        return Err(VmError::new("expected a DateTime record".into()));
+        return Err(VmError::new(format!(
+            "extract_datetime requires DateTime, got {}",
+            value_kind(v)
+        )));
     };
     if name != "DateTime" {
         return Err(VmError::new(format!("expected DateTime, got {name}")));
@@ -582,7 +592,10 @@ fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
 /// Extract epoch_ns from an Instant record.
 fn extract_instant(v: &Value) -> Result<i64, VmError> {
     let Value::Record(name, fields) = v else {
-        return Err(VmError::new("expected an Instant record".into()));
+        return Err(VmError::new(format!(
+            "extract_instant requires Instant, got {}",
+            value_kind(v)
+        )));
     };
     if name != "Instant" {
         return Err(VmError::new(format!("expected Instant, got {name}")));
@@ -596,7 +609,10 @@ fn extract_instant(v: &Value) -> Result<i64, VmError> {
 /// Extract ns from a Duration record.
 pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
     let Value::Record(name, fields) = v else {
-        return Err(VmError::new("expected a Duration record".into()));
+        return Err(VmError::new(format!(
+            "extract_duration requires Duration, got {}",
+            value_kind(v)
+        )));
     };
     if name != "Duration" {
         return Err(VmError::new(format!("expected Duration, got {name}")));
@@ -942,7 +958,9 @@ fn parse_regex_string_pair<'a>(
     }
     let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
         return Err(VmError::new(format!(
-            "regex.{op_name} requires string arguments"
+            "regex.{op_name} requires String, got ({}, {})",
+            value_kind(&args[0]),
+            value_kind(&args[1])
         )));
     };
     Ok((pattern.as_str(), text.as_str()))
@@ -963,7 +981,10 @@ fn parse_regex_string_triple<'a>(
         (&args[0], &args[1], &args[2])
     else {
         return Err(VmError::new(format!(
-            "regex.{op_name} requires string arguments"
+            "regex.{op_name} requires String, got ({}, {}, {})",
+            value_kind(&args[0]),
+            value_kind(&args[1]),
+            value_kind(&args[2])
         )));
     };
     Ok((pattern.as_str(), text.as_str(), replacement.as_str()))
@@ -1023,14 +1044,16 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                 ));
             }
             let Value::String(pattern) = &args[0] else {
-                return Err(VmError::new(
-                    "regex.replace_all_with requires a string pattern".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "regex.replace_all_with requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let Value::String(text) = &args[1] else {
-                return Err(VmError::new(
-                    "regex.replace_all_with requires a string text".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "regex.replace_all_with requires String, got {}",
+                    value_kind(&args[1])
+                )));
             };
             // Materialize match spans and match texts.  Spans are re-derived
             // deterministically from (pattern, text) on resume so we don't
@@ -1162,9 +1185,10 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "json.parse: first argument must be a string".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "json.parse requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let s = s.clone();
             match &args[1] {
@@ -1212,9 +1236,10 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "json.parse_list: first argument must be a string".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "json.parse_list requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let s = s.clone();
             let Value::TypeDescriptor(type_name) = &args[1] else {
@@ -1236,9 +1261,10 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "json.parse_map: first argument must be a string".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "json.parse_map requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let s = s.clone();
             let value_type = match &args[1] {
@@ -1316,7 +1342,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let (Value::Int(y), Value::Int(m), Value::Int(d)) = (&args[0], &args[1], &args[2])
             else {
-                return Err(VmError::new("time.date requires Int arguments".into()));
+                return Err(VmError::new(format!(
+                    "time.date requires Int, got ({}, {}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1]),
+                    value_kind(&args[2])
+                )));
             };
             // Reject silently-truncated `as i32`/`as u32` values: a
             // year of `u32::MAX + 1999` used to silently wrap to 1999.
@@ -1340,7 +1371,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let (Value::Int(h), Value::Int(m), Value::Int(s)) = (&args[0], &args[1], &args[2])
             else {
-                return Err(VmError::new("time.time requires Int arguments".into()));
+                return Err(VmError::new(format!(
+                    "time.time requires Int, got ({}, {}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1]),
+                    value_kind(&args[2])
+                )));
             };
             let h32 = u32::try_from(*h)
                 .map_err(|_| VmError::new(format!("time.time: hour {h} out of range for u32")))?;
@@ -1373,7 +1409,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let epoch_ns = extract_instant(&args[0])?;
             let Value::Int(offset_min) = &args[1] else {
-                return Err(VmError::new("time.to_datetime requires Int offset".into()));
+                return Err(VmError::new(format!(
+                    "time.to_datetime requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             // Rust `i64 % i64` carries the sign of the dividend, so for
             // negative `epoch_ns` whose magnitude isn't a multiple of 1e9
@@ -1418,7 +1457,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let dt = extract_datetime(&args[0])?;
             let Value::Int(offset_min) = &args[1] else {
-                return Err(VmError::new("time.to_instant requires Int offset".into()));
+                return Err(VmError::new(format!(
+                    "time.to_instant requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let offset = chrono::Duration::try_minutes(*offset_min).ok_or_else(|| {
                 VmError::new(format!(
@@ -1480,7 +1522,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let dt = extract_datetime(&args[0])?;
             let Value::String(pattern) = &args[1] else {
-                return Err(VmError::new("time.format requires a String pattern".into()));
+                return Err(VmError::new(format!(
+                    "time.format requires String, got {}",
+                    value_kind(&args[1])
+                )));
             };
             validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
             Ok(Value::String(dt.format(pattern).to_string()))
@@ -1494,9 +1539,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let d = extract_date(&args[0])?;
             let Value::String(pattern) = &args[1] else {
-                return Err(VmError::new(
-                    "time.format_date requires a String pattern".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "time.format_date requires String, got {}",
+                    value_kind(&args[1])
+                )));
             };
             validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
             Ok(Value::String(d.format(pattern).to_string()))
@@ -1509,7 +1555,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("time.parse requires String arguments".into()));
+                return Err(VmError::new(format!(
+                    "time.parse requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             match NaiveDateTime::parse_from_str(s, pattern) {
                 Ok(dt) => Ok(Value::Variant("Ok".into(), vec![make_datetime(dt)])),
@@ -1524,9 +1574,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "time.parse_date requires String arguments".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "time.parse_date requires String, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             // Parse as NaiveDateTime with a dummy time appended, then extract the date.
             let padded = format!("{s}T00:00:00");
@@ -1551,7 +1603,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let d = extract_date(&args[0])?;
             let Value::Int(days) = &args[1] else {
-                return Err(VmError::new("time.add_days requires Int days".into()));
+                return Err(VmError::new(format!(
+                    "time.add_days requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             // chrono::Duration::days panics when `days * 86_400_000` overflows
             // i64 milliseconds (i.e. for inputs beyond roughly ±106_751_991 days).
@@ -1582,7 +1637,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let d = extract_date(&args[0])?;
             let Value::Int(months) = &args[1] else {
-                return Err(VmError::new("time.add_months requires Int months".into()));
+                return Err(VmError::new(format!(
+                    "time.add_months requires Int, got {}",
+                    value_kind(&args[1])
+                )));
             };
             let months = *months;
             // Calculate target year and month using checked arithmetic so
@@ -1652,7 +1710,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.hours takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.hours requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.hours requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let ns = n.checked_mul(3_600_000_000_000).ok_or_else(|| {
                 VmError::new(format!(
@@ -1667,7 +1728,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.minutes takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.minutes requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.minutes requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let ns = n.checked_mul(60_000_000_000).ok_or_else(|| {
                 VmError::new(format!(
@@ -1682,7 +1746,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.seconds takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.seconds requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.seconds requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let ns = n.checked_mul(1_000_000_000).ok_or_else(|| {
                 VmError::new(format!(
@@ -1697,7 +1764,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.ms takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.ms requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.ms requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let ns = n.checked_mul(1_000_000).ok_or_else(|| {
                 VmError::new(format!(
@@ -1712,7 +1782,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.micros takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.micros requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.micros requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let ns = n.checked_mul(1_000).ok_or_else(|| {
                 VmError::new(format!(
@@ -1727,7 +1800,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.nanos takes 1 argument".into()));
             }
             let Value::Int(n) = &args[0] else {
-                return Err(VmError::new("time.nanos requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.nanos requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // No multiplication: the input is already in nanoseconds.
             // Still keep the pattern consistent with the siblings so
@@ -1771,9 +1847,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let (Value::Int(y), Value::Int(m)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "time.days_in_month requires Int arguments".into(),
-                ));
+                return Err(VmError::new(format!(
+                    "time.days_in_month requires Int, got ({}, {})",
+                    value_kind(&args[0]),
+                    value_kind(&args[1])
+                )));
             };
             // Previously these were `*y as i32` / `*m as u32`, which
             // silently wrapped: `days_in_month(2024, u32::MAX + 2)`
@@ -1794,7 +1872,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.is_leap_year takes 1 argument".into()));
             }
             let Value::Int(y) = &args[0] else {
-                return Err(VmError::new("time.is_leap_year requires an Int".into()));
+                return Err(VmError::new(format!(
+                    "time.is_leap_year requires Int, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let y32 = i32::try_from(*y).map_err(|_| {
                 VmError::new(format!("time.is_leap_year: year {y} out of range for i32"))
@@ -1926,11 +2007,23 @@ fn extract_http_response(
                 )));
             }
         },
-        _ => return Err(VmError::new("Response.status must be an Int".into())),
+        Some(other) => {
+            return Err(VmError::new(format!(
+                "Response.status requires Int, got {}",
+                value_kind(other)
+            )));
+        }
+        None => return Err(VmError::new("Response.status missing".into())),
     };
     let body = match fields.get("body") {
         Some(Value::String(s)) => s.clone(),
-        _ => return Err(VmError::new("Response.body must be a String".into())),
+        Some(other) => {
+            return Err(VmError::new(format!(
+                "Response.body requires String, got {}",
+                value_kind(other)
+            )));
+        }
+        None => return Err(VmError::new("Response.body missing".into())),
     };
     Ok((status, body, fields))
 }
@@ -2265,7 +2358,10 @@ fn do_http_serve_inner(
         )));
     }
     let Value::Int(port) = &args[0] else {
-        return Err(VmError::new(format!("{name_for_err}: port must be an Int")));
+        return Err(VmError::new(format!(
+            "{name_for_err} requires Int, got {}",
+            value_kind(&args[0])
+        )));
     };
     let handler = args[1].clone();
 
@@ -2459,7 +2555,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.get takes 1 argument (url)".into()));
                 }
                 let Value::String(url) = &args[0] else {
-                    return Err(VmError::new("http.get requires a String url".into()));
+                    return Err(VmError::new(format!(
+                        "http.get requires String, got {}",
+                        value_kind(&args[0])
+                    )));
                 };
 
                 if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
@@ -2497,21 +2596,31 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     ));
                 }
                 let Value::Variant(method_tag, method_args) = &args[0] else {
-                    return Err(VmError::new(
-                        "http.request: first argument must be a Method".into(),
-                    ));
+                    return Err(VmError::new(format!(
+                        "http.request requires Method, got {}",
+                        value_kind(&args[0])
+                    )));
                 };
                 if !method_args.is_empty() {
                     return Err(VmError::new("http.request: invalid Method variant".into()));
                 }
                 let Value::String(url) = &args[1] else {
-                    return Err(VmError::new("http.request: url must be a String".into()));
+                    return Err(VmError::new(format!(
+                        "http.request requires String, got {}",
+                        value_kind(&args[1])
+                    )));
                 };
                 let Value::String(body) = &args[2] else {
-                    return Err(VmError::new("http.request: body must be a String".into()));
+                    return Err(VmError::new(format!(
+                        "http.request requires String, got {}",
+                        value_kind(&args[2])
+                    )));
                 };
                 let Value::Map(header_map) = &args[3] else {
-                    return Err(VmError::new("http.request: headers must be a Map".into()));
+                    return Err(VmError::new(format!(
+                        "http.request requires Map, got {}",
+                        value_kind(&args[3])
+                    )));
                 };
 
                 if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
@@ -2601,7 +2710,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("http.segments takes 1 argument (path)".into()));
             }
             let Value::String(path) = &args[0] else {
-                return Err(VmError::new("http.segments requires a String".into()));
+                return Err(VmError::new(format!(
+                    "http.segments requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             let segments: Vec<Value> = path
                 .split('/')
@@ -2618,7 +2730,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let Value::String(raw) = &args[0] else {
-                return Err(VmError::new("http.parse_query requires a String".into()));
+                return Err(VmError::new(format!(
+                    "http.parse_query requires String, got {}",
+                    value_kind(&args[0])
+                )));
             };
             // Accept a leading `?` for convenience — e.g. directly
             // passing a URL fragment like `?a=1&b=2` shouldn't require

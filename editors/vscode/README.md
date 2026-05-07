@@ -43,14 +43,26 @@ spawn `silt lsp` as the language server.
 
 ## What works
 
-Matches the capabilities advertised by `silt lsp` (see `src/lsp/mod.rs`):
+Matches the capabilities advertised by `silt lsp` (see `src/lsp/mod.rs`).
+Mirrors the canonical feature list in `docs/editor-setup.md`:
 
 - Syntax highlighting (keywords, builtins, strings with `{interpolation}`,
   triple-quoted strings, `--` and nestable `{- -}` comments, numbers, operators)
 - Diagnostics (lex, parse, and type errors on every edit)
 - Hover (inferred types)
 - Go to definition
+- Go to type definition (jump from a value to the definition of its type)
+- Go to implementation (jump from a trait method to its implementations)
+- Find references (locate every use of a definition across the workspace)
+- Rename (rename a definition and update every reference)
+- Workspace symbol search (find any definition across the entire workspace by name)
+- Document highlight (highlight every occurrence of the symbol under the cursor)
 - Completion (keywords, stdlib, user definitions; `.` triggers member completion)
 - Signature help (parameter info on `(` and `,`)
 - Document symbols (outline)
+- Inlay hints (inline parameter names and inferred types)
+- Folding ranges (editor-driven code folding for blocks, records, and match arms)
+- Selection ranges (smart syntax-aware expand/shrink selection)
+- Semantic tokens (token classification for richer editor highlighting)
+- Code actions (quick fixes and refactors offered for the symbol or diagnostic under the cursor)
 - Formatting (via `silt fmt`)

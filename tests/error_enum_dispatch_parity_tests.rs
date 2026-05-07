@@ -252,10 +252,15 @@ fn dispatch_uses_shared_arity_registry() {
     // section comment). Hand-rolled loops would re-mention the enum
     // name once per loop. Since the registration is now driven by the
     // helper, no per-enum literal should remain in that region.
-    let region_start_marker = "// ── Stdlib error variants ──";
+    // Round-75 DEAD-7 collapsed the per-family Prelude loop and
+    // Stdlib-error loop into a single `chain()`-driven loop with a
+    // merged section header. The marker matches the post-merge text;
+    // the assertion below still verifies no per-enum literal remains
+    // inside the registration region.
+    let region_start_marker = "// ── Prelude + stdlib-error enum variants ──";
     let region_start = DISPATCH_SRC
         .find(region_start_marker)
-        .expect("Stdlib error variants comment missing");
+        .expect("Prelude + stdlib-error variants section comment missing");
     // Search for the next section comment AFTER skipping past the
     // start marker. Slice via byte length of the marker, not a magic
     // constant — the marker contains multi-byte ─ characters, so a

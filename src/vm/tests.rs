@@ -597,8 +597,16 @@ fn test_leq_float() {
     assert_eq!(result, Value::Bool(false));
 }
 
+/// Round-75 VM-2: Op::And dispatch is now `unreachable!()` — the
+/// compiler always lowers `BinOp::And` to a `JumpIfFalse` short-
+/// circuit (see `compiler/mod.rs:2010`). Hand-emitting Op::And here
+/// must crash the VM with the unreachable! panic, matching the
+/// LoopSetup precedent.
 #[test]
-fn test_and() {
+#[should_panic(
+    expected = "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue short-circuit"
+)]
+fn test_and_op_is_unreachable() {
     let script = make_function(|chunk| {
         chunk.emit_op(Op::True, span());
         chunk.emit_op(Op::False, span());
@@ -606,12 +614,18 @@ fn test_and() {
         chunk.emit_op(Op::Return, span());
     });
     let mut vm = Vm::new();
-    let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Bool(false));
+    let _ = vm.run(script);
 }
 
+/// Round-75 VM-2: symmetric to `test_and_op_is_unreachable` — the
+/// compiler always lowers `BinOp::Or` to a `JumpIfTrue` short-
+/// circuit at `compiler/mod.rs:2021`, so direct emission of Op::Or
+/// must crash with the unreachable! panic.
 #[test]
-fn test_or() {
+#[should_panic(
+    expected = "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue short-circuit"
+)]
+fn test_or_op_is_unreachable() {
     let script = make_function(|chunk| {
         chunk.emit_op(Op::True, span());
         chunk.emit_op(Op::False, span());
@@ -619,8 +633,7 @@ fn test_or() {
         chunk.emit_op(Op::Return, span());
     });
     let mut vm = Vm::new();
-    let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Bool(true));
+    let _ = vm.run(script);
 }
 
 #[test]

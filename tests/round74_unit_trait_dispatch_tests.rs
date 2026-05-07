@@ -1,32 +1,26 @@
-//! Round 74 Fix #4 lock: user-defined `trait T for Unit { ... }`
-//! impls must compile and dispatch on `Type::Unit` receivers.
+//! Round 74 Fix #4 lock (round-75 update): user-defined
+//! `trait T for Unit { ... }` impls must compile and dispatch on
+//! `Type::Unit` receivers.
 //!
 //! Pre-fix bug (audit GAP-4, "symbol drift"):
-//!   - Parser at `src/parser.rs:1745-1755` accepts `Named("Unit")` as
-//!     the impl target (the Symbol "Unit").
-//!   - FieldAccess dispatch at `src/typechecker/inference.rs:2576`
-//!     keys Unit lookups under `intern("()")`.
-//!   - Auto-derive registers under `"()"` (`mod.rs:6764`).
-//!   - `head_symbol_of_canon(Type::Unit) = "Unit"` (`canonical.rs:524`).
-//!   - `dispatch_name_for_value(Value::Unit) = "Unit"`
-//!     (`canonical_name(Type::Unit)` returns `"Unit"`).
+//!   - Parser accepts `Named("Unit")` as the impl target.
+//!   - FieldAccess dispatch in `src/typechecker/inference.rs` keys
+//!     Unit lookups (the round-74 fix initially used `intern("()")`,
+//!     round 75 flipped to `intern("Unit")` — see below).
+//!   - Auto-derive (round-74 used `"()"`; round-75 flipped to `"Unit"`).
+//!   - `head_symbol_of_canon(Type::Unit) = "Unit"`.
+//!   - `dispatch_name_for_value(Value::Unit) = "Unit"`.
 //!
-//!   Result: a user `trait Greet for Unit { fn greet(...) }` registers
-//!   under `("Greet", "Unit")` because the local `canonicalize_type_name`
-//!   in `mod.rs:6213` did not collapse `"Unit"` onto `"()"`. The
-//!   FieldAccess-arm dispatch keyed on `"()"` and the lookup missed
-//!   — surface error: "unknown method 'greet' on type ()".
-//!
-//! Post-fix: the local `canonicalize_type_name` now collapses
-//! `"Unit"` onto `"()"`, so user impls register under the same key
-//! the dispatch path uses. Auto-derive's hard-coded `"()"` entry was
-//! already aligned (`mod.rs:6764`).
-//!
-//! Note: this test will need to be updated whenever the broader
-//! canonical-name convergence in `src/types/canonical.rs` lands —
-//! that file is owned by a sibling agent and any further collapse
-//! (e.g. `canonical_name(Type::Unit) → "()"`) will keep this lock
-//! green by tightening, not loosening, the convergence.
+//! Round 74 originally collapsed `"Unit"` → `"()"` in the
+//! typechecker's `canonicalize_type_name` so the FieldAccess and
+//! auto-derive (`"()"`) sites converged on `"()"`. That made
+//! typecheck pass, but the runtime path (compiler emits globals via
+//! `canonicalize_type_name`; VM dispatches via
+//! `dispatch_name_for_value(Value::Unit) = "Unit"`) still keyed on
+//! `"Unit"`. Round 75 flipped both sides to the canonical direction
+//! `"()"` → `"Unit"` and updated the FieldAccess + auto-derive sites
+//! accordingly, so all of typechecker / compiler / VM converge on
+//! the single canonical key `"Unit"`.
 
 use std::process::Command;
 

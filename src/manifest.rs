@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::intern::{self, Symbol};
-use crate::module::BUILTIN_MODULES;
+use crate::module::{BUILTIN_MODULES, is_builtin_module};
 
 // Re-exported for callers that want to construct or pattern-match
 // `Dependency::Git { ref_spec, .. }` without reaching into `crate::git`.
@@ -197,6 +197,23 @@ impl Manifest {
 
         // Validation phase ----------------------------------------------------
         validate_identifier(&raw.package.name, "package name", &absolute)?;
+        // Builtin-collision check: a manifest whose `[package].name`
+        // equals a stdlib module (`io`, `string`, …) is rejected for
+        // the same reason `silt add` rejects builtin-colliding dep
+        // names — the import name would shadow the stdlib. Routed
+        // through the same `is_builtin_module` predicate so init /
+        // add / load all share one source of truth (round-75 DX-5
+        // GAP fix; see also `validate_package_name` below).
+        if is_builtin_module(&raw.package.name) {
+            return Err(ManifestError::Validation {
+                message: format!(
+                    "package name `{}` collides with builtin module `{}`; \
+                     pick a different name",
+                    raw.package.name, raw.package.name
+                ),
+                path: absolute,
+            });
+        }
         validate_version(&raw.package.version, &absolute)?;
 
         let mut dependencies = BTreeMap::new();
@@ -302,6 +319,36 @@ pub fn is_silt_identifier(name: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Validate a package name: must be a silt identifier AND must not collide
+/// with a builtin module name (`io`, `string`, etc.). Returns a
+/// human-readable error string describing the rule that failed.
+///
+/// Single source of truth for package-name acceptance, consulted by:
+///   - `Manifest::load` (rejects bad names already on disk)
+///   - `silt::cli::init` (rejects bad names before writing silt.toml; e.g.
+///     `mkdir io && cd io && silt init` previously silently produced a
+///     manifest whose `name = "io"` collided with the stdlib `io` module —
+///     round-75 DX-5 GAP fix).
+///
+/// The error wording mirrors what `silt add` already emits for
+/// builtin-colliding dep names (see `src/cli/add.rs:273-279`) so init,
+/// add, and the manifest loader report identical canonical shapes.
+pub fn validate_package_name(name: &str) -> Result<(), String> {
+    if !is_silt_identifier(name) {
+        return Err(format!(
+            "invalid package name `{name}`: \
+             must match silt identifier rules `[a-z_][a-z0-9_]*`"
+        ));
+    }
+    if is_builtin_module(name) {
+        return Err(format!(
+            "package name `{name}` collides with builtin module `{name}`; \
+             pick a different name"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(), ManifestError> {

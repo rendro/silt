@@ -236,12 +236,19 @@ fn trait_impl(
     let target_param_names: Vec<Symbol> = params.to_vec();
     let where_clauses: Vec<WhereClause> = params
         .iter()
-        .map(|p| (*p, trait_name, Vec::<TypeExpr>::new()))
+        .map(|p| WhereClause {
+            type_param: *p,
+            trait_name,
+            trait_args: Vec::new(),
+            trait_name_span: Span::synthetic(),
+        })
         .collect();
     TraitImpl {
         trait_name,
+        trait_name_span: Span::synthetic(),
         trait_args: Vec::new(),
         target_type: type_name,
+        target_type_span: Span::synthetic(),
         target_type_args,
         target_param_names,
         where_clauses,
