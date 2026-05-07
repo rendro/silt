@@ -3842,6 +3842,106 @@ mod tests {
         Parser::new(tokens).parse_program().unwrap()
     }
 
+    // ── Test helpers ────────────────────────────────────────────────
+    //
+    // The parser test bodies repeatedly decode `prog.decls[0]` as a
+    // `Decl::Fn`, drill into its `body: ExprKind::Block(stmts)`, and pull
+    // the last `Stmt::Expr` to inspect the resulting `ExprKind`. That
+    // five-line decode appeared ~28 times verbatim before round 76, all
+    // with the same panic messages. The helpers below collapse the
+    // decode to a single call so test bodies focus on the assertion they
+    // actually care about (e.g. "is the top-level expr a `?`").
+    //
+    // The helpers are panic-on-mismatch (test-only), and assume the
+    // first decl is a `fn` whose body is a block — this is the shape
+    // every site that used the inline decode required.
+
+    /// Decode the last expression of the first declaration (which must
+    /// be a `fn` with a block body) and return a reference to it.
+    /// Panics if the AST shape doesn't match.
+    fn last_expr_of_main(prog: &Program) -> &Expr {
+        let f = match &prog.decls[0] {
+            Decl::Fn(f) => f,
+            other => panic!("expected fn decl, got {:?}", other),
+        };
+        let stmts = match &f.body.kind {
+            ExprKind::Block(stmts) => stmts,
+            other => panic!("expected block body, got {:?}", other),
+        };
+        match stmts.last().unwrap() {
+            Stmt::Expr(e) => e,
+            other => panic!("expected expression statement, got {:?}", other),
+        }
+    }
+
+    /// Decode the last expression of the first fn decl, asserting it is
+    /// a `Match`, and return its `(scrutinee?, arms)`.
+    fn last_match_of_main(prog: &Program) -> (Option<&Expr>, &[MatchArm]) {
+        let expr = last_expr_of_main(prog);
+        match &expr.kind {
+            ExprKind::Match { expr: scrut, arms } => (scrut.as_deref(), arms.as_slice()),
+            other => panic!("expected match expression, got {:?}", other),
+        }
+    }
+
+    /// Convenience: first arm of the last match in `main`.
+    fn first_match_arm_of_main(prog: &Program) -> &MatchArm {
+        let (_, arms) = last_match_of_main(prog);
+        &arms[0]
+    }
+
+    // ── Helper contract pin ─────────────────────────────────────────
+    //
+    // Locks the helpers' contracts so future edits cannot silently
+    // drift. Compares helper output to a hand-decoded reference on a
+    // known-shape AST.
+    #[test]
+    fn helpers_match_hand_decoded_reference() {
+        let prog = parse(
+            r#"
+            fn main() {
+                match 1 {
+                    1 -> "one"
+                    _ -> "other"
+                }
+            }
+        "#,
+        );
+
+        // Hand-decoded reference: walk decls[0] → fn body → last stmt → expr.
+        let hand_expr = {
+            let f = match &prog.decls[0] {
+                Decl::Fn(f) => f,
+                _ => panic!("expected fn"),
+            };
+            let stmts = match &f.body.kind {
+                ExprKind::Block(s) => s,
+                _ => panic!("expected block"),
+            };
+            match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            }
+        };
+
+        let helper_expr = last_expr_of_main(&prog);
+        // Both references must point at the exact same node.
+        assert!(std::ptr::eq(hand_expr, helper_expr));
+
+        // last_match_of_main must agree with hand-decoded match.
+        let hand_arms = match &hand_expr.kind {
+            ExprKind::Match { arms, .. } => arms,
+            _ => panic!("expected match"),
+        };
+        let (_scrut, helper_arms) = last_match_of_main(&prog);
+        assert_eq!(hand_arms.len(), helper_arms.len());
+        assert!(std::ptr::eq(&hand_arms[0], &helper_arms[0]));
+
+        // first_match_arm_of_main must alias arms[0].
+        let first = first_match_arm_of_main(&prog);
+        assert!(std::ptr::eq(&hand_arms[0], first));
+    }
+
     #[test]
     fn test_hello_world() {
         let prog = parse(
@@ -4118,33 +4218,15 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         // Verify the match has a scrutinee with a pipe expression
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block body"),
-            };
-            // The match expression is the last statement
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expression statement"),
-            };
-            if let ExprKind::Match {
-                expr: Some(scrutinee),
-                arms,
-            } = &match_expr.kind
-            {
-                // Scrutinee should be a Pipe
-                assert!(
-                    matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
-                    "expected Pipe scrutinee, got {:?}",
-                    scrutinee.kind
-                );
-                // Should have 2 arms
-                assert_eq!(arms.len(), 2);
-            } else {
-                panic!("expected match expression with scrutinee");
-            }
-        }
+        let (scrutinee, arms) = last_match_of_main(&prog);
+        let scrutinee = scrutinee.expect("expected match expression with scrutinee");
+        assert!(
+            matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
+            "expected Pipe scrutinee, got {:?}",
+            scrutinee.kind
+        );
+        // Should have 2 arms
+        assert_eq!(arms.len(), 2);
     }
 
     #[test]
@@ -4260,21 +4342,8 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern.kind, PatternKind::Or(pats) if pats.len() == 3));
-            } else {
-                panic!("expected match");
-            }
-        }
+        let arm = first_match_arm_of_main(&prog);
+        assert!(matches!(&arm.pattern.kind, PatternKind::Or(pats) if pats.len() == 3));
     }
 
     #[test]
@@ -4290,21 +4359,8 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern.kind, PatternKind::Range(1, 10)));
-            } else {
-                panic!("expected match");
-            }
-        }
+        let arm = first_match_arm_of_main(&prog);
+        assert!(matches!(&arm.pattern.kind, PatternKind::Range(1, 10)));
     }
 
     #[test]
@@ -4320,23 +4376,10 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(
-                    matches!(&arms[0].pattern.kind, PatternKind::Pin(name) if *name == intern::intern("x"))
-                );
-            } else {
-                panic!("expected match");
-            }
-        }
+        let arm = first_match_arm_of_main(&prog);
+        assert!(
+            matches!(&arm.pattern.kind, PatternKind::Pin(name) if *name == intern::intern("x"))
+        );
     }
 
     #[test]
@@ -4352,28 +4395,15 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let PatternKind::Map(ref entries) = arms[0].pattern.kind {
-                    assert_eq!(entries.len(), 1);
-                    assert_eq!(entries[0].0, "key");
-                    assert!(
-                        matches!(entries[0].1.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
-                    );
-                } else {
-                    panic!("expected map pattern");
-                }
-            } else {
-                panic!("expected match");
-            }
+        let arm = first_match_arm_of_main(&prog);
+        if let PatternKind::Map(ref entries) = arm.pattern.kind {
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].0, "key");
+            assert!(
+                matches!(entries[0].1.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
+            );
+        } else {
+            panic!("expected map pattern");
         }
     }
 
@@ -4390,26 +4420,13 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let PatternKind::Constructor(ref name, ref inner) = arms[0].pattern.kind {
-                    assert_eq!(*name, intern::intern("Some"));
-                    assert_eq!(inner.len(), 1);
-                    assert!(matches!(&inner[0].kind, PatternKind::Tuple(pats) if pats.len() == 2));
-                } else {
-                    panic!("expected constructor pattern, got {:?}", arms[0].pattern);
-                }
-            } else {
-                panic!("expected match");
-            }
+        let arm = first_match_arm_of_main(&prog);
+        if let PatternKind::Constructor(ref name, ref inner) = arm.pattern.kind {
+            assert_eq!(*name, intern::intern("Some"));
+            assert_eq!(inner.len(), 1);
+            assert!(matches!(&inner[0].kind, PatternKind::Tuple(pats) if pats.len() == 2));
+        } else {
+            panic!("expected constructor pattern, got {:?}", arm.pattern);
         }
     }
 
@@ -4426,36 +4443,23 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let PatternKind::List(ref pats, ref rest) = arms[0].pattern.kind {
-                    assert_eq!(pats.len(), 1);
-                    assert!(
-                        matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h"))
-                    );
-                    assert!(rest.is_some());
-                    assert!(
-                        matches!(&rest.as_deref().unwrap().kind, PatternKind::Ident(n) if *n == intern::intern("t"))
-                    );
-                } else {
-                    panic!("expected list pattern");
-                }
-                // Second arm: empty list
-                assert!(
-                    matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty())
-                );
-            } else {
-                panic!("expected match");
-            }
+        let (_, arms) = last_match_of_main(&prog);
+        if let PatternKind::List(ref pats, ref rest) = arms[0].pattern.kind {
+            assert_eq!(pats.len(), 1);
+            assert!(
+                matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h"))
+            );
+            assert!(rest.is_some());
+            assert!(
+                matches!(&rest.as_deref().unwrap().kind, PatternKind::Ident(n) if *n == intern::intern("t"))
+            );
+        } else {
+            panic!("expected list pattern");
         }
+        // Second arm: empty list
+        assert!(
+            matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty())
+        );
     }
 
     #[test]
@@ -4471,35 +4475,22 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let PatternKind::Record {
-                    ref name,
-                    ref fields,
-                    has_rest,
-                } = arms[0].pattern.kind
-                {
-                    assert_eq!(*name, Some(intern::intern("User")));
-                    assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].0, intern::intern("name"));
-                    assert!(fields[0].1.is_none()); // shorthand
-                    assert_eq!(fields[1].0, intern::intern("age"));
-                    assert!(fields[1].1.is_none());
-                    assert!(!has_rest);
-                } else {
-                    panic!("expected record pattern");
-                }
-            } else {
-                panic!("expected match");
-            }
+        let arm = first_match_arm_of_main(&prog);
+        if let PatternKind::Record {
+            ref name,
+            ref fields,
+            has_rest,
+        } = arm.pattern.kind
+        {
+            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].0, intern::intern("name"));
+            assert!(fields[0].1.is_none()); // shorthand
+            assert_eq!(fields[1].0, intern::intern("age"));
+            assert!(fields[1].1.is_none());
+            assert!(!has_rest);
+        } else {
+            panic!("expected record pattern");
         }
     }
 
@@ -4515,20 +4506,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::List(ref elems) = expr.kind {
-                assert!(elems.is_empty());
-            } else {
-                panic!("expected empty list, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::List(ref elems) = expr.kind {
+            assert!(elems.is_empty());
+        } else {
+            panic!("expected empty list, got {:?}", expr.kind);
         }
     }
 
@@ -4542,20 +4524,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Map(ref entries) = expr.kind {
-                assert_eq!(entries.len(), 2);
-            } else {
-                panic!("expected map literal, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Map(ref entries) = expr.kind {
+            assert_eq!(entries.len(), 2);
+        } else {
+            panic!("expected map literal, got {:?}", expr.kind);
         }
     }
 
@@ -4569,20 +4542,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::SetLit(ref elems) = expr.kind {
-                assert_eq!(elems.len(), 3);
-            } else {
-                panic!("expected set literal, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::SetLit(ref elems) = expr.kind {
+            assert_eq!(elems.len(), 3);
+        } else {
+            panic!("expected set literal, got {:?}", expr.kind);
         }
     }
 
@@ -4596,17 +4560,8 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            assert!(matches!(&expr.kind, ExprKind::Range(_, _)));
-        }
+        let expr = last_expr_of_main(&prog);
+        assert!(matches!(&expr.kind, ExprKind::Range(_, _)));
     }
 
     #[test]
@@ -4619,22 +4574,13 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            // Should be Pipe(Pipe(a, f), g) — left-associative
-            if let ExprKind::Pipe(ref left, ref right) = expr.kind {
-                assert!(matches!(&right.kind, ExprKind::Ident(n) if *n == intern::intern("g")));
-                assert!(matches!(&left.kind, ExprKind::Pipe(_, _)));
-            } else {
-                panic!("expected pipe expression, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        // Should be Pipe(Pipe(a, f), g) — left-associative
+        if let ExprKind::Pipe(ref left, ref right) = expr.kind {
+            assert!(matches!(&right.kind, ExprKind::Ident(n) if *n == intern::intern("g")));
+            assert!(matches!(&left.kind, ExprKind::Pipe(_, _)));
+        } else {
+            panic!("expected pipe expression, got {:?}", expr.kind);
         }
     }
 
@@ -4653,26 +4599,17 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            // Top-level must be QuestionMark, not Pipe.
-            let ExprKind::QuestionMark(inner) = &expr.kind else {
-                panic!("expected `?` at top of expression, got {:?}", expr.kind);
-            };
-            // Inner must be a Pipe.
-            assert!(
-                matches!(&inner.kind, ExprKind::Pipe(_, _)),
-                "expected Pipe inside `?`, got {:?}",
-                inner.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        // Top-level must be QuestionMark, not Pipe.
+        let ExprKind::QuestionMark(inner) = &expr.kind else {
+            panic!("expected `?` at top of expression, got {:?}", expr.kind);
+        };
+        // Inner must be a Pipe.
+        assert!(
+            matches!(&inner.kind, ExprKind::Pipe(_, _)),
+            "expected Pipe inside `?`, got {:?}",
+            inner.kind
+        );
     }
 
     #[test]
@@ -4690,24 +4627,15 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            let ExprKind::QuestionMark(inner) = &expr.kind else {
-                panic!("expected `?` at top, got {:?}", expr.kind);
-            };
-            assert!(
-                matches!(&inner.kind, ExprKind::Binary(_, _, _)),
-                "expected Binary inside `?`, got {:?}",
-                inner.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        let ExprKind::QuestionMark(inner) = &expr.kind else {
+            panic!("expected `?` at top, got {:?}", expr.kind);
+        };
+        assert!(
+            matches!(&inner.kind, ExprKind::Binary(_, _, _)),
+            "expected Binary inside `?`, got {:?}",
+            inner.kind
+        );
     }
 
     #[test]
@@ -4723,24 +4651,15 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            let ExprKind::QuestionMark(inner) = &expr.kind else {
-                panic!("expected `?` at top, got {:?}", expr.kind);
-            };
-            assert!(
-                matches!(&inner.kind, ExprKind::Range(_, _)),
-                "expected Range inside `?`, got {:?}",
-                inner.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        let ExprKind::QuestionMark(inner) = &expr.kind else {
+            panic!("expected `?` at top, got {:?}", expr.kind);
+        };
+        assert!(
+            matches!(&inner.kind, ExprKind::Range(_, _)),
+            "expected Range inside `?`, got {:?}",
+            inner.kind
+        );
     }
 
     #[test]
@@ -4758,27 +4677,18 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            // Top-level is Binary(==), NOT QuestionMark — `?` was pulled
-            // into the RHS of `==`.
-            let ExprKind::Binary(_, op, rhs) = &expr.kind else {
-                panic!("expected Binary at top, got {:?}", expr.kind);
-            };
-            assert_eq!(*op, BinOp::Eq);
-            assert!(
-                matches!(&rhs.kind, ExprKind::QuestionMark(_)),
-                "expected QuestionMark on RHS of ==, got {:?}",
-                rhs.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        // Top-level is Binary(==), NOT QuestionMark — `?` was pulled
+        // into the RHS of `==`.
+        let ExprKind::Binary(_, op, rhs) = &expr.kind else {
+            panic!("expected Binary at top, got {:?}", expr.kind);
+        };
+        assert_eq!(*op, BinOp::Eq);
+        assert!(
+            matches!(&rhs.kind, ExprKind::QuestionMark(_)),
+            "expected QuestionMark on RHS of ==, got {:?}",
+            rhs.kind
+        );
     }
 
     #[test]
@@ -4793,23 +4703,14 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            let ExprKind::QuestionMark(inner) = &expr.kind else {
-                panic!("expected `?` at top, got {:?}", expr.kind);
-            };
-            let ExprKind::Binary(_, op, _) = &inner.kind else {
-                panic!("expected Binary inside `?`, got {:?}", inner.kind);
-            };
-            assert_eq!(*op, BinOp::Mul);
-        }
+        let expr = last_expr_of_main(&prog);
+        let ExprKind::QuestionMark(inner) = &expr.kind else {
+            panic!("expected `?` at top, got {:?}", expr.kind);
+        };
+        let ExprKind::Binary(_, op, _) = &inner.kind else {
+            panic!("expected Binary inside `?`, got {:?}", inner.kind);
+        };
+        assert_eq!(*op, BinOp::Mul);
     }
 
     #[test]
@@ -4827,25 +4728,16 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            let ExprKind::Binary(_, op, rhs) = &expr.kind else {
-                panic!("expected Binary at top, got {:?}", expr.kind);
-            };
-            assert_eq!(*op, BinOp::And);
-            assert!(
-                matches!(&rhs.kind, ExprKind::QuestionMark(_)),
-                "expected `?` on RHS of &&, got {:?}",
-                rhs.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        let ExprKind::Binary(_, op, rhs) = &expr.kind else {
+            panic!("expected Binary at top, got {:?}", expr.kind);
+        };
+        assert_eq!(*op, BinOp::And);
+        assert!(
+            matches!(&rhs.kind, ExprKind::QuestionMark(_)),
+            "expected `?` on RHS of &&, got {:?}",
+            rhs.kind
+        );
     }
 
     #[test]
@@ -4863,24 +4755,15 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            let ExprKind::QuestionMark(inner) = &expr.kind else {
-                panic!("expected `?` at top, got {:?}", expr.kind);
-            };
-            assert!(
-                matches!(&inner.kind, ExprKind::Ascription(_, _)),
-                "expected Ascription inside `?`, got {:?}",
-                inner.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        let ExprKind::QuestionMark(inner) = &expr.kind else {
+            panic!("expected `?` at top, got {:?}", expr.kind);
+        };
+        assert!(
+            matches!(&inner.kind, ExprKind::Ascription(_, _)),
+            "expected Ascription inside `?`, got {:?}",
+            inner.kind
+        );
     }
 
     #[test]
@@ -4897,25 +4780,16 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            // Top-level must be Pipe, with LHS being QuestionMark.
-            let ExprKind::Pipe(lhs, _rhs) = &expr.kind else {
-                panic!("expected Pipe at top, got {:?}", expr.kind);
-            };
-            assert!(
-                matches!(&lhs.kind, ExprKind::QuestionMark(_)),
-                "expected QuestionMark on pipe LHS, got {:?}",
-                lhs.kind
-            );
-        }
+        let expr = last_expr_of_main(&prog);
+        // Top-level must be Pipe, with LHS being QuestionMark.
+        let ExprKind::Pipe(lhs, _rhs) = &expr.kind else {
+            panic!("expected Pipe at top, got {:?}", expr.kind);
+        };
+        assert!(
+            matches!(&lhs.kind, ExprKind::QuestionMark(_)),
+            "expected QuestionMark on pipe LHS, got {:?}",
+            lhs.kind
+        );
     }
 
     #[test]
@@ -4928,20 +4802,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Return(ref val) = expr.kind {
-                assert!(val.is_some());
-            } else {
-                panic!("expected return");
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Return(ref val) = expr.kind {
+            assert!(val.is_some());
+        } else {
+            panic!("expected return");
         }
     }
 
@@ -4955,20 +4820,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Return(ref val) = expr.kind {
-                assert!(val.is_none());
-            } else {
-                panic!("expected return");
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Return(ref val) = expr.kind {
+            assert!(val.is_none());
+        } else {
+            panic!("expected return");
         }
     }
 
@@ -4984,40 +4840,31 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Loop {
-                ref bindings,
-                ref body,
-            } = expr.kind
-            {
-                assert_eq!(bindings.len(), 2);
-                assert_eq!(bindings[0].0, intern::intern("i"));
-                assert_eq!(bindings[1].0, intern::intern("acc"));
-                // body should contain a Recur
-                if let ExprKind::Block(ref inner_stmts) = body.kind {
-                    let recur_expr = match inner_stmts.last().unwrap() {
-                        Stmt::Expr(e) => e,
-                        _ => panic!("expected expr in loop body"),
-                    };
-                    if let ExprKind::Recur(ref args) = recur_expr.kind {
-                        assert_eq!(args.len(), 2);
-                    } else {
-                        panic!("expected recur, got {:?}", recur_expr.kind);
-                    }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Loop {
+            ref bindings,
+            ref body,
+        } = expr.kind
+        {
+            assert_eq!(bindings.len(), 2);
+            assert_eq!(bindings[0].0, intern::intern("i"));
+            assert_eq!(bindings[1].0, intern::intern("acc"));
+            // body should contain a Recur
+            if let ExprKind::Block(ref inner_stmts) = body.kind {
+                let recur_expr = match inner_stmts.last().unwrap() {
+                    Stmt::Expr(e) => e,
+                    _ => panic!("expected expr in loop body"),
+                };
+                if let ExprKind::Recur(ref args) = recur_expr.kind {
+                    assert_eq!(args.len(), 2);
                 } else {
-                    panic!("expected block body");
+                    panic!("expected recur, got {:?}", recur_expr.kind);
                 }
             } else {
-                panic!("expected loop, got {:?}", expr.kind);
+                panic!("expected block body");
             }
+        } else {
+            panic!("expected loop, got {:?}", expr.kind);
         }
     }
 
@@ -5227,22 +5074,13 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Lambda { ref params, .. } = expr.kind {
-                assert_eq!(params.len(), 2);
-                assert!(params[0].ty.is_some());
-                assert!(params[1].ty.is_some());
-            } else {
-                panic!("expected lambda, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Lambda { ref params, .. } = expr.kind {
+            assert_eq!(params.len(), 2);
+            assert!(params[0].ty.is_some());
+            assert!(params[1].ty.is_some());
+        } else {
+            panic!("expected lambda, got {:?}", expr.kind);
         }
     }
 
@@ -5280,26 +5118,13 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { ref arms, .. } = match_expr.kind {
-                assert_eq!(arms.len(), 5);
-                assert!(arms[0].guard.is_some());
-                assert!(arms[1].guard.is_none());
-                assert!(arms[2].guard.is_some());
-                assert!(arms[3].guard.is_some());
-                assert!(arms[4].guard.is_none());
-            } else {
-                panic!("expected match");
-            }
-        }
+        let (_, arms) = last_match_of_main(&prog);
+        assert_eq!(arms.len(), 5);
+        assert!(arms[0].guard.is_some());
+        assert!(arms[1].guard.is_none());
+        assert!(arms[2].guard.is_some());
+        assert!(arms[3].guard.is_some());
+        assert!(arms[4].guard.is_none());
     }
 
     #[test]
@@ -5330,29 +5155,18 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let PatternKind::Record {
-                    ref name,
-                    ref fields,
-                    has_rest,
-                } = arms[0].pattern.kind
-                {
-                    assert_eq!(*name, Some(intern::intern("User")));
-                    assert_eq!(fields.len(), 1);
-                    assert!(has_rest);
-                } else {
-                    panic!("expected record pattern with rest");
-                }
-            }
+        let arm = first_match_arm_of_main(&prog);
+        if let PatternKind::Record {
+            ref name,
+            ref fields,
+            has_rest,
+        } = arm.pattern.kind
+        {
+            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(fields.len(), 1);
+            assert!(has_rest);
+        } else {
+            panic!("expected record pattern with rest");
         }
     }
 
@@ -5369,20 +5183,11 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Loop { ref bindings, .. } = expr.kind {
-                assert!(bindings.is_empty());
-            } else {
-                panic!("expected loop, got {:?}", expr.kind);
-            }
+        let expr = last_expr_of_main(&prog);
+        if let ExprKind::Loop { ref bindings, .. } = expr.kind {
+            assert!(bindings.is_empty());
+        } else {
+            panic!("expected loop, got {:?}", expr.kind);
         }
     }
 
@@ -5426,20 +5231,7 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            let stmts = match &f.body.kind {
-                ExprKind::Block(stmts) => stmts,
-                _ => panic!("expected block"),
-            };
-            let match_expr = match stmts.last().unwrap() {
-                Stmt::Expr(e) => e,
-                _ => panic!("expected expr stmt"),
-            };
-            if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern.kind, PatternKind::Range(-10, 10)));
-            } else {
-                panic!("expected match");
-            }
-        }
+        let arm = first_match_arm_of_main(&prog);
+        assert!(matches!(&arm.pattern.kind, PatternKind::Range(-10, 10)));
     }
 }

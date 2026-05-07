@@ -836,6 +836,12 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 /// `src/typechecker/builtins.rs` (`register_math_builtins` /
 /// `register_float_builtins`). LSP dot-completion (`src/lsp.rs::dot_completions`)
 /// consults this list so editor autocompletion surfaces module constants.
+///
+/// Parity lock: `tests/module_constants_completion_tests.rs`
+/// (`math_constants_are_listed`, `float_constants_are_listed`,
+/// `unknown_module_has_no_constants`,
+/// `float_functions_do_not_duplicate_constants`) — round-26 audit
+/// findings L8/G5.
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     match module {
         "math" => vec!["pi", "e"],

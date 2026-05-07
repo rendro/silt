@@ -2095,34 +2095,22 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
     }
 }
 
+/// Surface kind name used by the FFI `FromValue` impls' diagnostic shape
+/// (`"expected <Kind>, got <kind>"`). Round 76 ERR-1 GAP collapse: this
+/// previously hand-rolled its own match arms that drifted from the two
+/// canonical kind oracles (`builtins::common::value_kind` and
+/// `vm::Vm::type_name`) on four variants — `BuiltinFn` ("Fn" vs
+/// "BuiltinFn"), `VariantConstructor` ("Constructor" vs
+/// "VariantConstructor"), `TypeDescriptor` ("Type" vs "TypeDescriptor"),
+/// `PrimitiveDescriptor` ("Type" vs "PrimitiveDescriptor"). Round 75
+/// ERR-1 GAP unified `value_kind` with `Vm::type_name` for all 22
+/// variants; this helper now delegates to that canonical source so a
+/// single edit to one match arm propagates to every FFI error message.
+/// Per the project's "one way to do things" convention.
+///
+/// Locked by `tests/round76_value_type_name_parity_tests.rs`.
 fn value_type_name(v: &Value) -> &'static str {
-    match v {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
-        Value::Bool(_) => "Bool",
-        Value::String(_) => "String",
-        Value::List(_) => "List",
-        Value::Range(..) => "Range",
-        Value::Map(_) => "Map",
-        Value::Set(_) => "Set",
-        Value::Tuple(_) => "Tuple",
-        Value::Record(..) => "Record",
-        Value::Variant(..) => "Variant",
-        // Surface name for function-shaped values matches `Type::Fun`'s
-        // Display impl (which renders `Fn(...) -> R`) and the canonical
-        // dispatch name returned by `dispatch_name_for_value`. The
-        // round 71 follow-up unified all sites on `"Fn"`.
-        Value::VmClosure(_) | Value::BuiltinFn(_) => "Fn",
-        Value::VariantConstructor(..) => "Constructor",
-        Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
-        Value::Channel(_) => "Channel",
-        Value::Handle(_) => "Handle",
-        Value::Bytes(_) => "Bytes",
-        Value::TcpListener(_) => "TcpListener",
-        Value::TcpStream(_) => "TcpStream",
-        Value::Unit => "Unit",
-    }
+    crate::builtins::value_kind(v)
 }
 
 impl Hash for Value {

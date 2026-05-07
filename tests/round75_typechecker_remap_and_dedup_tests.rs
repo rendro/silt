@@ -470,13 +470,19 @@ fn dead_drift_repl_calls_merge_imported_module_exports() {
             .matches(".merge_imported_module_exports(")
             .count();
     // The non-REPL `check_program` path uses the helper 3x; the REPL
-    // path adds 3 more, so the total occurrences should be >=6
-    // (some compilers may fold formatting).
+    // path adds 3 more, so the total occurrences should be >=6.
+    // Round-75 L8 tightening: the previous threshold was `>= 5`, which
+    // tolerated reverting one of the three REPL sites (drops to 6,
+    // still passing — actual today is 7). Tightening to `>= 6` catches
+    // a partial revert at any of the three REPL paths the round-75
+    // DEAD-DRIFT fix introduced; reverting one site drops the count to
+    // 6, reverting two drops to 5 — both now caught.
     assert!(
-        occurrences >= 5,
+        occurrences >= 6,
         "round 75 DEAD-DRIFT: REPL must route through \
          `merge_imported_module_exports` for non-builtin imports, \
          matching the `check_program` path. Found only {occurrences} \
-         total `.merge_imported_module_exports(` invocations."
+         total `.merge_imported_module_exports(` invocations \
+         (need >= 6: 3 from check_program + 3 from REPL)."
     );
 }

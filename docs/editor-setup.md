@@ -37,7 +37,7 @@ The server communicates over stdin/stdout using the standard LSP protocol.
 | **Document highlight** | Highlight every occurrence of the symbol under the cursor in the active file |
 | **Rename** | Rename a definition and update every reference (`<leader>rn`) |
 | **Code actions** | Quick fixes and refactors offered for the symbol or diagnostic under the cursor |
-| **Inlay hints** | Inline parameter names and inferred types rendered in the editor |
+| **Inlay hints** | Inferred types for `let`-bindings and unannotated parameters rendered as inline hints |
 | **Folding ranges** | Editor-driven code folding for blocks, records, and match arms |
 | **Selection ranges** | Smart syntax-aware expand/shrink selection |
 | **Semantic tokens** | Token classification for richer editor highlighting |

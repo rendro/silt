@@ -3475,6 +3475,32 @@ impl TypeChecker {
             }
 
             // Check that all required methods are implemented with correct signature.
+            // Round 76 BROKEN T2: substitute the impl's `trait_args`
+            // (loaded above as `enclosing_args`) into the trait method
+            // template *before* alpha-renaming the method-polymorphic
+            // vars. Without this step the trait's PARAMETER tyvars
+            // (e.g. `a` in `trait Foo(a) { fn produce(self) -> a }`)
+            // get treated like method-polymorphic vars, which silently
+            // lets `impl Foo(Int) for String { fn produce(self) ->
+            // String }` typecheck — the param var is alpha-renamed to
+            // a fresh var that unifies with `String`, erasing the
+            // impl's promise that the produced value is an `Int`.
+            // Pre-substitution pins the param var to its impl-specific
+            // concrete arg so the only remaining free vars are the
+            // method's own polymorphism.
+            let trait_param_substitution: HashMap<TyVar, Type> =
+                if !trait_info.param_var_ids.is_empty()
+                    && enclosing_args.len() == trait_info.param_var_ids.len()
+                {
+                    trait_info
+                        .param_var_ids
+                        .iter()
+                        .zip(enclosing_args.iter())
+                        .map(|(&v, t)| (v, self.apply(t)))
+                        .collect()
+                } else {
+                    HashMap::new()
+                };
             for (method_name, trait_method_type) in &trait_info.methods {
                 let key = (*type_name, *method_name);
                 if let Some(entry) = self.method_table.get(&key) {
@@ -3486,10 +3512,17 @@ impl TypeChecker {
                     // stored method_table entries are templates reused by
                     // every lookup site via `instantiate_method_type`.
                     let impl_type = self.instantiate_method_type(&stored_impl_type);
-                    let fvs = free_vars_in(trait_method_type);
+                    // Round 76 BROKEN T2: substitute trait_args first so
+                    // only method-polymorphic vars are alpha-renamed.
+                    let trait_method_with_args = if trait_param_substitution.is_empty() {
+                        trait_method_type.clone()
+                    } else {
+                        substitute_vars(trait_method_type, &trait_param_substitution)
+                    };
+                    let fvs = free_vars_in(&trait_method_with_args);
                     let mapping: HashMap<TyVar, Type> =
                         fvs.into_iter().map(|v| (v, self.fresh_var())).collect();
-                    let expected = substitute_vars(trait_method_type, &mapping);
+                    let expected = substitute_vars(&trait_method_with_args, &mapping);
                     self.unify(&impl_type, &expected, impl_span);
                 } else if !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
@@ -6085,17 +6118,51 @@ impl TypeChecker {
                 continue;
             }
             let resolved = self.resolve_type_expr(&binding.ty, &mut impl_param_map);
-            impl_binding_map.insert(binding.name, resolved.clone());
             // Register into the canonical assoc-binding registry. The
             // registry keys on the canonical target head (so Range and
             // List collapse), parallel to method_table's
-            // canonicalize_type_name routing above.
-            self.resolver.register_assoc_binding(
+            // canonicalize_type_name routing above. Round 76 BROKEN T1:
+            // the registry refuses self- or mutually-referential
+            // bindings that would otherwise drive `canonicalize` into
+            // infinite recursion (stack overflow). Skip the
+            // `impl_binding_map` insertion on cycle so the per-method
+            // signature check below reports a clean "missing required
+            // assoc-type" rather than walking through a poisoned entry.
+            match self.resolver.register_assoc_binding(
                 ti.trait_name,
                 ti.target_type,
                 binding.name,
-                resolved,
-            );
+                resolved.clone(),
+            ) {
+                Ok(()) => {
+                    impl_binding_map.insert(binding.name, resolved);
+                }
+                Err(cycle) => {
+                    let via_msg = if (
+                        cycle.via.0.as_str(),
+                        cycle.via.1.as_str(),
+                        cycle.via.2.as_str(),
+                    ) == (
+                        cycle.trait_name.as_str(),
+                        cycle.head.as_str(),
+                        cycle.assoc_name.as_str(),
+                    ) {
+                        String::new()
+                    } else {
+                        format!(
+                            " (cycle via <{} as {}>::{})",
+                            cycle.via.1, cycle.via.0, cycle.via.2
+                        )
+                    };
+                    self.error(
+                        format!(
+                            "associated type binding for <{} as {}>::{} is self-referential{via_msg}",
+                            cycle.head, cycle.trait_name, cycle.assoc_name,
+                        ),
+                        binding.span,
+                    );
+                }
+            }
         }
         // Verify each declared assoc-type has a binding and that the
         // binding satisfies any declared bounds.

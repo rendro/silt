@@ -153,9 +153,23 @@ impl Server {
             return None;
         }
 
+        // Round-76 D3: suppress the top-of-hover signature block when
+        // it would carry unresolved TyVars AND the markdown signature
+        // below the `---` separator is authoritative (i.e. `doc_text`
+        // is present). The audit example: hovering `string.length` in
+        // a file that forgot `import string` produced
+        // `Fn(String) -> _` because the FieldAccess arm stashed a
+        // fresh `Type::Var` on the AST, and the Call arm later unified
+        // the parameter side but not the return slot. The markdown
+        // signature already shows the correct `Fn(String) -> Int`, so
+        // dropping the broken top block is strictly an improvement.
         let mut value = String::new();
         if let Some(t) = ty {
-            value.push_str(&format!("```silt\n{t}\n```"));
+            let render_top_signature =
+                !(has_unresolved_vars(&t) && doc_text.is_some());
+            if render_top_signature {
+                value.push_str(&format!("```silt\n{t}\n```"));
+            }
         }
         // Phase B of the effect-rows proposal: render the declared
         // effect set on every fn (and the inferred set when it differs)

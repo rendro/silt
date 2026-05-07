@@ -72,7 +72,7 @@ use std::collections::HashMap;
 /// Resolved type-alias entry stored in the global alias registry.
 ///
 /// Populated by the typechecker when it processes a `TypeBody::Alias`
-/// declaration: the target [`TypeExpr`] is resolved to a [`Type`], a
+/// declaration: the target [`crate::ast::TypeExpr`] is resolved to a [`Type`], a
 /// fresh `TyVar` is allocated for each alias parameter, and the result
 /// is registered here. The canonicaliser then expands an alias
 /// reference by substituting the call-site type arguments into the
@@ -116,6 +116,23 @@ pub struct AssocBinding {
     /// itself an `AssocProj` — re-enter through `canonicalize` on the
     /// enclosing type, not through this stored value.)
     pub ty: Type,
+}
+
+/// Cycle diagnostic returned by [`Resolver::register_assoc_binding`]
+/// when the supplied binding RHS would close a cycle back on the
+/// triple being registered. Round 76 BROKEN T1 fix.
+#[derive(Debug, Clone)]
+pub struct AssocBindingCycle {
+    /// Trait name of the binding under registration.
+    pub trait_name: String,
+    /// Canonical target head of the binding under registration.
+    pub head: String,
+    /// Associated-type name of the binding under registration.
+    pub assoc_name: String,
+    /// Triple at which the cycle closes (may equal `(trait_name,
+    /// head, assoc_name)` for direct self-reference, or a different
+    /// triple for mutual cycles through other registered bindings).
+    pub via: (String, String, String),
 }
 
 /// Compile-session-scoped storage for the alias and associated-type
@@ -176,23 +193,148 @@ impl Resolver {
     /// convention; the typechecker enforces uniqueness via its
     /// duplicate-impl check, so in practice this only fires once per
     /// triple).
+    ///
+    /// Round 76 BROKEN T1 cycle protection: refuses to register a
+    /// binding whose RHS reduces to a chain of `AssocProj`s that
+    /// closes back on the very triple being registered (or any
+    /// already-registered triple). Without this guard, a binding like
+    /// `type Item = <Int as Container>::Item` (direct self-reference)
+    /// or a mutual pair `Foo::T = <Int as Bar>::S` /
+    /// `Bar::S = <Int as Foo>::T` would store a self-referential
+    /// `AssocProj` and the next `canonicalize` call would recurse
+    /// indefinitely (round 76 audit T1 stack overflow). On detection,
+    /// returns the offending cycle's head triple so the caller can
+    /// emit a typed diagnostic; the binding is *not* inserted.
     pub fn register_assoc_binding(
         &mut self,
         trait_name: Symbol,
         target_head: Symbol,
         assoc_name: Symbol,
         ty: Type,
-    ) {
+    ) -> Result<(), AssocBindingCycle> {
         let head_canon = canonicalize_type_name(self, target_head);
         let canon_ty = canonicalize(self, &ty);
-        self.assoc_bindings.insert(
-            (
-                resolve(trait_name),
-                resolve(head_canon),
-                resolve(assoc_name),
-            ),
-            AssocBinding { ty: canon_ty },
+        // Cycle detection: walk the canonicalised RHS, following any
+        // already-registered assoc bindings, and refuse insertion if
+        // we'd close back on the triple under registration. This
+        // covers both direct self-reference (`type Item =
+        // <Int as Container>::Item`) and mutual cycles through other
+        // bindings already in the registry.
+        let target_triple = (
+            resolve(trait_name),
+            resolve(head_canon),
+            resolve(assoc_name),
         );
+        let mut visited: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+        // Treat the triple under registration as already-visited so a
+        // direct AssocProj on the RHS that resolves to the same triple
+        // is detected immediately.
+        visited.insert(target_triple.clone());
+        if let Some(cycle) = self.find_assoc_cycle(&canon_ty, &mut visited) {
+            return Err(AssocBindingCycle {
+                trait_name: target_triple.0.clone(),
+                head: target_triple.1.clone(),
+                assoc_name: target_triple.2.clone(),
+                via: cycle,
+            });
+        }
+        self.assoc_bindings
+            .insert(target_triple, AssocBinding { ty: canon_ty });
+        Ok(())
+    }
+
+    /// Walk a canonicalised type and return the offending triple if any
+    /// `AssocProj` it contains transitively follows back to a triple in
+    /// `visited`. Used by `register_assoc_binding` to break cycles.
+    fn find_assoc_cycle(
+        &self,
+        ty: &Type,
+        visited: &mut std::collections::HashSet<(String, String, String)>,
+    ) -> Option<(String, String, String)> {
+        match ty {
+            Type::AssocProj {
+                receiver,
+                trait_name,
+                assoc_name,
+            } => {
+                if let Some(head) = head_symbol_of_canon(receiver) {
+                    let head_canon = canonicalize_type_name(self, head);
+                    let triple = (
+                        resolve(*trait_name),
+                        resolve(head_canon),
+                        resolve(*assoc_name),
+                    );
+                    if visited.contains(&triple) {
+                        return Some(triple);
+                    }
+                    if let Some(binding) = self.assoc_bindings.get(&triple).cloned() {
+                        visited.insert(triple);
+                        let res = self.find_assoc_cycle(&binding.ty, visited);
+                        if res.is_some() {
+                            return res;
+                        }
+                    }
+                }
+                self.find_assoc_cycle(receiver, visited)
+            }
+            Type::List(inner)
+            | Type::Range(inner)
+            | Type::Set(inner)
+            | Type::Channel(inner) => self.find_assoc_cycle(inner, visited),
+            Type::Map(k, v) => self
+                .find_assoc_cycle(k, visited)
+                .or_else(|| self.find_assoc_cycle(v, visited)),
+            Type::Tuple(elems) => {
+                for e in elems {
+                    if let Some(c) = self.find_assoc_cycle(e, visited) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::Fun(params, ret) => {
+                for p in params {
+                    if let Some(c) = self.find_assoc_cycle(p, visited) {
+                        return Some(c);
+                    }
+                }
+                self.find_assoc_cycle(ret, visited)
+            }
+            Type::Record(_, fields) => {
+                for (_, t) in fields {
+                    if let Some(c) = self.find_assoc_cycle(t, visited) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::Generic(_, args) => {
+                for a in args {
+                    if let Some(c) = self.find_assoc_cycle(a, visited) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::AnonRecord { fields, .. } => {
+                for t in fields.values() {
+                    if let Some(c) = self.find_assoc_cycle(t, visited) {
+                        return Some(c);
+                    }
+                }
+                None
+            }
+            Type::Int
+            | Type::Float
+            | Type::ExtFloat
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Error
+            | Type::Never => None,
+        }
     }
 
     /// Look up an `assoc-type` binding by `(trait, target_head,
@@ -389,7 +531,7 @@ pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 ///
 /// Returns `String` (rather than the `&'static str` the design sketch
 /// originally suggested) because user-declared `Type::Record` and
-/// `Type::Generic` carry runtime-interned [`Symbol`](crate::intern::Symbol)
+/// `Type::Generic` carry runtime-interned [`Symbol`]
 /// names whose backing string is owned by the interner pool, not a
 /// `'static` literal. Built-in names (`"Int"`, `"List"`, `"Map"`, ...)
 /// match the entries in [`crate::types::builtins::BUILTIN_TYPES`]; the

@@ -60,7 +60,7 @@ Mirrors the canonical feature list in `docs/editor-setup.md`:
 - Completion (keywords, stdlib, user definitions; `.` triggers member completion)
 - Signature help (parameter info on `(` and `,`)
 - Document symbols (outline)
-- Inlay hints (inline parameter names and inferred types)
+- Inlay hints (inferred types for `let`-bindings and unannotated parameters rendered as inline hints)
 - Folding ranges (editor-driven code folding for blocks, records, and match arms)
 - Selection ranges (smart syntax-aware expand/shrink selection)
 - Semantic tokens (token classification for richer editor highlighting)

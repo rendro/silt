@@ -1715,6 +1715,39 @@ fn runtime_pure_examples_run_to_completion() {
         // Vending-machine state machine fold over a fixed event
         // list. Pure compute, no I/O beyond `println`.
         "state_machine.silt",
+        // Round-76 G2 (Doc2/TC4) extension: nine more runtime-pure
+        // examples confirmed by audit. Each declares `fn main`, has
+        // no networked / interactive / blocking-IO / unbounded-loop
+        // construct, and terminates fast (each ran to completion in
+        // <1.5s wall-clock with `cargo run` startup; the actual VM
+        // execution is sub-100ms).
+        //
+        // Personal budget tracker over a fixed transaction list.
+        // Pure compute, formatted `println` output.
+        "budget.silt",
+        // Caesar / ROT13 / hex / Base64 encoder demo over hard-coded
+        // strings. Pure compute.
+        "encoder.silt",
+        // Pseudo-random student-record generator using a seeded LCG.
+        // No system entropy, no I/O.
+        "data_gen.silt",
+        // Result/Option error-handling demo over hand-built configs;
+        // `connecting to localhost:8080` is a printed message only,
+        // no actual TCP connect.
+        "error_handling.silt",
+        // JSON literal parse + `time.weekday` / `time.date` math
+        // over a hard-coded event list. Same shape as birthdays.
+        "json_time.silt",
+        // JSON pipeline demo: parse a literal, group/sort/aggregate
+        // employee records, format a report. Pure compute.
+        "json_transform.silt",
+        // BFS maze solver over a hard-coded grid. Pure compute.
+        "maze_solver.silt",
+        // URL-router demo: matches a fixed list of request strings
+        // against a route table and prints the dispatch. Pure compute.
+        "router.silt",
+        // BFS / DFS over a hand-built graph. Pure compute.
+        "search.silt",
         // Note: `math_test.silt` is intentionally NOT in this list.
         // It declares `fn test_*` functions only, no `fn main`, so
         // `silt run` cannot drive it. The companion typecheck

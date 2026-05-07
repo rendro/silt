@@ -1,8 +1,8 @@
 //! "did you mean ...?" suggestion helper for type-checker diagnostics.
 //!
 //! Closes round-17 deferred finding #4: when the type checker emits
-//! `undefined variable '<typo>'` or `unknown function '<typo>' on module
-//! '<mod>'`, it should append a `did you mean \`<candidate>\`?` hint when
+//! `undefined variable 'TYPO'` or `unknown function 'TYPO' on module
+//! 'MOD'`, it should append a `did you mean \`CANDIDATE\`?` hint when
 //! a close-enough identifier exists in scope. This module owns the
 //! string-distance math and the threshold policy so call sites stay
 //! one-line.

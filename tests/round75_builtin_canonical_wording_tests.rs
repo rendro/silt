@@ -316,6 +316,17 @@ fn main() { io.read_file(42) }
         "io.read_file runtime/typecheck wording should not contain the \
          terse 'requires a string path' form. Got: {err}"
     );
+    // POSITIVE LOCK (round-75 L6 tightening): assert the source-of-truth
+    // canonical form is present in src/builtins/io.rs. Without this, a
+    // partial revert to a different terse form (e.g. "needs String path")
+    // would leave the negation green. Mirror the round-74 sibling test
+    // pattern in tests/round74_collections_canonical_kind_wording_tests.rs.
+    assert!(
+        IO_RS.contains("io.read_file requires String, got"),
+        "src/builtins/io.rs missing canonical \
+         'io.read_file requires String, got' form — partial revert to a \
+         different terse wording would otherwise leave this test green."
+    );
 }
 
 #[test]
@@ -337,6 +348,16 @@ fn main() {
         "time.add_days runtime/typecheck wording should not contain the \
          terse 'requires Int days' form. Got: {err}"
     );
+    // POSITIVE LOCK (round-75 L6 tightening): the canonical form
+    // "time.add_days requires Int, got <kind>" lives in
+    // src/builtins/data.rs. Lock its presence so a partial revert to
+    // any other terse wording (e.g. "needs Int") is caught.
+    assert!(
+        DATA_RS.contains("time.add_days requires Int, got"),
+        "src/builtins/data.rs missing canonical \
+         'time.add_days requires Int, got' form — partial revert to a \
+         different terse wording would otherwise leave this test green."
+    );
 }
 
 #[test]
@@ -357,6 +378,16 @@ fn main() { time.add_days(42, 1) }
         !err.contains("expected a Date record"),
         "extract_date runtime/typecheck wording should not contain the \
          terse 'expected a Date record' form. Got: {err}"
+    );
+    // POSITIVE LOCK (round-75 L6 tightening): the canonical form
+    // "extract_date requires Date, got <kind>" lives in
+    // src/builtins/data.rs. Lock its presence so a partial revert to
+    // any other terse wording (e.g. "needs a Date") is caught.
+    assert!(
+        DATA_RS.contains("extract_date requires Date, got"),
+        "src/builtins/data.rs missing canonical \
+         'extract_date requires Date, got' form — partial revert to a \
+         different terse wording would otherwise leave this test green."
     );
 }
 

@@ -62,9 +62,14 @@ is invisible to the caller.
 
 ### Where the absence is felt
 
-Concrete cases in current silt code:
+Concrete cases (illustrative — see real silt syntax below; these
+snippets use stand-in `Config` / `Repo` / `Report` / `AppError`
+types and assume the relevant `import env`/`import option` etc. have
+been hoisted out for brevity. The third snippet shows hypothetical
+syntax silt does not have today: there is no `await` keyword and
+no `module ... exports` declaration):
 
-```silt
+```text
 -- Looks pure. Quietly reads $HOME, opens a file, parses TOML.
 fn load_defaults() -> Config {
   let home = option.unwrap_or(env.get("HOME"), "/")
@@ -78,8 +83,9 @@ A caller hovering over `load_defaults()` sees `() -> Config`. There
 is nothing in the type that warns "this touches the filesystem and
 will panic if the file is malformed".
 
-```silt
--- Async-coloring question:
+```text
+-- Async-coloring question (illustrative pseudocode — silt has no
+-- async/await; concurrency is structured via task.spawn / channels):
 fn fetch_and_log(url: String) -> Result(Body, NetError) {
   let resp = http.get(url).await?
   log.info("fetched {url}")
@@ -91,8 +97,9 @@ There is no signal in the signature that this function suspends. A
 synchronous caller cannot tell from the type alone that they need to
 be inside a task scope.
 
-```silt
--- Module boundary: capability question.
+```text
+-- Module boundary: capability question (illustrative — silt files
+-- are modules implicitly; there is no `module ... exports` keyword):
 module config_loader exports load_defaults, save_user_pref
 ```
 
@@ -102,8 +109,9 @@ filesystem" — and therefore no way to deny it of `!fs` (or `!io`)
 in a sandbox target. Effect tracking is the type-level prerequisite
 for capability-based deployment.
 
-```silt
--- Mock-friendly testing:
+```text
+-- Mock-friendly testing (illustrative — `Repo`, `Report`, `AppError`
+-- are stand-ins for project-defined types):
 fn business_logic(repo: Repo) -> Result(Report, AppError) {
   -- pure if repo is a fake; impure if repo is a real Postgres handle.
 }
@@ -370,7 +378,11 @@ would buy (cancellation, scope-bounded resources). Defer.
   checking is opt-in via `--strict-effects`. Future major version
   flips the default.
 
-```silt
+```text
+-- Illustrative — uses the proposed `!{...}` row syntax (not yet
+-- accepted by `silt check`) and stand-in `Config` / `ConfigError`
+-- / `Bytes` / `crypto.sha256` types.
+
 -- Inferred. Hover shows: () -> Config !{io, fs}
 fn load_defaults() -> Config {
   let home = option.unwrap_or(env.get("HOME"), "/")

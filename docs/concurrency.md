@@ -337,6 +337,14 @@ depends on where that task is at the moment of cancellation:
   (first-writer-wins: the cancel already won), and a subsequent
   `task.join(h)` on the cancelled handle raises `joined task failed:
   cancelled` as a runtime error.
+- **Task is queued but not yet running** (spawned but not yet picked up
+  by the scheduler): behaviour matches the running case. The handle's
+  result is set to `Err("cancelled")` immediately, but if the scheduler
+  later picks up the task it may still run a slice before its own
+  completion result is discarded — same first-writer-wins rule. This
+  case mirrors the `task.cancel` builtin docstring at
+  `src/typechecker/builtins/docs.rs` (search for `task.cancel`); the
+  two surfaces are kept in sync deliberately.
 
 `task.cancel` is therefore **not** a synchronous stop signal. Treat it as a
 request that the handle be marked cancelled. Because `task.join` raises on

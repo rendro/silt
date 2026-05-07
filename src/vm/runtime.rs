@@ -341,7 +341,23 @@ impl IoPool {
                     } else {
                         "IO task panicked".to_string()
                     };
-                    Value::Variant("Err".into(), vec![Value::String(msg)])
+                    // Route the panic message through the completion's
+                    // typed-error factory rather than emitting the legacy
+                    // untyped `Err(String)` shape that bypassed every
+                    // caller's typed match arms (callers typecheck as
+                    // `Result(T, PgError)` / `Result(T, TcpError)` /
+                    // `Result(T, IoError)` etc — a stringly-shaped
+                    // `Err` matched no arm). Using `build_timeout_err`
+                    // here is semantically a slight bend (panic !=
+                    // timeout) but it is the right shape: each
+                    // factory's "unknown / timeout" variant is the
+                    // closest typed bucket for an unexpected internal
+                    // failure, and the "panic: " prefix preserves the
+                    // distinction in the message text. Without this,
+                    // user `match` arms over the typed error enum
+                    // never fire on the panic path.
+                    let prefixed = format!("panic: {msg}");
+                    completion2.build_timeout_err(&prefixed)
                 }
             };
             completion2.complete(result);

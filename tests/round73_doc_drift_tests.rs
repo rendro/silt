@@ -156,9 +156,14 @@ fn b4_concurrency_doc_no_bare_loop_with_no_recur() {
 
 #[test]
 fn b4_loop_no_bindings_doc_corrected() {
-    // Behavioral lock: the corrected loop pattern actually loops.
-    // We send 3 messages, close the channel, and confirm the loop drains
-    // all 3 before exiting on `Closed`.
+    // Behavioral lock (round-75 L7 tightening): the corrected loop
+    // pattern actually loops at *runtime*, not just type-check. We send
+    // 3 messages, close the channel, and confirm the loop drains all 3
+    // before exiting on `Closed`. Earlier this test only ran `silt
+    // check`, which would still pass if the body ran zero or one times
+    // — the doc claim "loop drains all 3 before exiting on Closed" is
+    // behavioral, so we now exercise it via `silt run` and assert the
+    // three printed values appear in order.
     let src = r#"
 import channel
 
@@ -180,7 +185,37 @@ fn main() {
   }
 }
 "#;
-    check_ok("b4_loop_unit", src);
+    let dir = scratch_dir("b4_loop_unit_run");
+    let main = write_main(&dir, src);
+    let output = silt_bin()
+        .args(["run", main.to_str().unwrap()])
+        .output()
+        .expect("silt run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "silt run should succeed for b4_loop_unit snippet.\n\
+         stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // The loop must drain all three messages before the Closed arm
+    // terminates. A revert that makes `loop _ = ()` run the body once
+    // would print only "a" and silently drop "b" and "c" — caught here.
+    assert!(
+        stdout.contains("a") && stdout.contains("b") && stdout.contains("c"),
+        "loop _ = () should drain all three channel messages; got \
+         stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // Order matters: channel sends are FIFO and the loop must process
+    // them in send order. Lock the exact ordering so a regression that
+    // reverses or skips messages is caught.
+    let pa = stdout.find('a').expect("missing 'a'");
+    let pb = stdout.find('b').expect("missing 'b'");
+    let pc = stdout.find('c').expect("missing 'c'");
+    assert!(
+        pa < pb && pb < pc,
+        "loop drain order should be a, b, c; got stdout:\n{stdout}"
+    );
 
     // Behavioral lock #2: the recursive-fn alternative type-checks.
     let drain_src = r#"
@@ -599,5 +634,133 @@ fn l3_effect_rows_doc_uses_current_silt_syntax() {
         EFFECT_DOC_SRC.contains("result.unwrap_or("),
         "effect-rows.md should use `result.unwrap_or(...)` for Result values \
          (silt has no bare `.unwrap_or` method)."
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Round-76 B4 (Doc1) extension: ```silt fences that contain non-silt
+// syntax must be retagged ```text (or ```pseudo) so a reader knows
+// they are illustrative pseudocode, not runnable silt. The three new
+// offenders introduced by the original L3 fix were:
+//   - `.await?` (silt has no async/await)
+//   - `module config_loader exports load_defaults, save_user_pref`
+//     (silt files are modules implicitly; no `module` keyword)
+//   - `Repo, Report, AppError` (undefined stand-in types)
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn round76_effect_rows_doc_pseudocode_blocks_retagged() {
+    let doc = EFFECT_DOC_SRC;
+
+    // The illustrative snippets must NOT be tagged ```silt —
+    // `silt check` would fail on them. They live in ```text fences
+    // now so a reader (and the doc walker below) knows they are
+    // pseudocode.
+    //
+    // Walk fence-by-fence and assert no ```silt fence contains any
+    // of the offender substrings.
+    for offender in [
+        ".await?",
+        "module config_loader exports",
+        "Repo, Report, AppError",
+    ] {
+        let mut in_silt_fence = false;
+        let mut found_in_silt = false;
+        for line in doc.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```silt") {
+                in_silt_fence = true;
+                continue;
+            }
+            if trimmed.starts_with("```") {
+                in_silt_fence = false;
+                continue;
+            }
+            if in_silt_fence && line.contains(offender) {
+                found_in_silt = true;
+                break;
+            }
+        }
+        assert!(
+            !found_in_silt,
+            "effect-rows.md offender {offender:?} appears inside a ```silt fence — \
+             retag the fence as ```text or rewrite the snippet to real silt."
+        );
+    }
+}
+
+#[test]
+fn round76_effect_rows_all_silt_fences_parse() {
+    // Positive assertion: every ```silt fence in effect-rows.md must
+    // parse via `silt check` (or be tagged ```text/```pseudo). The
+    // three problem fences from B4 were retagged to ```text in
+    // round 76; this test guards against future drift in either
+    // direction (un-retagging, or new ```silt fences with bad
+    // syntax).
+    let doc = EFFECT_DOC_SRC;
+
+    let mut current: Option<String> = None;
+    let mut snippets: Vec<String> = Vec::new();
+    for line in doc.lines() {
+        let trimmed = line.trim_start();
+        if let Some(buf) = current.as_mut() {
+            if trimmed.starts_with("```") {
+                snippets.push(std::mem::take(buf));
+                current = None;
+            } else {
+                buf.push_str(line);
+                buf.push('\n');
+            }
+        } else if trimmed.starts_with("```silt") {
+            current = Some(String::new());
+        }
+    }
+
+    for (idx, snippet) in snippets.iter().enumerate() {
+        let dir = scratch_dir(&format!("round76_effect_silt_{idx}"));
+        let main = write_main(&dir, snippet);
+        let output = silt_bin()
+            .args(["check", main.to_str().unwrap()])
+            .output()
+            .expect("silt check");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "effect-rows.md ```silt fence #{idx} did NOT parse via `silt check`. \
+             Either retag it to ```text/```pseudo (illustrative pseudocode) or \
+             rewrite the snippet to runnable silt.\n\
+             snippet:\n{snippet}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Round-76 G3 (Doc4): docs/concurrency.md task.cancel section must
+// enumerate the third "queued but not yet running" case, matching
+// the wording in src/typechecker/builtins/docs.rs:812-816.
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn round76_concurrency_doc_task_cancel_third_case() {
+    let doc = CONCURRENCY_DOC_SRC;
+
+    // The doc must mention the queued-not-yet-scheduled case in the
+    // task.cancel section, matching the builtin doc at
+    // src/typechecker/builtins/docs.rs:812-816 ("queued but not yet
+    // scheduled — handle resolves to Err immediately, but a slice
+    // may still run if scheduler picks it up").
+    assert!(
+        doc.contains("queued but not yet"),
+        "concurrency.md task.cancel section should enumerate the \
+         `queued but not yet running/scheduled` case (third bullet) — \
+         matching the builtin doc at src/typechecker/builtins/docs.rs."
+    );
+    // The doc should specifically reference the first-writer-wins
+    // semantics shared with the builtin doc.
+    assert!(
+        doc.contains("first-writer-wins"),
+        "concurrency.md task.cancel section should reference \
+         `first-writer-wins` semantics."
     );
 }

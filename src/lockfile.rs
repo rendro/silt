@@ -328,10 +328,10 @@ impl Lockfile {
     /// network to see if a branch dep's HEAD has advanced upstream. A
     /// lockfile pinning `branch = "main"` to SHA `abc...` stays valid
     /// across `silt run` invocations even when `main` has new commits;
-    /// `silt update` is the explicit refresh trigger. The offline path
-    /// implemented in [`Lockfile::resolve_offline`] is authoritative —
-    /// it reuses the SHAs already pinned in `self` for every git dep
-    /// rather than calling `git ls-remote`.
+    /// `silt update` is the explicit refresh trigger. The offline
+    /// resolution path is authoritative — it reuses the SHAs already
+    /// pinned in `self` for every git dep rather than calling
+    /// `git ls-remote`.
     pub fn matches_manifest(&self, manifest: &Manifest) -> bool {
         // Re-resolve the manifest to a fresh transitive set using the
         // offline variant (reusing stored SHAs for git deps). Any failure

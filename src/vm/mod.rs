@@ -50,6 +50,23 @@ pub fn default_io_pool_size() -> usize {
     runtime::default_io_pool_size()
 }
 
+/// Test-only: submit a panicking closure to this VM's I/O pool with a
+/// caller-supplied `IoCompletion` (whose `timeout_err` factory shapes
+/// the resulting `Err` Value), block until the completion fires, and
+/// return the resulting `Value`. Used by the round-76 lock test for
+/// the IoPool worker-panic recovery path: pre-fix, a worker panic
+/// produced an untyped `Err(String)` that bypassed every typed match
+/// arm; post-fix it routes through `IoCompletion::build_timeout_err`
+/// with a "panic: " prefix so the result is the same typed shape the
+/// scheduler watchdog produces on a deadline cancel.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> Value {
+    let c = vm.runtime.io_pool.submit_with(completion, || {
+        panic!("synthetic IO worker panic for round-76 lock");
+    });
+    c.wait()
+}
+
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -143,7 +160,11 @@ pub struct Vm {
     pub(crate) tco_elided: Vec<(usize, String, crate::lexer::Span)>,
 
     // ── Caches ──────────────────────────────────────────────────
-    /// Cache for compiled regex patterns (bounded, LRU-like eviction).
+    /// Cache for compiled regex patterns (bounded, FIFO eviction —
+    /// first-in first-out: the oldest 25% of entries are evicted when
+    /// the cache reaches `MAX_ENTRIES`. `RegexCache::get` only pushes
+    /// to its order deque on miss; a hit does not re-order, so this
+    /// is pure insertion order).
     pub(crate) regex_cache: RegexCache,
 }
 

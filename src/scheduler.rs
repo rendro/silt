@@ -515,7 +515,8 @@ impl Scheduler {
 
     /// Submit a runnable task to the scheduler.
     ///
-    /// Returns an error if the live-task count has reached [`MAX_TASKS`].
+    /// Returns an error if the live-task count has reached the
+    /// scheduler's hard task limit.
     pub fn submit(&self, task: Task) -> Result<(), String> {
         self.ensure_workers();
         let current = self.inner.live_tasks.load(Ordering::SeqCst);

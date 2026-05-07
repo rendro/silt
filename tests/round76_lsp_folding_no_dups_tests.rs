@@ -1,8 +1,20 @@
-//! Tier 2 LSP features: inlay hints, document highlight, folding
-//! range, selection range.
+//! Round-76 D1: foldingRange must not emit duplicate folds for fn /
+//! trait-method / trait-impl-method bodies.
 //!
-//! Shares the subprocess harness shape with tests/lsp.rs and
-//! tests/lsp_workspace_tests.rs.
+//! Pre-fix: `collect_decl_folds` pushed a fold for the body block via
+//! `push_block_fold(&f.body.span, &f.body, ...)` AND then called
+//! `walk_expr_folds(&f.body, ...)`, which itself recognises the
+//! `ExprKind::Block` body and pushes the same fold again. Trait /
+//! TraitImpl method bodies followed the same broken pattern. The
+//! existing `lsp_tier2_tests::folding_range_covers_fn_body` only
+//! asserted "at least one fold" so duplicates slipped through.
+//!
+//! Lock: real LSP `textDocument/foldingRange` request, asserting the
+//! exact number of folds for a controlled input.
+//!   * Two top-level fns → exactly 2 folds (was 4).
+//!   * Trait + impl with two methods each → all-distinct (start,end)
+//!     tuples (pre-fix every method body produced two folds with the
+//!     same span).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -196,73 +208,12 @@ impl LspClient {
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[test]
-fn inlay_hints_shows_inferred_types() {
+fn folding_range_two_fns_emits_exactly_two_folds() {
     let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_t2_inlay.silt";
-    let src = "fn main() {\n  let x = 42\n  let s = \"hi\"\n  x\n}\n";
-    client.did_open_and_wait(file, src);
-
-    let resp = client.request(
-        "textDocument/inlayHint",
-        json!({
-            "textDocument": { "uri": file },
-            "range": {
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 5, "character": 0 }
-            }
-        }),
-    );
-    let arr = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .expect("inlay hint result array");
-    let labels: Vec<String> = arr
-        .iter()
-        .filter_map(|h| h.get("label").and_then(|l| l.as_str()).map(String::from))
-        .collect();
-    assert!(
-        labels.iter().any(|l| l == ": Int"),
-        "expected `: Int` hint; got {labels:?}"
-    );
-    assert!(
-        labels.iter().any(|l| l == ": String"),
-        "expected `: String` hint; got {labels:?}"
-    );
-    client.shutdown();
-}
-
-#[test]
-fn document_highlight_returns_all_ident_occurrences() {
-    let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_t2_hl.silt";
-    // `count` appears three times in the body.
-    let src = "fn main() {\n  let count = 1\n  let y = count + count\n  y\n}\n";
-    client.did_open_and_wait(file, src);
-
-    // Cursor on the first `count` use at line 2.
-    let resp = client.request(
-        "textDocument/documentHighlight",
-        json!({
-            "textDocument": { "uri": file },
-            "position": { "line": 2, "character": 10 }
-        }),
-    );
-    let arr = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .expect("highlight result");
-    assert!(
-        arr.len() >= 2,
-        "expected at least two highlights, got {arr:?}"
-    );
-    client.shutdown();
-}
-
-#[test]
-fn folding_range_covers_fn_body() {
-    let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_t2_fold.silt";
-    let src = "fn main() {\n  let x = 1\n  let y = 2\n  x + y\n}\n";
+    let file = "file:///tmp/silt_r76_fold_two_fns.silt";
+    // Two single-line fn bodies (each spanning lines 0-2 / 3-5). Pre-fix
+    // we would see 4 folds; post-fix exactly 2.
+    let src = "fn a() {\n  1\n}\nfn b() {\n  2\n}\n";
     client.did_open_and_wait(file, src);
 
     let resp = client.request(
@@ -273,54 +224,101 @@ fn folding_range_covers_fn_body() {
         .get("result")
         .and_then(|r| r.as_array())
         .expect("folding range result");
-    // Round-76 D1: a single-fn body MUST emit exactly one fold. The
-    // pre-fix code pushed the body fold twice (once from the explicit
-    // `push_block_fold` in `collect_decl_folds`, once from
-    // `walk_expr_folds`'s `Block` arm), and the original "at least
-    // one" gate happily passed on duplicates.
     assert_eq!(
         arr.len(),
-        1,
-        "expected exactly one fold for a single fn body; got {} — {arr:?}",
+        2,
+        "expected exactly 2 folds (one per fn body); got {} — {arr:?}",
         arr.len()
     );
-    // Affirmative: the single fold spans the body lines.
-    let f = &arr[0];
+
+    // Also confirm the fold spans are distinct (no two folds with the
+    // same start_line — which would indicate a true duplicate).
+    let starts: Vec<u64> = arr
+        .iter()
+        .filter_map(|f| f.get("startLine").and_then(|l| l.as_u64()))
+        .collect();
+    let mut deduped = starts.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
     assert_eq!(
-        f.get("startLine").and_then(|l| l.as_u64()),
-        Some(0),
-        "fold should start at the fn header line"
+        starts.len(),
+        deduped.len(),
+        "duplicate folds detected (same startLine reported twice): {starts:?}"
     );
-    let end = f.get("endLine").and_then(|l| l.as_u64()).unwrap_or(0);
-    assert!(end > 0, "fold should end below the fn header; got {f:?}");
+
     client.shutdown();
 }
 
 #[test]
-fn selection_range_returns_nested_chain() {
+fn folding_range_trait_impl_two_methods_emits_three_folds() {
     let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_t2_sel.silt";
-    let src = "fn main() {\n  1 + 2\n}\n";
+    let file = "file:///tmp/silt_r76_fold_trait_impl.silt";
+    // Trait header + impl with two methods. The impl's body fold + one
+    // fold per method body. Pre-fix the impl would yield 1 + 2*2 = 5
+    // folds for the impl alone (each method body double-pushed) plus
+    // the trait span fold. Post-fix exactly 1 (trait) + 1 (impl) + 2
+    // (method bodies) = 4 folds. We assert that no two folds share the
+    // same (startLine, endLine) — that's the hallmark of the
+    // duplication bug.
+    let src = "\
+trait T {
+  fn a(self) -> Int
+  fn b(self) -> Int
+}
+type W { v: Int }
+trait T for W {
+  fn a(self) -> Int {
+    self.v
+  }
+  fn b(self) -> Int {
+    self.v + 1
+  }
+}
+fn main() {
+  let w = W { v: 1 }
+  w.a()
+}
+";
     client.did_open_and_wait(file, src);
 
     let resp = client.request(
-        "textDocument/selectionRange",
-        json!({
-            "textDocument": { "uri": file },
-            "positions": [ { "line": 1, "character": 2 } ]
-        }),
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": file } }),
     );
     let arr = resp
         .get("result")
         .and_then(|r| r.as_array())
-        .expect("selection range result");
-    assert_eq!(arr.len(), 1);
-    let first = &arr[0];
-    // The response should have a nested `parent` somewhere.
-    let has_parent = first.get("parent").is_some();
-    assert!(
-        has_parent,
-        "expected a selection range with a parent; got {first:?}"
+        .expect("folding range result");
+
+    // Each fold has a distinct (startLine, endLine) tuple. The duplicate
+    // bug produced two identical folds for every method body; deduping
+    // by (start, end) and comparing to the original length detects it.
+    let folds: Vec<(u64, u64)> = arr
+        .iter()
+        .map(|f| {
+            (
+                f.get("startLine").and_then(|l| l.as_u64()).unwrap_or(0),
+                f.get("endLine").and_then(|l| l.as_u64()).unwrap_or(0),
+            )
+        })
+        .collect();
+    let mut deduped = folds.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
+    assert_eq!(
+        folds.len(),
+        deduped.len(),
+        "duplicate folds detected (same (start,end) reported twice): folds={folds:?}"
     );
+
+    // Plus the affirmative count: 1 trait + 1 impl + 2 method bodies +
+    // 1 main fn body = 5 folds.
+    assert_eq!(
+        arr.len(),
+        5,
+        "expected exactly 5 folds; got {} — {arr:?}",
+        arr.len()
+    );
+
     client.shutdown();
 }

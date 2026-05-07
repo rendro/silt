@@ -475,7 +475,29 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                     }) => {
                         let mut merged = new_fields.clone();
                         for (n, t) in extra_fields.iter() {
-                            merged.insert(*n, substitute_vars(t, mapping));
+                            // Round 76 LATENT T3: align with the
+                            // companion `apply` site (typechecker/
+                            // mod.rs ~line 922) which uses
+                            // `or_insert` (existing wins). The
+                            // unifier's invariant guarantees
+                            // overlapping fields have already been
+                            // pairwise-unified before any tail
+                            // binding fires (`unify_anon_anon` runs
+                            // the common-key pass at line ~1017
+                            // before binding the tail), so the
+                            // existing field is canonical and the
+                            // substituted record's same-name field
+                            // would only re-introduce a stale type
+                            // pre-merge. Pre-fix this site used
+                            // `merged.insert` (substitution wins),
+                            // diverging from `apply` and producing
+                            // different results for any caller that
+                            // exercised overlap. Aligning on
+                            // `or_insert` matches the unifier
+                            // invariant.
+                            merged
+                                .entry(*n)
+                                .or_insert_with(|| substitute_vars(t, mapping));
                         }
                         return Type::AnonRecord {
                             fields: merged,
