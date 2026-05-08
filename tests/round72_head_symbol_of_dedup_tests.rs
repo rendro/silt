@@ -58,7 +58,10 @@ fn only_one_definition_of_head_symbol_of_canon() {
         hits
     );
     let (path, _line) = &hits[0];
-    let path_str = path.to_string_lossy();
+    // Normalise separators so the lock works on Windows runners
+    // (`D:\a\silt\silt\src\types\canonical.rs`) the same as on
+    // Unix (`src/types/canonical.rs`). Round 79 follow-up.
+    let path_str = path.to_string_lossy().replace('\\', "/");
     assert!(
         path_str.ends_with("types/canonical.rs"),
         "the canonical definition must live in src/types/canonical.rs; \
