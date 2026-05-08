@@ -1858,12 +1858,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Ok(Value::Unit); // sleep completed
                 }
                 // Still pending — re-park.
-                vm.pending_io = Some(completion.clone());
-                vm.block_reason = Some(BlockReason::Io(completion));
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
+                return Err(vm.park_on_completion(args, completion));
             }
             if vm
                 .current_deadline
@@ -1879,12 +1874,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 std::time::Duration::from_nanos(dur_ns as u64),
                 completion.clone(),
             );
-            vm.pending_io = Some(completion.clone());
-            vm.block_reason = Some(BlockReason::Io(completion));
-            for arg in args {
-                vm.push(arg.clone());
-            }
-            Err(VmError::yield_signal())
+            Err(vm.park_on_completion(args, completion))
         }
 
         _ => Err(VmError::new(format!("unknown time function: {name}"))),
@@ -2471,11 +2461,7 @@ fn do_http_serve_inner(
     // If running as a scheduled task, yield and let the scheduler
     // park us until the serve handle completes (i.e. server shuts down).
     if vm.is_scheduled_task {
-        vm.block_reason = Some(BlockReason::Join(handle.clone()));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
+        return Err(vm.park_with_reason(args, BlockReason::Join(handle.clone())));
     }
 
     // Main thread: block until the server shuts down.
@@ -2505,24 +2491,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     )));
                 };
 
-                if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
-                    return Ok(r);
-                }
-                if vm.is_scheduled_task {
-                    let url = url.clone();
-                    let completion = vm
-                        .runtime
-                        .io_pool
-                        .submit_with(http_completion(), move || do_http_get(&url));
-                    vm.pending_io = Some(completion.clone());
-                    vm.block_reason = Some(BlockReason::Io(completion));
-                    for arg in args {
-                        vm.push(arg.clone());
-                    }
-                    return Err(VmError::yield_signal());
-                }
-                // Main thread: synchronous fallback.
-                Ok(do_http_get(url))
+                let url = url.clone();
+                vm.submit_io_or_run(args, http_completion(), &http_timeout_err, move || {
+                    do_http_get(&url)
+                })
             }
             #[cfg(not(feature = "http"))]
             {
@@ -2567,35 +2539,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     )));
                 };
 
-                if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
-                    return Ok(r);
-                }
-                if vm.is_scheduled_task {
-                    let method_tag = method_tag.clone();
-                    let url = url.clone();
-                    let body = body.clone();
-                    let headers: Vec<(String, String)> = header_map
-                        .iter()
-                        .filter_map(|(k, v)| {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                Some((key.clone(), val.clone()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    let completion = vm.runtime.io_pool.submit_with(http_completion(), move || {
-                        do_http_request(&method_tag, &url, &body, &headers)
-                    });
-                    vm.pending_io = Some(completion.clone());
-                    vm.block_reason = Some(BlockReason::Io(completion));
-                    for arg in args {
-                        vm.push(arg.clone());
-                    }
-                    return Err(VmError::yield_signal());
-                }
-
-                // Main thread: synchronous fallback
+                let method_tag = method_tag.clone();
+                let url = url.clone();
+                let body = body.clone();
                 let headers: Vec<(String, String)> = header_map
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2606,7 +2552,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         }
                     })
                     .collect();
-                Ok(do_http_request(method_tag, url, body, &headers))
+                vm.submit_io_or_run(args, http_completion(), &http_timeout_err, move || {
+                    do_http_request(&method_tag, &url, &body, &headers)
+                })
             }
             #[cfg(not(feature = "http"))]
             {

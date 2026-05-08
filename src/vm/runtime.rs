@@ -310,16 +310,6 @@ impl IoPool {
         self.num_workers
     }
 
-    /// Submit a blocking I/O operation. Defaults to an `IoError`-shaped
-    /// deadline-timeout factory on the returned completion. Legacy
-    /// entry point — new code should prefer [`submit_with`] so a
-    /// watchdog-fired timeout surfaces the right typed variant for
-    /// the caller's module (e.g. `Err(TcpTimeout)` for tcp ops rather
-    /// than the catch-all `Err(IoUnknown(msg))`).
-    pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
-        self.submit_with(IoCompletion::new(), f)
-    }
-
     /// Submit a blocking I/O operation using a caller-supplied
     /// completion handle. The handle's `timeout_err` factory determines
     /// the typed variant the scheduler watchdog surfaces when the

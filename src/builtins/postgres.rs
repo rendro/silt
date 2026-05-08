@@ -1768,23 +1768,10 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         )));
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let url = url.clone();
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_connect(url));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_connect(url.clone()))
+    let url = url.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_connect(url)
+    })
 }
 
 /// Test-only re-export of `pg_timeout_err` so integration tests can
@@ -1869,24 +1856,10 @@ fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(msg) => return Ok(err(other_error(msg))),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let url = url.clone();
-        let opts = opts.clone();
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_connect_with(url, opts));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_connect_with(url.clone(), opts))
+    let url = url.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_connect_with(url, opts)
+    })
 }
 
 fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -1920,23 +1893,10 @@ fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(msg) => return Ok(err(other_error(msg))),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let sql = sql.clone();
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_query(target, sql, params));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_query(target, sql.clone(), params))
+    let sql = sql.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_query(target, sql, params)
+    })
 }
 
 fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -1970,23 +1930,10 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(msg) => return Ok(err(other_error(msg))),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let sql = sql.clone();
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_execute(target, sql, params));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_execute(target, sql.clone(), params))
+    let sql = sql.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_execute(target, sql, params)
+    })
 }
 
 /// `postgres.transact(pool_or_tx, callback)` — pins a single pooled
@@ -2294,22 +2241,10 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(msg) => return Ok(err(other_error(msg))),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let sql = sql.clone();
-        let completion = vm.runtime.io_pool.submit_with(pg_completion(), move || {
-            do_cursor_open(tx_id, cell, sql, params, batch_size)
-        });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_cursor_open(tx_id, cell, sql.clone(), params, batch_size))
+    let sql = sql.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_cursor_open(tx_id, cell, sql, params, batch_size)
+    })
 }
 
 fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -2323,22 +2258,9 @@ fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_cursor_next(cursor_id));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_cursor_next(cursor_id))
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_cursor_next(cursor_id)
+    })
 }
 
 fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -2352,22 +2274,9 @@ fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Err(v) => return Ok(err(v)),
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit_with(pg_completion(), move || do_cursor_close(cursor_id));
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_cursor_close(cursor_id))
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_cursor_close(cursor_id)
+    })
 }
 
 fn close(_vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -2467,16 +2376,7 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         ok(Value::Channel(worker_channel))
     };
 
-    if vm.is_scheduled_task {
-        let completion = vm.runtime.io_pool.submit_with(pg_completion(), work);
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(work())
+    vm.run_or_submit_io(args, pg_completion(), work)
 }
 
 /// `postgres.notify(executor, channel_name, payload)` — fire a NOTIFY.
@@ -2505,23 +2405,11 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         )));
     };
 
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let channel_name = channel_name.clone();
-        let payload = payload.clone();
-        let completion = vm.runtime.io_pool.submit_with(pg_completion(), move || {
-            do_notify(target, channel_name, payload)
-        });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
-        }
-        return Err(VmError::yield_signal());
-    }
-    Ok(do_notify(target, channel_name.clone(), payload.clone()))
+    let channel_name = channel_name.clone();
+    let payload = payload.clone();
+    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+        do_notify(target, channel_name, payload)
+    })
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

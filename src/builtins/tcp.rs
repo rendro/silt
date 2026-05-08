@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 
 use crate::value::{IoCompletion, ReadWrite, TcpListenerHandle, TcpStreamHandle, Value};
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{Vm, VmError};
 
 /// Factory: deadline-cancelled tcp op surfaces as `Err(TcpTimeout)`
 /// rather than the default `Err(IoUnknown(_))`. Used by every tcp.*
@@ -105,7 +105,7 @@ mod tls {
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
     use super::{
-        BlockReason, ReadWrite, TcpStreamHandle, Value, Vm, VmError, err_tls, ok, require_bytes,
+        ReadWrite, TcpStreamHandle, Value, Vm, VmError, err_tls, ok, require_bytes,
         require_listener, require_string, tcp_completion, tcp_timeout_err,
     };
 
@@ -120,33 +120,16 @@ mod tls {
         }
         let addr = require_string(&args[0], "tcp.connect_tls")?.to_string();
         let hostname = require_string(&args[1], "tcp.connect_tls")?.to_string();
-
-        if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-            return Ok(r);
-        }
-        if vm.is_scheduled_task {
-            let next_id = vm.next_tcp_id();
-            let completion = vm.runtime.io_pool.submit_with(tcp_completion(), move || {
-                match do_connect_tls(&addr, &hostname, next_id) {
-                    Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::Variant(
-                        "Err".into(),
-                        vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
-                    ),
-                }
-            });
-            vm.pending_io = Some(completion.clone());
-            vm.block_reason = Some(BlockReason::Io(completion));
-            for arg in args {
-                vm.push(arg.clone());
-            }
-            return Err(VmError::yield_signal());
-        }
         let next_id = vm.next_tcp_id();
-        match do_connect_tls(&addr, &hostname, next_id) {
-            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err_tls(e)),
-        }
+        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+            match do_connect_tls(&addr, &hostname, next_id) {
+                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                Err(e) => Value::Variant(
+                    "Err".into(),
+                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                ),
+            }
+        })
     }
 
     /// `accept_tls(listener, cert_pem, key_pem) -> Result(TcpStream, String)`.
@@ -160,35 +143,16 @@ mod tls {
         let listener = require_listener(&args[0], "tcp.accept_tls")?.clone();
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
-
-        if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-            return Ok(r);
-        }
-        if vm.is_scheduled_task {
-            let next_id = vm.next_tcp_id();
-            let cert_clone = cert_pem.clone();
-            let key_clone = key_pem.clone();
-            let completion = vm.runtime.io_pool.submit_with(tcp_completion(), move || {
-                match do_accept_tls(&listener.listener, &cert_clone, &key_clone, next_id) {
-                    Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::Variant(
-                        "Err".into(),
-                        vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
-                    ),
-                }
-            });
-            vm.pending_io = Some(completion.clone());
-            vm.block_reason = Some(BlockReason::Io(completion));
-            for arg in args {
-                vm.push(arg.clone());
-            }
-            return Err(VmError::yield_signal());
-        }
         let next_id = vm.next_tcp_id();
-        match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
-            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err_tls(e)),
-        }
+        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+            match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
+                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                Err(e) => Value::Variant(
+                    "Err".into(),
+                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                ),
+            }
+        })
     }
 
     /// `accept_tls_mtls(listener, cert_pem, key_pem, client_ca_pem)
@@ -207,53 +171,22 @@ mod tls {
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls_mtls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
-
-        if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-            return Ok(r);
-        }
-        if vm.is_scheduled_task {
-            let next_id = vm.next_tcp_id();
-            let cert_clone = cert_pem.clone();
-            let key_clone = key_pem.clone();
-            let ca_clone = client_ca_pem.clone();
-            let completion =
-                vm.runtime
-                    .io_pool
-                    .submit_with(tcp_completion(), move || {
-                        match do_accept_tls_mtls(
-                            &listener.listener,
-                            &cert_clone,
-                            &key_clone,
-                            &ca_clone,
-                            next_id,
-                        ) {
-                            Ok(handle) => {
-                                Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
-                            }
-                            Err(e) => Value::Variant(
-                                "Err".into(),
-                                vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
-                            ),
-                        }
-                    });
-            vm.pending_io = Some(completion.clone());
-            vm.block_reason = Some(BlockReason::Io(completion));
-            for arg in args {
-                vm.push(arg.clone());
-            }
-            return Err(VmError::yield_signal());
-        }
         let next_id = vm.next_tcp_id();
-        match do_accept_tls_mtls(
-            &listener.listener,
-            &cert_pem,
-            &key_pem,
-            &client_ca_pem,
-            next_id,
-        ) {
-            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err_tls(e)),
-        }
+        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+            match do_accept_tls_mtls(
+                &listener.listener,
+                &cert_pem,
+                &key_pem,
+                &client_ca_pem,
+                next_id,
+            ) {
+                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                Err(e) => Value::Variant(
+                    "Err".into(),
+                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                ),
+            }
+        })
     }
 
     fn do_connect_tls(
@@ -582,22 +515,6 @@ fn require_stream<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<TcpStrea
     }
 }
 
-fn make_stream(stream: TcpStream, vm: &mut Vm) -> Value {
-    let id = vm.next_tcp_id();
-    // Clone the fd for the side-channel shutdown path. `try_clone` can only
-    // fail on resource exhaustion; if it does, we drop back to Drop-based
-    // close semantics (the closed flag still prevents further ops).
-    let shutdown_sock = stream.try_clone().ok();
-    let reader_socket = raw_socket_of(&stream);
-    Value::TcpStream(Arc::new(TcpStreamHandle {
-        id,
-        inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
-        closed: AtomicBool::new(false),
-        shutdown_sock: Mutex::new(shutdown_sock),
-        reader_socket,
-    }))
-}
-
 /// Cache the OS socket for the inner stream so `tcp.close` on Windows
 /// can issue `CancelIoEx` on it without needing to acquire `inner`'s
 /// mutex (which a parked reader may be holding). On Unix this is also
@@ -767,41 +684,24 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("tcp.accept takes 1 argument".into()));
     }
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
-    if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let next_id = vm.next_tcp_id();
-        let completion = vm
-            .runtime
-            .io_pool
-            .submit(move || match listener.listener.accept() {
-                Ok((stream, _addr)) => {
-                    let shutdown_sock = stream.try_clone().ok();
-                    let reader_socket = raw_socket_of(&stream);
-                    let handle = Arc::new(TcpStreamHandle {
-                        id: next_id,
-                        inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
-                        closed: AtomicBool::new(false),
-                        shutdown_sock: Mutex::new(shutdown_sock),
-                        reader_socket,
-                    });
-                    Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
-                }
-                Err(e) => tcp_io_err(&e),
-            });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
+    let next_id = vm.next_tcp_id();
+    vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+        match listener.listener.accept() {
+            Ok((stream, _addr)) => {
+                let shutdown_sock = stream.try_clone().ok();
+                let reader_socket = raw_socket_of(&stream);
+                let handle = Arc::new(TcpStreamHandle {
+                    id: next_id,
+                    inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
+                    closed: AtomicBool::new(false),
+                    shutdown_sock: Mutex::new(shutdown_sock),
+                    reader_socket,
+                });
+                Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
+            }
+            Err(e) => tcp_io_err(&e),
         }
-        return Err(VmError::yield_signal());
-    }
-    // Main thread: synchronous fallback.
-    match listener.listener.accept() {
-        Ok((stream, _)) => Ok(ok(make_stream(stream, vm))),
-        Err(e) => Ok(tcp_io_err(&e)),
-    }
+    })
 }
 
 fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -809,41 +709,24 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("tcp.connect takes 1 argument".into()));
     }
     let addr = require_string(&args[0], "tcp.connect")?.to_string();
-    if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-        return Ok(r);
-    }
-    if vm.is_scheduled_task {
-        let next_id = vm.next_tcp_id();
-        let addr_for_closure = addr.clone();
-        let completion =
-            vm.runtime
-                .io_pool
-                .submit(move || match TcpStream::connect(&addr_for_closure) {
-                    Ok(stream) => {
-                        let shutdown_sock = stream.try_clone().ok();
-                        let reader_socket = raw_socket_of(&stream);
-                        let handle = Arc::new(TcpStreamHandle {
-                            id: next_id,
-                            inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
-                            closed: AtomicBool::new(false),
-                            shutdown_sock: Mutex::new(shutdown_sock),
-                            reader_socket,
-                        });
-                        Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
-                    }
-                    Err(e) => tcp_io_err(&e),
+    let next_id = vm.next_tcp_id();
+    vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+        match TcpStream::connect(&addr) {
+            Ok(stream) => {
+                let shutdown_sock = stream.try_clone().ok();
+                let reader_socket = raw_socket_of(&stream);
+                let handle = Arc::new(TcpStreamHandle {
+                    id: next_id,
+                    inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
+                    closed: AtomicBool::new(false),
+                    shutdown_sock: Mutex::new(shutdown_sock),
+                    reader_socket,
                 });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
+                Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
+            }
+            Err(e) => tcp_io_err(&e),
         }
-        return Err(VmError::yield_signal());
-    }
-    match TcpStream::connect(&addr) {
-        Ok(stream) => Ok(ok(make_stream(stream, vm))),
-        Err(e) => Ok(tcp_io_err(&e)),
-    }
+    })
 }
 
 fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -867,51 +750,27 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     if stream.closed.load(Ordering::SeqCst) {
         return Ok(err_closed());
     }
-    if vm.is_scheduled_task {
-        let stream_clone = stream.clone();
-        let completion = vm.runtime.io_pool.submit_with(tcp_completion(), move || {
-            let mut buf = vec![0u8; max];
-            let mut guard = stream_clone.inner.lock();
-            match guard.read(&mut buf) {
-                Ok(n) => {
-                    buf.truncate(n);
-                    Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))])
-                }
-                Err(e) => {
-                    // If the stream was closed (locally) while/before this
-                    // read, surface as EOF rather than the platform-specific
-                    // cancellation error (Windows: WSACancelBlockingCall /
-                    // WSA_OPERATION_ABORTED from CancelIoEx in close()).
-                    if stream_clone.closed.load(Ordering::SeqCst) {
-                        Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(Vec::new()))])
-                    } else {
-                        Value::Variant("Err".into(), vec![Value::String(e.to_string())])
-                    }
+    vm.run_or_submit_io(args, tcp_completion(), move || {
+        let mut buf = vec![0u8; max];
+        let mut guard = stream.inner.lock();
+        match guard.read(&mut buf) {
+            Ok(n) => {
+                buf.truncate(n);
+                Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))])
+            }
+            Err(e) => {
+                // If the stream was closed (locally) while/before this
+                // read, surface as EOF rather than the platform-specific
+                // cancellation error (Windows: WSACancelBlockingCall /
+                // WSA_OPERATION_ABORTED from CancelIoEx in close()).
+                if stream.closed.load(Ordering::SeqCst) {
+                    Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(Vec::new()))])
+                } else {
+                    tcp_io_err(&e)
                 }
             }
-        });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
         }
-        return Err(VmError::yield_signal());
-    }
-    let mut buf = vec![0u8; max];
-    let mut guard = stream.inner.lock();
-    match guard.read(&mut buf) {
-        Ok(n) => {
-            buf.truncate(n);
-            Ok(ok(Value::Bytes(Arc::new(buf))))
-        }
-        Err(e) => {
-            if stream.closed.load(Ordering::SeqCst) {
-                Ok(ok(Value::Bytes(Arc::new(Vec::new()))))
-            } else {
-                Ok(tcp_io_err(&e))
-            }
-        }
-    }
+    })
 }
 
 fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -932,29 +791,14 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     if stream.closed.load(Ordering::SeqCst) {
         return Ok(err_closed());
     }
-    if vm.is_scheduled_task {
-        let stream_clone = stream.clone();
-        let completion = vm.runtime.io_pool.submit_with(tcp_completion(), move || {
-            let mut buf = vec![0u8; n];
-            let mut guard = stream_clone.inner.lock();
-            match guard.read_exact(&mut buf) {
-                Ok(()) => Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))]),
-                Err(e) => tcp_io_err(&e),
-            }
-        });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
+    vm.run_or_submit_io(args, tcp_completion(), move || {
+        let mut buf = vec![0u8; n];
+        let mut guard = stream.inner.lock();
+        match guard.read_exact(&mut buf) {
+            Ok(()) => Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))]),
+            Err(e) => tcp_io_err(&e),
         }
-        return Err(VmError::yield_signal());
-    }
-    let mut buf = vec![0u8; n];
-    let mut guard = stream.inner.lock();
-    match guard.read_exact(&mut buf) {
-        Ok(()) => Ok(ok(Value::Bytes(Arc::new(buf)))),
-        Err(e) => Ok(tcp_io_err(&e)),
-    }
+    })
 }
 
 fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -974,31 +818,14 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     if stream.closed.load(Ordering::SeqCst) {
         return Ok(err_closed());
     }
-    if vm.is_scheduled_task {
-        let stream_clone = stream.clone();
-        let completion = vm.runtime.io_pool.submit_with(tcp_completion(), move || {
-            let mut guard = stream_clone.inner.lock();
-            match guard.write_all(&buf) {
-                Ok(()) => match guard.flush() {
-                    Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
-                    Err(e) => tcp_io_err(&e),
-                },
+    vm.run_or_submit_io(args, tcp_completion(), move || {
+        let mut guard = stream.inner.lock();
+        match guard.write_all(&buf) {
+            Ok(()) => match guard.flush() {
+                Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
                 Err(e) => tcp_io_err(&e),
-            }
-        });
-        vm.pending_io = Some(completion.clone());
-        vm.block_reason = Some(BlockReason::Io(completion));
-        for arg in args {
-            vm.push(arg.clone());
+            },
+            Err(e) => tcp_io_err(&e),
         }
-        return Err(VmError::yield_signal());
-    }
-    let mut guard = stream.inner.lock();
-    match guard.write_all(&buf) {
-        Ok(()) => match guard.flush() {
-            Ok(()) => Ok(ok(Value::Unit)),
-            Err(e) => Ok(tcp_io_err(&e)),
-        },
-        Err(e) => Ok(tcp_io_err(&e)),
-    }
+    })
 }

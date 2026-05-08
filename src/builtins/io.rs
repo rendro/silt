@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::common::value_kind;
 use crate::builtins::data::make_datetime;
 use crate::value::Value;
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{Vm, VmError};
 
 /// Program arguments forwarded by the CLI for `io.args()`.
 ///
@@ -176,32 +176,16 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     value_kind(&args[0])
                 )));
             };
-            if let Some(r) = vm.io_entry_guard(args)? {
-                return Ok(r);
-            }
-            if vm.is_scheduled_task {
-                let path = path.clone();
-                let completion =
-                    vm.runtime
-                        .io_pool
-                        .submit(move || match std::fs::read_to_string(&path) {
-                            Ok(content) => {
-                                Value::Variant("Ok".into(), vec![Value::String(content)])
-                            }
-                            Err(e) => io_result_err(&e, &path),
-                        });
-                vm.pending_io = Some(completion.clone());
-                vm.block_reason = Some(BlockReason::Io(completion));
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
-            }
-            // Main thread: synchronous fallback.
-            match std::fs::read_to_string(path) {
-                Ok(content) => Ok(Value::Variant("Ok".into(), vec![Value::String(content)])),
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+            let path = path.clone();
+            vm.submit_io_or_run(
+                args,
+                crate::value::IoCompletion::new(),
+                &crate::value::io_unknown_timeout_err,
+                move || match std::fs::read_to_string(&path) {
+                    Ok(content) => Value::Variant("Ok".into(), vec![Value::String(content)]),
+                    Err(e) => io_result_err(&e, &path),
+                },
+            )
         }
         "write_file" => {
             if args.len() != 2 {
@@ -214,73 +198,37 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     value_kind(&args[1])
                 )));
             };
-
-            if let Some(r) = vm.io_entry_guard(args)? {
-                return Ok(r);
-            }
-            if vm.is_scheduled_task {
-                let path = path.clone();
-                let content = content.clone();
-                let completion =
-                    vm.runtime
-                        .io_pool
-                        .submit(move || match std::fs::write(&path, &content) {
-                            Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
-                            Err(e) => io_result_err(&e, &path),
-                        });
-                vm.pending_io = Some(completion.clone());
-                vm.block_reason = Some(BlockReason::Io(completion));
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
-            }
-            // Main thread: synchronous fallback.
-            match std::fs::write(path, content) {
-                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+            let path = path.clone();
+            let content = content.clone();
+            vm.submit_io_or_run(
+                args,
+                crate::value::IoCompletion::new(),
+                &crate::value::io_unknown_timeout_err,
+                move || match std::fs::write(&path, &content) {
+                    Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
+                    Err(e) => io_result_err(&e, &path),
+                },
+            )
         }
-        "read_line" => {
-            if let Some(r) = vm.io_entry_guard(args)? {
-                return Ok(r);
-            }
-            if vm.is_scheduled_task {
-                let completion = vm.runtime.io_pool.submit(move || {
-                    let mut line = String::new();
-                    match std::io::stdin().read_line(&mut line) {
-                        // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
-                        // match-against-Err loops terminate cleanly instead of
-                        // spinning on "".
-                        Ok(0) => io_err(Value::Variant("IoUnexpectedEof".into(), vec![])),
-                        Ok(_) => Value::Variant(
-                            "Ok".into(),
-                            vec![Value::String(line.trim_end().to_string())],
-                        ),
-                        Err(e) => io_result_err(&e, ""),
-                    }
-                });
-                vm.pending_io = Some(completion.clone());
-                vm.block_reason = Some(BlockReason::Io(completion));
-                for arg in args {
-                    vm.push(arg.clone());
+        "read_line" => vm.submit_io_or_run(
+            args,
+            crate::value::IoCompletion::new(),
+            &crate::value::io_unknown_timeout_err,
+            move || {
+                let mut line = String::new();
+                match std::io::stdin().read_line(&mut line) {
+                    // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
+                    // match-against-Err loops terminate cleanly instead of
+                    // spinning on "".
+                    Ok(0) => io_err(Value::Variant("IoUnexpectedEof".into(), vec![])),
+                    Ok(_) => Value::Variant(
+                        "Ok".into(),
+                        vec![Value::String(line.trim_end().to_string())],
+                    ),
+                    Err(e) => io_result_err(&e, ""),
                 }
-                return Err(VmError::yield_signal());
-            }
-            // Main thread: synchronous fallback.
-            let mut line = String::new();
-            match std::io::stdin().read_line(&mut line) {
-                // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so calling
-                // programs can break out of input loops with
-                // `match io.read_line() { Err(IoUnexpectedEof) -> break; ... }`.
-                Ok(0) => Ok(io_err(Value::Variant("IoUnexpectedEof".into(), vec![]))),
-                Ok(_) => Ok(Value::Variant(
-                    "Ok".into(),
-                    vec![Value::String(line.trim_end().to_string())],
-                )),
-                Err(e) => Ok(io_result_err(&e, "")),
-            }
-        }
+            },
+        ),
         "args" => {
             // Round-74: return only the program args explicitly forwarded
             // by the CLI past a `--` separator (e.g.

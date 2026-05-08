@@ -62,12 +62,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             }
             // Buffer is full -- park via scheduler or wait with a watchdog.
             if vm.is_scheduled_task {
-                vm.block_reason = Some(BlockReason::Send(ch));
-                // Re-push args so CallBuiltin can re-execute after wake.
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
+                return Err(vm.park_with_reason(args, BlockReason::Send(ch)));
             }
             // Main thread: wait on a condvar backed by the channel's
             // send waker. A watchdog periodically checks whether any
@@ -99,12 +94,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             }
             // Channel is empty -- park via scheduler or wait with a watchdog.
             if vm.is_scheduled_task {
-                vm.block_reason = Some(BlockReason::Receive(ch));
-                // Re-push args so CallBuiltin can re-execute after wake.
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
+                return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
             }
             // Main thread: wait with a watchdog. The channel's receive
             // waker pokes a local condvar when a value arrives or the
@@ -189,11 +179,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
 
             // No operation succeeded — park via scheduler or spin.
             if vm.is_scheduled_task {
-                vm.block_reason = Some(BlockReason::Select(select_ops));
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
+                return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
             }
 
             // Main thread: block on a shared condvar. Wrap every
@@ -355,29 +341,15 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
                     })
                     .collect();
-                vm.block_reason = Some(BlockReason::Select(select_ops));
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                // Stash the timer channel on the stack too? No — we rebuild
-                // it from the duration on resume by calling the same code
-                // path, so the duration alone is enough. Actually, we DO
-                // re-enter this arm on resume because CallBuiltin replays
-                // its args, and the `try_receive` above will either deliver
-                // a value landed during the park (correct) or fall through
-                // to a FRESH timer + select. A stale timer from this park
-                // would already have closed timer_ch and been dropped here
-                // — it can't keep us alive. So: rely on the `try_receive`
-                // short-circuit above to observe any delivered value
-                // post-wake, and otherwise re-arm a new timer. The
-                // worst-case extra delay on resume is `ms * 1` (one
-                // additional timer tick); for a recv_timeout that just
-                // parked, that is acceptable — a task should not commonly
-                // yield out of this arm mid-wait except via cancel (which
-                // does not resume) or another VM-level yield signal
-                // (which is not expected here because select does not
-                // yield internally).
-                return Err(VmError::yield_signal());
+                // Note: we DO re-enter this arm on resume because CallBuiltin
+                // replays its args, and the `try_receive` above will either
+                // deliver a value landed during the park (correct) or fall
+                // through to a FRESH timer + select. A stale timer from this
+                // park would already have closed timer_ch and been dropped
+                // here — it can't keep us alive. So: rely on `try_receive`
+                // post-wake, otherwise re-arm a new timer. Worst-case extra
+                // delay on resume is one timer tick; acceptable.
+                return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
             }
             // Main-thread path: drive the same select condvar loop that the
             // `channel.select` builtin uses. Mirrors the structure there;
@@ -506,12 +478,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                     TryReceiveResult::Empty => {
                         // Channel empty -- park via scheduler or block.
                         if vm.is_scheduled_task {
-                            vm.block_reason = Some(BlockReason::Receive(ch));
-                            // Re-push args so the CallBuiltin re-executes channel.each.
-                            for arg in args {
-                                vm.push(arg.clone());
-                            }
-                            return Err(VmError::yield_signal());
+                            return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
                         }
                         // Main thread: block on condvar until data or close.
                         match ch.receive_blocking() {
@@ -635,12 +602,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
             // If we're a scheduled task, park via the scheduler.
             if vm.is_scheduled_task {
-                vm.block_reason = Some(BlockReason::Join(handle));
-                // Re-push args so CallBuiltin can re-execute after wake.
-                for arg in args {
-                    vm.push(arg.clone());
-                }
-                return Err(VmError::yield_signal());
+                return Err(vm.park_with_reason(args, BlockReason::Join(handle)));
             }
 
             // Main thread: block with condvar, but wake periodically to

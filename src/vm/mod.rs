@@ -226,39 +226,150 @@ impl Vm {
     ///      (or main-thread sync call).
     ///
     /// The `args` slice is pushed back onto the stack on re-park so the
-    /// CallBuiltin opcode can re-read them when the task resumes.
-    pub(crate) fn io_entry_guard(&mut self, args: &[Value]) -> Result<Option<Value>, VmError> {
-        self.io_entry_guard_with(args, &crate::value::io_unknown_timeout_err)
-    }
-
-    /// Variant of [`io_entry_guard`] that takes a caller-supplied factory
-    /// used when the current task's deadline has already elapsed at
-    /// entry. Modules with non-IoError error types (tcp, http, ...) call
-    /// this with their own factory so a deadline-at-entry surfaces the
-    /// right typed variant rather than the generic `Err(IoUnknown(_))`.
+    /// CallBuiltin opcode can re-read them when the task resumes. The
+    /// re-park branch routes through
+    /// [`park_on_completion`](Self::park_on_completion) so the
+    /// pending_io / block_reason / args-pushback protocol lives in
+    /// exactly one place.
+    ///
+    /// The `timeout_err` factory shapes the typed `Err` variant emitted
+    /// when `current_deadline` has already elapsed at entry. Modules
+    /// with non-IoError error types (tcp, http, ...) pass their own
+    /// factory so a deadline-at-entry surfaces the right typed variant
+    /// rather than the generic `Err(IoUnknown(_))`. Most callers should
+    /// use [`submit_io_or_run`](Self::submit_io_or_run) which calls
+    /// this internally; direct callers exist only when post-guard
+    /// logic must run before the actual submit (e.g. tcp.read's
+    /// closed-stream check).
     pub(crate) fn io_entry_guard_with(
         &mut self,
         args: &[Value],
         timeout_err: &(dyn Fn(&str) -> Value + Sync),
     ) -> Result<Option<Value>, VmError> {
-        use crate::vm::runtime::BlockReason;
         if self.is_scheduled_task
             && let Some(completion) = self.pending_io.take()
         {
             if let Some(result) = completion.try_get() {
                 return Ok(Some(result));
             }
-            self.pending_io = Some(completion.clone());
-            self.block_reason = Some(BlockReason::Io(completion));
-            for arg in args {
-                self.push(arg.clone());
-            }
-            return Err(VmError::yield_signal());
+            return Err(self.park_on_completion(args, completion));
         }
         if let Some(err) = self.deadline_exceeded_with(timeout_err) {
             return Ok(Some(err));
         }
         Ok(None)
+    }
+
+    /// Park the current scheduled task with the given block reason and
+    /// re-push `args` onto the stack so the CallBuiltin opcode can
+    /// re-execute on resume. Returns the yield signal as a `VmError`
+    /// so the caller can `return Err(...)` directly.
+    ///
+    /// This is the **single** place that owns the args-pushback +
+    /// yield_signal sequence. Every park site — IO completions
+    /// (`park_on_completion`), channel send/receive/select, task
+    /// join — routes through here so the protocol cannot drift
+    /// across builtins. (Round 78 extraction; the prior ~30
+    /// hand-rolled sites collapse to one.)
+    ///
+    /// The caller is responsible for setting up whatever wakes the
+    /// task: a completion handle on `pending_io`, a waker
+    /// registered on a channel, a join slot on a task handle, etc.
+    pub(crate) fn park_with_reason(
+        &mut self,
+        args: &[Value],
+        reason: crate::vm::runtime::BlockReason,
+    ) -> VmError {
+        self.block_reason = Some(reason);
+        for arg in args {
+            self.push(arg.clone());
+        }
+        VmError::yield_signal()
+    }
+
+    /// Park the current scheduled task on an IO completion handle.
+    /// Sets `pending_io` so the entry-guard's resume branch picks
+    /// up this completion, then delegates to
+    /// [`park_with_reason`](Self::park_with_reason) for the
+    /// shared block_reason / args-pushback / yield sequence.
+    ///
+    /// The completion must already be wired so that something will
+    /// call `completion.complete(_)` to wake the task — typically a
+    /// closure submitted to `runtime.io_pool` or a deadline
+    /// scheduled on `runtime.timer`.
+    pub(crate) fn park_on_completion(
+        &mut self,
+        args: &[Value],
+        completion: Arc<IoCompletion>,
+    ) -> VmError {
+        use crate::vm::runtime::BlockReason;
+        self.pending_io = Some(completion.clone());
+        self.park_with_reason(args, BlockReason::Io(completion))
+    }
+
+    /// One-shot "submit to the IO pool, park on yield, run synchronously
+    /// on the main thread" helper for IO-pool-backed builtins.
+    ///
+    /// Encapsulates the entire entry-guard / submit / park / sync-fallback
+    /// dance in a single call so every IO builtin uses the same code path
+    /// and the args-pushback on re-park is the helper's responsibility,
+    /// not the caller's. Adding a new IO builtin reduces to picking the
+    /// right `(completion_factory, timeout_err)` pair and writing the
+    /// closure body — no manual completion-state mutation, no manual
+    /// args-pushback loop.
+    ///
+    /// `op` runs on a worker thread when called from a scheduled task,
+    /// or synchronously on the main thread otherwise. It must produce
+    /// the typed `Value` result already wrapped in `Ok(_)` / `Err(_)`
+    /// variants.
+    ///
+    /// Builtins with non-IoPool parking (channel send/receive, timer
+    /// sleeps, postgres listen workers) handle their own park sequence —
+    /// they call [`park_on_completion`](Self::park_on_completion) for
+    /// the timer-backed case and never touch this helper.
+    ///
+    /// Builtins that need to inject logic *between* the entry guard and
+    /// the submit (e.g. tcp.read's "drain pending completion before
+    /// reporting closed-stream") call [`io_entry_guard_with`] themselves
+    /// for the resume gate, then call
+    /// [`run_or_submit_io`](Self::run_or_submit_io) with the
+    /// already-guarded `args` for the submit-or-sync half.
+    pub(crate) fn submit_io_or_run<F>(
+        &mut self,
+        args: &[Value],
+        completion: Arc<IoCompletion>,
+        timeout_err: &(dyn Fn(&str) -> Value + Sync),
+        op: F,
+    ) -> Result<Value, VmError>
+    where
+        F: FnOnce() -> Value + Send + 'static,
+    {
+        if let Some(r) = self.io_entry_guard_with(args, timeout_err)? {
+            return Ok(r);
+        }
+        self.run_or_submit_io(args, completion, op)
+    }
+
+    /// Submit-or-run half of [`submit_io_or_run`] without the entry
+    /// guard. Use when the caller has already run
+    /// [`io_entry_guard_with`] and wants to interleave additional
+    /// post-guard checks (e.g. tcp.read's closed-stream check, which
+    /// must happen *after* the resume gate so a pending completion
+    /// wins over a racing close) before the actual submit.
+    pub(crate) fn run_or_submit_io<F>(
+        &mut self,
+        args: &[Value],
+        completion: Arc<IoCompletion>,
+        op: F,
+    ) -> Result<Value, VmError>
+    where
+        F: FnOnce() -> Value + Send + 'static,
+    {
+        if self.is_scheduled_task {
+            let c = self.runtime.io_pool.submit_with(completion, op);
+            return Err(self.park_on_completion(args, c));
+        }
+        Ok(op())
     }
 
     pub fn new() -> Self {
