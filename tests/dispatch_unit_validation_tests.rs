@@ -43,6 +43,11 @@
 use std::fs;
 use std::path::PathBuf;
 
+use silt::lexer::Lexer;
+use silt::parser::Parser;
+use silt::typechecker;
+use silt::types::Severity;
+
 /// Find src/typechecker/inference.rs relative to CARGO_MANIFEST_DIR.
 fn inference_source() -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -173,5 +178,124 @@ fn type_name_for_impl_maps_unit_to_some_symbol() {
          match, the trait-constraint check for a concrete Unit \
          receiver uses type_name_for_impl to look up the impl. If \
          this ever returns None for Unit, the check silently no-ops."
+    );
+}
+
+/// Behavioural lock for the round-24 dispatch_method_entry Unit-skip arm.
+///
+/// WHY THE SOURCE-GREP LOCKS ABOVE AREN'T ENOUGH (silent-revert pattern):
+/// The two source-grep tests above pin the literal arm
+/// `Type::Error | Type::Never => {}` and reject the broken form
+/// `Type::Error | Type::Never | Type::Unit => {}`. They do NOT catch
+/// semantically-equivalent reverts that use a different syntactic shape,
+/// e.g. introducing a separate arm `Type::Unit => return,` (or `=> {}`,
+/// or `=> continue,`) earlier in the match. Both source-grep assertions
+/// would still pass against that revert because the literal "Error |
+/// Never" arm is unchanged.
+///
+/// WHY THIS TEST CATCHES IT (behavioural counterpart):
+/// The original justification at the top of the file said a behavioural
+/// test would require either a user-reachable `trait X for ()` impl
+/// (the grammar didn't permit it) or a constructed `MethodEntry` with
+/// non-empty `method_constraints` on a Unit receiver. That justification
+/// is now STALE: round 74 GAP-4 (commit c189e2e) made `trait T for Unit`
+/// reachable end-to-end, and round 75 TYPE-3 cemented the canonical
+/// "Unit" symbol. There is now a public, user-reachable path.
+///
+/// This test exercises that path: a parameterized trait `T(c)` is
+/// implemented for `Unit` with `c = String`, and a method-level
+/// `where a: T(Int)` clause forces dispatch_method_entry to validate
+/// the trait-args constraint on a Unit-typed tyvar. With current
+/// (correct) source, the Unit case falls through the match's `_` arm
+/// and `verify_trait_obligation` rejects the program because Unit
+/// impls only `T(String)`, not `T(Int)`. With the silent revert
+/// `Type::Unit => return,`, the constraint check is skipped entirely,
+/// the program typechecks clean, and the soundness hole is back.
+///
+/// This pattern mirrors the round-58/round-?? `BROKEN-2` test in
+/// `tests/trait_args_where_clause_runtime_tests.rs::impl_method_where_clause_trait_args_runtime`,
+/// adapted to substitute Unit for the inner type-arg so the relevant
+/// branch in dispatch_method_entry is `Type::Unit`.
+#[test]
+fn dispatch_method_entry_validates_trait_args_when_inner_is_unit() {
+    // The setup:
+    //   - `T(c)` is a parameterized trait with one method `m(self) -> c`.
+    //   - `Unit` impls only `T(String)`.
+    //   - `Box(a)` is a generic carrier; `Foo for Box(a)` declares its
+    //     `do_it` method with method-level `where a: T(Int)`.
+    //   - `main` calls `b.do_it()` on `b: Box(Unit)`, so at dispatch
+    //     time the inner tyvar `a` resolves to `Unit`. The constraint
+    //     `a: T(Int)` must be checked against Unit's impls and rejected
+    //     because Unit impls `T(String)`, not `T(Int)`.
+    //
+    // If `dispatch_method_entry`'s skip arm silently re-includes Unit
+    // (e.g. `Type::Unit => return,`), the constraint is dropped on the
+    // floor and the program typechecks clean — that is the regression
+    // this test guards against.
+    let src = r#"
+trait T(c) { fn m(self) -> c }
+trait T(String) for Unit { fn m(self) -> String = "u" }
+type Box(a) { Wrap(a) }
+trait Foo { fn do_it(self) -> Int }
+trait Foo for Box(a) {
+    fn do_it(self) -> Int where a: T(Int) = match self {
+        Wrap(_) -> 0
+    }
+}
+fn main() {
+    let b: Box(Unit) = Wrap(())
+    let r: Int = b.do_it()
+    println(r)
+}
+"#;
+
+    let tokens = Lexer::new(src).tokenize().expect("lexer");
+    let mut program = Parser::new(tokens).parse_program().expect("parse");
+    let errs: Vec<String> = typechecker::check(&mut program)
+        .into_iter()
+        .filter(|e| e.severity == Severity::Error)
+        .map(|e| e.message)
+        .collect();
+
+    // Primary assertion: typechecking MUST produce at least one error.
+    // Pre-revert (current correct source): the constraint `a: T(Int)`
+    // resolves with `a := Unit`, hits the `_` arm in dispatch_method_entry,
+    // and `verify_trait_obligation` emits an error.
+    // Post-revert (`Type::Unit => return`): no error is emitted, the
+    // program typechecks clean, and this assertion fires.
+    assert!(
+        !errs.is_empty(),
+        "round-24 behavioural lock: typechecking the `T(Int)` mismatch \
+         on a `Box(Unit)` receiver MUST produce at least one error. \
+         The constraint `a: T(Int)` is method-level on `Foo for Box(a)`; \
+         when `b: Box(Unit)` is dispatched through `do_it`, the inner \
+         tyvar `a` resolves to Unit and dispatch_method_entry's match \
+         must validate the trait-args bound. If this assertion fires, \
+         someone likely re-introduced a Unit-skip arm (e.g. \
+         `Type::Unit => return,`) into dispatch_method_entry that \
+         the source-grep locks above don't catch. Got no errors."
+    );
+
+    // Secondary assertion: the error wording must look like a trait /
+    // trait-args mismatch diagnostic, not some unrelated error. We
+    // accept either the bare "does not implement trait" form (the
+    // verify_trait_obligation fallback) or the parameterized
+    // "trait 'T(Int)'" / "T(String)" mismatch form. We're tolerant
+    // here on purpose: the exact wording can shift between rounds
+    // (and indeed already shifted between round-58 and the
+    // parameterized-trait diagnostics), but any of these strings
+    // anchors the failure to the trait-constraint path rather than
+    // an unrelated diagnostic that happened to fire on the program.
+    let trait_related = errs.iter().any(|e| {
+        e.contains("does not implement")
+            || e.contains("T(Int)")
+            || (e.contains("trait") && e.contains("Int"))
+            || e.contains("T(String)")
+    });
+    assert!(
+        trait_related,
+        "round-24 behavioural lock: at least one error must mention \
+         the trait-constraint mismatch (either 'does not implement', \
+         'T(Int)', 'trait' + 'Int', or 'T(String)'). Got: {errs:?}"
     );
 }

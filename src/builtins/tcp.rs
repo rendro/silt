@@ -483,18 +483,34 @@ fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
     super::common::require_int(arg, fn_label)
 }
 
-#[cfg(feature = "tcp-tls")]
+// Round 79 (F5 BLOAT/parity): the tcp-local `require_bool` /
+// `require_bytes` previously emitted `"<fn> requires Bool"` /
+// `"<fn> requires Bytes"` without the canonical `, got <kind>` tail
+// established in round 75 across `numeric.rs`, `string.rs`,
+// `collections.rs`, `bytes.rs`, `crypto.rs`, `encoding.rs`, and
+// `uuid.rs`. The TCP-specific `require_listener` / `require_stream`
+// were similarly truncated. We now route through the canonical
+// helpers in `super::common` (for Bool/Bytes) and use
+// `super::common::value_kind` to render the offending kind in the
+// listener/stream arms — keeping the diagnostic shape uniform.
+//
+// Round 79: `require_bytes` is no longer gated behind `tcp-tls` because
+// `tcp.write` (always available) needs the same canonical-shape error
+// when its second arg is not Bytes. The pre-fix `tcp.write` body had a
+// hand-rolled `"tcp.write requires Bytes"` (no `, got <kind>` tail) at
+// the inline match arm; routing through the common helper unifies the
+// shape.
 fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
-    match arg {
-        Value::Bytes(b) => Ok(b.clone()),
-        _ => Err(VmError::new(format!("{fn_label} requires Bytes"))),
-    }
+    super::common::require_bytes(arg, fn_label)
 }
 
 fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
     match arg {
         Value::Bool(b) => Ok(*b),
-        _ => Err(VmError::new(format!("{fn_label} requires Bool"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires Bool, got {}",
+            super::common::value_kind(other)
+        ))),
     }
 }
 
@@ -504,14 +520,20 @@ fn require_listener<'a>(
 ) -> Result<&'a Arc<TcpListenerHandle>, VmError> {
     match arg {
         Value::TcpListener(l) => Ok(l),
-        _ => Err(VmError::new(format!("{fn_label} requires TcpListener"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires TcpListener, got {}",
+            super::common::value_kind(other)
+        ))),
     }
 }
 
 fn require_stream<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<TcpStreamHandle>, VmError> {
     match arg {
         Value::TcpStream(s) => Ok(s),
-        _ => Err(VmError::new(format!("{fn_label} requires TcpStream"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires TcpStream, got {}",
+            super::common::value_kind(other)
+        ))),
     }
 }
 
@@ -806,10 +828,7 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("tcp.write takes 2 arguments".into()));
     }
     let stream = require_stream(&args[0], "tcp.write")?.clone();
-    let buf = match &args[1] {
-        Value::Bytes(b) => b.clone(),
-        _ => return Err(VmError::new("tcp.write requires Bytes".into())),
-    };
+    let buf = require_bytes(&args[1], "tcp.write")?;
     // See `read`: io_entry_guard before closed-check so a pending
     // completion wins over a racing close().
     if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {

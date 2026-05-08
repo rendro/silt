@@ -37,7 +37,8 @@ main() {
     trap 'rm -rf "$tmpdir"' EXIT
 
     printf "  Downloading %s\n" "$url"
-    fetch "$url" "$tmpdir/silt.$ext"
+    fetch "$url" "$tmpdir/silt.$ext" \
+        || err "failed to download binary from $url (HTTP fetch returned non-zero)"
 
     printf "  Downloading %s\n" "$sums_url"
     fetch "$sums_url" "$tmpdir/SHA256SUMS" \

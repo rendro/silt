@@ -57,34 +57,78 @@ fn pending_io_assignment_lives_only_inside_park_helper() {
     );
 }
 
-/// The IO builtins (`src/builtins/io.rs`, `tcp.rs`, `postgres.rs`)
-/// must contain ZERO `for arg in args` re-push loops — they all
-/// route through `Vm::submit_io_or_run` / `Vm::run_or_submit_io`.
+/// Every file in `src/builtins/` (except `concurrency.rs` and
+/// `common.rs`) must contain ZERO `for arg in args` re-push loops —
+/// they all route through `Vm::submit_io_or_run` /
+/// `Vm::run_or_submit_io` / `Vm::park_with_reason`.
 ///
-/// `src/builtins/data.rs` is excluded because http.serve and
-/// time.sleep route through `park_with_reason` /
-/// `park_on_completion` (which live in vm/mod.rs), and the
-/// canonical-form lock at `count_in_file(data.rs, "for arg in
-/// args") == 0` is checked separately. `concurrency.rs` is
-/// excluded because `channel.each` has round-robin yield sites
-/// that don't set a block_reason — different protocol shape, out
-/// of scope for the round 78 helper.
+/// Round-79 T4 widening (audit finding T4): the original ban-list
+/// hard-coded only 4 files (`io.rs`, `tcp.rs`, `postgres.rs`,
+/// `data.rs`), so a new builtin module that hand-rolled the
+/// pre-helper protocol would silently slip past. The lock now
+/// discovers files by reading `src/builtins/` and excludes only:
+///   * `concurrency.rs` — `channel.each` has round-robin yield
+///     sites that don't set a block_reason (different protocol
+///     shape, out of scope for the round-78 helper).
+///   * `common.rs` — helper utilities, no IO routing.
 #[test]
 fn io_builtins_do_not_hand_roll_args_pushback() {
-    for path in &[
-        "src/builtins/io.rs",
-        "src/builtins/tcp.rs",
-        "src/builtins/postgres.rs",
-        "src/builtins/data.rs",
-    ] {
-        let n = count_in_file(path, "for arg in args");
-        assert_eq!(
-            n, 0,
-            "{path} must not hand-roll `for arg in args` re-push — route \
-             through Vm::submit_io_or_run / Vm::run_or_submit_io / \
-             Vm::park_with_reason instead. Found {n} site(s)."
+    const EXCLUDED: &[&str] = &["concurrency.rs", "common.rs"];
+    let builtins_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins");
+    let entries = std::fs::read_dir(&builtins_dir)
+        .unwrap_or_else(|e| panic!("read_dir {builtins_dir:?}: {e}"));
+
+    let mut scanned: Vec<String> = Vec::new();
+    let mut violations: Vec<(String, usize)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let fname = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("")
+            .to_string();
+        if EXCLUDED.contains(&fname.as_str()) {
+            continue;
+        }
+        // Skip mod.rs — re-export glue, no IO routing.
+        if fname == "mod.rs" {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        let n = src.matches("for arg in args").count();
+        scanned.push(fname.clone());
+        if n > 0 {
+            violations.push((fname, n));
+        }
+    }
+
+    // Sanity: the four originally-named files must still be in the
+    // scanned set — guards against the loop accidentally skipping
+    // everything (e.g. wrong dir, glob mismatch).
+    for required in &["io.rs", "tcp.rs", "postgres.rs", "data.rs"] {
+        assert!(
+            scanned.iter().any(|s| s == required),
+            "round 78 T4: expected scan to include `{required}`; \
+             scanned={scanned:?}"
         );
     }
+
+    assert!(
+        violations.is_empty(),
+        "round 78 T4: builtin file(s) hand-roll `for arg in args` \
+         re-push — route through Vm::submit_io_or_run / \
+         Vm::run_or_submit_io / Vm::park_with_reason instead. \
+         Violations (file, count): {violations:?}. \
+         Scanned files: {scanned:?}."
+    );
 }
 
 /// `Vm::park_with_reason` is the **single** place that owns the
@@ -298,13 +342,6 @@ fn main() -> () {{
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-fn count_in_file(rel: &str, needle: &str) -> usize {
-    let abs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let src = std::fs::read_to_string(&abs)
-        .unwrap_or_else(|e| panic!("read {rel}: {e}"));
-    src.matches(needle).count()
-}
 
 fn count_in_dir(rel: &str, needle: &str) -> usize {
     let abs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);

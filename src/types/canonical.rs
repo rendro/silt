@@ -183,6 +183,16 @@ impl Resolver {
         self.aliases.get(&resolve(name)).cloned()
     }
 
+    /// Remove a registered alias by name. Used by the typechecker when
+    /// a cycle is detected closing on an as-yet-unregistered alias:
+    /// any earlier alias on the cycle path was registered with a
+    /// target that referenced the now-known-cyclic target, so leaving
+    /// those entries in the map produces incoherent diagnostics at
+    /// later use sites (round 79 LATENT TS-L1).
+    pub fn unregister_alias(&mut self, name: Symbol) {
+        self.aliases.remove(&resolve(name));
+    }
+
     /// Register an `assoc-type` impl binding.
     ///
     /// Called by the typechecker when processing a `TraitImpl`: for

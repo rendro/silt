@@ -148,19 +148,50 @@ fn postgres_source_has_typed_io_helpers() {
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
 
+    // Round 79 follow-up: round 78 (commit 54f9105) consolidated the
+    // 24 hand-rolled IO yield-and-park sites — including all of
+    // postgres.rs — into the three Vm helpers `submit_io_or_run`,
+    // `run_or_submit_io`, `park_with_reason`. After that refactor,
+    // direct `io_entry_guard_with(args, &pg_timeout_err)` calls
+    // collapsed to 1 (the lone `pg_set_timeout` site that doesn't
+    // submit IO), and `submit_with(pg_completion()` collapsed to 2
+    // (the listener-completion timers in pg_listener_recv /
+    // pg_listener_unlisten). The bulk of the typed-protocol now
+    // lives inside `vm.submit_io_or_run(args, pg_completion(),
+    // &pg_timeout_err, ...)` blocks.
+    //
+    // This positive-shape lock was not updated in round 78 and
+    // started failing silently. Round 79 retargets it at the
+    // post-consolidation pattern: the typed-protocol surface should
+    // total at least 9 sites across the three helpers.
     let entry_guard_with = src.matches("io_entry_guard_with(args, &pg_timeout_err)").count();
     let submit_with = src.matches("submit_with(pg_completion()").count();
+    let submit_io_or_run = src
+        .matches("submit_io_or_run(args, pg_completion(), &pg_timeout_err,")
+        .count();
+    let run_or_submit_io = src.matches("run_or_submit_io(args, pg_completion(),").count();
 
-    // 9 entry-guard sites + 5 submit sites per the round-73 audit.
+    let typed_protocol_total =
+        entry_guard_with + submit_with + submit_io_or_run + run_or_submit_io;
     assert!(
-        entry_guard_with >= 9,
-        "expected at least 9 `io_entry_guard_with(args, &pg_timeout_err)` \
-         sites in src/builtins/postgres.rs, found {entry_guard_with}",
+        typed_protocol_total >= 9,
+        "expected at least 9 typed-pg-protocol sites in src/builtins/postgres.rs \
+         (sum of `io_entry_guard_with(args, &pg_timeout_err)`, \
+         `submit_with(pg_completion()`, \
+         `submit_io_or_run(args, pg_completion(), &pg_timeout_err,`, and \
+         `run_or_submit_io(args, pg_completion(),`); \
+         got {typed_protocol_total} (entry_guard_with={entry_guard_with}, \
+         submit_with={submit_with}, submit_io_or_run={submit_io_or_run}, \
+         run_or_submit_io={run_or_submit_io})",
     );
+    // Independent floor on the helper that owns the bulk of the
+    // protocol — guards against a refactor that funnels everything
+    // through one of the smaller helpers and trips the combined
+    // count for the wrong reason.
     assert!(
-        submit_with >= 5,
-        "expected at least 5 `submit_with(pg_completion(), ...)` sites \
-         in src/builtins/postgres.rs, found {submit_with}",
+        submit_io_or_run >= 5,
+        "expected at least 5 `submit_io_or_run(args, pg_completion(), &pg_timeout_err,` \
+         sites in src/builtins/postgres.rs, found {submit_io_or_run}",
     );
     assert!(
         src.contains("fn pg_timeout_err"),

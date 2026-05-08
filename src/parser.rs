@@ -3393,14 +3393,14 @@ impl Parser {
                     span: self.span(),
                 });
             }
-            let (name, _) = self.expect_ident()?;
+            let (name, name_span) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             self.skip_nl();
             let value = self.parse_expr()?;
             if !seen.insert(name) {
                 return Err(ParseError {
                     message: format!("duplicate field '{}' in anon record literal", name),
-                    span: self.span(),
+                    span: name_span,
                 });
             }
             fields.push((name, value));

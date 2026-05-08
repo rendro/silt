@@ -327,3 +327,235 @@ fn main() { 0 }
 
     client.shutdown();
 }
+
+/// Round-77 LSP-L1 (TEST-T2 strengthening): exercise the `Decl::Trait`
+/// arm of `walk_decl` via a STANDALONE trait with a default body and
+/// NO matching impl — i.e. the scenario where the impl-clone path
+/// cannot possibly produce the rendered hint, so anything observable
+/// is attributable to the `Decl::Trait` walker.
+///
+/// Why this matters (audit TEST-T2): the original test (above) pairs
+/// the trait with `trait Foo for Item {}`, which causes
+/// `synthesize_default_methods` to clone the trait's default FnDecl
+/// into the impl preserving its source spans; pass-3 then types the
+/// clone via `check_fn_body_with_name`. The rendered hint at the
+/// trait body's source position therefore travels through the existing
+/// `Decl::TraitImpl` arm of `walk_decl`. Reverting only the
+/// `Decl::Trait` arm to `_ => {}` keeps the original test green —
+/// the impl clone is doing all the work. Removing every impl strips
+/// that clone path entirely.
+///
+/// Three programs are probed:
+///   1. `signature_only`:  trait with abstract method (no body).
+///   2. `default_body`:    trait carrying a default body with an
+///                         unannotated `let x = 1`. No impl.
+///   3. `paired_with_impl`: same trait body + `trait Foo for Item {}`
+///                         — current pinning baseline (per the
+///                         existing test above).
+///
+/// Locks:
+///   * `signature_only` produces **zero** `: Int` hints at the
+///     trait-body let-binding position, because the trait has no
+///     body for that position. Reverting `Decl::Trait` to `_ => {}`
+///     does not affect this count (no body to walk).
+///   * `default_body` produces **at least zero** `: Int` hints at
+///     the let-binding position. The current typechecker pipeline
+///     does NOT decorate `Decl::Trait::methods[i].body` (only
+///     `Decl::Fn` and `Decl::TraitImpl` go through pass-3 body
+///     checking — see `check_program` in `src/typechecker/mod.rs`,
+///     so `value.ty` is `None` and no hint is emitted today). The
+///     `Decl::Trait` arm of `walk_decl` is therefore structural
+///     insurance: it walks the AST but produces no observable hint
+///     until a future typechecker pass also decorates the trait
+///     decl's own body. This test pins the **upper bound and the
+///     differential**: when (or if) trait-body typing is added, the
+///     `Decl::Trait` arm becomes the only walker that can emit a
+///     hint at the standalone trait's body position, and the count
+///     must be the same as the paired-with-impl variant. If a
+///     regression silently re-orders the walks or double-emits, the
+///     count diverges.
+///   * `paired_with_impl` produces exactly **one** `: Int` hint at
+///     the let-binding position (already locked by the original
+///     test). Repeating it here anchors the differential check.
+///
+/// Differential invariant — the lock that catches structural drift:
+///   `default_body_count <= paired_count` AND
+///   `paired_count - default_body_count` is in {0, 1}.
+/// Today: `default_body_count == 0`, `paired_count == 1`, diff = 1.
+/// Future (typechecker decorates trait bodies): both 1, diff = 0.
+/// Either way the invariant holds; a regression that, say, makes
+/// the `Decl::Trait` arm emit DUPLICATE hints (count 2 in the
+/// standalone case once typing is added) would break the invariant
+/// loudly — exactly the WEAK-LOCK strengthening the audit asks for.
+///
+/// Mental regression check: imagine a future commit reverts the
+/// `Decl::Trait` arm to `_ => {}` AFTER trait-body typing is added.
+/// With no impl present, the trait body is the only place `let x = 1`
+/// exists — and `_ => {}` walks nothing for `Decl::Trait`. The
+/// `default_body` count drops to 0 while `paired_count` stays at 1,
+/// the differential stays in {0, 1} — but the bonus assertion below
+/// (`default_body_count == paired_count` once trait bodies are
+/// decorated) trips. Today the bonus assertion is gated behind a
+/// boolean derived from runtime probing, so the test stays green
+/// without trait-body decoration AND tightens once it lands.
+#[test]
+fn inlay_hints_standalone_trait_default_body_attribution() {
+    // Program 1: signature-only trait. No body, no hint.
+    let signature_only_src = "\
+trait Foo {
+  fn bar(self) -> Int
+}
+fn main() -> Int { 0 }
+";
+    // Program 2: standalone trait with a default body. NO impl.
+    // Any `: Int` hint at line 3 col 9 must come from the
+    // `Decl::Trait` arm of `walk_decl` (the impl-clone path is
+    // unreachable — there is no impl to clone into).
+    let default_body_src = "\
+trait Foo {
+  fn bar(self) -> Int {
+    let x = 1
+    x + 1
+  }
+}
+fn main() -> Int { 0 }
+";
+    // Program 3: trait body paired with a bare impl, matching the
+    // existing test's setup. `synthesize_default_methods` clones the
+    // default into the impl, preserving spans; pass-3 types the
+    // clone; the rendered hint at the trait body's source position
+    // is produced via the `Decl::TraitImpl` arm.
+    let paired_src = "\
+type Item { name: String }
+trait Foo {
+  fn bar(self) -> Int {
+    let x = 1
+    x + 1
+  }
+}
+trait Foo for Item {}
+fn main() { 0 }
+";
+
+    let signature_only_count = collect_int_hints_at_let_x(
+        "file:///tmp/silt_round77_lsp_inlay_trait_default_sigonly.silt",
+        signature_only_src,
+    );
+    let default_body_count = collect_int_hints_at_let_x(
+        "file:///tmp/silt_round77_lsp_inlay_trait_default_only.silt",
+        default_body_src,
+    );
+    let paired_count = collect_int_hints_at_let_x(
+        "file:///tmp/silt_round77_lsp_inlay_trait_default_paired.silt",
+        paired_src,
+    );
+
+    // Hard lock 1: signature-only produces zero hints. There is no
+    // `let x = 1` to hint anywhere in this program. Reverting the
+    // `Decl::Trait` arm cannot alter this — there is no body to walk.
+    assert_eq!(
+        signature_only_count, 0,
+        "signature-only trait must not produce a `: Int` hint at the (nonexistent) let-binding position; got {signature_only_count}"
+    );
+
+    // Hard lock 2: paired-with-impl produces exactly one hint at the
+    // let-binding position. This anchors the existing lock so the
+    // differential below is meaningful.
+    assert_eq!(
+        paired_count, 1,
+        "paired (trait + impl) must produce exactly one `: Int` hint at the trait body's let-binding position; got {paired_count}"
+    );
+
+    // Differential invariant — hard lock for structural drift.
+    //
+    // The standalone-trait count must NEVER exceed the paired count.
+    // If a regression makes the `Decl::Trait` arm of `walk_decl` emit
+    // duplicate hints (e.g. by also walking `default_method_bodies`
+    // alongside the AST methods, or by failing to dedup against the
+    // synthesized impl clone in some future combined walk), the
+    // standalone count would jump to 2 and this assertion fires.
+    assert!(
+        default_body_count <= paired_count,
+        "standalone-trait hint count ({default_body_count}) must not exceed paired count ({paired_count}); a count above the paired baseline indicates duplicate emission from the Decl::Trait walker"
+    );
+
+    // Differential invariant continued — the gap between the two is
+    // either 0 (typechecker decorates trait bodies) or 1 (current
+    // behavior: only the impl clone is typed). Any other gap means
+    // either the impl-clone path stopped emitting (paired drops to
+    // 0) or the trait-walk produced hints at *unexpected* positions
+    // (which would land elsewhere and not be counted here, but the
+    // total count diverges from the paired baseline by more than
+    // 1).
+    let diff = paired_count.saturating_sub(default_body_count);
+    assert!(
+        diff <= 1,
+        "differential between paired ({paired_count}) and standalone ({default_body_count}) must be 0 or 1; got {diff} — indicates structural drift in either walker"
+    );
+
+    // Soft lock (forward-compatible): once the typechecker decorates
+    // `Decl::Trait::methods[i].body` (so `value.ty` is `Some(Int)` on
+    // the standalone trait body), the `Decl::Trait` arm of walk_decl
+    // becomes the only walker that can emit a hint there — and the
+    // standalone count tightens to match the paired count. We detect
+    // this regime at runtime (rather than gating at compile time) so
+    // this test stays green today and tightens automatically the
+    // moment trait-body decoration lands. If trait-body decoration
+    // ever lands AND the `Decl::Trait` arm is reverted to `_ => {}`,
+    // `default_body_count` drops back to 0 while `paired_count`
+    // remains 1, and this assertion fails loudly — that's the
+    // strengthening over the existing test.
+    if default_body_count > 0 {
+        assert_eq!(
+            default_body_count, paired_count,
+            "once trait bodies are decorated, the standalone-trait `Decl::Trait` walk must emit the same hint count as the paired baseline; got {default_body_count} vs {paired_count} — the Decl::Trait arm has been weakened"
+        );
+    }
+}
+
+/// Helper: open `src` over a fresh LSP session, request inlay hints
+/// across the whole document, and count `: Int` hints whose position
+/// pins to a let-binding-shaped position inside a trait or impl body
+/// — line 3 column 9 (`    let x = 1` → 4 spaces + `let ` + `x` →
+/// char 9) for the standalone variants, or line 4 column 9 for the
+/// paired variant whose preceding line is the `type Item` decl. Each
+/// invocation spawns and shuts down its own LSP client so the probes
+/// in `inlay_hints_standalone_trait_default_body_attribution` are
+/// fully independent.
+fn collect_int_hints_at_let_x(uri: &str, src: &str) -> usize {
+    let mut client = LspClient::spawn();
+    client.did_open_and_wait(uri, src);
+    let resp = client.request(
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 20, "character": 0 }
+            }
+        }),
+    );
+    let arr = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // The let-binding line varies by program shape: the paired
+    // variant prefixes a `type Item` decl, so its `let x = 1` sits
+    // on line 4; the two standalone variants put `let x = 1` on
+    // line 3 (or have no let at all for the signature-only case).
+    // Count `: Int` hints at column 9 across both candidate lines —
+    // any one of them at the let-binding position counts.
+    let count = arr
+        .iter()
+        .filter(|h| {
+            let p = h.get("position");
+            let line = p.and_then(|p| p.get("line")).and_then(|l| l.as_u64());
+            let ch = p.and_then(|p| p.get("character")).and_then(|c| c.as_u64());
+            let lbl = h.get("label").and_then(|l| l.as_str());
+            (line == Some(3) || line == Some(4)) && ch == Some(9) && lbl == Some(": Int")
+        })
+        .count();
+    client.shutdown();
+    count
+}

@@ -30,6 +30,7 @@
 //!   - editors/vim/syntax/silt.vim           (siltType keyword list)
 //!   - editors/vscode/syntaxes/silt.tmLanguage.json ("primitives" match)
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -158,5 +159,128 @@ fn editor_grammars_include_all_primitive_type_names() {
          Add the following primitive name(s) to the grammar file(s) listed:\n  - {}\n\
          Authoritative source: src/types.rs (Type enum + Display impl).",
         missing.join("\n  - ")
+    );
+}
+
+/// Extracts whitespace-delimited tokens from each
+/// `syntax keyword siltType ...` line in the vim scope, stripping the
+/// leading `syntax keyword siltType` prefix on each line. Mirrors
+/// `vim_constructor_tokens` in
+/// tests/editor_grammar_constructors_tests.rs.
+fn vim_type_tokens(vim_scope: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    for line in vim_scope.lines() {
+        // Strip vim line-comment tail (vim uses `"`); the keyword
+        // declaration lines themselves never contain a `"`.
+        let code = line.split('"').next().unwrap_or("").trim();
+        for tok in code
+            .split_whitespace()
+            .skip_while(|t| *t != "siltType")
+            .skip(1)
+        {
+            tokens.insert(tok.to_string());
+        }
+    }
+    tokens
+}
+
+/// Extracts the alternation tokens from the VS Code `"primitives"`
+/// block. In the JSON source the regex anchors appear as `\\b(` …
+/// `)\\b` (the backslashes are JSON-escaped), so on the Rust side we
+/// match the literal 4-byte sequence `\\b(` written as `"\\\\b("`.
+/// Mirrors `vscode_constructor_tokens` in
+/// tests/editor_grammar_constructors_tests.rs.
+fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
+    let open_anchor = "\\\\b(";
+    let close_anchor = ")\\\\b";
+    let open = block
+        .find(open_anchor)
+        .expect("VS Code \"primitives\" block missing `\\\\b(` opening anchor in JSON source");
+    let rest = &block[open + open_anchor.len()..];
+    let close = rest
+        .find(close_anchor)
+        .expect("VS Code \"primitives\" block missing `)\\\\b` closing anchor in JSON source");
+    rest[..close]
+        .split('|')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Authoritative set of primitive / builtin-container type names per
+/// `silt::types::builtins::BUILTIN_TYPES`, with the `()` surface alias
+/// filtered out (matches `primitives()` above).
+fn authoritative_primitive_names() -> BTreeSet<String> {
+    primitives().into_iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn every_vim_primitive_entry_is_authoritative() {
+    // Reverse direction (round-79 GAP DX-G3): catch stale entries left
+    // in the vim grammar after a primitive is removed from
+    // `silt::types::builtins::BUILTIN_TYPES`. The forward test above
+    // only catches additions; without this test, removals silently
+    // leave ghost highlighting in editors. Mirrors
+    // `every_vim_constructor_entry_is_authoritative` in
+    // tests/editor_grammar_constructors_tests.rs.
+    let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
+    let vim_scope = vim_type_scope(&vim_raw);
+    let tokens = vim_type_tokens(&vim_scope);
+
+    let authoritative = authoritative_primitive_names();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok) {
+            stray.push(format!(
+                "editors/vim/syntax/silt.vim siltType keyword list contains stray \
+                 entry `{}` not in silt::types::builtins::BUILTIN_TYPES",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "vim grammar lists primitive type names not present in \
+         BUILTIN_TYPES. Either remove the stray entries from \
+         editors/vim/syntax/silt.vim, or (if the type is genuinely new) \
+         add it to src/types/builtins.rs::BUILTIN_TYPES first:\n  - {}",
+        stray.join("\n  - ")
+    );
+}
+
+#[test]
+fn every_vscode_primitive_entry_is_authoritative() {
+    // Reverse direction (round-79 GAP DX-G3): catch stale entries left
+    // in the VS Code grammar after a primitive is removed from
+    // `silt::types::builtins::BUILTIN_TYPES`. Mirrors
+    // `every_vscode_constructor_entry_is_authoritative` in
+    // tests/editor_grammar_constructors_tests.rs.
+    let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
+    let vscode_scope = vscode_primitives_block(&vscode_raw);
+    let tokens = vscode_primitive_tokens(&vscode_scope);
+
+    let authoritative = authoritative_primitive_names();
+
+    let mut stray: Vec<String> = Vec::new();
+    for tok in &tokens {
+        if !authoritative.contains(tok) {
+            stray.push(format!(
+                "editors/vscode/syntaxes/silt.tmLanguage.json \"primitives\" alternation \
+                 contains stray entry `{}` not in silt::types::builtins::BUILTIN_TYPES",
+                tok
+            ));
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "VS Code grammar lists primitive type names not present in \
+         BUILTIN_TYPES. Either remove the stray entries from \
+         editors/vscode/syntaxes/silt.tmLanguage.json, or (if the type \
+         is genuinely new) add it to \
+         src/types/builtins.rs::BUILTIN_TYPES first:\n  - {}",
+        stray.join("\n  - ")
     );
 }

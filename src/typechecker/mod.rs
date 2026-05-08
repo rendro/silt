@@ -923,10 +923,27 @@ impl TypeChecker {
                                     new_fields.entry(n).or_insert(t);
                                 }
                                 rtail
+                            } else if let Type::Var(w) = resolved {
+                                // Tail var transitively resolved to another
+                                // tyvar — re-tail on the fresh var so the
+                                // freshening propagates. Mirrors
+                                // substitute_vars' `Some(Type::Var(w))` arm.
+                                RowTail::Var(w)
                             } else {
-                                // Tail var resolved to something other than a
-                                // record — keep it, the unify caller will
-                                // already have errored if it's a real mismatch.
+                                // Round 79 LATENT TS-L2: matches
+                                // substitute_vars sibling — keeps the two
+                                // row-tail walks aligned per L2. The
+                                // unifier should never bind a row tail var
+                                // to a non-record, non-Var concrete type;
+                                // catch genuine drift loudly in debug
+                                // builds, release falls through to the
+                                // pre-existing safe fallback.
+                                let _other = &resolved;
+                                debug_assert!(
+                                    false,
+                                    "row tail var bound to non-record concrete type {:?}",
+                                    _other
+                                );
                                 RowTail::Var(*v)
                             }
                         } else {
@@ -2120,6 +2137,34 @@ impl TypeChecker {
             (Type::Record(n1, _), Type::Record(n2, _)) => n1 == n2,
             (Type::Record(n1, _), Type::Generic(n2, _))
             | (Type::Generic(n1, _), Type::Record(n2, _)) => n1 == n2,
+            // Round 79 TS-B1: structurally compare anonymous records so
+            // bounds like `where a: Convert({a: Int, b: String})` accept
+            // an impl whose trait-arg is the byte-equal record. Without
+            // this arm two equal `AnonRecord` values fell through to the
+            // `_ => false` catch-all and the obligation was rejected.
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: t1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: t2,
+                },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && Self::trait_arg_compatible_canon(v1, v2)
+                    })
+            }
+            // `Never` is uninhabited; only equal to itself. Symmetry arm
+            // for completeness — entry-point `canonicalize` doesn't
+            // collapse `Never` to anything else.
+            (Type::Never, Type::Never) => true,
+            // No `(AssocProj, _)` arm is needed: the entry-point
+            // `canonicalize` resolves projections before this walk runs,
+            // so the recursive comparator never sees `AssocProj`.
             _ => false,
         }
     }
@@ -4105,6 +4150,32 @@ impl TypeChecker {
                 ),
                 target_te.span,
             );
+            // Round 79 LATENT TS-L1: when a cycle is detected closing
+            // on the alias under registration (`td.name`), every other
+            // alias in the cycle chain was registered earlier with a
+            // target that pointed back through the now-known-cyclic
+            // path. With `type A = B; type B = A`, A registered first
+            // (B not yet visible) with target Generic("B"); B then
+            // detects the cycle but A is still in the alias map
+            // pretending A→Generic("B") is valid, so a later
+            // `let v: A = 42` reports "expected B, got Int" instead of
+            // a coherent cycle diagnostic. Walk the chain (excluding
+            // td.name itself, which never registered) and unregister
+            // each entry so use-site canonicalisation no longer sees
+            // a half-built alias path.
+            for &cycle_name in &cycle {
+                if cycle_name != td.name {
+                    self.resolver.unregister_alias(cycle_name);
+                    self.type_aliases.remove(&cycle_name);
+                    self.type_alias_arity.remove(&cycle_name);
+                }
+            }
+            // Also drop this alias's placeholder entries — registration
+            // is being skipped, and leaving the name in `type_aliases`
+            // (the placeholder set) lets later passes treat A as a
+            // valid alias that just happens to have no resolver entry.
+            self.type_aliases.remove(&td.name);
+            self.type_alias_arity.remove(&td.name);
             // Skip registration so the canonicaliser doesn't loop on a
             // self-referential expansion at any later use site.
             return;
@@ -6584,9 +6655,18 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
                 tail: nt,
             },
         ) => {
-            for ((on, ot_), (nn, nt_)) in of.iter().zip(nf.iter()) {
-                if on == nn {
-                    align_tyvars_into(ot_, nt_, map);
+            // Round 79 LATENT TS-L3: walk the new field map by key
+            // and align with the old field of the same key when it
+            // exists. The previous `of.iter().zip(nf.iter())` form
+            // only saw a pair when both maps had the same key at the
+            // same position; differing key sets (e.g. pass-3
+            // narrowed scheme has additional fields) silently
+            // dropped mappings for keys present on both sides at
+            // mismatched positions. Iterating by key keeps every
+            // common-key alignment regardless of position.
+            for (key, n_ty) in nf.iter() {
+                if let Some(o_ty) = of.get(key) {
+                    align_tyvars_into(o_ty, n_ty, map);
                 }
             }
             // Open row tail (`...r`) renaming: pre-narrowed `r` ↦
