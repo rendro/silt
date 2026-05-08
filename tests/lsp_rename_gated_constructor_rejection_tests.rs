@@ -286,4 +286,11 @@ fn rename_on_user_ident_in_doc_mentioning_gated_ctor_succeeds() {
         !result.is_null(),
         "rename on user-defined fn must succeed even when doc mentions a gated constructor; got {resp}"
     );
+    // Round 79 follow-up: round-60 L5 sibling (above) calls
+    // `client.shutdown()` at the end. This test was missing the
+    // call, so on Windows runners nextest flagged the LSP child
+    // process as a leak (PID 2500) and the job exited 1 even
+    // though the assertion itself passed. Shut down explicitly to
+    // match the sibling and clear the runner's leak detector.
+    client.shutdown();
 }
