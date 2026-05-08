@@ -102,7 +102,7 @@ jobs:
   test-windows:
     name: Test Windows (${{ matrix.partition }})
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -133,10 +133,14 @@ jobs:
           $process = Start-Process -FilePath "bash" `
             -ArgumentList ".github/scripts/run-test-partition.sh","${{ matrix.partition }}" `
             -NoNewWindow -PassThru
-          $finished = $process.WaitForExit(25*60*1000)
+          # Round-79 follow-up: the `rest` partition was bumping the
+          # 25-min cap because Windows runners are 3-5× slower than
+          # Linux/macOS at file I/O. Bumped to 30 min (with the
+          # job-level timeout-minutes also raised to 35 for headroom).
+          $finished = $process.WaitForExit(30*60*1000)
           if (-not $finished) {
             $process.Kill()
-            Write-Error "cargo nextest exceeded 25-minute wall-clock cap"
+            Write-Error "cargo nextest exceeded 30-minute wall-clock cap"
             exit 124
           }
           exit $process.ExitCode
