@@ -174,14 +174,16 @@ fn connect_with_unknown_keys_ignored() {
 /// Rust layer still double-checks).
 #[test]
 fn connect_with_non_map_opts_rejected() {
-    // Lock the exact phrase from the only error-constructor site
-    // (`src/builtins/postgres.rs` `parse_connect_opts`):
-    //   "postgres.connect_with: opts must be a Map (e.g. #{})"
-    // The previous `"Map" || "opts"` chain was weaker than a single
-    // `contains` against the unique phrase, because both substrings are
-    // always present in the only possible message.
+    // Lock the canonical "<fn> requires <Kind>, got <kind>" wording
+    // (round 75 standardisation across require_*) plus the unique
+    // `(e.g. #{})` hint that distinguishes this site from the generic
+    // `require_map` helper. Updated round 79 from the pre-round-75
+    // phrase `"opts must be a Map"` which the wording refactor retired.
     let err = read_max_pool_size_for_tests(&Value::Int(1)).expect_err("Int rejected");
-    assert!(err.contains("opts must be a Map"), "err: {err}");
+    assert!(
+        err.contains("postgres.connect_with requires Map") && err.contains("(e.g. #{})"),
+        "err: {err}"
+    );
 }
 
 // ── LOW-2: redact_pg_message strips DETAIL / WHERE / HINT ──────────
