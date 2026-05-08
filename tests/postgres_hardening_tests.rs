@@ -143,16 +143,16 @@ fn connect_with_zero_max_pool_size_rejected() {
 /// error that mentions the field name and that it must be an Int.
 #[test]
 fn connect_with_wrong_type_rejected() {
-    // Lock the exact phrasing emitted by `parse_connect_opts` in
-    // `src/builtins/postgres.rs`:
-    //   "postgres.connect_with: max_pool_size must be an Int"
-    // The previous pair of disjoint `contains("max_pool_size")` +
-    // `contains("Int")` checks would silently pass even if the message
-    // drifted into two unrelated substrings.
+    // Round 79 follow-up: round 75's canonical-form refactor
+    // ("<fn> requires <Kind>, got <kind>") replaced the prior
+    // bespoke phrasing here. The current emitting site is
+    // src/builtins/postgres.rs:1815 → "postgres.connect_with
+    // requires Int, got <kind>". Updated lock asserts both the
+    // canonical prefix and that the rejected kind appears.
     let opts = map_with(&[("max_pool_size", Value::String("lots".to_string()))]);
     let err = read_max_pool_size_for_tests(&opts).expect_err("wrong type rejected");
     assert!(
-        err.contains("postgres.connect_with: max_pool_size must be an Int"),
+        err.contains("postgres.connect_with requires Int") && err.contains("got String"),
         "err: {err}",
     );
 }
