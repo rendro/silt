@@ -164,7 +164,17 @@ jobs:
             fuzz
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        # `--locked` would honour cargo-fuzz's published Cargo.lock,
+        # which pins an older rustix release (<0.38) that uses
+        # perma-unstable `rustc_layout_scalar_valid_range_*`
+        # attributes. Recent nightlies (~2026-05) reject those
+        # attributes outside the rustc compiler itself, so the locked
+        # install fails. Drop `--locked` so cargo resolves fresh
+        # semver-compatible versions and pulls in a newer rustix that
+        # compiles on current nightly. We accept the small
+        # reproducibility hit because the alternative is keeping the
+        # corpus-replay gate red indefinitely.
+        run: cargo install cargo-fuzz
 
       - name: Seed corpus
         run: ./fuzz/seed.sh
