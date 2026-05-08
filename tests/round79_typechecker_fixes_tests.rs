@@ -117,8 +117,7 @@ fn main() -> Int { use_it(7) }
     // `vm.run` proceed — the explicit `errs.is_empty()` check above
     // is the load-bearing assertion. The runner's role is to confirm
     // the program produces the expected integer 7 when executed.
-    let runner =
-        InProcessRunner::new(src.to_string()).with_budget(Duration::from_secs(10));
+    let runner = InProcessRunner::new(src.to_string()).with_budget(Duration::from_secs(10));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -133,9 +132,7 @@ fn main() -> Int { use_it(7) }
     // `main` is `() -> Int`. The runner returns `Some(Value::Int(7))`.
     match outcome.result {
         Some(Value::Int(7)) => {}
-        other => panic!(
-            "round 79 TS-B1: expected main() to return Int(7); got {other:?}"
-        ),
+        other => panic!("round 79 TS-B1: expected main() to return Int(7); got {other:?}"),
     }
 }
 

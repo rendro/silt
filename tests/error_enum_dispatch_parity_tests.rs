@@ -29,6 +29,7 @@
 //! user-visible strings.
 
 use silt::module::{builtin_enum_variants, builtin_error_enum_variants_with_arity};
+#[cfg(any(not(feature = "postgres"), not(feature = "tcp")))]
 use silt::types::Severity;
 
 const DISPATCH_SRC: &str = include_str!("../src/vm/dispatch.rs");

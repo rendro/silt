@@ -38,11 +38,7 @@ fn modules_doc_calls_out_fs_helpers() {
     // Round-74 finding #5 specifically called out `fs.list_dir`,
     // `fs.stat`, `fs.read_link` as silently undocumented entry points.
     // Pin them so the listing can't be trimmed without notice.
-    for needle in &[
-        "fs.list_dir",
-        "fs.stat",
-        "fs.read_link",
-    ] {
+    for needle in &["fs.list_dir", "fs.stat", "fs.read_link"] {
         assert!(
             MODULES_DOC_SRC.contains(needle),
             "docs/language/modules.md should mention `{needle}` in the fs row \
@@ -53,12 +49,7 @@ fn modules_doc_calls_out_fs_helpers() {
 
 #[test]
 fn modules_doc_calls_out_env_helpers() {
-    for needle in &[
-        "env.get",
-        "env.set",
-        "env.remove",
-        "env.vars",
-    ] {
+    for needle in &["env.get", "env.set", "env.remove", "env.vars"] {
         assert!(
             MODULES_DOC_SRC.contains(needle),
             "docs/language/modules.md should mention `{needle}` in the env row \

@@ -110,9 +110,7 @@ fn bloat1_errors_rs_enum_names_is_registry_driven() {
         .enumerate()
         .filter(|(_, l)| {
             let t = l.trim_start();
-            !t.starts_with("//")
-                && l.contains("let mut enum_names")
-                && l.contains("vec![")
+            !t.starts_with("//") && l.contains("let mut enum_names") && l.contains("vec![")
         })
         .map(|(i, l)| (i + 1, l))
         .collect();

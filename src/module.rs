@@ -39,8 +39,7 @@ pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "Stri
 /// two sites cannot drift.
 ///
 /// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
-pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] =
-    &["List", "Map", "Set", "Channel", "Tuple"];
+pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {

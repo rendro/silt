@@ -4619,6 +4619,7 @@ struct CollectionItemSpec<'a> {
 /// `force_last_comma` covers the single-element tuple `(x,)` case
 /// where the comma is required as a disambiguator even when the source
 /// omitted it.
+#[allow(clippy::too_many_arguments)]
 fn format_delimited_collection<'a>(
     expr_span: Span,
     depth: usize,

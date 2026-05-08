@@ -144,12 +144,12 @@ fn trait_decl_and_impl_format_output_reparses() {
                trait HashTable(Int) for List(a) where a: Hash {\n    fn get(self, key: Int) -> Maybe(Int) = None\n}\n";
     let formatted = format(src).expect("first format");
     // Re-tokenize and re-parse — the round-trip-parse leg.
-    let toks = Lexer::new(&formatted)
-        .tokenize()
-        .unwrap_or_else(|e| panic!("formatted output failed to lex: {e:?}\nformatted:\n{formatted}"));
-    Parser::new(toks)
-        .parse_program()
-        .unwrap_or_else(|e| panic!("formatted output failed to parse: {e:?}\nformatted:\n{formatted}"));
+    let toks = Lexer::new(&formatted).tokenize().unwrap_or_else(|e| {
+        panic!("formatted output failed to lex: {e:?}\nformatted:\n{formatted}")
+    });
+    Parser::new(toks).parse_program().unwrap_or_else(|e| {
+        panic!("formatted output failed to parse: {e:?}\nformatted:\n{formatted}")
+    });
     // And idempotency on top of round-trip-parse.
     let second = format(&formatted).expect("second format");
     assert_eq!(

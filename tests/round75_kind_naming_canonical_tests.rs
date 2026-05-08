@@ -312,13 +312,9 @@ fn user_facing_type_name_titlecase_aligned_with_type_name() {
         let ok = match v {
             Value::Record(name, _) => ufn == *name,
             Value::Variant(tag, _) => ufn == *tag,
-            Value::VariantConstructor(name, _) => {
-                ufn == format!("VariantConstructor `{name}`")
-            }
+            Value::VariantConstructor(name, _) => ufn == format!("VariantConstructor `{name}`"),
             Value::TypeDescriptor(name) => ufn == format!("TypeDescriptor `{name}`"),
-            Value::PrimitiveDescriptor(name) => {
-                ufn == format!("PrimitiveDescriptor `{name}`")
-            }
+            Value::PrimitiveDescriptor(name) => ufn == format!("PrimitiveDescriptor `{name}`"),
             _ => ufn == tn,
         };
         assert!(

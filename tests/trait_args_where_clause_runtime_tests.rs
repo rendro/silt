@@ -44,7 +44,10 @@ fn type_errors_full(input: &str) -> Vec<(String, Span)> {
 }
 
 fn type_errors(input: &str) -> Vec<String> {
-    type_errors_full(input).into_iter().map(|(m, _)| m).collect()
+    type_errors_full(input)
+        .into_iter()
+        .map(|(m, _)| m)
+        .collect()
 }
 
 /// Run a silt source program via the `silt run` subprocess and return
@@ -201,9 +204,7 @@ fn main() { println(\"x\".bar()) }
     let errs = type_errors_full(src);
     let mismatches: Vec<_> = errs
         .iter()
-        .filter(|(m, _)| {
-            m.contains("type mismatch") || m.contains("expected") && m.contains("got")
-        })
+        .filter(|(m, _)| m.contains("type mismatch") || m.contains("expected") && m.contains("got"))
         .collect();
     assert!(
         !mismatches.is_empty(),

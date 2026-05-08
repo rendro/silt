@@ -209,7 +209,9 @@ fn both_sites_iterate_primitive_names_via_for_loop() {
 
 #[test]
 fn both_sites_iterate_container_names_via_for_loop() {
-    let dispatch_iters = DISPATCH_SRC.matches("BUILTIN_GENERIC_CONTAINER_NAMES").count();
+    let dispatch_iters = DISPATCH_SRC
+        .matches("BUILTIN_GENERIC_CONTAINER_NAMES")
+        .count();
     let builtins_iters = TYPECHECKER_BUILTINS_SRC
         .matches("BUILTIN_GENERIC_CONTAINER_NAMES")
         .count();
@@ -259,9 +261,7 @@ fn every_primitive_descriptor_name_is_a_runtime_global() {
         // because typed-descriptor values are typechecker-only carriers
         // (`TypeOf(<inner>)`) and don't have user-callable methods
         // beyond `Type::parse` / `Type::empty` style statics.
-        let src = format!(
-            "fn main() {{\n    let _d = {name}\n    println(\"ok\")\n}}\n"
-        );
+        let src = format!("fn main() {{\n    let _d = {name}\n    println(\"ok\")\n}}\n");
         let path = temp_silt_file(&format!("primdesc_{name}"), &src);
 
         let output = Command::new(env!("CARGO_BIN_EXE_silt"))

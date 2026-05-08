@@ -1102,7 +1102,14 @@ impl Parser {
             Ok(pair) => pair,
             Err(e) => {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
+                    self.make_recovery_stub(
+                        name,
+                        name_span,
+                        params,
+                        return_type,
+                        span,
+                        doc.clone(),
+                    ),
                     e,
                 )));
             }
@@ -1145,7 +1152,14 @@ impl Parser {
             })();
             if let Err(e) = result {
                 return Err(Box::new((
-                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
+                    self.make_recovery_stub(
+                        name,
+                        name_span,
+                        params,
+                        return_type,
+                        span,
+                        doc.clone(),
+                    ),
                     e,
                 )));
             }
@@ -1172,7 +1186,14 @@ impl Parser {
                 Ok(e) => (e, false),
                 Err(err) => {
                     return Err(Box::new((
-                        self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
+                        self.make_recovery_stub(
+                            name,
+                            name_span,
+                            params,
+                            return_type,
+                            span,
+                            doc.clone(),
+                        ),
                         err,
                     )));
                 }
@@ -1182,7 +1203,14 @@ impl Parser {
                 Ok(b) => (b, false),
                 Err(err) => {
                     return Err(Box::new((
-                        self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
+                        self.make_recovery_stub(
+                            name,
+                            name_span,
+                            params,
+                            return_type,
+                            span,
+                            doc.clone(),
+                        ),
                         err,
                     )));
                 }
@@ -4446,9 +4474,7 @@ fn main() {
         let (_, arms) = last_match_of_main(&prog);
         if let PatternKind::List(ref pats, ref rest) = arms[0].pattern.kind {
             assert_eq!(pats.len(), 1);
-            assert!(
-                matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h"))
-            );
+            assert!(matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h")));
             assert!(rest.is_some());
             assert!(
                 matches!(&rest.as_deref().unwrap().kind, PatternKind::Ident(n) if *n == intern::intern("t"))
@@ -4457,9 +4483,7 @@ fn main() {
             panic!("expected list pattern");
         }
         // Second arm: empty list
-        assert!(
-            matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty())
-        );
+        assert!(matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty()));
     }
 
     #[test]

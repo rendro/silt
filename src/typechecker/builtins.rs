@@ -840,10 +840,7 @@ impl TypeChecker {
                     let (v, vv) = self.fresh_tv();
                     (
                         vec![kv, vv],
-                        Type::Generic(
-                            intern("TypeOf"),
-                            vec![Type::Map(Box::new(k), Box::new(v))],
-                        ),
+                        Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
                     )
                 }
                 // `Tuple` is registered VM-side as a `TypeDescriptor`

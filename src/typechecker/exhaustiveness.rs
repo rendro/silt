@@ -1204,8 +1204,12 @@ impl TypeChecker {
                             PatternKind::Wildcard | PatternKind::Ident(_) => {
                                 Some(synth(PatternKind::Wildcard))
                             }
-                            PatternKind::Record { fields: r_fields, .. }
-                            | PatternKind::AnonRecord { fields: r_fields, .. } => {
+                            PatternKind::Record {
+                                fields: r_fields, ..
+                            }
+                            | PatternKind::AnonRecord {
+                                fields: r_fields, ..
+                            } => {
                                 let sub = r_fields
                                     .iter()
                                     .find(|(n, _)| n == fname)

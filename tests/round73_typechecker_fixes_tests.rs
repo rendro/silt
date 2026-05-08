@@ -141,10 +141,8 @@ fn main() {
         "expected a where-constraint diagnostic on the anon-record receiver, got none"
     );
     assert!(
-        errs.iter().any(|e| {
-            e.contains("does not implement trait")
-                && e.contains("MyTrait")
-        }),
+        errs.iter()
+            .any(|e| { e.contains("does not implement trait") && e.contains("MyTrait") }),
         "expected `does not implement trait 'MyTrait'` for the anon record, got: {errs:?}"
     );
 }

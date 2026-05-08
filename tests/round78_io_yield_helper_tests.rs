@@ -74,8 +74,7 @@ fn pending_io_assignment_lives_only_inside_park_helper() {
 #[test]
 fn io_builtins_do_not_hand_roll_args_pushback() {
     const EXCLUDED: &[&str] = &["concurrency.rs", "common.rs"];
-    let builtins_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins");
+    let builtins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins");
     let entries = std::fs::read_dir(&builtins_dir)
         .unwrap_or_else(|e| panic!("read_dir {builtins_dir:?}: {e}"));
 
@@ -101,8 +100,7 @@ fn io_builtins_do_not_hand_roll_args_pushback() {
         if fname == "mod.rs" {
             continue;
         }
-        let src = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let n = src.matches("for arg in args").count();
         scanned.push(fname.clone());
         if n > 0 {
@@ -292,10 +290,7 @@ fn main() -> () {
     let async_outcome = InProcessRunner::new(async_src)
         .with_budget(Duration::from_secs(5))
         .run_trial();
-    assert!(
-        async_outcome.ok(),
-        "async sleep failed: {async_outcome:?}"
-    );
+    assert!(async_outcome.ok(), "async sleep failed: {async_outcome:?}");
 
     assert_eq!(sync.result, Some(Value::Unit));
     assert_eq!(async_outcome.result, Some(Value::Unit));

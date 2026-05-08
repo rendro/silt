@@ -118,12 +118,8 @@ fn init_project() {
     // name shadowed the stdlib `io` module.
     if let Err(msg) = silt::manifest::validate_package_name(&package_name) {
         eprintln!("silt init: {msg}");
-        eprintln!(
-            "       (the package name was derived from the directory name `{dirname}`;"
-        );
-        eprintln!(
-            "        rename the directory or run `silt init` from a directory whose name"
-        );
+        eprintln!("       (the package name was derived from the directory name `{dirname}`;");
+        eprintln!("        rename the directory or run `silt init` from a directory whose name");
         eprintln!("        is not a stdlib module).");
         process::exit(1);
     }

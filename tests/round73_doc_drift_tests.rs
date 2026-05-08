@@ -117,7 +117,10 @@ const CONCURRENCY_DOC_SRC: &str = include_str!("../docs/concurrency.md");
 #[test]
 fn b4_loops_doc_does_not_claim_bare_loop_iterates() {
     let runtime = read_doc(LOOPS_DOC_PATH);
-    assert_eq!(LOOPS_DOC_SRC, runtime, "include_str! and runtime read disagree");
+    assert_eq!(
+        LOOPS_DOC_SRC, runtime,
+        "include_str! and runtime read disagree"
+    );
 
     assert!(
         !LOOPS_DOC_SRC.contains("repeats its body indefinitely"),

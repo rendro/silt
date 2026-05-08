@@ -150,7 +150,12 @@ fn round77_builtin_enum_variants_still_complete_regression_check() {
     //   * prelude:   `Ok`, `Some`
     //   * channels:  `Recv`
     //   * time:      `Monday`
-    let probes = [("Ok", "Ok"), ("Som", "Some"), ("Rec", "Recv"), ("Mon", "Monday")];
+    let probes = [
+        ("Ok", "Ok"),
+        ("Som", "Some"),
+        ("Rec", "Recv"),
+        ("Mon", "Monday"),
+    ];
     for (prefix, expected) in probes {
         let matches = completion_candidates_for_prefix(prefix);
         assert!(

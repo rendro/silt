@@ -215,8 +215,7 @@ fn gated_variants_list_matches_gated_constructor_module() {
     // And every non-prelude variant in `builtin_enum_variants` must
     // appear in `GATED_VARIANTS` (sanity-checked from the other
     // direction; otherwise this test would be vacuous on additions).
-    let listed: std::collections::BTreeSet<&'static str> =
-        GATED_VARIANTS.iter().copied().collect();
+    let listed: std::collections::BTreeSet<&'static str> = GATED_VARIANTS.iter().copied().collect();
     let mut missing: Vec<(&'static str, &'static str)> = Vec::new();
     for (enum_name, variants) in builtin_enum_variants() {
         if PRELUDE_ENUMS.contains(enum_name) {

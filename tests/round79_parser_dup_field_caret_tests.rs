@@ -90,7 +90,8 @@ fn duplicate_anon_record_field_caret_lands_on_second_field_name() {
     );
 
     assert_eq!(
-        err.span.offset, want,
+        err.span.offset,
+        want,
         "duplicate-field error span must point at the second `a` (offset {}), \
          not at the trailing `,` or `}}`. \
          Got offset {} (byte {:?}). Full source: {:?}. Error: {}",

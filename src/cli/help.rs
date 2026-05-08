@@ -98,8 +98,7 @@ pub(crate) fn usage_text() -> String {
 /// suggestion path so a typo like `silt --verison` surfaces a "did you
 /// mean '--version'" hint rather than the generic "Unknown command"
 /// noise. Keep in sync with the match arms in `run_main`.
-pub(crate) const GLOBAL_FLAGS: &[&str] =
-    &["--version", "-V", "-v", "--help", "-h", "help"];
+pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-h", "help"];
 
 /// Single source of truth for the `silt check` usage banner line.
 /// Both the `--help` path and the "no arguments given" path render

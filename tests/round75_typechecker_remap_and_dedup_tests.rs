@@ -69,7 +69,9 @@ fn type3_canonical_module_canonicalize_unrelated_names_round_trip() {
     // Note: `()` is the alias; it does NOT round-trip — it collapses
     // to "Unit". Everything else round-trips.
     let res = Resolver::new();
-    for n in ["Int", "List", "Map", "Set", "Tuple", "Foo", "Bar", "Bool", "Unit"] {
+    for n in [
+        "Int", "List", "Map", "Set", "Tuple", "Foo", "Bar", "Bool", "Unit",
+    ] {
         let s = intern(n);
         assert_eq!(
             canonicalize_type_name(&res, s),
@@ -185,8 +187,9 @@ fn dead3_duplicate_let_top_level_emits_canonical_error() {
     let dup = errs
         .iter()
         .filter(|e| {
-            e.message
-                .contains("duplicate top-level definition of 'x'; names must be unique at module scope")
+            e.message.contains(
+                "duplicate top-level definition of 'x'; names must be unique at module scope",
+            )
         })
         .count();
     assert!(
@@ -317,9 +320,7 @@ fn type1_instantiate_with_constraints_substitutes_through_args_in_source() {
     // The mod.rs file should now invoke `substitute_vars(t, &mapping)`
     // INSIDE the trait_arg_bindings remap loop (sibling
     // method-constraints loop already did this; the fix mirrors it).
-    let occurrences = TYPECHECKER_MOD_RS
-        .matches(must_contain)
-        .count();
+    let occurrences = TYPECHECKER_MOD_RS.matches(must_contain).count();
     assert!(
         occurrences >= 3,
         "round 75 TYPE-1 LATENT: expected `{must_contain}` to appear at \
@@ -391,8 +392,8 @@ fn main() {
 fn type2_align_tyvars_walks_anon_record_fields() {
     // Construct an old/new pair with parallel AnonRecord shapes and
     // assert that `align_tyvars` recovers the inner-tyvar mapping.
-    use std::collections::BTreeMap;
     use silt::types::{RowTail, TyVar, Type};
+    use std::collections::BTreeMap;
     let old_v: TyVar = 42;
     let new_v: TyVar = 99;
     let old_tail: TyVar = 7;

@@ -164,15 +164,18 @@ fn postgres_source_has_typed_io_helpers() {
     // started failing silently. Round 79 retargets it at the
     // post-consolidation pattern: the typed-protocol surface should
     // total at least 9 sites across the three helpers.
-    let entry_guard_with = src.matches("io_entry_guard_with(args, &pg_timeout_err)").count();
+    let entry_guard_with = src
+        .matches("io_entry_guard_with(args, &pg_timeout_err)")
+        .count();
     let submit_with = src.matches("submit_with(pg_completion()").count();
     let submit_io_or_run = src
         .matches("submit_io_or_run(args, pg_completion(), &pg_timeout_err,")
         .count();
-    let run_or_submit_io = src.matches("run_or_submit_io(args, pg_completion(),").count();
+    let run_or_submit_io = src
+        .matches("run_or_submit_io(args, pg_completion(),")
+        .count();
 
-    let typed_protocol_total =
-        entry_guard_with + submit_with + submit_io_or_run + run_or_submit_io;
+    let typed_protocol_total = entry_guard_with + submit_with + submit_io_or_run + run_or_submit_io;
     assert!(
         typed_protocol_total >= 9,
         "expected at least 9 typed-pg-protocol sites in src/builtins/postgres.rs \

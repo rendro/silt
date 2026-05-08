@@ -106,8 +106,7 @@ fn main() {
 /// of a run that pretends the program is well-typed.
 #[test]
 fn t2_broken_program_does_not_silently_print_haha() {
-    let runner =
-        InProcessRunner::new(T2_BROKEN_PROGRAM).with_budget(Duration::from_secs(5));
+    let runner = InProcessRunner::new(T2_BROKEN_PROGRAM).with_budget(Duration::from_secs(5));
     let outcome = runner.run_trial();
     assert!(
         !outcome.stdout.contains("haha"),

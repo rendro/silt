@@ -26,8 +26,7 @@
 //!   body documented the running and parked cases but was silent on
 //!   the queued-but-not-yet-running case.
 
-const STRICT_EFFECTS_MIGRATION: &str =
-    include_str!("../docs/strict-effects-migration.md");
+const STRICT_EFFECTS_MIGRATION: &str = include_str!("../docs/strict-effects-migration.md");
 const EFFECT_ROWS_PROPOSAL: &str = include_str!("../docs/proposals/effect-rows.md");
 const MODULES_DOC: &str = include_str!("../docs/language/modules.md");
 const GENERICS_DOC: &str = include_str!("../docs/language/generics.md");
@@ -121,9 +120,7 @@ fn generics_doc_no_phantom_ordered_as_builtin() {
 
     let defines_ordered_on_page = section.contains("trait Ordered");
     let mentions_real_auto_derived = section.contains("Equal")
-        && (section.contains("Hash")
-            || section.contains("Compare")
-            || section.contains("Display"));
+        && (section.contains("Hash") || section.contains("Compare") || section.contains("Display"));
 
     assert!(
         defines_ordered_on_page || mentions_real_auto_derived,
@@ -181,8 +178,9 @@ fn task_cancel_doc_explains_queued_case() {
     // must mention the queued / not-yet-running case in addition to the
     // running and parked cases.
     let lower = BUILTINS_DOCS_RS.to_lowercase();
-    let queued_words =
-        lower.contains("queued") || lower.contains("not yet running") || lower.contains("not-yet-running");
+    let queued_words = lower.contains("queued")
+        || lower.contains("not yet running")
+        || lower.contains("not-yet-running");
     assert!(
         queued_words,
         "src/typechecker/builtins/docs.rs task.cancel doc body should \

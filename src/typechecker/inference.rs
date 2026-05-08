@@ -2633,16 +2633,11 @@ impl TypeChecker {
                     // List` — without the `type` prefix used by the
                     // primitive arm above), preserving observable
                     // behavior across all four heads.
-                    ref t @ (Type::List(_)
-                    | Type::Tuple(_)
-                    | Type::Map(_, _)
-                    | Type::Set(_)) => {
+                    t @ (Type::List(_) | Type::Tuple(_) | Type::Map(_, _) | Type::Set(_)) => {
                         let type_name = self
                             .type_name_for_impl(t)
                             .expect("container head has canonical name");
-                        if let Some(entry) =
-                            self.method_table.get(&(type_name, field)).cloned()
-                        {
+                        if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);

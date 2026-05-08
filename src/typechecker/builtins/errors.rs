@@ -201,22 +201,21 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // cfg-aware filter is preserved by skipping `PgError`/`TcpError`
     // when their features are off — matching what the previous
     // hand-rolled vec literal expressed via `#[cfg(...)] vec.push(...)`.
-    let enum_names: Vec<&'static str> =
-        crate::module::builtin_error_enum_variants_with_arity()
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| {
-                #[cfg(not(feature = "postgres"))]
-                if *name == "PgError" {
-                    return false;
-                }
-                #[cfg(not(feature = "tcp"))]
-                if *name == "TcpError" {
-                    return false;
-                }
-                true
-            })
-            .collect();
+    let enum_names: Vec<&'static str> = crate::module::builtin_error_enum_variants_with_arity()
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|_name| {
+            #[cfg(not(feature = "postgres"))]
+            if *_name == "PgError" {
+                return false;
+            }
+            #[cfg(not(feature = "tcp"))]
+            if *_name == "TcpError" {
+                return false;
+            }
+            true
+        })
+        .collect();
     for enum_name in &enum_names {
         for trait_name in &["Error", "Display"] {
             checker

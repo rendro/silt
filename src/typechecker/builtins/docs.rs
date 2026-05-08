@@ -1,3 +1,10 @@
+// The `#[cfg(test)] mod tests` block sits in the middle of this file;
+// the `pub(super) const ..._MD: &str` items below it follow the
+// per-module markdown convention (one big raw-string per stdlib
+// module). Suppressing `clippy::items_after_test_module` here keeps
+// the test fixture inline with the helpers it tests.
+#![allow(clippy::items_after_test_module)]
+
 //! Shared helper for attaching markdown documentation to built-in
 //! names registered in the per-module `register(checker, env)`
 //! routines under `src/typechecker/builtins/`.

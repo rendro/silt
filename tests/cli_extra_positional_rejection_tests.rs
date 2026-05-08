@@ -58,11 +58,7 @@ fn silt_run_rejects_two_file_positionals() {
     write_trivial(&b);
 
     let out = silt_cmd()
-        .args([
-            "run",
-            a.to_str().unwrap(),
-            b.to_str().unwrap(),
-        ])
+        .args(["run", a.to_str().unwrap(), b.to_str().unwrap()])
         .output()
         .expect("failed to run silt");
 
@@ -91,13 +87,7 @@ fn silt_run_accepts_extras_after_double_dash() {
     write_trivial(&a);
 
     let out = silt_cmd()
-        .args([
-            "run",
-            a.to_str().unwrap(),
-            "--",
-            "extra1",
-            "extra2",
-        ])
+        .args(["run", a.to_str().unwrap(), "--", "extra1", "extra2"])
         .output()
         .expect("failed to run silt");
 
@@ -120,11 +110,7 @@ fn silt_check_rejects_two_file_positionals() {
     write_trivial(&b);
 
     let out = silt_cmd()
-        .args([
-            "check",
-            a.to_str().unwrap(),
-            b.to_str().unwrap(),
-        ])
+        .args(["check", a.to_str().unwrap(), b.to_str().unwrap()])
         .output()
         .expect("failed to run silt");
 
@@ -152,13 +138,7 @@ fn silt_check_accepts_extras_after_double_dash() {
     write_trivial(&a);
 
     let out = silt_cmd()
-        .args([
-            "check",
-            a.to_str().unwrap(),
-            "--",
-            "extra1",
-            "extra2",
-        ])
+        .args(["check", a.to_str().unwrap(), "--", "extra1", "extra2"])
         .output()
         .expect("failed to run silt");
 
@@ -180,11 +160,7 @@ fn silt_disasm_rejects_two_file_positionals() {
     write_trivial(&b);
 
     let out = silt_cmd()
-        .args([
-            "disasm",
-            a.to_str().unwrap(),
-            b.to_str().unwrap(),
-        ])
+        .args(["disasm", a.to_str().unwrap(), b.to_str().unwrap()])
         .output()
         .expect("failed to run silt");
 
@@ -211,13 +187,7 @@ fn silt_disasm_accepts_extras_after_double_dash() {
     write_trivial(&a);
 
     let out = silt_cmd()
-        .args([
-            "disasm",
-            a.to_str().unwrap(),
-            "--",
-            "extra1",
-            "extra2",
-        ])
+        .args(["disasm", a.to_str().unwrap(), "--", "extra1", "extra2"])
         .output()
         .expect("failed to run silt");
 

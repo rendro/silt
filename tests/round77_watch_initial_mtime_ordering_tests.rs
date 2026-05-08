@@ -51,22 +51,18 @@ fn initial_run_assigns_last_run_system_before_subprocess() {
     // First wall-clock timestamp capture in the function body. This is
     // the initial-run assignment after the round-77 fix; pre-fix it
     // came AFTER the initial subprocess call.
-    let assign_pos = body
-        .find("last_run_system = SystemTime::now()")
-        .expect(
-            "watch_and_rerun must capture `last_run_system = SystemTime::now()` \
+    let assign_pos = body.find("last_run_system = SystemTime::now()").expect(
+        "watch_and_rerun must capture `last_run_system = SystemTime::now()` \
              — the mtime check in any_silt_path_mtime_newer depends on it",
-        );
+    );
 
     // First subprocess invocation in the function body. Both rerun
     // branches and the initial branch use `Command::new(&exe)` — the
     // very first hit corresponds to the initial run.
-    let cmd_pos = body
-        .find("Command::new(&exe)")
-        .expect(
-            "watch_and_rerun must invoke the compile subprocess via \
+    let cmd_pos = body.find("Command::new(&exe)").expect(
+        "watch_and_rerun must invoke the compile subprocess via \
              `Command::new(&exe)`",
-        );
+    );
 
     assert!(
         assign_pos < cmd_pos,
@@ -98,12 +94,10 @@ fn last_run_instant_also_precedes_initial_subprocess() {
         .expect("src/watch.rs must define `pub fn watch_and_rerun(...)`");
     let body = &src[fn_start..];
 
-    let assign_pos = body
-        .find("last_run = Instant::now()")
-        .expect(
-            "watch_and_rerun must capture `last_run = Instant::now()` for the \
+    let assign_pos = body.find("last_run = Instant::now()").expect(
+        "watch_and_rerun must capture `last_run = Instant::now()` for the \
              debounce window check in should_rerun_now",
-        );
+    );
     let cmd_pos = body
         .find("Command::new(&exe)")
         .expect("watch_and_rerun must invoke the compile subprocess");

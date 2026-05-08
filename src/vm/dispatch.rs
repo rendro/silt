@@ -115,7 +115,10 @@ static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
     ("TcpError", builtins::tcp::call_tcp_error_trait),
     ("TimeError", builtins::data::call_time_error_trait),
     ("BytesError", builtins::bytes::call_bytes_error_trait),
-    ("ChannelError", builtins::concurrency::call_channel_error_trait),
+    (
+        "ChannelError",
+        builtins::concurrency::call_channel_error_trait,
+    ),
 ];
 
 /// Look up the `trait Error` dispatch helper for a given builtin enum
@@ -226,10 +229,8 @@ impl Vm {
         // Round-73 BLOAT-2 fix: name set hoisted to
         // `module::BUILTIN_PRIMITIVE_NAMES`.
         for name in module::BUILTIN_PRIMITIVE_NAMES {
-            self.globals.insert(
-                (*name).into(),
-                Value::PrimitiveDescriptor((*name).into()),
-            );
+            self.globals
+                .insert((*name).into(), Value::PrimitiveDescriptor((*name).into()));
         }
 
         // Builtin container type descriptors — uppercase names so users

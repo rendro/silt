@@ -189,7 +189,8 @@ fn main() {
          SILT_IO_TIMEOUT may not have been read by Scheduler::new."
     );
     assert_eq!(
-        adds, removes,
+        adds,
+        removes,
         "round-75 VM-1: I/O Blocked-arm cancel-setup race leaked \
          {} watchdog registry entries (adds={adds}, removes={removes}). \
          The F10 cancelled-mid-setup else branch must call \

@@ -24,8 +24,7 @@ const VM_MOD_PATH: &str = "src/vm/mod.rs";
 /// Read the source file. Tests run with `cargo test`, whose cwd is the
 /// crate root, so a relative path is correct here.
 fn read_vm_mod() -> String {
-    fs::read_to_string(VM_MOD_PATH)
-        .unwrap_or_else(|e| panic!("failed to read {VM_MOD_PATH}: {e}"))
+    fs::read_to_string(VM_MOD_PATH).unwrap_or_else(|e| panic!("failed to read {VM_MOD_PATH}: {e}"))
 }
 
 /// Find the field-doc block immediately preceding `pub(crate) regex_cache:`

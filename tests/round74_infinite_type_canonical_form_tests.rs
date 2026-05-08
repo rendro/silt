@@ -34,8 +34,8 @@
 //! signature change must update these tests.
 
 use silt::intern::intern;
-use silt::types::RowTail;
 use silt::typechecker::{Type, TypeChecker};
+use silt::types::RowTail;
 use std::collections::BTreeMap;
 
 const TYPECHECKER_MOD_RS: &str = include_str!("../src/typechecker/mod.rs");

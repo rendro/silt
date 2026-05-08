@@ -97,10 +97,14 @@ fn every_registry_enum_has_a_dispatch_table_entry() {
     let close = after.find("];").expect("ERROR_TRAIT_DISPATCH not closed");
     let table = &after[..close];
 
+    // Round 79 follow-up: tolerate both single-line `("Foo", call_foo)`
+    // and rustfmt-broken-up multi-line `( "Foo", call_foo, )` forms.
+    // Compare on a whitespace-collapsed view of the table.
+    let table_compact: String = table.chars().filter(|c| !c.is_whitespace()).collect();
     let mut missing: Vec<&'static str> = Vec::new();
     for (enum_name, _) in builtin_error_enum_variants_with_arity() {
         let key_lit = format!("(\"{enum_name}\",");
-        if !table.contains(&key_lit) {
+        if !table_compact.contains(&key_lit) {
             missing.push(enum_name);
         }
     }
@@ -145,8 +149,9 @@ fn every_registry_enum_message_routes_through_table() {
     fn ctor_call_for(_enum_name: &str, variant: &str, _arity: usize) -> Option<String> {
         match variant {
             "ParseEmpty" | "ChannelTimeout" => Some(variant.to_string()),
-            "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect"
-            | "TimeParseFormat" => Some(format!(r#"{variant}("x")"#)),
+            "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect" | "TimeParseFormat" => {
+                Some(format!(r#"{variant}("x")"#))
+            }
             "BytesInvalidUtf8" => Some(format!(r#"{variant}(0)"#)),
             "JsonSyntax" | "TomlSyntax" | "RegexInvalidPattern" => {
                 Some(format!(r#"{variant}("x", 0)"#))

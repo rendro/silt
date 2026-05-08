@@ -106,7 +106,12 @@ const FORBIDDEN: &[ForbiddenPattern] = &[
         // Include the `.` and trailing word boundary via the close-
         // paren / space / pipe so `string.upper_case` (hypothetical)
         // would not match. Real builtin is `string.to_upper`.
-        needles: &["string.upper ", "string.upper(", "string.upper}", "string.upper\n"],
+        needles: &[
+            "string.upper ",
+            "string.upper(",
+            "string.upper}",
+            "string.upper\n",
+        ],
         why: "real builtin is `string.to_upper` (see \
               `src/typechecker/builtins/string.rs:103`)",
     },
@@ -114,7 +119,12 @@ const FORBIDDEN: &[ForbiddenPattern] = &[
         name: "string.lower",
         // Symmetric guard: `string.lower` is also not a builtin —
         // the real one is `string.to_lower`.
-        needles: &["string.lower ", "string.lower(", "string.lower}", "string.lower\n"],
+        needles: &[
+            "string.lower ",
+            "string.lower(",
+            "string.lower}",
+            "string.lower\n",
+        ],
         why: "real builtin is `string.to_lower` (see \
               `src/typechecker/builtins/string.rs:109`)",
     },
@@ -133,7 +143,14 @@ const FORBIDDEN: &[ForbiddenPattern] = &[
     },
     ForbiddenPattern {
         name: "where-clause `Into(...)` constraint",
-        needles: &[": Into(", "+ Into(", ", a: Into(", ", b: Into(", ", k: Into(", ", v: Into("],
+        needles: &[
+            ": Into(",
+            "+ Into(",
+            ", a: Into(",
+            ", b: Into(",
+            ", k: Into(",
+            ", v: Into(",
+        ],
         why: "`Into` is not a registered trait; define a domain \
               trait (see the `Convert(b)` example in generics.md)",
     },

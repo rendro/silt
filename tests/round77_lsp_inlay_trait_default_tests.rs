@@ -285,9 +285,7 @@ fn main() { 0 }
         .iter()
         .find(|h| h.get("label").and_then(|l| l.as_str()) == Some(": Int"))
         .expect("`: Int` hint must exist");
-    let pos = int_hint
-        .get("position")
-        .expect("hint has a position");
+    let pos = int_hint.get("position").expect("hint has a position");
     // The `let x = 1` sits on line 3 of `src` (zero-indexed): line 0
     // is the type decl, 1 is `trait Foo {`, 2 is `  fn bar(self) ->
     // Int {`, 3 is `    let x = 1`. The rendered hint sits right after

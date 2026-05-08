@@ -252,10 +252,7 @@ fn apply_edit(source: &str, edit: &Value) -> String {
         .pointer("/start/character")
         .and_then(|v| v.as_u64())
         .unwrap() as usize;
-    let el = range
-        .pointer("/end/line")
-        .and_then(|v| v.as_u64())
-        .unwrap() as usize;
+    let el = range.pointer("/end/line").and_then(|v| v.as_u64()).unwrap() as usize;
     let ec = range
         .pointer("/end/character")
         .and_then(|v| v.as_u64())

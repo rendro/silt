@@ -57,9 +57,7 @@ fn parse_program(src: &str) -> Result<Program, String> {
     let tokens = Lexer::new(src)
         .tokenize()
         .map_err(|e| format!("lex error: {}", e.message))?;
-    Parser::new(tokens)
-        .parse_program()
-        .map_err(|e| e.message)
+    Parser::new(tokens).parse_program().map_err(|e| e.message)
 }
 
 /// Parse + typecheck. Returns Ok(()) when both succeed without errors,
@@ -206,9 +204,8 @@ fn accept_corpus_typechecks() {
     let float_patterns = ["1.0..10.0", "-1.5..1.5", "-2.5..-1.5", "1.5..-1.5"];
     for p in int_patterns.iter().chain(float_patterns.iter()) {
         let src = match_with_pattern(p);
-        parse_and_typecheck(&src).unwrap_or_else(|e| {
-            panic!("pattern `{p}` should typecheck cleanly, got error: {e}")
-        });
+        parse_and_typecheck(&src)
+            .unwrap_or_else(|e| panic!("pattern `{p}` should typecheck cleanly, got error: {e}"));
     }
 }
 

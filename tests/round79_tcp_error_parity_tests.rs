@@ -142,9 +142,7 @@ fn main() {
   tcp.accept(id(123))
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src)
-        .tokenize()
-        .expect("lex error");
+    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
     let mut program = silt::parser::Parser::new(tokens)
         .parse_program()
         .expect("parse error");

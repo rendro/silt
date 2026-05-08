@@ -664,8 +664,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // stash `(state, result)` in `BuiltinAcc::State` and the callback
             // value in the `SuspendedBuiltin`. We also handle a mid-callback
             // yield via `suspended_invoke`.
-            let (mut state, mut result, callback) = if let Some(susp) =
-                vm.take_suspended_builtin()
+            let (mut state, mut result, callback) = if let Some(susp) = vm.take_suspended_builtin()
             {
                 if susp.name == "list.unfold" {
                     if let BuiltinAcc::State(s, r) = susp.acc {

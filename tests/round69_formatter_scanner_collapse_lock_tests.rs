@@ -62,8 +62,8 @@ fn assert_formatted_parses(source: &str) -> String {
 /// one pass on this input).
 fn assert_idempotent(source: &str) {
     let first = assert_formatted_parses(source);
-    let second = format(&first)
-        .unwrap_or_else(|e| panic!("second format failed: {e:?}\nfirst:\n{first}"));
+    let second =
+        format(&first).unwrap_or_else(|e| panic!("second format failed: {e:?}\nfirst:\n{first}"));
     assert_eq!(
         first, second,
         "formatter must be idempotent across two passes\n---first---\n{first}\n---second---\n{second}"

@@ -6332,7 +6332,10 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("http.request requires String, got"), "got: {err}");
+    assert!(
+        err.contains("http.request requires String, got"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -6345,7 +6348,10 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("http.request requires String, got"), "got: {err}");
+    assert!(
+        err.contains("http.request requires String, got"),
+        "got: {err}"
+    );
 }
 
 #[test]

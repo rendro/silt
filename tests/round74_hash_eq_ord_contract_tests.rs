@@ -15,8 +15,8 @@
 //! same code path.
 
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Command;
@@ -97,11 +97,7 @@ fn float_extfloat_nan_ord_distinct() {
 fn list_range_equal_pairs_hash_equal() {
     // Range(1,3) materializes to [1,2,3]; PartialEq returns true (line
     // ~1729-1730), so Hash and Ord must agree.
-    let list = Value::List(Arc::new(vec![
-        Value::Int(1),
-        Value::Int(2),
-        Value::Int(3),
-    ]));
+    let list = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
     let range = Value::Range(1, 3);
     assert_eq!(list, range);
     assert_eq!(range, list);

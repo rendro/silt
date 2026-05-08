@@ -117,18 +117,27 @@ fn tuple_expr(elems: Vec<Expr>) -> Expr {
 /// because that is what the parser produces for surface-syntax method
 /// calls.
 fn method_call(recv: Expr, method: Symbol, args: Vec<Expr>) -> Expr {
-    let fa = Expr::new(ExprKind::FieldAccess(Box::new(recv), method), Span::synthetic());
+    let fa = Expr::new(
+        ExprKind::FieldAccess(Box::new(recv), method),
+        Span::synthetic(),
+    );
     Expr::new(ExprKind::Call(Box::new(fa), args), Span::synthetic())
 }
 
 /// `recv.field` — record field access.
 fn field_access(recv: Expr, field: Symbol) -> Expr {
-    Expr::new(ExprKind::FieldAccess(Box::new(recv), field), Span::synthetic())
+    Expr::new(
+        ExprKind::FieldAccess(Box::new(recv), field),
+        Span::synthetic(),
+    )
 }
 
 /// `a + b` — used to combine display strings.
 fn bin(a: Expr, op: BinOp, b: Expr) -> Expr {
-    Expr::new(ExprKind::Binary(Box::new(a), op, Box::new(b)), Span::synthetic())
+    Expr::new(
+        ExprKind::Binary(Box::new(a), op, Box::new(b)),
+        Span::synthetic(),
+    )
 }
 
 fn match_expr(scrut: Expr, arms: Vec<MatchArm>) -> Expr {
@@ -335,7 +344,10 @@ fn synth_binop_match_enum(
     let make_method = |body: Expr| {
         fn_decl(
             method_name,
-            vec![param(self_sym, self_te.clone()), param(other_sym, self_te.clone())],
+            vec![
+                param(self_sym, self_te.clone()),
+                param(other_sym, self_te.clone()),
+            ],
             Some(ret_ty.clone()),
             body,
         )
@@ -773,6 +785,7 @@ fn synth_binop_record_impl(
 /// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is
 /// `empty_body` when `fields` is empty, otherwise the result of
 /// `full_body(self_sym, fields)`.
+#[allow(clippy::too_many_arguments)]
 fn synth_unop_record_impl(
     trait_name: Symbol,
     method_name: Symbol,

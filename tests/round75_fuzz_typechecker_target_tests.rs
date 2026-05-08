@@ -88,10 +88,7 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type()
-                .map(|ft| ft.is_file())
-                .unwrap_or(false)
-                && e.file_name() != ".gitkeep"
+            e.file_type().map(|ft| ft.is_file()).unwrap_or(false) && e.file_name() != ".gitkeep"
         })
         .take(10)
         .collect();

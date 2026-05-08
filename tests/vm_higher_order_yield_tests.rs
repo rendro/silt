@@ -82,7 +82,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "Some(1)", "list.min_by [3,1,2] should be Some(1)");
+    assert_eq!(
+        out.trim(),
+        "Some(1)",
+        "list.min_by [3,1,2] should be Some(1)"
+    );
 }
 
 // ── list.max_by ─────────────────────────────────────────────────────
@@ -108,7 +112,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "Some(3)", "list.max_by [3,1,2] should be Some(3)");
+    assert_eq!(
+        out.trim(),
+        "Some(3)",
+        "list.max_by [3,1,2] should be Some(3)"
+    );
 }
 
 // ── list.scan ───────────────────────────────────────────────────────

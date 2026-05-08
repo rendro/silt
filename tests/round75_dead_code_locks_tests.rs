@@ -190,7 +190,11 @@ fn dead6_no_production_caller_for_effectset_len() {
         // `<effects-typed-thing>.len()`. The module already exposes
         // `is_empty` / `iter` / `contains`, so production code has no
         // reason to call `.len()` on an `EffectSet`.
-        let fragments = ["EffectSet::len(", ".declared_effects.len(", ".inferred_effects.len("];
+        let fragments = [
+            "EffectSet::len(",
+            ".declared_effects.len(",
+            ".inferred_effects.len(",
+        ];
         for needle in fragments {
             assert!(
                 !src.contains(needle),

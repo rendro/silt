@@ -66,9 +66,7 @@ fn main() {
     );
     assert!(
         errs.iter().any(|e| {
-            e.contains("does not implement trait")
-                && e.contains("MyTrait")
-                && e.contains("<anon>")
+            e.contains("does not implement trait") && e.contains("MyTrait") && e.contains("<anon>")
         }),
         "expected an error of the form \"type '<anon>' does not implement trait 'MyTrait'\"; \
          got: {errs:?}"

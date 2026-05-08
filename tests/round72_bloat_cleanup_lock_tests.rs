@@ -144,8 +144,7 @@ fn l5_no_synth_span_call_sites_left_in_typechecker() {
 #[test]
 fn l5_span_synthetic_constructor_present_in_lexer() {
     assert!(
-        LEXER_SRC.contains("pub fn synthetic")
-            || LEXER_SRC.contains("pub const SYNTHETIC"),
+        LEXER_SRC.contains("pub fn synthetic") || LEXER_SRC.contains("pub const SYNTHETIC"),
         "src/lexer.rs::impl Span must expose a `synthetic()` constructor \
          (or `SYNTHETIC` const) after the round-72 L5 fix. This is the \
          single source of truth that replaces the two `synth_span` \
@@ -229,12 +228,7 @@ fn l5_exhaustiveness_runtime_still_renders_diagnostic() {
     // explicitly that the path components do NOT contain any of the
     // diagnostic substrings.
     let path_str = path.to_string_lossy().to_lowercase();
-    for needle in [
-        "non-exhaustive",
-        "nonexhaustive",
-        "not exhaustive",
-        "blue",
-    ] {
+    for needle in ["non-exhaustive", "nonexhaustive", "not exhaustive", "blue"] {
         assert!(
             !path_str.contains(needle),
             "tempfile path {path_str:?} contains substring {needle:?} \

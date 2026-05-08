@@ -147,8 +147,9 @@ fn every_registered_error_enum_message_dispatches() {
             // arity-0
             "ParseEmpty" | "ChannelTimeout" => Some(variant.to_string()),
             // arity-1 String
-            "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect"
-            | "TimeParseFormat" => Some(format!(r#"{variant}("x")"#)),
+            "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect" | "TimeParseFormat" => {
+                Some(format!(r#"{variant}("x")"#))
+            }
             // arity-1 Int
             "BytesInvalidUtf8" => Some(format!(r#"{variant}(0)"#)),
             // arity-2 (String, Int)

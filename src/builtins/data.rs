@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
+use super::common::value_kind;
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
-use super::common::value_kind;
 use crate::value::{IoCompletion, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 

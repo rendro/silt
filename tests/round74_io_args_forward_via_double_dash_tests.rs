@@ -57,14 +57,7 @@ fn silt_run_forwards_program_args_after_double_dash() {
     write_args_dumper(&script);
 
     let out = silt_cmd()
-        .args([
-            "run",
-            script.to_str().unwrap(),
-            "--",
-            "foo",
-            "bar",
-            "baz",
-        ])
+        .args(["run", script.to_str().unwrap(), "--", "foo", "bar", "baz"])
         .output()
         .expect("failed to run silt");
 
@@ -192,12 +185,7 @@ fn silt_bare_file_shim_forwards_program_args_after_double_dash() {
     write_args_dumper(&script);
 
     let out = silt_cmd()
-        .args([
-            script.to_str().unwrap(),
-            "--",
-            "alpha",
-            "beta",
-        ])
+        .args([script.to_str().unwrap(), "--", "alpha", "beta"])
         .output()
         .expect("failed to run silt");
 

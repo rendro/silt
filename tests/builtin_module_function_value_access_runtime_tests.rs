@@ -96,9 +96,7 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
         .trim_start_matches("ThreadId(")
         .trim_end_matches(')')
         .to_string();
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_value_access_rt_{label}_p{pid}_t{tid}.silt"
-    ));
+    let tmp = std::env::temp_dir().join(format!("silt_value_access_rt_{label}_p{pid}_t{tid}.silt"));
     std::fs::write(&tmp, src).expect("write temp file");
     let bin = env!("CARGO_BIN_EXE_silt");
     let out = Command::new(bin)

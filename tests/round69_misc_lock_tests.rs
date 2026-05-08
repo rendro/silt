@@ -69,11 +69,7 @@ fn scratch_with_bad_silt() -> PathBuf {
     .unwrap();
     // Extra whitespace + unindented body: parses fine but the formatter
     // would rewrite. Forces fmt --check to actually walk the tree.
-    fs::write(
-        dir.join("bad.silt"),
-        "fn  main( ) {\nprintln(\"hi\")\n}\n",
-    )
-    .unwrap();
+    fs::write(dir.join("bad.silt"), "fn  main( ) {\nprintln(\"hi\")\n}\n").unwrap();
     dir
 }
 

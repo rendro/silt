@@ -105,8 +105,8 @@ mod tls {
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
     use super::{
-        ReadWrite, TcpStreamHandle, Value, Vm, VmError, err_tls, ok, require_bytes,
-        require_listener, require_string, tcp_completion, tcp_timeout_err,
+        ReadWrite, TcpStreamHandle, Value, Vm, VmError, require_bytes, require_listener,
+        require_string, tcp_completion, tcp_timeout_err,
     };
 
     /// `connect_tls(addr, hostname) -> Result(TcpStream, String)`. Opens a
@@ -121,15 +121,18 @@ mod tls {
         let addr = require_string(&args[0], "tcp.connect_tls")?.to_string();
         let hostname = require_string(&args[1], "tcp.connect_tls")?.to_string();
         let next_id = vm.next_tcp_id();
-        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
-            match do_connect_tls(&addr, &hostname, next_id) {
+        vm.submit_io_or_run(
+            args,
+            tcp_completion(),
+            &tcp_timeout_err,
+            move || match do_connect_tls(&addr, &hostname, next_id) {
                 Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
                 Err(e) => Value::Variant(
                     "Err".into(),
                     vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
                 ),
-            }
-        })
+            },
+        )
     }
 
     /// `accept_tls(listener, cert_pem, key_pem) -> Result(TcpStream, String)`.
@@ -144,15 +147,18 @@ mod tls {
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
         let next_id = vm.next_tcp_id();
-        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
-            match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
+        vm.submit_io_or_run(
+            args,
+            tcp_completion(),
+            &tcp_timeout_err,
+            move || match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
                 Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
                 Err(e) => Value::Variant(
                     "Err".into(),
                     vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
                 ),
-            }
-        })
+            },
+        )
     }
 
     /// `accept_tls_mtls(listener, cert_pem, key_pem, client_ca_pem)
@@ -449,19 +455,6 @@ fn err(s: impl Into<String>) -> Value {
     )
 }
 
-/// Build `Err(TcpTls(msg))` — rustls handshake / cert errors surface
-/// as `String` rather than `io::Error`, so they need their own helper.
-#[cfg(feature = "tcp-tls")]
-fn err_tls(s: impl Into<String>) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "TcpTls".into(),
-            vec![Value::String(s.into())],
-        )],
-    )
-}
-
 /// Build `Err(TcpClosed)`.
 fn err_closed() -> Value {
     Value::Variant(
@@ -707,8 +700,11 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
     let next_id = vm.next_tcp_id();
-    vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
-        match listener.listener.accept() {
+    vm.submit_io_or_run(
+        args,
+        tcp_completion(),
+        &tcp_timeout_err,
+        move || match listener.listener.accept() {
             Ok((stream, _addr)) => {
                 let shutdown_sock = stream.try_clone().ok();
                 let reader_socket = raw_socket_of(&stream);
@@ -722,8 +718,8 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
-        }
-    })
+        },
+    )
 }
 
 fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
@@ -732,8 +728,11 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let addr = require_string(&args[0], "tcp.connect")?.to_string();
     let next_id = vm.next_tcp_id();
-    vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
-        match TcpStream::connect(&addr) {
+    vm.submit_io_or_run(
+        args,
+        tcp_completion(),
+        &tcp_timeout_err,
+        move || match TcpStream::connect(&addr) {
             Ok(stream) => {
                 let shutdown_sock = stream.try_clone().ok();
                 let reader_socket = raw_socket_of(&stream);
@@ -747,8 +746,8 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
-        }
-    })
+        },
+    )
 }
 
 fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {

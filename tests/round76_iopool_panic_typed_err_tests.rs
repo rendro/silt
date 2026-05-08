@@ -88,10 +88,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
              Got: {:?}",
             inner
         ),
-        other => panic!(
-            "expected typed inner variant, got {:?}",
-            other
-        ),
+        other => panic!("expected typed inner variant, got {:?}", other),
     };
 
     assert_eq!(

@@ -61,9 +61,7 @@ fn run_session(script: &str) -> SessionOutput {
         if !script.ends_with('\n') {
             stdin.write_all(b"\n").expect("failed to write newline");
         }
-        stdin
-            .write_all(b":quit\n")
-            .expect("failed to write :quit");
+        stdin.write_all(b":quit\n").expect("failed to write :quit");
     }
     drop(child.stdin.take());
 

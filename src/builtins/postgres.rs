@@ -37,7 +37,7 @@ use r2d2_postgres::PostgresConnectionManager;
 
 use super::common::value_kind;
 use crate::value::{Channel, IoCompletion, TrySendResult, Value};
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{Vm, VmError};
 
 /// Factory: deadline-cancelled postgres op surfaces as `Err(PgTimeout)`
 /// rather than the default `Err(IoUnknown(_))`. Used by every postgres.*
@@ -894,9 +894,7 @@ fn extract_pool_id(v: &Value) -> Result<u64, VmError> {
         )));
     };
     if tag != "PgPool" {
-        return Err(VmError::new(format!(
-            "postgres requires PgPool, got {tag}"
-        )));
+        return Err(VmError::new(format!("postgres requires PgPool, got {tag}")));
     }
     match payload.first() {
         Some(Value::Int(n)) if *n >= 0 => Ok(*n as u64),
@@ -914,9 +912,7 @@ fn extract_tx_id(v: &Value) -> Result<u64, VmError> {
         )));
     };
     if tag != "PgTx" {
-        return Err(VmError::new(format!(
-            "postgres requires PgTx, got {tag}"
-        )));
+        return Err(VmError::new(format!("postgres requires PgTx, got {tag}")));
     }
     match payload.first() {
         Some(Value::Int(n)) if *n >= 0 => Ok(*n as u64),

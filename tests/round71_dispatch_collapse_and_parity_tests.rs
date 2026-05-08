@@ -363,7 +363,13 @@ fn phase_0_canonical_wording_appears_at_most_once() {
         ("typechecker/builtins/errors.rs", ERRORS_BUILTIN_SRC),
     ]
     .iter()
-    .filter_map(|(name, src)| if src.contains(needle) { Some(*name) } else { None })
+    .filter_map(|(name, src)| {
+        if src.contains(needle) {
+            Some(*name)
+        } else {
+            None
+        }
+    })
     .collect();
     assert!(
         occurrences.len() <= 1,

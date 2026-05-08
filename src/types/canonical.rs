@@ -215,6 +215,7 @@ impl Resolver {
     /// indefinitely (round 76 audit T1 stack overflow). On detection,
     /// returns the offending cycle's head triple so the caller can
     /// emit a typed diagnostic; the binding is *not* inserted.
+    #[allow(clippy::result_large_err)]
     pub fn register_assoc_binding(
         &mut self,
         trait_name: Symbol,
@@ -288,10 +289,9 @@ impl Resolver {
                 }
                 self.find_assoc_cycle(receiver, visited)
             }
-            Type::List(inner)
-            | Type::Range(inner)
-            | Type::Set(inner)
-            | Type::Channel(inner) => self.find_assoc_cycle(inner, visited),
+            Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+                self.find_assoc_cycle(inner, visited)
+            }
             Type::Map(k, v) => self
                 .find_assoc_cycle(k, visited)
                 .or_else(|| self.find_assoc_cycle(v, visited)),

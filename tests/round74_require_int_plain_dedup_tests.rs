@@ -110,9 +110,9 @@ fn main() { stream.count(stream.from_range("nope", 100)) }
 "#;
     let outcome = try_run(src);
     let err = match outcome {
-        Ok(v) => panic!(
-            "expected runtime error from stream.from_range(\"nope\", 100); got Ok({v:?})"
-        ),
+        Ok(v) => {
+            panic!("expected runtime error from stream.from_range(\"nope\", 100); got Ok({v:?})")
+        }
         Err(msg) => msg,
     };
     assert!(

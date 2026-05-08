@@ -660,11 +660,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
 ///   * If `e.span` is `None`, call
 ///     `render_runtime_error_without_source(msg, false)` — a plain
 ///     `error[runtime]:` header with no locator.
-fn render_repl_vm_error(
-    e: &VmError,
-    input: &str,
-    adjust: Option<(usize, usize, usize, usize)>,
-) {
+fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, usize, usize)>) {
     if let Some(span) = e.span {
         let resolved = match adjust {
             Some((prefix_len, input_lines, input_bytes, last_line_cols)) => {
@@ -686,8 +682,7 @@ fn render_repl_vm_error(
         // numbers come from the original REPL input buffer (or the wrapped
         // input for `eval_expression`) and don't carry usable positions
         // here, so we label every frame `<declaration>`.
-        for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
-        {
+        for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string()) {
             eprintln!("{line}");
         }
     } else {

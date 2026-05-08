@@ -1794,10 +1794,8 @@ impl TypeChecker {
                     Some(Type::Var(new_tv)) => *new_tv,
                     _ => *tv,
                 };
-                let new_args: Vec<Type> = args
-                    .iter()
-                    .map(|t| substitute_vars(t, &mapping))
-                    .collect();
+                let new_args: Vec<Type> =
+                    args.iter().map(|t| substitute_vars(t, &mapping)).collect();
                 (new_tv, *trait_name, new_args)
             })
             .collect();
@@ -1875,10 +1873,8 @@ impl TypeChecker {
                         // sibling at `:1773-1776` already does this on
                         // the method-table path; the trait-arg
                         // side-channel did not.
-                        let new_args: Vec<Type> = args
-                            .iter()
-                            .map(|t| substitute_vars(t, &mapping))
-                            .collect();
+                        let new_args: Vec<Type> =
+                            args.iter().map(|t| substitute_vars(t, &mapping)).collect();
                         self.trait_arg_bindings
                             .insert((*new_tv, trait_name), new_args);
                     }
@@ -2487,10 +2483,8 @@ impl TypeChecker {
                     .impl_constraints
                     .iter()
                     .map(|(idx, t, args)| {
-                        let new_args: Vec<Type> = args
-                            .iter()
-                            .map(|a| substitute_vars(a, &ty_remap))
-                            .collect();
+                        let new_args: Vec<Type> =
+                            args.iter().map(|a| substitute_vars(a, &ty_remap)).collect();
                         (*idx, *t, new_args)
                     })
                     .collect();
@@ -2510,10 +2504,8 @@ impl TypeChecker {
                     .method_constraints
                     .iter()
                     .map(|(tv, t, args)| {
-                        let new_args: Vec<Type> = args
-                            .iter()
-                            .map(|a| substitute_vars(a, &ty_remap))
-                            .collect();
+                        let new_args: Vec<Type> =
+                            args.iter().map(|a| substitute_vars(a, &ty_remap)).collect();
                         (*tv_remap.get(tv).unwrap_or(tv), *t, new_args)
                     })
                     .collect();
@@ -4474,9 +4466,7 @@ impl TypeChecker {
                     // and emit a proper arity diagnostic for `Bytes(Int)`.
                     // The bare-name path is handled in the `Named` arm
                     // above. See round 72 GAP G1.
-                    "Bytes" if resolved_args.is_empty() => {
-                        Type::Generic(intern("Bytes"), vec![])
-                    }
+                    "Bytes" if resolved_args.is_empty() => Type::Generic(intern("Bytes"), vec![]),
                     "TcpListener" if resolved_args.is_empty() => {
                         Type::Generic(intern("TcpListener"), vec![])
                     }
@@ -6040,8 +6030,7 @@ impl TypeChecker {
                     // If resolved is concrete (shouldn't happen — impl_param_map
                     // only inserts fresh Var entries) treat it as a tautology.
                     if let Some(idx) = ti.target_param_names.iter().position(|n| n == type_param) {
-                        impl_obligations_by_index
-                            .push((idx, *trait_name, resolved_bound_args));
+                        impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
                     }
                 }
                 None => {
@@ -6727,19 +6716,15 @@ pub(super) fn scheme_narrowed(old: &Type, new: &Type) -> bool {
             if op.len() != np.len() {
                 return true;
             }
-            op.iter().zip(np.iter()).any(|(a, b)| scheme_narrowed(a, b))
-                || scheme_narrowed(or_, nr)
+            op.iter().zip(np.iter()).any(|(a, b)| scheme_narrowed(a, b)) || scheme_narrowed(or_, nr)
         }
         (Type::List(o), Type::List(n)) => scheme_narrowed(o, n),
         (Type::Range(o), Type::Range(n)) => scheme_narrowed(o, n),
-        (Type::List(o), Type::Range(n)) | (Type::Range(o), Type::List(n)) => {
-            scheme_narrowed(o, n)
-        }
+        (Type::List(o), Type::Range(n)) | (Type::Range(o), Type::List(n)) => scheme_narrowed(o, n),
         (Type::Set(o), Type::Set(n)) => scheme_narrowed(o, n),
         (Type::Channel(o), Type::Channel(n)) => scheme_narrowed(o, n),
         (Type::Tuple(o), Type::Tuple(n)) => {
-            o.len() != n.len()
-                || o.iter().zip(n.iter()).any(|(a, b)| scheme_narrowed(a, b))
+            o.len() != n.len() || o.iter().zip(n.iter()).any(|(a, b)| scheme_narrowed(a, b))
         }
         (Type::Map(ok, ov), Type::Map(nk, nv)) => {
             scheme_narrowed(ok, nk) || scheme_narrowed(ov, nv)
@@ -6747,7 +6732,10 @@ pub(super) fn scheme_narrowed(old: &Type, new: &Type) -> bool {
         (Type::Record(on, of), Type::Record(nn, nf)) => {
             on != nn
                 || of.len() != nf.len()
-                || of.iter().zip(nf.iter()).any(|((_, a), (_, b))| scheme_narrowed(a, b))
+                || of
+                    .iter()
+                    .zip(nf.iter())
+                    .any(|((_, a), (_, b))| scheme_narrowed(a, b))
         }
         (Type::Generic(on, oa), Type::Generic(nn, na)) => {
             on != nn
@@ -7191,8 +7179,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             .iter()
             .map(|(name, _)| *name)
             .collect();
-    let mut all_enum_names: Vec<&'static str> =
-        vec!["Step", "ChannelResult", "Method", "Weekday"];
+    let mut all_enum_names: Vec<&'static str> = vec!["Step", "ChannelResult", "Method", "Weekday"];
     // Stdlib error enums: Display + Error are already registered in
     // `errors.rs`; re-stamping with all_auto_traits adds the missing
     // Equal/Compare/Hash without disturbing the existing entries
@@ -7482,10 +7469,11 @@ impl ReplTypeContext {
                             self.env.define(*item, scheme);
                         }
                     }
-                } else if self
-                    .checker
-                    .merge_imported_module_exports(*module, *module, &mut self.env)
-                {
+                } else if self.checker.merge_imported_module_exports(
+                    *module,
+                    *module,
+                    &mut self.env,
+                ) {
                     // Round 75 DEAD-DRIFT: route through the same
                     // helper as `check_program` so the REPL sees
                     // producer-side exports for non-builtin modules
@@ -7553,10 +7541,11 @@ impl ReplTypeContext {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.checker.imported_modules.insert(*module);
-                } else if self
-                    .checker
-                    .merge_imported_module_exports(*module, *module, &mut self.env)
-                {
+                } else if self.checker.merge_imported_module_exports(
+                    *module,
+                    *module,
+                    &mut self.env,
+                ) {
                     // Round 75 DEAD-DRIFT: parallel REPL path —
                     // producer-side exports merged for non-builtin
                     // bare-module imports.

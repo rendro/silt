@@ -113,7 +113,8 @@ fn round73_map_multiline_trailing_comment_on_value_line_byte_exact() {
 #[test]
 fn round73_map_multiline_standalone_interior_comment_byte_exact() {
     let src = "fn main() {\n    let m = #{\n        \"a\": 1,\n        -- between\n        \"b\": 2,\n    }\n}\n";
-    let expected = "fn main() {\n  let m = #{\n    \"a\": 1,\n    -- between\n    \"b\": 2,\n  }\n}\n";
+    let expected =
+        "fn main() {\n  let m = #{\n    \"a\": 1,\n    -- between\n    \"b\": 2,\n  }\n}\n";
     assert_byte_exact("map_standalone", src, expected);
 }
 
@@ -148,7 +149,8 @@ fn round73_nested_list_in_map_byte_exact() {
     // input would diverge if the helper ever switched back to eager
     // rendering.
     let src = "fn main() {\n    let m = #{\n        \"xs\": [\n            1, -- one\n            2,\n        ], -- xs\n        \"y\": 99,\n    }\n}\n";
-    let expected = "fn main() {\n  let m = #{ \"xs\": [\n    1, -- one\n    2,\n  ], \"y\": 99, }\n}\n";
+    let expected =
+        "fn main() {\n  let m = #{ \"xs\": [\n    1, -- one\n    2,\n  ], \"y\": 99, }\n}\n";
     assert_byte_exact("nested_list_in_map", src, expected);
 }
 
@@ -218,9 +220,6 @@ fn count_fn_body_lines(src: &str, name: &str) -> usize {
             _ => {}
         }
     }
-    assert!(
-        byte_end > 0,
-        "could not find matching `}}` for fn `{name}`"
-    );
+    assert!(byte_end > 0, "could not find matching `}}` for fn `{name}`");
     after[..byte_end].lines().count()
 }

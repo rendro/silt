@@ -38,8 +38,9 @@ fn module_defines_primitive_names_constant() {
     // Sanity: at minimum the five canonical primitives must be present.
     let actual: std::collections::BTreeSet<&str> =
         BUILTIN_PRIMITIVE_NAMES.iter().copied().collect();
-    let expected: std::collections::BTreeSet<&str> =
-        ["Int", "Float", "ExtFloat", "String", "Bool"].into_iter().collect();
+    let expected: std::collections::BTreeSet<&str> = ["Int", "Float", "ExtFloat", "String", "Bool"]
+        .into_iter()
+        .collect();
     assert!(
         expected.is_subset(&actual),
         "BUILTIN_PRIMITIVE_NAMES must contain {expected:?}; got {actual:?}"
@@ -56,8 +57,9 @@ fn module_defines_generic_container_names_constant() {
     );
     let actual: std::collections::BTreeSet<&str> =
         BUILTIN_GENERIC_CONTAINER_NAMES.iter().copied().collect();
-    let expected: std::collections::BTreeSet<&str> =
-        ["List", "Map", "Set", "Channel", "Tuple"].into_iter().collect();
+    let expected: std::collections::BTreeSet<&str> = ["List", "Map", "Set", "Channel", "Tuple"]
+        .into_iter()
+        .collect();
     assert!(
         expected.is_subset(&actual),
         "BUILTIN_GENERIC_CONTAINER_NAMES must contain {expected:?}; \

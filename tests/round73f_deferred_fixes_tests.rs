@@ -393,8 +393,7 @@ fn main() { int.abs("not-an-int") }
     );
     // Negative locks: pre-fix terse wording must not return.
     assert!(
-        !err_str.contains("int.abs requires an int")
-            && !err_str.contains("int.abs requires a int"),
+        !err_str.contains("int.abs requires an int") && !err_str.contains("int.abs requires a int"),
         "terse pre-fix wording must not surface anywhere. Got: {err_str}"
     );
 }

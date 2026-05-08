@@ -88,8 +88,7 @@ fn vscode_readme_inlay_hint_wording_matches_impl() {
 
     // Positive: the new wording.
     assert!(
-        VSCODE_README_SRC
-            .contains("inferred types for `let`-bindings and unannotated parameters"),
+        VSCODE_README_SRC.contains("inferred types for `let`-bindings and unannotated parameters"),
         "editors/vscode/README.md should describe inlay hints as `inferred types for \
          `let`-bindings and unannotated parameters rendered as inline hints` — \
          matching `src/lsp/inlay_hints.rs:7-19`."

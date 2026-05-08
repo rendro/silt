@@ -138,9 +138,7 @@ fn canonical_dispatch_name_for_value_does_not_emit_old_variant_tags() {
          values is `\"Fn\"` (round 77 BROKEN fix lock)"
     );
     assert!(
-        !src.contains(
-            r#"Value::VariantConstructor(..) => Some("VariantConstructor".to_string())"#
-        ),
+        !src.contains(r#"Value::VariantConstructor(..) => Some("VariantConstructor".to_string())"#),
         "pre-fix literal `Value::VariantConstructor(..) => \
          Some(\"VariantConstructor\".to_string())` must not return; \
          canonical dispatch name for function-shaped values is `\"Fn\"` \

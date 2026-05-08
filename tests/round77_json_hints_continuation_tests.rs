@@ -102,7 +102,9 @@ fn test_silt_check_json_emits_unprefixed_continuation_note_round77() {
             })
             .collect();
         assert!(
-            hint_strs.iter().any(|h| h.contains("add one as the entry point")),
+            hint_strs
+                .iter()
+                .any(|h| h.contains("add one as the entry point")),
             "expected hints to contain the continuation note 'add one as the entry point', got: {hint_strs:?}\nfull JSON:\n{stdout}"
         );
         // Backward-compat: the message line itself must NOT carry the

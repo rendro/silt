@@ -165,8 +165,7 @@ impl Server {
         // dropping the broken top block is strictly an improvement.
         let mut value = String::new();
         if let Some(t) = ty {
-            let render_top_signature =
-                !(has_unresolved_vars(&t) && doc_text.is_some());
+            let render_top_signature = !(has_unresolved_vars(&t) && doc_text.is_some());
             if render_top_signature {
                 value.push_str(&format!("```silt\n{t}\n```"));
             }
