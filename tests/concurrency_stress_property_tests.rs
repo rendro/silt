@@ -625,12 +625,27 @@ proptest! {
     })]
 
     /// Master property: any generated concurrent program must
-    /// terminate within 5s with an acceptable exit code + stderr shape
-    /// (invariants 1–4).
+    /// terminate within the per-case budget with an acceptable exit
+    /// code + stderr shape (invariants 1–4).
+    ///
+    /// Default budget is 5s; raised to 10s on Windows CI to absorb
+    /// the documented 3–5× slowness of GitHub windows-latest runners
+    /// at process spawning + file I/O. A randomly-generated program
+    /// with a few `time.sleep(time.ms(N))` + `task.join` chains can
+    /// trip the 5s ceiling under Windows runner contention even when
+    /// the program is well-behaved (round 79 follow-up: observed
+    /// `TIMEOUT after 5.12s (max 5s)` on a chain of two send + two
+    /// sleep + one done-channel waiter, which finishes well under
+    /// 1s on Linux/macOS).
     #[test]
     fn prop_random_concurrent_program_obeys_hardness_invariants(prog in genp::arb_program()) {
+        let budget = if cfg!(target_os = "windows") && std::env::var("CI").is_ok() {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(5)
+        };
         let src = emit_program(&prog);
-        let outcome = run_silt_timeout("prop", &src, Duration::from_secs(5));
+        let outcome = run_silt_timeout("prop", &src, budget);
         if let Err(msg) = check_invariants(&src, &outcome) {
             // `prop_assert!` + shrinking will produce the minimal failing
             // source; include the diagnostic message for triage.
