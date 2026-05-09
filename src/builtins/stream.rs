@@ -95,7 +95,10 @@ fn push(out: &Channel, val: &Value) -> bool {
 fn require_channel<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<Channel>, VmError> {
     match arg {
         Value::Channel(c) => Ok(c),
-        _ => Err(VmError::new(format!("{fn_label} requires Channel"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires Channel, got {}",
+            super::common::value_kind(other)
+        ))),
     }
 }
 
@@ -113,7 +116,10 @@ fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError
 fn require_callable<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Value, VmError> {
     match arg {
         Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Ok(arg),
-        _ => Err(VmError::new(format!("{fn_label} requires a function"))),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires Fn, got {}",
+            super::common::value_kind(other)
+        ))),
     }
 }
 
@@ -1243,7 +1249,7 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                             other => {
                                 return Ok(err_tcp_unknown(format!(
                                     "stream.write_to_tcp: Ok(_) wrapper expected Bytes, got {}",
-                                    type_name(&other)
+                                    super::common::value_kind(&other)
                                 )));
                             }
                         }
@@ -1255,7 +1261,7 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                     other => {
                         return Ok(err_tcp_unknown(format!(
                             "stream.write_to_tcp expected Bytes, got {}",
-                            type_name(&other)
+                            super::common::value_kind(&other)
                         )));
                     }
                 };
@@ -1306,7 +1312,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
                             other => {
                                 return Ok(err_io_unknown(format!(
                                     "stream.write_to_file: Ok(_) wrapper expected Bytes, got {}",
-                                    type_name(&other)
+                                    super::common::value_kind(&other)
                                 )));
                             }
                         }
@@ -1318,7 +1324,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
                     other => {
                         return Ok(err_io_unknown(format!(
                             "stream.write_to_file expected Bytes, got {}",
-                            type_name(&other)
+                            super::common::value_kind(&other)
                         )));
                     }
                 };
@@ -1336,16 +1342,3 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
     Ok(ok(Value::Unit))
 }
 
-fn type_name(v: &Value) -> &'static str {
-    match v {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::String(_) => "String",
-        Value::Bool(_) => "Bool",
-        Value::List(_) => "List",
-        Value::Bytes(_) => "Bytes",
-        Value::Channel(_) => "Channel",
-        Value::Variant(..) => "Variant",
-        _ => "value",
-    }
-}

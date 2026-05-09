@@ -1811,8 +1811,20 @@ impl Vm {
             }
             Op::PopN => {
                 let count = self.read_u8()? as usize;
-                let new_len = self.stack.len().saturating_sub(count);
-                self.stack.truncate(new_len);
+                // Defense-in-depth: a saturating subtraction silently
+                // truncates to an empty stack on over-pop, masking
+                // compiler bugs that emit too-large a popcount. Match
+                // the strict underflow handling used by `Op::Pop` (and
+                // the rest of the dispatch) by returning a hard error
+                // instead.
+                if count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "internal VM error: PopN underflow (count {count}, \
+                         stack size {})",
+                        self.stack.len()
+                    )));
+                }
+                self.stack.truncate(self.stack.len() - count);
             }
             Op::Dup => {
                 let val = self.peek()?.clone();
@@ -2138,9 +2150,18 @@ impl Vm {
                 let method_name_index = self.read_u16()? as usize;
                 let argc = self.read_u8()? as usize;
                 let method_name = self.read_constant_string(method_name_index)?;
-                if argc > self.stack.len() {
+                // Defense-in-depth: the compiler always emits
+                // `argc = (args.len() + 1) as u8` (the receiver counts
+                // toward argc), so argc==0 means corrupt bytecode and
+                // would otherwise OOB-index `self.stack[receiver_slot]`
+                // below (receiver_slot would equal stack.len()).
+                // Reject argc==0 alongside the upper-bound check, using
+                // the canonical `internal VM error:` prefix.
+                if argc == 0 || argc > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "call method '{method_name}': argc {argc} exceeds stack size {}",
+                        "internal VM error: call method '{method_name}' \
+                         expects argc >= 1 (receiver required) and argc \
+                         <= stack size; got argc {argc}, stack size {}",
                         self.stack.len()
                     )));
                 }

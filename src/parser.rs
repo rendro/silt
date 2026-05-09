@@ -46,7 +46,7 @@ type Result<T> = std::result::Result<T, ParseError>;
 /// which lines are part of a comment so the parser can verify that the
 /// decl on line L+1 is IMMEDIATELY adjacent to the doc block.
 #[derive(Debug, Default, Clone)]
-pub struct DocIndex {
+pub(crate) struct DocIndex {
     /// `docs_by_end_line[line]` = doc block ending at that line, if any.
     /// The block ends on the line whose `--`/`-}` closes the block. The
     /// decl that consumes this doc must begin on line `end_line + 1`.
@@ -58,7 +58,7 @@ impl DocIndex {
     ///
     /// The scan is string-aware (skips `"..."`, `"""..."""`, and
     /// interpolation braces) but otherwise independent of the lexer.
-    pub fn from_source(source: &str) -> Self {
+    pub(crate) fn from_source(source: &str) -> Self {
         let bytes = source.as_bytes();
         let n = bytes.len();
 
@@ -416,7 +416,7 @@ impl DocIndex {
     /// Look up the doc comment block that ENDS on the line immediately
     /// before `decl_line`. Returns `None` if there's no such block, or
     /// if the line between is blank (meaning the comment isn't adjacent).
-    pub fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {
+    pub(crate) fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {
         if decl_line == 0 {
             return None;
         }

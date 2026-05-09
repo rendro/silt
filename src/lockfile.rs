@@ -500,7 +500,7 @@ impl Lockfile {
 /// Excluded by virtue of not walking them: `silt.lock`, `target/`,
 /// `.git/`. Sticking to `src/` makes the checksum mean exactly "the
 /// sources the compiler will see".
-pub fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::Error> {
+pub(crate) fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::Error> {
     let src_root = pkg_root.join("src");
     let mut entries: Vec<(String, String)> = Vec::new();
     if src_root.is_dir() {

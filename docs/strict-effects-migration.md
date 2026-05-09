@@ -1,6 +1,7 @@
 ---
 title: "Strict-effects mode: migration guide"
 section: "Guide"
+order: 6
 status: stable
 ---
 

@@ -290,35 +290,53 @@ pub(super) fn fn_param_names(f: &FnDecl) -> Vec<String> {
 }
 
 /// Build a function's type signature from its typed body.
-/// Extracts parameter types from the body expression's typed sub-expressions.
+///
+/// For each param, the lookup order is:
+///   1. The user-written type annotation on the param (`a: Int`) — lowered
+///      via `super::fields::type_expr_to_type`. This is the authoritative
+///      source whenever the user wrote one.
+///   2. A body walk that finds an `Ident` reference to the param and grabs
+///      its inferred type. Catches the case where the param is unannotated
+///      but the typechecker pinned it through body usage.
+///   3. A `Type::Var(0)` placeholder — rendered as `_` by the type
+///      formatter — so signatureHelp / hover still show *something* for
+///      a fully unconstrained, unused, unannotated param.
+///
+/// Round-80 L4: the prior implementation walked the body for every param
+/// and returned `None` if any param was unused inside the body. That
+/// dropped the entire fn signature for `fn ignore(a: Int, b: Int) -> Int
+/// = 42` — hover returned null and signatureHelp lost the param types.
+/// The new lookup order prefers the user's annotation so fully-annotated
+/// signatures with unused params now produce a complete `Type::Fun(..)`.
 pub(super) fn build_fn_type(f: &FnDecl) -> Option<Type> {
     // After type checking, the body has a resolved type (the return type).
     let ret_ty = f.body.ty.as_ref()?;
 
-    // Extract param types: each param pattern may have been given a type
-    // during checking. We look at the body — if it's a block, the params
-    // were bound there. But the simplest reliable source is the function's
-    // own usage. As a practical approach: walk the body to find Ident nodes
-    // matching param names and grab their types.
-    let param_names: Vec<Symbol> = f
-        .params
-        .iter()
-        .filter_map(|p| {
-            if let PatternKind::Ident(name) = &p.pattern.kind {
-                Some(*name)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut param_types = Vec::new();
-    for name in &param_names {
-        if let Some(ty) = find_param_type(&f.body, *name) {
-            param_types.push(ty);
-        } else {
-            return None; // Can't determine a param type
+    let mut param_types = Vec::with_capacity(f.params.len());
+    for param in &f.params {
+        // 1. Prefer the user-written annotation on this param.
+        if let Some(te) = &param.ty {
+            param_types.push(super::fields::type_expr_to_type(te));
+            continue;
         }
+        // 2. Body walk for inferred type from a usage site.
+        let name_opt = if let PatternKind::Ident(name) = &param.pattern.kind {
+            Some(*name)
+        } else {
+            None
+        };
+        if let Some(name) = name_opt
+            && let Some(ty) = find_param_type(&f.body, name)
+        {
+            param_types.push(ty);
+            continue;
+        }
+        // 3. Fully unconstrained — render as `_` rather than dropping
+        //    the entire signature. `Type::Var(0)` formats as `_` per
+        //    `impl Display for Type` (src/types/mod.rs:110), matching
+        //    silt's "I don't care about this type" rendering used
+        //    elsewhere in diagnostics.
+        param_types.push(Type::Var(0));
     }
 
     Some(Type::Fun(param_types, Box::new(ret_ty.clone())))

@@ -50,14 +50,19 @@ main() {
 
     printf "  Extracting\n"
     if [ "$ext" = "tar.gz" ]; then
-        tar xzf "$tmpdir/silt.$ext" -C "$tmpdir"
+        tar xzf "$tmpdir/silt.$ext" -C "$tmpdir" \
+            || err "failed to extract archive (tar returned non-zero — corrupted download?)"
     else
-        unzip -q "$tmpdir/silt.$ext" -d "$tmpdir"
+        unzip -q "$tmpdir/silt.$ext" -d "$tmpdir" \
+            || err "failed to extract archive (unzip returned non-zero — corrupted download?)"
     fi
 
-    mkdir -p "$INSTALL_DIR"
-    cp "$tmpdir/$bin" "$INSTALL_DIR/$bin"
-    chmod +x "$INSTALL_DIR/$bin"
+    mkdir -p "$INSTALL_DIR" \
+        || err "failed to create install dir $INSTALL_DIR (permission denied?)"
+    cp "$tmpdir/$bin" "$INSTALL_DIR/$bin" \
+        || err "failed to install binary to $INSTALL_DIR (permission denied?)"
+    chmod +x "$INSTALL_DIR/$bin" \
+        || err "failed to mark $INSTALL_DIR/$bin executable (permission denied?)"
 
     printf "\n  silt %s installed to %s\n\n" "$version" "$INSTALL_DIR/$bin"
 

@@ -337,77 +337,60 @@ mod tls {
     /// inner `StreamOwned` type already implements `Read + Write`, but the
     /// monomorphised type names differ (`ClientConnection` vs
     /// `ServerConnection`), so we wrap rather than carrying a bound through.
-    struct ClientStreamWrapper {
-        inner: rustls::StreamOwned<ClientConnection, TcpStream>,
-    }
-    impl ClientStreamWrapper {
-        fn complete_io_handshake(&mut self) -> Result<(), String> {
-            // rustls::StreamOwned negotiates lazily on first read/write.
-            // Force handshake completion now so connect_tls failures are
-            // reported synchronously rather than at the first I/O call.
-            while self.inner.conn.is_handshaking() {
-                self.inner
-                    .conn
-                    .complete_io(&mut self.inner.sock)
-                    .map_err(|e| format!("tls handshake: {e}"))?;
+    ///
+    /// Round 80 dedup (DUP-1): the byte-identical impl bodies for
+    /// `ClientStreamWrapper` and `ServerStreamWrapper` (same
+    /// `complete_io_handshake`, same Read/Write/ReadWrite forwards) are
+    /// emitted from a single `stream_wrapper!` macro arm. Adding a third
+    /// connection type (e.g. a future Quic/0-RTT variant) is one
+    /// invocation; before this round it was ~50 LOC of copy-paste.
+    macro_rules! stream_wrapper {
+        ($name:ident, $conn:ty) => {
+            struct $name {
+                inner: rustls::StreamOwned<$conn, TcpStream>,
             }
-            Ok(())
-        }
-    }
-    impl Read for ClientStreamWrapper {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.inner.read(buf)
-        }
-    }
-    impl Write for ClientStreamWrapper {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.inner.write(buf)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.inner.flush()
-        }
-    }
-    // Manual `ReadWrite` impl so `tcp.close` on Windows can reach the
-    // underlying `TcpStream`'s SOCKET handle for `CancelIoEx`. The
-    // blanket impl was removed when `ReadWrite::raw_socket` was added.
-    impl ReadWrite for ClientStreamWrapper {
-        fn raw_socket(&self) -> Option<usize> {
-            self.inner.sock.raw_socket()
-        }
+            impl $name {
+                fn complete_io_handshake(&mut self) -> Result<(), String> {
+                    // rustls::StreamOwned negotiates lazily on first
+                    // read/write. Force handshake completion now so
+                    // connect_tls / accept_tls failures are reported
+                    // synchronously rather than at the first I/O call.
+                    while self.inner.conn.is_handshaking() {
+                        self.inner
+                            .conn
+                            .complete_io(&mut self.inner.sock)
+                            .map_err(|e| format!("tls handshake: {e}"))?;
+                    }
+                    Ok(())
+                }
+            }
+            impl Read for $name {
+                fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                    self.inner.read(buf)
+                }
+            }
+            impl Write for $name {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    self.inner.write(buf)
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    self.inner.flush()
+                }
+            }
+            // Manual `ReadWrite` impl so `tcp.close` on Windows can reach
+            // the underlying `TcpStream`'s SOCKET handle for `CancelIoEx`.
+            // The blanket impl was removed when `ReadWrite::raw_socket`
+            // was added.
+            impl ReadWrite for $name {
+                fn raw_socket(&self) -> Option<usize> {
+                    self.inner.sock.raw_socket()
+                }
+            }
+        };
     }
 
-    struct ServerStreamWrapper {
-        inner: rustls::StreamOwned<ServerConnection, TcpStream>,
-    }
-    impl ServerStreamWrapper {
-        fn complete_io_handshake(&mut self) -> Result<(), String> {
-            while self.inner.conn.is_handshaking() {
-                self.inner
-                    .conn
-                    .complete_io(&mut self.inner.sock)
-                    .map_err(|e| format!("tls handshake: {e}"))?;
-            }
-            Ok(())
-        }
-    }
-    impl Read for ServerStreamWrapper {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.inner.read(buf)
-        }
-    }
-    impl Write for ServerStreamWrapper {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.inner.write(buf)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.inner.flush()
-        }
-    }
-    impl ReadWrite for ServerStreamWrapper {
-        fn raw_socket(&self) -> Option<usize> {
-            self.inner.sock.raw_socket()
-        }
-    }
+    stream_wrapper!(ClientStreamWrapper, ClientConnection);
+    stream_wrapper!(ServerStreamWrapper, ServerConnection);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

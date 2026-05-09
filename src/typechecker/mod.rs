@@ -1595,7 +1595,14 @@ impl TypeChecker {
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
-                    let mut msg = format!("type mismatch: expected {n2}, got {n1}");
+                    // Round 80 BROKEN B1+B2: this arm formatted the bare
+                    // `Symbol` heads, which dropped type args (`Bag(String)`
+                    // → `Bag`) and leaked the internal `TypeOf` head
+                    // (`type Person` → `TypeOf`). Format via the parent
+                    // `Type` values so `Type::Display`'s args rendering
+                    // and TypeOf special-casing apply (mirrors the
+                    // catch-all arm at the bottom of `unify`).
+                    let mut msg = format!("type mismatch: expected {t2}, got {t1}");
                     if let Some(hint) = Self::chain_hint(&t1, &t2) {
                         msg.push('\n');
                         msg.push_str(&hint);
@@ -3613,6 +3620,27 @@ impl TypeChecker {
         if td_name_str == "TypeOf" {
             self.error(
                 format!("'{td_name_str}' is a reserved type name used by the type system"),
+                td.span,
+            );
+            return;
+        }
+        // Round 80 BROKEN B3: a type-decl whose name shadows a builtin
+        // scalar/container type (Int, Float, Bool, String, Unit, List,
+        // Range, Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
+        // ExtFloat, TcpListener, TcpStream — the authoritative list is
+        // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
+        // the builtin binding and then auto-derived Equal/Compare/Hash/
+        // Display impls referencing fields that the *builtin* type does
+        // not have, producing an unspanned cascade of "unknown method
+        // 'x' on type Int" errors. Reject at the declaration site with
+        // a single clear diagnostic. Mirrors the variant-shadow error
+        // shape below.
+        if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
+            self.error(
+                format!(
+                    "type '{td_name_str}' shadows builtin type '{td_name_str}'; \
+                     choose a different name"
+                ),
                 td.span,
             );
             return;

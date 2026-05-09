@@ -309,20 +309,10 @@ fn legacy_register_join_waker_still_works() {
     assert_eq!(handle.join_waker_count(), 0);
 }
 
-/// `register_waker` (no guard) still functions for legacy I/O call
-/// sites. It pushes an entry that is drained by `complete()`.
-#[test]
-fn legacy_register_io_waker_still_works() {
-    let completion = IoCompletion::new();
-    let fired = Arc::new(AtomicBool::new(false));
-    let fired_clone = fired.clone();
-
-    completion.register_waker(Box::new(move || {
-        fired_clone.store(true, Ordering::SeqCst);
-    }));
-    assert_eq!(completion.waker_count(), 1);
-
-    assert!(completion.complete(Value::Unit));
-    assert!(fired.load(Ordering::SeqCst));
-    assert_eq!(completion.waker_count(), 0);
-}
+// Round 80 dead-code removal: `legacy_register_io_waker_still_works`
+// asserted the existence of `IoCompletion::register_waker` (no
+// guard). That function had zero production callers; the only
+// surviving I/O-waker entry point is `register_waker_guard` (locked
+// by the guard tests above). The non-guard fn and this test were
+// removed together. The replacement source-grep test lives in
+// `tests/round80_dead_code_tests.rs::register_waker_non_guard_absent`.

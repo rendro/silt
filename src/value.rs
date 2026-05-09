@@ -1125,33 +1125,14 @@ impl IoCompletion {
         self.next_waker_id.fetch_add(1, AtomicOrdering::Relaxed)
     }
 
-    /// Register a waker with double-check pattern (prevents missed wakeups).
-    ///
-    /// Legacy entry point: callers that need RAII deregistration on
-    /// cancel should prefer [`register_waker_guard`](Self::register_waker_guard).
-    /// This non-guard variant remains for stable call sites whose
-    /// caller does not race with cancellation.
-    pub fn register_waker(&self, waker: Waker) {
-        // Allocate an id on the non-guard path too so the storage
-        // shape stays uniform.
-        let id = self.mint_waker_id();
-        let already_done = self.result.lock().is_some();
-        if already_done {
-            waker();
-        } else {
-            self.wakers.lock().push((id, waker));
-            // Double-check: result may have arrived between check and push
-            if self.result.lock().is_some() {
-                let wakers: Vec<(u64, Waker)> = {
-                    let mut guard = self.wakers.lock();
-                    std::mem::take(&mut *guard)
-                };
-                for (_, w) in wakers {
-                    w();
-                }
-            }
-        }
-    }
+    // Round 80 dead-code removal (DEAD-FN): the non-guard
+    // `register_waker` had zero production callers — every I/O entry
+    // guard now uses `register_waker_guard` for cancel-path
+    // correctness. The only remaining caller was the
+    // `legacy_register_io_waker_still_works` test asserting the
+    // function existed; both have been removed. The waker-id minting
+    // and double-check pattern survive verbatim inside
+    // `register_waker_guard` below.
 
     /// Register a waker and return an `IoWakerRegistration` RAII guard
     /// that deregisters the entry on drop. Required for cancel-path
