@@ -955,7 +955,16 @@ impl TypeChecker {
                         let ft = field_ty.clone();
                         self.unify(&result_ty, &ft, span);
                     } else {
-                        self.error(format!("anon record has no field '{field}'"), span);
+                        // ERR-GAP (round 81 F2): match the sibling Record /
+                        // Generic deferred sites and append a did-you-mean
+                        // hint when a near-edit-distance field exists.
+                        let candidates: Vec<(Symbol, Type)> =
+                            af.iter().map(|(k, v)| (*k, v.clone())).collect();
+                        let base = format!("anon record has no field '{field}'");
+                        self.error(
+                            format_record_field_suggestion(base, field, &candidates),
+                            span,
+                        );
                     }
                 }
                 Type::Generic(type_name, type_args) => {
@@ -2459,7 +2468,16 @@ impl TypeChecker {
                             self.unify(&obj_ty, &extended, span);
                             result_ty
                         } else {
-                            self.error(format!("anon record has no field '{field}'"), span);
+                            // ERR-GAP (round 81 F2): mirror the sibling
+                            // Record / Generic field-access sites and
+                            // append a did-you-mean hint.
+                            let candidates: Vec<(Symbol, Type)> =
+                                fields.iter().map(|(k, v)| (*k, v.clone())).collect();
+                            let base = format!("anon record has no field '{field}'");
+                            self.error(
+                                format_record_field_suggestion(base, field, &candidates),
+                                span,
+                            );
                             Type::Error
                         }
                     }
@@ -3817,8 +3835,16 @@ impl TypeChecker {
                             };
                             self.unify(&resolved, &extended, span);
                         } else {
+                            // ERR-GAP (round 81 F3): mirror the sibling
+                            // Record / Generic record-update sites and
+                            // append a did-you-mean hint when the typo
+                            // is close to one of the closed row's fields.
+                            let candidates: Vec<(Symbol, Type)> =
+                                af.iter().map(|(k, v)| (*k, v.clone())).collect();
+                            let base =
+                                format!("unknown field '{field_name}' in closed anon record");
                             self.error(
-                                format!("unknown field '{field_name}' in closed anon record"),
+                                format_record_field_suggestion(base, *field_name, &candidates),
                                 span,
                             );
                         }
@@ -4834,6 +4860,18 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         Type::Var(_) => true,
         Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_) if is_equality => {
             true
+        }
+        // TYPE-GAP (round 81 F1): closed-row anon records compile down to
+        // `Value::Record` and Value's PartialEq compares them element-wise
+        // (src/value.rs ~1714), so `==`/`!=` is well-defined for them.
+        // Open rows are rejected even on equality: two open-row values may
+        // differ on unobserved fields, so the answer would depend on the
+        // hidden tail — surface the row variable as the reason rather than
+        // silently letting one row's surplus fields decide the result.
+        // Ordering still rejects AnonRecord (the VM's compare() does not
+        // support it, mirroring the Tuple/Map/Set/Bool/Unit treatment).
+        Type::AnonRecord { fields: _, tail } if is_equality => {
+            matches!(tail, RowTail::Closed)
         }
         _ => false,
     }

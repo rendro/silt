@@ -452,9 +452,12 @@ fn methods_for_canon_name(program: &Program, canon_name: &str) -> Vec<String> {
     for decl in &program.decls {
         if let Decl::TraitImpl(ti) = decl {
             // Compare against the canonical form of the impl's target
-            // (so `Range -> List`, `Bytes -> List`, `() -> Unit`
-            // collapses match expectations the same way the typechecker
-            // routes them at dispatch time).
+            // (so `Range -> List` and `() -> Unit` collapses match
+            // expectations the same way the typechecker routes them at
+            // dispatch time). Note: `Bytes` is NOT canonicalized here;
+            // user aliases such as `type Bytes = List(Int)` are missed
+            // by this LSP-side mirror — see `canonicalize_target_name`
+            // at the function below for the exact set of rewrites.
             let target_name = resolve(ti.target_type);
             let target_canon = canonicalize_target_name(&target_name);
             if target_canon == canon_name {

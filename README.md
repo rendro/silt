@@ -187,7 +187,7 @@ silt add <name> --path <path>                             Add a path-based depen
 silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based dependency to silt.toml
 ```
 
-The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
+The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
 
 `run`, `check`, and `test` also accept `--strict-effects` to enforce effect annotations on user functions; see the [strict-effects migration guide](docs/strict-effects-migration.md).
 

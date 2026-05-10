@@ -5950,6 +5950,8 @@ fn precedence(op: BinOp) -> u8 {
 /// top-level construct has an `l_bp` strictly below the parent position's
 /// required min_bp will be re-parsed with the wrong associativity.
 mod bp {
+    use crate::ast::BinOp;
+
     pub const FLOATELSE_L: u8 = 10;
     pub const FLOATELSE_R: u8 = 11;
     pub const RANGE_L: u8 = 60;
@@ -5966,6 +5968,24 @@ mod bp {
     // rules so `a |> (x?)` in the source stays `a |> (x?)` on emit
     // rather than rewriting to the non-equivalent `a |> x?`.
     pub const QUESTIONMARK: u8 = 54;
+
+    /// Left binding power for each `BinOp`, mirroring the `(l_bp, r_bp)`
+    /// pairs in `parse_expr_bp` (src/parser.rs). All Binary operators are
+    /// left-associative so `r_bp == l_bp + 1`. This is the SINGLE source
+    /// of truth used by both `expr_top_l_bp` (cross-family precedence)
+    /// and `format_expr_with_parens` (parent-position min_bp). Earlier
+    /// rounds had this table replicated 3 times in formatter.rs which
+    /// silently drifted the next time the parser changed.
+    pub fn binop_l_bp(op: BinOp) -> u8 {
+        match op {
+            BinOp::Or => 20,
+            BinOp::And => 30,
+            BinOp::Eq | BinOp::Neq => 40,
+            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
+            BinOp::Add | BinOp::Sub => 70,
+            BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
+        }
+    }
 }
 
 /// Left binding power at the TOP of `expr` — i.e. the lowest-bp operator
@@ -5980,14 +6000,7 @@ fn expr_top_l_bp(expr: &Expr) -> u8 {
         ExprKind::FloatElse(..) => bp::FLOATELSE_L,
         ExprKind::Range(..) => bp::RANGE_L,
         ExprKind::Pipe(..) => bp::PIPE_L,
-        ExprKind::Binary(_, op, _) => match op {
-            BinOp::Or => 20,
-            BinOp::And => 30,
-            BinOp::Eq | BinOp::Neq => 40,
-            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
-            BinOp::Add | BinOp::Sub => 70,
-            BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
-        },
+        ExprKind::Binary(_, op, _) => bp::binop_l_bp(*op),
         // Postfix operators sit at the TOP of the formatted text. A parent
         // whose min_bp exceeds the postfix's bp would not consume the
         // postfix on re-parse, splitting the tree differently.
@@ -6030,14 +6043,7 @@ fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: 
     //    is lower. All our Binary operators are left-associative
     //    (l_bp, l_bp+1), so the left child uses l_bp and the right child
     //    uses l_bp+1.
-    let parent_l_bp: u8 = match parent_op {
-        BinOp::Or => 20,
-        BinOp::And => 30,
-        BinOp::Eq | BinOp::Neq => 40,
-        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
-        BinOp::Add | BinOp::Sub => 70,
-        BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
-    };
+    let parent_l_bp = bp::binop_l_bp(parent_op);
     let required = if is_left {
         parent_l_bp
     } else {

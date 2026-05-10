@@ -2060,14 +2060,14 @@ impl Parser {
                     self.skip_nl();
                     break;
                 }
-                let (fname, _) = self.expect_ident()?;
+                let (fname, fname_span) = self.expect_ident()?;
                 self.expect(&Token::Colon)?;
                 self.skip_nl();
                 let fty = self.parse_type_expr()?;
                 if !seen.insert(fname) {
                     return Err(ParseError {
                         message: format!("duplicate field '{}' in anon record type", fname),
-                        span: self.span(),
+                        span: fname_span,
                     });
                 }
                 fields.push((fname, fty));

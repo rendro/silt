@@ -251,9 +251,41 @@ fn document_highlight_returns_all_ident_occurrences() {
         .get("result")
         .and_then(|r| r.as_array())
         .expect("highlight result");
+    // The binder on line 1 plus the two uses on line 2 -> exactly 3
+    // highlights. The previous `>= 2` gate would have silently accepted an
+    // implementation that dropped the binder.
+    assert_eq!(
+        arr.len(),
+        3,
+        "expected exactly three highlights (binder + 2 uses), got {arr:?}"
+    );
+    let starts: Vec<(u64, u64)> = arr
+        .iter()
+        .filter_map(|h| {
+            let line = h.pointer("/range/start/line").and_then(|v| v.as_u64())?;
+            let ch = h.pointer("/range/start/character").and_then(|v| v.as_u64())?;
+            Some((line, ch))
+        })
+        .collect();
+    assert_eq!(
+        starts.len(),
+        3,
+        "every highlight must expose a start line/character; got {arr:?}"
+    );
+    // Binder on line 1 at character 6 (`  let count = 1`).
     assert!(
-        arr.len() >= 2,
-        "expected at least two highlights, got {arr:?}"
+        starts.iter().any(|&(l, c)| l == 1 && c == 6),
+        "expected binder highlight at line 1, character 6; got {starts:?}"
+    );
+    // First use on line 2 at character 10 (`  let y = count + count`).
+    assert!(
+        starts.iter().any(|&(l, c)| l == 2 && c == 10),
+        "expected use highlight at line 2, character 10; got {starts:?}"
+    );
+    // Second use on line 2 at character 18.
+    assert!(
+        starts.iter().any(|&(l, c)| l == 2 && c == 18),
+        "expected use highlight at line 2, character 18; got {starts:?}"
     );
     client.shutdown();
 }

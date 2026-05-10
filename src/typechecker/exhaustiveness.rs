@@ -45,7 +45,18 @@ impl TypeChecker {
             .map(|a| &a.pattern)
             .collect();
 
+        // Resolve type variables, then canonicalise so user-declared aliases
+        // (e.g. `type Aliased = Empty`) expand to their head before we look
+        // up enum metadata or run the usefulness algorithm. Without this,
+        // `is_uninhabited` would search `self.enums` for the alias name,
+        // miss the underlying empty enum, and the bottom-eliminator
+        // short-circuit below would not fire — leading to a spurious
+        // "non-exhaustive match" error on `match x { }` where `x: Aliased`
+        // and `Aliased` aliases an empty enum. Peer sites
+        // (`type_name_for_impl`, `type_args_of`, the `unify` entry) already
+        // canonicalise after `apply`; we follow the same recipe here.
         let scrutinee_ty = self.apply(scrutinee_ty);
+        let scrutinee_ty = crate::types::canonical::canonicalize(&self.resolver, &scrutinee_ty);
 
         // Uninhabited-type short-circuit: a `match x { }` with zero arms on
         // a scrutinee type that has no inhabitants is vacuously exhaustive
