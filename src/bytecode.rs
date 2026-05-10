@@ -343,6 +343,13 @@ impl Chunk {
         self.emit((value >> 8) as u8, span);
     }
 
+    /// Emit an opcode immediately followed by a u16 operand sharing the same span.
+    pub fn emit_op_u16(&mut self, op: Op, idx: u16, span: Span) -> usize {
+        let offset = self.emit_op(op, span);
+        self.emit_u16(idx, span);
+        offset
+    }
+
     /// Emit a u8 operand.
     pub fn emit_u8(&mut self, value: u8, span: Span) {
         self.emit(value, span);

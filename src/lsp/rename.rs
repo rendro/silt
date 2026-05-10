@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 use lsp_server::{ErrorCode, Response};
 use lsp_types::{PrepareRenameResponse, Range, TextEdit, Uri, WorkspaceEdit};
 
-use crate::intern::resolve as resolve_sym;
+use crate::intern::{Symbol, resolve as resolve_sym};
 use crate::lexer;
 use crate::module;
 use crate::types::builtins as builtin_types;
@@ -32,6 +32,8 @@ use crate::types::builtins as builtin_types;
 use super::Server;
 use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::position_to_offset;
+use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
+use super::state::Document;
 
 impl Server {
     /// `textDocument/prepareRename` — tell the client whether a rename
@@ -50,7 +52,13 @@ impl Server {
         let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
         let name_str = resolve_sym(name);
 
-        if !is_user_renameable(&name_str) {
+        // Scope-aware gate: a symbol is renameable when it resolves to a
+        // user-introduced binding visible at the cursor, even if the
+        // lexeme matches a builtin name (silt allows shadowing builtins
+        // via let / fn / type / trait declarations). Only when no user
+        // binding is in scope do we fall back to the name-based
+        // `is_user_renameable` filter (rejects builtins, keywords, etc.).
+        if !is_symbol_user_renameable_at_cursor(doc, name, &name_str, cursor) {
             return None;
         }
 
@@ -101,7 +109,11 @@ impl Server {
             return Ok(None);
         };
         let name_str = resolve_sym(name);
-        if !is_user_renameable(&name_str) {
+        // Scope-aware gate: see `prepare_rename` for the rationale. A
+        // user-shadowed builtin name (e.g. `let Int = 42` followed by a
+        // use of `Int`) must be renameable; a use-site of an actual
+        // builtin (no shadowing in scope) must still be rejected.
+        if !is_symbol_user_renameable_at_cursor(doc, name, &name_str, cursor) {
             return Err(Response::new_err(
                 request_id,
                 ErrorCode::InvalidParams as i32,
@@ -132,12 +144,74 @@ impl Server {
     }
 }
 
+/// Scope-aware rename gate.
+///
+/// Returns true when the symbol at `cursor` (with display name `name_str`)
+/// resolves to a user-introduced binding — either:
+///   * the cursor sits ON a local binding identifier (fn param, `let`
+///     binder inside a fn body, when-binder, …), OR
+///   * a local binding for `name` is visible at this cursor (use-site of
+///     a local), OR
+///   * a top-level definition for `name` exists in this document
+///     (Decl::Let, Decl::Fn, Decl::Type, Decl::Trait, …).
+///
+/// In all three cases the name maps to a user binding even if the
+/// lexeme also names a builtin — silt explicitly allows shadowing
+/// builtins via `let`/`fn`/`type`/`trait`, so refusing rename based on
+/// the lexeme alone is wrong (DX-G1).
+///
+/// When none of those hold, the cursor is on a use-site of a name with
+/// no user binding in scope — i.e. a real builtin reference. We then
+/// fall back to [`is_user_renameable`], the historical name-based
+/// filter that rejects builtin globals, builtin module names, builtin
+/// constructors, and silt keywords.
+fn is_symbol_user_renameable_at_cursor(
+    doc: &Document,
+    name: Symbol,
+    name_str: &str,
+    cursor: usize,
+) -> bool {
+    // Always reject silt keywords / empty names regardless of scope —
+    // those can never be renamed (parser would reject the result).
+    if name_str.is_empty() || is_silt_keyword(name_str) {
+        return false;
+    }
+
+    // 1. Cursor is on a local binding identifier itself.
+    if find_local_binding_at_offset(&doc.locals, cursor).is_some() {
+        return true;
+    }
+    // 2. A local binding for this name is visible at the cursor.
+    if nearest_local_binding_for(&doc.locals, name, cursor).is_some() {
+        return true;
+    }
+    // 3. The symbol is a user-defined top-level binding in this doc
+    //    (Decl::Let / Decl::Fn / Decl::Type / Decl::Trait register here
+    //    via `build_definitions`). Top-level user shadowing of a builtin
+    //    name (`let Int = 42` at module scope) lands in this branch.
+    if doc.definitions.contains_key(&name) {
+        return true;
+    }
+
+    // 4. No user binding for this name in scope — the cursor is on a
+    //    use-site of a builtin module / global / constructor. Defer to
+    //    the historical name-based filter so keyword/constructor
+    //    rejection still fires.
+    is_user_renameable(name_str)
+}
+
 /// A user-renameable identifier: not a silt keyword, not a builtin
 /// module, not a reserved name. Builtin constructor variants (every
 /// name yielded by `module::all_builtin_constructor_names` — `Ok`,
 /// `Err`, `Some`, `None`, plus every gated variant from `io`, `json`,
 /// `http`, `channel`, `postgres`, `time`, etc.) are stdlib-defined
 /// and also rejected.
+///
+/// This is a name-only check; it intentionally has no notion of
+/// "is the cursor on a binding or a use-site?". Callers that need
+/// scope-aware behaviour should consult
+/// [`is_symbol_user_renameable_at_cursor`] instead — that helper falls
+/// back to this one only when the symbol has no user binding in scope.
 ///
 /// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
 /// can assert every gated constructor is protected from rename.
