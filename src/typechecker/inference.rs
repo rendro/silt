@@ -3019,7 +3019,8 @@ impl TypeChecker {
                             // compare() (src/vm/arithmetic.rs) only supports
                             // Int/Float/ExtFloat/String/List/Range/Record/Variant
                             // for ordering. Equality additionally supports
-                            // Tuple/Map/Set/Bool/Unit via Value's PartialEq.
+                            // Tuple/Map/Set/Bool/Unit/Channel and closed-row
+                            // AnonRecord via Value's PartialEq.
                             let resolved = self.apply(&lt);
                             match &resolved {
                                 Type::Var(_) => {
@@ -4873,6 +4874,14 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         Type::AnonRecord { fields: _, tail } if is_equality => {
             matches!(tail, RowTail::Closed)
         }
+        // TYPE-LATENT-1 (round 82): Channel handles support identity-based
+        // equality at runtime (`Value::Channel(a) == Value::Channel(b)` iff
+        // `a.id == b.id`, see src/value.rs ~1717). Without this arm the
+        // typechecker rejected `ch1 == ch2` even though the VM produces a
+        // well-defined Bool. Ordering is still rejected: Channel ids are
+        // identity tokens, not a meaningful well-order — same shape as
+        // Tuple/Map/Set/Bool/Unit/AnonRecord above.
+        Type::Channel(_) if is_equality => true,
         _ => false,
     }
 }

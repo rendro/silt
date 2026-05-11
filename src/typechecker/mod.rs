@@ -7747,6 +7747,33 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     sigs
 }
 
+/// Snapshot every nominal record / enum name registered by
+/// `register_builtins`. Used by the round-82 parity test in
+/// `tests/round82_stdlib_types_registry_tests.rs` to lock the central
+/// registry (`module::BUILTIN_STDLIB_TYPE_NAMES`) against runtime
+/// state. Routes through a fresh `TypeChecker` so the snapshot reflects
+/// every per-module `register` callback's effect on `checker.records`
+/// / `checker.enums` — including the `Result`/`Option`/`Step`/
+/// `ChannelResult`/`ChannelOp` prelude enums declared directly in
+/// `register_builtins` itself.
+///
+/// Each entry's category (`"record"` vs `"enum"`) is preserved so the
+/// test can render a useful diff when the sets diverge.
+pub fn registered_builtin_type_names() -> Vec<(String, &'static str)> {
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    let mut out: Vec<(String, &'static str)> = Vec::new();
+    for sym in checker.records.keys() {
+        out.push((resolve(*sym).to_string(), "record"));
+    }
+    for sym in checker.enums.keys() {
+        out.push((resolve(*sym).to_string(), "enum"));
+    }
+    out.sort();
+    out
+}
+
 /// Return a map of builtin qualified names to their parameter-name lists,
 /// indexed in argument order. Sibling registry to
 /// `builtin_type_signatures`: signatures carry only types (the rendered

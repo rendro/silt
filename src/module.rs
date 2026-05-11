@@ -41,6 +41,84 @@ pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "Stri
 /// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
 
+/// Central registry of the record / enum type NAMES the stdlib registers
+/// per-module at typechecker startup (i.e. via the `register` entry
+/// points in `src/typechecker/builtins/`). These are uppercase nominal
+/// type names a user can write in type-annotation position but are
+/// owned by the stdlib — renaming one via the LSP would silently
+/// rewrite user references while leaving the builtin type intact.
+///
+/// Unlike [`crate::types::builtins::BUILTIN_TYPES`] (which lists
+/// primitives + generic containers), this registry covers the nominal
+/// types declared by per-module `register` functions:
+///
+/// - `fs.rs`           → `FileStat`
+/// - `time.rs`         → `Instant`, `Date`, `Time`, `DateTime`,
+///                       `Duration`, `Weekday`
+/// - `http.rs`         → `Method`, `Response`, `Request`
+/// - `errors.rs`       → `IoError`, `JsonError`, `TomlError`,
+///                       `ParseError`, `HttpError`, `RegexError`,
+///                       `TimeError`, `BytesError`, `ChannelError`,
+///                       and the cfg-gated `PgError`, `TcpError`.
+///
+/// Parity lock: `tests/round82_stdlib_types_registry_tests.rs` walks
+/// `checker.records.keys() ∪ checker.enums.keys()` after stdlib init
+/// and asserts the set matches this registry. Adding a new stdlib
+/// record/enum without updating this list will fail that test.
+///
+/// Consumers:
+/// 1. Editor grammars (`editors/vim/syntax/silt.vim`,
+///    `editors/vscode/syntaxes/silt.tmLanguage.json`) — surface these
+///    names so cross-editor highlighting matches the language.
+/// 2. LSP rename gate (`src/lsp/rename.rs::builtin_globals`) — reject
+///    rename so stdlib types are not silently rewritten away.
+pub const BUILTIN_STDLIB_TYPE_NAMES: &[&str] = &[
+    // fs.rs
+    "FileStat",
+    // time.rs
+    "Instant",
+    "Date",
+    "Time",
+    "DateTime",
+    "Duration",
+    "Weekday",
+    // http.rs
+    "Method",
+    "Response",
+    "Request",
+    // errors.rs (always-on)
+    "IoError",
+    "JsonError",
+    "TomlError",
+    "ParseError",
+    "HttpError",
+    "RegexError",
+    "TimeError",
+    "BytesError",
+    "ChannelError",
+    // errors.rs (cfg-gated) — listed but conditional. The
+    // `feature_gated_stdlib_type` helper below routes each gated name
+    // to its required cargo feature; the parity test in
+    // `tests/round82_stdlib_types_registry_tests.rs` filters by the
+    // active feature set when comparing against typechecker state.
+    "PgError",
+    "TcpError",
+];
+
+/// Returns the cargo feature required for the given stdlib type to be
+/// registered by the typechecker, or `None` if the type is
+/// unconditionally registered under default features.
+///
+/// Used by the round-82 parity test to filter out feature-gated names
+/// when the active build does not include the relevant feature.
+pub fn feature_gated_stdlib_type(name: &str) -> Option<&'static str> {
+    match name {
+        "PgError" => Some("postgres"),
+        "TcpError" => Some("tcp"),
+        _ => None,
+    }
+}
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

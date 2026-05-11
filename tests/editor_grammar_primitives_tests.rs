@@ -210,8 +210,17 @@ fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
 /// Authoritative set of primitive / builtin-container type names per
 /// `silt::types::builtins::BUILTIN_TYPES`, with the `()` surface alias
 /// filtered out (matches `primitives()` above).
+///
+/// Round 82 DX-GAP-1: also includes `silt::module::BUILTIN_STDLIB_TYPE_NAMES`
+/// (the per-module record/enum types like `FileStat`, `Date`, `Response`).
+/// Both sets share the vim `siltType` keyword scope and the vscode
+/// `"primitives"` regex so the bidirectional parity check accepts both.
 fn authoritative_primitive_names() -> BTreeSet<String> {
-    primitives().into_iter().map(|s| s.to_string()).collect()
+    let mut set: BTreeSet<String> = primitives().into_iter().map(|s| s.to_string()).collect();
+    for n in silt::module::BUILTIN_STDLIB_TYPE_NAMES {
+        set.insert((*n).to_string());
+    }
+    set
 }
 
 #[test]

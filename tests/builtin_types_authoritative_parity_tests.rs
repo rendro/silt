@@ -108,17 +108,25 @@ fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Pull the keyword tokens out of the vim `siltType` keyword line.
+/// Pull the keyword tokens out of the vim `siltType` keyword line(s).
 /// Format: `syntax keyword siltType Int Float ExtFloat Bool ...`.
-fn vim_type_tokens(line: &str) -> BTreeSet<String> {
+///
+/// Round 82 DX-GAP-1: multiple `syntax keyword siltType ...` lines are
+/// supported (used to separate primitives / generic containers from
+/// stdlib record/enum types for readability). Each line is parsed
+/// independently — the `syntax keyword siltType` prefix is skipped on
+/// every line and only the names after it are accumulated.
+fn vim_type_tokens(input: &str) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
-    let mut after_silt_type = false;
-    for tok in line.split_whitespace() {
-        if after_silt_type {
-            tokens.insert(tok.to_string());
-        }
-        if tok == "siltType" {
-            after_silt_type = true;
+    for line in input.lines() {
+        let mut after_silt_type = false;
+        for tok in line.split_whitespace() {
+            if after_silt_type {
+                tokens.insert(tok.to_string());
+            }
+            if tok == "siltType" {
+                after_silt_type = true;
+            }
         }
     }
     tokens
@@ -127,12 +135,23 @@ fn vim_type_tokens(line: &str) -> BTreeSet<String> {
 /// Authoritative set of names that must appear in editor grammars.
 /// `()` is the punctuation surface for `Unit` and is not represented
 /// as a keyword in either grammar — exclude it.
+///
+/// Round 82 DX-GAP-1 widening: includes both `BUILTIN_TYPES`
+/// (primitives + generic containers) and `BUILTIN_STDLIB_TYPE_NAMES`
+/// (per-module record/enum types like `FileStat`, `Date`, `Response`).
+/// Both sets share the vim `siltType` keyword scope and the vscode
+/// `"primitives"` regex — collapsing the dual-shape that would
+/// otherwise force two parallel parity tests.
 fn authoritative_grammar_names() -> BTreeSet<String> {
-    builtins::iter_all()
+    let mut set: BTreeSet<String> = builtins::iter_all()
         .map(|b| b.name)
         .filter(|n| *n != "()")
         .map(|s| s.to_string())
-        .collect()
+        .collect();
+    for n in silt::module::BUILTIN_STDLIB_TYPE_NAMES {
+        set.insert((*n).to_string());
+    }
+    set
 }
 
 #[test]
