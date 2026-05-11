@@ -210,8 +210,9 @@ fn is_symbol_user_renameable_at_cursor(
 /// This is a name-only check; it intentionally has no notion of
 /// "is the cursor on a binding or a use-site?". Callers that need
 /// scope-aware behaviour should consult
-/// [`is_symbol_user_renameable_at_cursor`] instead — that helper falls
-/// back to this one only when the symbol has no user binding in scope.
+/// `is_symbol_user_renameable_at_cursor` (internal) instead — that
+/// helper falls back to this one only when the symbol has no user
+/// binding in scope.
 ///
 /// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
 /// can assert every gated constructor is protected from rename.

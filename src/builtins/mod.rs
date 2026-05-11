@@ -36,6 +36,19 @@ pub fn value_kind(v: &Value) -> &'static str {
     common::value_kind(v)
 }
 
+/// Re-export the canonical `Ok(v)` variant builder so an integration
+/// test can lock the round-83 dedup: three sibling builtin modules
+/// (`tcp`, `stream`, `postgres`) had byte-identical local `fn ok`
+/// clones that were collapsed to call `common::ok` instead. The lock
+/// in `tests/round83_dead_code_dedup_lock_tests.rs` proves the deletion
+/// was a semantic no-op by comparing this builder's output against a
+/// hand-rolled `Value::Variant("Ok".into(), vec![v])`. Thin wrapper
+/// pattern matches `value_kind` above — we widen only this one helper,
+/// not the rest of `common.rs`.
+pub fn ok(v: Value) -> Value {
+    common::ok(v)
+}
+
 /// Shared scaffolding for every `trait Error for <FooError>` builtin
 /// dispatch helper (e.g. `call_io_error_trait`,
 /// `call_json_error_trait`, …). Round-36 collapsed eleven copy-pasted

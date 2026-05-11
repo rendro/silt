@@ -193,8 +193,28 @@ pub(crate) fn clamp_span_to_source(span: Span, source: &str) -> Span {
     Span::with_offset(line_count, last_col, clamped_offset)
 }
 
-/// Check whether stderr is a terminal (for ANSI color support).
-fn use_color() -> bool {
+/// Check whether stderr should receive ANSI color escapes.
+///
+/// Precedence (highest first):
+/// 1. `NO_COLOR` set to any non-empty value → never color (per <https://no-color.org/>).
+///    This is the kill-switch and wins over every other signal, including
+///    `FORCE_COLOR` and a real tty. Cargo/clippy/rustc all honor it.
+/// 2. `FORCE_COLOR` set to any non-empty value → always color, even when
+///    stderr is redirected (matches cargo's behavior).
+/// 3. Otherwise: isatty(stderr).
+///
+/// Lock: tests/round83_use_color_env_vars_tests.rs.
+pub(crate) fn use_color() -> bool {
+    // NO_COLOR is the killswitch — per the spec, any non-empty value disables
+    // color; an empty value (or unset) does not.
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        return false;
+    }
+    // FORCE_COLOR forces color even when stderr isn't a tty (e.g. piped to a
+    // file or captured by a wrapper that wants the escapes preserved).
+    if std::env::var_os("FORCE_COLOR").is_some_and(|v| !v.is_empty()) {
+        return true;
+    }
     #[cfg(unix)]
     {
         unsafe extern "C" {

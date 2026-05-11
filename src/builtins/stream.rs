@@ -20,6 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::common::ok;
 use crate::value::{Channel, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BuiltinAcc, SuspendedBuiltin, Vm, VmError};
 
@@ -121,10 +122,6 @@ fn require_callable<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Value, VmE
             super::common::value_kind(other)
         ))),
     }
-}
-
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
 }
 
 /// Wrap an `io::Error` into `Err(IoError)` — used by file-backed stream

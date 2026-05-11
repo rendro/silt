@@ -105,13 +105,12 @@ pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&s
             let sym = intern(v);
             env.attach_doc(sym, &body);
         }
-        // Also attach to the bare enum name itself (e.g. `IoError`
-        // as a type descriptor), so hover on the type renders the
-        // section. The bare enum names aren't in `env.bindings`
-        // today (only their variants are), so this is a no-op for
-        // current bindings — we keep the line for forward
-        // compatibility if the type itself starts being registered
-        // as a binding (e.g. for `type t = IoError` annotations).
+        // Attach the rendered body to the enum's type binding as
+        // well (e.g. `IoError` as a type descriptor), so hover on
+        // the type itself renders the section. Round 82 registered
+        // builtin enum type names via `BUILTIN_STDLIB_TYPE_NAMES`,
+        // so this now lands on a real binding rather than being a
+        // forward-compat placeholder.
         let enum_sym = intern(enum_name);
         env.attach_doc(enum_sym, &body);
     }

@@ -1653,7 +1653,21 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::Variant(name, fields));
             }
-            Op::RecordUpdate => {
+            Op::RecordUpdate | Op::RecordUpdateAnon => {
+                // Round 83: `RecordUpdateAnon` shares the operand layout
+                // and merge logic with `RecordUpdate`. The only difference
+                // is the resulting `Value::Record`'s `type_name`:
+                //   * `RecordUpdate` preserves the base's name — used for
+                //     nominal `.{...}` updates where the type is unchanged.
+                //   * `RecordUpdateAnon` overrides the name to "<anon>" —
+                //     used for `{...base, ...}` spreads when the
+                //     typechecker reports the result as `Type::AnonRecord`.
+                //     Without the override, a spread of a nominal record
+                //     and an anon-record literal of the same shape would
+                //     compare unequal at runtime because
+                //     `Value::Record::eq` checks the name first
+                //     (src/value.rs ~1714).
+                let is_anon = matches!(op, Op::RecordUpdateAnon);
                 let field_count = self.read_u8()? as usize;
                 let mut field_names = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
@@ -1675,7 +1689,12 @@ impl Vm {
                     for (name, val) in field_names.into_iter().zip(new_values) {
                         fields.insert(name, val);
                     }
-                    self.push(Value::Record(type_name, existing));
+                    let result_name = if is_anon {
+                        "<anon>".to_string()
+                    } else {
+                        type_name
+                    };
+                    self.push(Value::Record(result_name, existing));
                 } else {
                     return Err(VmError::new(format!(
                         "record update `.{{...}}` requires a record, got {}",

@@ -49,6 +49,7 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeRecord => "MakeRecord",
         Op::MakeVariant => "MakeVariant",
         Op::RecordUpdate => "RecordUpdate",
+        Op::RecordUpdateAnon => "RecordUpdateAnon",
         Op::MakeRange => "MakeRange",
         Op::ListConcat => "ListConcat",
         Op::GetField => "GetField",
@@ -323,8 +324,11 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             (line, next)
         }
 
-        // ── RecordUpdate: u8 field_count, then field_count x u16 field_name_index
-        Op::RecordUpdate => {
+        // ── RecordUpdate / RecordUpdateAnon: u8 field_count, then
+        // field_count x u16 field_name_index. The two opcodes share an
+        // operand layout — they differ only in the resulting Value's
+        // `type_name` (base's name vs `"<anon>"`).
+        Op::RecordUpdate | Op::RecordUpdateAnon => {
             let field_count = code[offset + 1];
             let mut line = format!("{offset:04}  {name:<20} {field_count}");
             let mut next = offset + 2;
@@ -596,8 +600,10 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 72 variants (round 72 audit).
-        const EXPECTED_OP_COUNT: usize = 72;
+        // tables. Last verified: 73 variants (round 83 audit added
+        // `RecordUpdateAnon` to fix the spread-vs-anon-literal `==`
+        // divergence — see src/bytecode.rs for the design note).
+        const EXPECTED_OP_COUNT: usize = 73;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

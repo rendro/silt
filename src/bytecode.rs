@@ -113,6 +113,16 @@ pub enum Op {
     MakeVariant, // operands: u16 name_index, u8 field_count
     /// Functional record update.
     RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
+    /// Functional record update whose result is an anon (row-poly) record.
+    /// Same layout/semantics as `RecordUpdate`, but the resulting
+    /// `Value::Record` carries the synthetic name `"<anon>"` instead of
+    /// inheriting the base's `type_name`. Emitted by the compiler when the
+    /// typechecker reports the spread expression's static type as
+    /// `Type::AnonRecord` — required so the runtime value's `type_name`
+    /// matches the type-level shape, otherwise `==` between a spread of a
+    /// nominal record and an anon-record literal of the same shape would
+    /// return `false` (Value::Record's PartialEq compares the name first).
+    RecordUpdateAnon, // operand: u8 field_count, then field_count × u16 field_name_index
     /// Create a lazy range (inclusive) from two ints on the stack.
     MakeRange,
     /// Concatenate two lists/ranges on the stack into a single list.
@@ -251,6 +261,7 @@ impl Op {
             b if b == Op::MakeRecord as u8 => Some(Op::MakeRecord),
             b if b == Op::MakeVariant as u8 => Some(Op::MakeVariant),
             b if b == Op::RecordUpdate as u8 => Some(Op::RecordUpdate),
+            b if b == Op::RecordUpdateAnon as u8 => Some(Op::RecordUpdateAnon),
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
             b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
             b if b == Op::GetField as u8 => Some(Op::GetField),

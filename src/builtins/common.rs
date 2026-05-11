@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::value::Value;
 use crate::vm::VmError;
 
-pub(super) fn ok(v: Value) -> Value {
+pub(crate) fn ok(v: Value) -> Value {
     Value::Variant("Ok".into(), vec![v])
 }
 

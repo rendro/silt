@@ -454,11 +454,11 @@ vocabulary is the point.
 
 | Effect | Modules / builtins contributing |
 |---|---|
-| `!io` (catch-all) | `io`, `fs`, `net`, `time`, `random`, `env`, `env_var`, `ffi` |
-| `!fs` | `io.read_file`, `io.write_file`, `io.exists`, `io.is_file`, `io.is_dir`, `fs.*` |
+| `!io` (catch-all) | `io`, `fs`, `env`, `time`, `tcp`, `http`, `postgres`, `stream`, `crypto`, `math`, `uuid` (any function in these modules that touches an OS resource) |
+| `!fs` | `io.read_file`, `io.write_file`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`, `fs.list_dir`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob` |
 | `!net` | `tcp.*`, `http.*`, `postgres.*` (`regex` is pure — no `!net`) |
-| `!time` | `time.now`, `time.today`, `time.to_utc`, `time.format_now`, `uuid.v7` |
-| `!random` | `math.random`, `uuid.v4`, `crypto.random_bytes`, `crypto.gen_*` |
+| `!time` | `time.now`, `time.today`, `time.sleep`, `uuid.v7` |
+| `!random` | `math.random`, `uuid.v4`, `crypto.random_bytes` |
 
 ### (b) Default for legacy code — RESOLVED
 

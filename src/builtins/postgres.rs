@@ -35,7 +35,7 @@ use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
-use super::common::value_kind;
+use super::common::{ok, value_kind};
 use crate::value::{Channel, IoCompletion, TrySendResult, Value};
 use crate::vm::{Vm, VmError};
 
@@ -271,10 +271,6 @@ fn drain_cursors_for_tx(tx_id: u64) {
 }
 
 // ── Result / error builders ─────────────────────────────────────────
-
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
-}
 
 fn err(v: Value) -> Value {
     Value::Variant("Err".into(), vec![v])

@@ -87,7 +87,7 @@ pub struct LockedPackage {
     /// nothing pins the local package, so it has no source/checksum.
     pub source: LockedSource,
     /// Content hash of the dep's source tree (`"sha256:<hex>"`),
-    /// computed by [`checksum_path_source`]. Empty for the root.
+    /// computed by `checksum_path_source` (internal). Empty for the root.
     pub checksum: String,
 }
 

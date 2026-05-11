@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 
+use super::common::ok;
 use crate::value::{IoCompletion, ReadWrite, TcpListenerHandle, TcpStreamHandle, Value};
 use crate::vm::{Vm, VmError};
 
@@ -394,10 +395,6 @@ mod tls {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
-}
 
 /// Classify a `std::io::Error` into a `TcpError` variant.
 fn tcp_error_to_variant(err: &std::io::Error) -> Value {

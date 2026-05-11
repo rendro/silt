@@ -1391,8 +1391,27 @@ impl Compiler {
                     span,
                 })?;
 
-            let tokens = Lexer::new(&source).tokenize().map_err(|_| CompileError {
-                message: format!("lex error in '{module_name}'"),
+            // Round 83 STYLE/BLOAT fix: previously this map_err discarded
+            // the underlying `LexError` and built a bare generic message
+            // mentioning only the module name. Because the only caller
+            // (`pre_typecheck_user_imports` at line ~1353) drops the
+            // Result entirely (`let _ = ...`), that message was
+            // unreachable to end users. Mirror the rich path used by
+            // `compile_file_module_inner` (line ~1466) so the diagnostic
+            // would carry a real file path, line, column, and snippet if
+            // this function's error path is ever propagated.
+            // Lock: tests/round83_anonrec_spread_eq_tests.rs grep-asserts
+            // the old wording never returns.
+            let file_display = normalize_module_path(&resolved.file_path);
+            let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
+                message: format_module_source_error(
+                    module_name,
+                    &file_display,
+                    &source,
+                    "lex error",
+                    &e.message,
+                    e.span,
+                ),
                 span,
             })?;
             let (mut program, _) = Parser::new(tokens).parse_program_recovering();
@@ -2629,12 +2648,27 @@ impl Compiler {
                 if let Some(base) = spread {
                     // Extend op: compile base, then RecordUpdate-style merge
                     // (RecordUpdate already supports adding new fields too).
+                    //
+                    // Round 83 LATENT (AnonRecord spread `==` divergence):
+                    // emit `RecordUpdateAnon` rather than `RecordUpdate`
+                    // here. The typechecker reports the result of a
+                    // `{...base, ...}` spread as `Type::AnonRecord` even
+                    // when `base` is a nominal record (see
+                    // src/typechecker/inference.rs ~4099). The resulting
+                    // runtime `Value::Record`'s `type_name` must therefore
+                    // be `"<anon>"` to match an anon-record literal of the
+                    // same shape — `Value::Record::eq` checks the name
+                    // before the field map (src/value.rs ~1714), so
+                    // inheriting the nominal base's name made
+                    // `{...person} == { x: 1 }` return `false` despite
+                    // identical fields and identical static types.
+                    // Lock: tests/round83_anonrec_spread_eq_tests.rs.
                     self.compile_expr(base)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     for (_, val) in fields {
                         self.compile_expr(val)?;
                     }
-                    self.current_chunk().emit_op(Op::RecordUpdate, span);
+                    self.current_chunk().emit_op(Op::RecordUpdateAnon, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
                     for fname in &field_names {
                         let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;

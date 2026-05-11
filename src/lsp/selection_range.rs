@@ -16,7 +16,7 @@ use crate::lexer::Span;
 
 use super::Server;
 use super::conversions::{position_to_offset, span_to_range};
-use super::text_utils::expr_extent;
+use super::text_utils::{expr_extent, match_closing_brace};
 
 impl Server {
     pub(super) fn selection_range(
@@ -119,13 +119,55 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
                 }
             }
         }
-        Decl::Type(td) if cursor >= td.span.offset => {
-            out.push(td.span);
+        Decl::Type(td) => {
+            // Round-83 GAP fix: bound the cursor on BOTH sides with the
+            // decl's actual extent. `td.span` is just the `type` keyword
+            // span (4 bytes); without an upper bound we'd push this
+            // unrelated keyword span into the chain whenever the cursor
+            // appears AFTER the decl in source order, making it the
+            // outermost element of an unrelated chain (chain parent does
+            // not enclose its child — Shift+Alt+→ semantics broken).
+            let end = type_decl_extent(td, source);
+            if cursor >= td.span.offset && cursor <= end {
+                out.push(td.span);
+            }
         }
-        Decl::Trait(t) if cursor >= t.span.offset => {
-            out.push(t.span);
+        Decl::Trait(t) => {
+            // Round-83 GAP fix: same as Decl::Type — `t.span` is just the
+            // `trait` keyword (5 bytes). The trait body is always
+            // brace-delimited, so scan for the matching `}`.
+            let end = match_closing_brace(source, t.span.offset).unwrap_or(source.len());
+            if cursor >= t.span.offset && cursor <= end {
+                out.push(t.span);
+            }
         }
         _ => {}
+    }
+}
+
+/// End offset (exclusive) of a `type` declaration in source.
+///
+/// For brace-bodied types (`type Foo { ... }` — records and enums) this
+/// scans forward for the matching `}`. For aliases (`type Foo = ...`)
+/// there is no brace body in source; we scan to end-of-line, which is
+/// the canonical decl terminator for single-line aliases. Multi-line
+/// aliases are rare; falling back to end-of-line on those still gives a
+/// non-zero extent that correctly excludes the rest of the file.
+fn type_decl_extent(td: &TypeDecl, source: &str) -> usize {
+    match &td.body {
+        TypeBody::Record(_) | TypeBody::Enum(_) => {
+            match_closing_brace(source, td.span.offset).unwrap_or(source.len())
+        }
+        TypeBody::Alias(_) => {
+            // Alias: scan from the `type` keyword to the next newline.
+            let bytes = source.as_bytes();
+            let start = td.span.offset.min(bytes.len());
+            let mut i = start;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            i
+        }
     }
 }
 

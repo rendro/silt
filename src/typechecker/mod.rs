@@ -4648,8 +4648,9 @@ impl TypeChecker {
                 // `Item` declared on `Super`; in that case the AssocProj
                 // must use `Super` as the trait_name so the binding
                 // (registered under `(Super, target, Item)`) is found
-                // by canonicalize. Walk the supertrait chain in BFS
-                // order; first declaring trait wins.
+                // by canonicalize. Walk the supertrait chain in DFS
+                // order (LIFO via `Vec::pop`); the first popped trait
+                // that declares the assoc-type wins.
                 let declaring_trait = self
                     .find_assoc_type_declaring_trait(*trait_name, *assoc_name)
                     .unwrap_or(*trait_name);

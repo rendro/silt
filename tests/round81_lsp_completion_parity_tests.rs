@@ -185,6 +185,151 @@ fn lsp_auto_derive_non_ordering_arm_matches_typechecker() {
     );
 }
 
+/// Round 83 LATENT strengthen: the `lsp_auto_derive_non_ordering_arm_
+/// matches_typechecker` lock above only checks that the arm-head
+/// (`"Tuple" | "Map" | "Set"`) appears in `src/lsp/completion.rs` and
+/// that the slice literal `&["Tuple", "Map", "Set"]` appears in
+/// `src/typechecker/mod.rs`. It does NOT lock the RHS — the method-name
+/// list returned by the LSP arm — against the trait-name list in the
+/// typechecker. If someone edited the LSP arm to e.g.
+/// `&["display", "compare", "equal", "hash"]`, the existing test would
+/// still pass, but the LSP would advertise a phantom `compare`
+/// completion on Map/Set/Tuple receivers (since the typechecker
+/// registers only Equal/Hash/Display for those types via
+/// `non_ordering_traits = &["Equal", "Hash", "Display"]`).
+///
+/// This test locks the parity in three steps:
+///
+///   1. Lock the exact LSP arm body (`"Tuple" | "Map" | "Set" =>
+///      &["display", "equal", "hash"]`), whitespace-normalized.
+///   2. Lock the exact typechecker slice literal
+///      (`let non_ordering_traits: &[&str] = &["Equal", "Hash",
+///      "Display"];`), whitespace-normalized.
+///   3. Convert each trait name in `non_ordering_traits` to its method
+///      name via the canonical lowercase mapping (`Equal -> equal`,
+///      `Hash -> hash`, `Display -> display` — see
+///      `builtin_trait_decls` at `src/typechecker/mod.rs:6926`: every
+///      auto-derive built-in trait has a single method whose name is
+///      the lowercase form of the trait name). Assert the resulting
+///      set equals the LSP method set.
+///
+/// Mental revert check: if someone changed the LSP arm to
+/// `"Tuple" | "Map" | "Set" => &["display", "compare", "equal", "hash"]`,
+/// step (1) would fail (the exact-arm needle would not be found) AND
+/// step (3) would fail (LSP set = {display, compare, equal, hash} but
+/// typechecker-derived set = {display, equal, hash}). Either failure
+/// catches the drift.
+#[test]
+fn lsp_auto_derive_method_names_match_typechecker_trait_names() {
+    fn normalize_ws(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    // Step 1: lock the exact LSP arm body. The arm appears on a single
+    // source line (currently `src/lsp/completion.rs:439`). We
+    // whitespace-normalize the entire file once and grep for the
+    // normalized arm so a future rustfmt break across two lines won't
+    // false-flag the lock.
+    let completion_norm = normalize_ws(COMPLETION_RS);
+    let lsp_arm = "\"Tuple\" | \"Map\" | \"Set\" => &[\"display\", \"equal\", \"hash\"]";
+    assert!(
+        completion_norm.contains(lsp_arm),
+        "src/lsp/completion.rs no longer contains the exact \
+         non-ordering LSP arm `{lsp_arm}` (whitespace-normalized). If \
+         the RHS method list changed, the typechecker's \
+         `non_ordering_traits` at src/typechecker/mod.rs:7145 MUST \
+         change in lock-step (`Equal`/`Hash`/`Display` are the only \
+         built-in non-ordering auto-derived traits). Either revert the \
+         LSP edit or update both sides AND this test."
+    );
+
+    // Step 2: lock the exact typechecker slice literal.
+    let typechecker_norm = normalize_ws(TYPECHECKER_RS);
+    let tc_slice = "let non_ordering_traits: &[&str] = &[\"Equal\", \"Hash\", \"Display\"];";
+    assert!(
+        typechecker_norm.contains(tc_slice),
+        "src/typechecker/mod.rs no longer contains the exact slice \
+         literal `{tc_slice}` (whitespace-normalized). If the \
+         non-ordering trait set changed, the LSP arm at \
+         src/lsp/completion.rs:439 MUST change in lock-step (each \
+         trait's method name is its lowercase form — see \
+         `builtin_trait_decls`). Either revert the typechecker edit or \
+         update both sides AND this test."
+    );
+
+    // Step 3: derive the expected LSP method set from the typechecker
+    // trait list via the canonical lowercase mapping, parse the actual
+    // LSP method set out of the arm, and assert they match.
+    //
+    // Mapping rationale: `builtin_trait_decls()` at
+    // src/typechecker/mod.rs:6926 declares each auto-derive built-in
+    // trait with a single method whose name is the lowercase of the
+    // trait name (Display -> display, Compare -> compare,
+    // Equal -> equal, Hash -> hash). The mapping is intentionally
+    // trivial; if the project ever introduces a multi-word built-in
+    // trait whose method name diverges from `to_lowercase`, this
+    // mapping must be revisited (and `builtin_trait_decls` will need
+    // to be the source of truth instead of a string transform).
+    let typechecker_non_ordering: &[&str] = &["Equal", "Hash", "Display"];
+    let expected_lsp_methods: std::collections::BTreeSet<String> =
+        typechecker_non_ordering
+            .iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+
+    // Parse the LSP arm's method list directly out of the source. We
+    // locate the arm head `"Tuple" | "Map" | "Set" =>` and grab the
+    // `&[...]` slice literal that immediately follows, then collect
+    // every double-quoted token inside the brackets. This makes the
+    // test self-driven against the LSP source rather than restating
+    // its contents inline — the only inline constants are the
+    // typechecker trait names, which we re-derive method names from.
+    let arm_head = "\"Tuple\" | \"Map\" | \"Set\" =>";
+    let arm_head_idx = completion_norm
+        .find(arm_head)
+        .expect("Step 1 already locked the arm-head presence; \
+                 unreachable if Step 1 passed");
+    let after_head = &completion_norm[arm_head_idx + arm_head.len()..];
+    let slice_open = after_head
+        .find("&[")
+        .expect("LSP non-ordering arm has no `&[` slice literal after \
+                 `=>` — the arm shape changed; update this test to \
+                 match.");
+    let slice_close_rel = after_head[slice_open..]
+        .find(']')
+        .expect("LSP non-ordering arm `&[` has no matching `]` — the \
+                 arm shape changed; update this test to match.");
+    let slice_body = &after_head[slice_open + 2..slice_open + slice_close_rel];
+
+    let mut lsp_methods: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut chars = slice_body.char_indices();
+    while let Some((_, ch)) = chars.next() {
+        if ch == '"' {
+            let mut s = String::new();
+            for (_, c) in chars.by_ref() {
+                if c == '"' {
+                    break;
+                }
+                s.push(c);
+            }
+            lsp_methods.insert(s);
+        }
+    }
+
+    assert_eq!(
+        lsp_methods, expected_lsp_methods,
+        "LSP non-ordering method set {lsp_methods:?} differs from the \
+         typechecker-derived expected set {expected_lsp_methods:?}. \
+         The mapping is lowercase-of-trait-name (Equal -> equal, \
+         Hash -> hash, Display -> display) per `builtin_trait_decls` \
+         at src/typechecker/mod.rs:6926. Either the LSP advertises a \
+         method the typechecker doesn't register (phantom completion \
+         risk) or it omits one (missing completion). Update both \
+         sides AND this test in lock-step."
+    );
+}
+
 /// Negative-side parity lock: any canonical type name that lives in
 /// the LSP's `auto_derived_methods_for` arms MUST also appear in the
 /// typechecker's `register_auto_derived_impls_for` calls. This catches

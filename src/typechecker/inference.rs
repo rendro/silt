@@ -889,11 +889,7 @@ impl TypeChecker {
                     f.declared_effects,
                 )
             };
-            self.errors.push(crate::types::TypeError {
-                message,
-                span: f.body.span,
-                severity: crate::types::Severity::Error,
-            });
+            self.error(message, f.body.span);
         }
 
         // Restore previous constraints and return type
@@ -3653,14 +3649,13 @@ impl TypeChecker {
                         } else {
                             format!("{inferred}")
                         };
-                        self.errors.push(crate::types::TypeError {
-                            message: format!(
+                        self.error(
+                            format!(
                                 "effect '{}' not declared in lambda\nlambda body uses {}; signature declares {}",
                                 representative, inferred_render, effects,
                             ),
-                            span: body.span,
-                            severity: crate::types::Severity::Error,
-                        });
+                            body.span,
+                        );
                     }
                 }
 

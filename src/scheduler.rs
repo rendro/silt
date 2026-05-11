@@ -27,7 +27,7 @@ pub mod test_hooks;
 pub mod test_support;
 pub mod wake_graph;
 
-pub use wake_graph::{MainTarget, SelectEdge as WakeSelectEdge};
+pub use wake_graph::MainTarget;
 use wake_graph::{NodeId, ParkEdge, SelectEdge, WakeGraph};
 
 /// Callback invoked on every wake-graph state change. Type-aliased to
