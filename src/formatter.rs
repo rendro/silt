@@ -1951,47 +1951,72 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
 /// alternate-toggle the `in_string` flag and the `--` inside the string
 /// would be misread as a trailing comment, fabricating a phantom comment
 /// (`--"""}`) that grows on every formatter pass and breaks idempotency.
-fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
+/// Output of `scan_line_for_comments`. Captures the start indices and
+/// bracket-context snapshots at the moments the scanner first sees a
+/// `--` line comment and/or a `{-` block comment outside of strings,
+/// triple-quotes, interpolation expressions, and outer block comments.
+///
+/// `line_comment_bracket_depth` is `bracket_stack.len()` at the `--`,
+/// and `line_comment_bracket_top` is `bracket_stack.last()` — exposing
+/// both lets a caller predicate either on "any unclosed bracket"
+/// (F1, F2) or on "specifically inside an unclosed `{` block body"
+/// (F3) without duplicating the scanner.
+struct LineScanResult {
+    line_comment_start: Option<usize>,
+    line_comment_bracket_depth: usize,
+    line_comment_bracket_top: Option<char>,
+    block_start: Option<usize>,
+    block_start_bracket_depth: usize,
+}
+
+/// Walk a single source line and capture the position of the first
+/// top-level `--` line comment and `{-` block comment, plus the
+/// bracket-stack snapshot at each. The scanner mirrors the lexer's
+/// string / triple-string / interpolation / block-comment state machine
+/// so that markers inside any of those (or inside an outer block
+/// comment) are correctly ignored.
+///
+/// Returns the line as a `Vec<char>` (so callers can slice into it
+/// without re-collecting) and the scan result. Three sibling extractors
+/// (`extract_trailing_comment_from_line`,
+/// `extract_bracket_interior_line_comment_from_line`,
+/// `extract_block_body_trailing_comment_from_line`) share this scanner
+/// and each apply a different post-scan predicate.
+///
+/// Round-83 unify: prior to this refactor the three extractors each
+/// inlined a ~80-line copy of this scanner. The audit-round-69 collapse
+/// of `compute_block_end_line` → `compute_bracket_end_line` set the
+/// pattern; this is the line-comment-extractor equivalent.
+fn scan_line_for_comments(line: &str) -> (Vec<char>, LineScanResult) {
     let chars: Vec<char> = line.chars().collect();
-    // First pass: find the byte index of the first `--` line comment that
-    // sits outside of any string or block comment, AND the byte index and
-    // depth-tracking info for the first `{-` that sits outside of any
-    // string (block-in-block is fine — we handle nesting).
-    //
-    // String-interpolation handling: a regular string `"..."` may contain
-    // `{ <expr> }` interpolations (mirroring the lexer's `interp_stack`
-    // logic in `scan_string`). Inside an interpolation expression we are
-    // in code mode — nested strings, braces, and even `{- ... -}` block
-    // comments are all possible. We track interpolation brace depth on a
-    // stack so we know when a `}` returns us to string context. Without
-    // this, the scanner mis-classifies `--` inside a nested string of an
-    // interpolation as a line comment, fabricating a phantom trailing
-    // comment that grows on every formatter pass and breaks idempotency.
+    // String / triple-string / interp / block-comment state mirrors the
+    // lexer's `scan_string` and `scan_block_comment`. Without this we
+    // would mis-classify `--` inside a nested string of an interpolation
+    // as a line comment, fabricating a phantom trailing comment that
+    // grows on every formatter pass and breaks idempotency.
     let mut in_string = false;
     let mut in_triple = false;
     let mut interp_depths: Vec<usize> = Vec::new();
     let mut block_depth: usize = 0;
-    let mut block_start: Option<usize> = None;
-    let mut block_start_bracket_depth: i32 = 0;
+    // Stack of unclosed bracket-opener characters in code (outside
+    // strings / outer block comments / interp). Snapshotted at the
+    // moment a `--` or `{-` is found so callers can predicate on the
+    // depth or the innermost-open bracket kind. Equivalent to the prior
+    // `bracket_depth: i32` counter for the gate `> 0` (over-closing
+    // brackets pop an empty stack as a no-op vs. counter going to -1;
+    // both fail the `> 0` gate identically).
+    let mut bracket_stack: Vec<char> = Vec::new();
     let mut line_comment_start: Option<usize> = None;
-    let mut line_comment_bracket_depth: i32 = 0;
-    // Bracket-pair depth in code (parens/brackets/braces). When > 0 at the
-    // start of a `--` or `{-`, the comment is INSIDE an unclosed bracket
-    // pair — i.e. the line is mid-expression, NOT the end of a statement
-    // — and the comment must NOT be extracted as a "trailing comment of
-    // the statement on this line". Otherwise a multi-line construct
-    // whose first line is `f( -- note` would attach `-- note` to the
-    // call statement as a whole, leading the formatter to emit it after
-    // the closing `)` on pass 1; pass 2 then re-extracts and the comment
-    // either drifts further or is dropped, breaking idempotency.
-    let mut bracket_depth: i32 = 0;
+    let mut line_comment_bracket_depth: usize = 0;
+    let mut line_comment_bracket_top: Option<char> = None;
+    let mut block_start: Option<usize> = None;
+    let mut block_start_bracket_depth: usize = 0;
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i];
         if in_triple {
-            // Inside a triple-quoted string: only `"""` closes it. Every
-            // other character (including `"`, `--`, `{-`) is raw content
-            // and must NOT alter scanner state.
+            // Triple-quoted string: only `"""` closes; `"`, `--`, `{-`
+            // are all raw content.
             if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
                 in_triple = false;
                 i += 3;
@@ -2002,17 +2027,15 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         }
         if in_string {
             if ch == '\\' && i + 1 < chars.len() {
-                // Escape sequence (\n, \t, \\, \", \{, \}). Skip the
-                // escape and the next char so an escaped `{` does not
-                // open a phantom interpolation.
+                // Escape sequence (\n, \t, \\, \", \{, \}). Skip both so
+                // escaped `{` does not open a phantom interpolation.
                 i += 2;
                 continue;
             }
             if ch == '{' {
-                // Unescaped `{` inside a string opens an interpolation
-                // expression — switch back to code mode and remember to
-                // resume string mode when this interp's matching `}` is
-                // seen (mirrors the lexer's `interp_stack`).
+                // Unescaped `{` opens an interpolation expression;
+                // switch to code mode (mirroring the lexer's
+                // `interp_stack`).
                 interp_depths.push(0);
                 in_string = false;
                 i += 1;
@@ -2025,8 +2048,8 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             continue;
         }
         if block_depth > 0 {
-            // Inside a block comment: only care about `{-` (deepen) and
-            // `-}` (close). `--` and `"` inside block comments are inert.
+            // Inside a block comment: only `{-` (deepen) and `-}`
+            // (close) matter; `--` and `"` are inert.
             if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
                 block_depth += 1;
                 i += 2;
@@ -2041,9 +2064,6 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             continue;
         }
         // Outside any string or block comment.
-        // Recognize a triple-quote `"""` BEFORE the regular `"` rule, so
-        // we don't mistakenly enter regular-string mode on the first of
-        // three consecutive quotes.
         if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
             in_triple = true;
             i += 3;
@@ -2055,43 +2075,37 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             continue;
         }
         if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            // A `--` only counts as a line comment when we are NOT inside
-            // a string interpolation expression. (Inside an interpolation
-            // expression in valid Silt source the lexer would treat `--`
-            // as a line comment that breaks the surrounding string, so
-            // such code never reaches the formatter — but if it somehow
-            // does, conservatively treating it as a comment would still
-            // be wrong because a truly-trailing comment lives at the
-            // outermost code level only.)
+            // A `--` only counts as a line comment outside an interp
+            // expression.
             if interp_depths.is_empty() {
                 line_comment_start = Some(i);
-                line_comment_bracket_depth = bracket_depth;
+                line_comment_bracket_depth = bracket_stack.len();
+                line_comment_bracket_top = bracket_stack.last().copied();
                 break;
             }
-            // Skip both dashes and continue scanning the interp expr.
             i += 2;
             continue;
         }
         if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
             if block_start.is_none() && interp_depths.is_empty() {
                 block_start = Some(i);
-                block_start_bracket_depth = bracket_depth;
+                block_start_bracket_depth = bracket_stack.len();
             }
             block_depth += 1;
             i += 2;
             continue;
         }
-        // Track bracket-pair depth in code (outside strings/comments/interp).
+        // Bracket tracking outside strings/comments/interp.
         if interp_depths.is_empty() {
             if ch == '(' || ch == '[' || ch == '{' {
-                bracket_depth += 1;
+                bracket_stack.push(ch);
             } else if ch == ')' || ch == ']' || ch == '}' {
-                bracket_depth -= 1;
+                bracket_stack.pop();
             }
         }
         if !interp_depths.is_empty() {
-            // We are inside an interpolation expression. Track nested
-            // braces and detect the matching `}` that closes the interp.
+            // Inside an interp expression: track nested braces and
+            // detect the matching `}` that closes the interp.
             if ch == '{' {
                 if let Some(d) = interp_depths.last_mut() {
                     *d += 1;
@@ -2114,44 +2128,41 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         }
         i += 1;
     }
+    (
+        chars,
+        LineScanResult {
+            line_comment_start,
+            line_comment_bracket_depth,
+            line_comment_bracket_top,
+            block_start,
+            block_start_bracket_depth,
+        },
+    )
+}
 
-    // If a `--` line comment exists at top level, it wins (and the
-    // extracted text may include a block comment that appears AFTER it
-    // as plain comment bytes, since once `--` starts everything to EOL
-    // is comment). The first-pass loop already stops at `--`, so we
-    // simply emit from `line_comment_start` to end.
-    if let Some(start) = line_comment_start {
-        // If the `--` sits inside an unclosed bracket pair (the line
-        // is mid-expression — e.g. `f( -- note`), the comment is NOT
-        // a statement-trailing comment. Drop it so the splice routine
-        // (or the multi-line emitter for the enclosing construct) can
-        // place it at the correct interior position instead.
-        if line_comment_bracket_depth > 0 {
+fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
+    let (chars, scan) = scan_line_for_comments(line);
+    // If a top-level `--` exists, it wins (the extracted text may
+    // include a block comment that appears AFTER it as plain comment
+    // bytes — once `--` starts, everything to EOL is comment).
+    if let Some(start) = scan.line_comment_start {
+        // If the `--` sits inside an unclosed bracket pair, the line
+        // is mid-expression — not a statement-trailing comment.
+        if scan.line_comment_bracket_depth > 0 {
             return None;
         }
         let comment: String = chars[start..].iter().collect();
         return Some(comment.trim_end().to_string());
     }
-
-    // No line comment. If we saw a block comment, check whether it
-    // qualifies as a trailing block comment — its closer must be
-    // followed only by whitespace (or a `--` line comment).
-    let start = block_start?;
-    // Same bracket-depth guard as above: if the block comment opens
-    // inside an unclosed bracket pair on this line, it is interior
-    // (handled by `splice_inline_block_comments`), not a statement-
-    // trailing comment. Returning `Some` here would attribute the
-    // comment to the surrounding statement, which then duplicates it
-    // (the splice routine ALSO emits it from the source-token gap),
-    // producing pass-1 output that pass 2 reflows differently.
-    if block_start_bracket_depth > 0 {
+    // No line comment. Check whether a top-level block comment
+    // qualifies as a trailing block comment.
+    let start = scan.block_start?;
+    if scan.block_start_bracket_depth > 0 {
         return None;
     }
     // Walk from `start` to find the matching close, accounting for
-    // nesting. The outer scan above already tracked depth, but by that
-    // point it may have discovered additional block comments later on
-    // the line, so we redo the walk here starting at the known outer
-    // `{-` to find exactly where it ends.
+    // nesting. We redo the walk here because the outer scan may have
+    // discovered additional block comments later on the line.
     let mut depth: usize = 0;
     let mut j = start;
     let mut close_end: Option<usize> = None;
@@ -2173,27 +2184,16 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         }
         j += 1;
     }
-    let Some(close_end) = close_end else {
-        // Unterminated block comment on this line — cannot be a
-        // trailing comment.
-        return None;
-    };
-    // After the block comment's closer, only whitespace (and optionally
-    // a `--` line comment) may follow for it to count as trailing.
+    let close_end = close_end?;
+    // After the block close, only whitespace (and optionally a `--`
+    // line comment) may follow for it to count as trailing.
     let mut k = close_end;
     while k < chars.len() && chars[k].is_whitespace() {
         k += 1;
     }
-    if k < chars.len() {
-        // There's more content after the block close. If it's a `--`
-        // line comment, we accept the combined `{- ... -} -- ...` tail
-        // as the trailing comment. Otherwise this block comment is
-        // inline and NOT trailing.
-        if !(chars[k] == '-' && k + 1 < chars.len() && chars[k + 1] == '-') {
-            return None;
-        }
+    if k < chars.len() && !(chars[k] == '-' && k + 1 < chars.len() && chars[k + 1] == '-') {
+        return None;
     }
-    // Emit the trailing substring starting at the `{-`.
     let comment: String = chars[start..].iter().collect();
     Some(comment.trim_end().to_string())
 }
@@ -2221,119 +2221,11 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
 /// multi-line emitter already routes the comment via the per-line
 /// `trailing_map` / `comments` vec pathways.
 fn extract_bracket_interior_line_comment_from_line(line: &str) -> Option<String> {
-    // Reuse the same string/comment/interp scanner as
-    // `extract_trailing_comment_from_line`, but (a) only succeed when the
-    // `--` sits at bracket_depth > 0, and (b) require the prefix before
-    // `--` to contain no non-bracket-open code characters.
-    let chars: Vec<char> = line.chars().collect();
-    let mut in_string = false;
-    let mut in_triple = false;
-    let mut interp_depths: Vec<usize> = Vec::new();
-    let mut block_depth: usize = 0;
-    let mut line_comment_start: Option<usize> = None;
-    let mut line_comment_bracket_depth: i32 = 0;
-    let mut bracket_depth: i32 = 0;
-    let mut i = 0;
-    while i < chars.len() {
-        let ch = chars[i];
-        if in_triple {
-            if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
-                in_triple = false;
-                i += 3;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' && i + 1 < chars.len() {
-                i += 2;
-                continue;
-            }
-            if ch == '{' {
-                interp_depths.push(0);
-                in_string = false;
-                i += 1;
-                continue;
-            }
-            if ch == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if block_depth > 0 {
-            if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-                block_depth += 1;
-                i += 2;
-                continue;
-            }
-            if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' {
-                block_depth -= 1;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
-            in_triple = true;
-            i += 3;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            i += 1;
-            continue;
-        }
-        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            if interp_depths.is_empty() {
-                line_comment_start = Some(i);
-                line_comment_bracket_depth = bracket_depth;
-                break;
-            }
-            i += 2;
-            continue;
-        }
-        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            block_depth += 1;
-            i += 2;
-            continue;
-        }
-        if interp_depths.is_empty() {
-            if ch == '(' || ch == '[' || ch == '{' {
-                bracket_depth += 1;
-            } else if ch == ')' || ch == ']' || ch == '}' {
-                bracket_depth -= 1;
-            }
-        }
-        if !interp_depths.is_empty() {
-            if ch == '{' {
-                if let Some(d) = interp_depths.last_mut() {
-                    *d += 1;
-                }
-                i += 1;
-                continue;
-            }
-            if ch == '}' {
-                if let Some(d) = interp_depths.last_mut() {
-                    if *d == 0 {
-                        interp_depths.pop();
-                        in_string = true;
-                    } else {
-                        *d -= 1;
-                    }
-                }
-                i += 1;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    let start = line_comment_start?;
+    let (chars, scan) = scan_line_for_comments(line);
+    let start = scan.line_comment_start?;
     // Must be inside an unclosed bracket pair — otherwise the trailing-
     // comment extractor would have already claimed it.
-    if line_comment_bracket_depth <= 0 {
+    if scan.line_comment_bracket_depth == 0 {
         return None;
     }
     // The character immediately before the `--` (skipping whitespace)
@@ -2392,119 +2284,11 @@ fn extract_bracket_interior_line_comment_from_line(line: &str) -> Option<String>
 /// runs — so the comment attaches to the correct inner statement rather
 /// than the enclosing one.
 fn extract_block_body_trailing_comment_from_line(line: &str) -> Option<String> {
-    // Reuse the same string/comment/interp scanner as its siblings, but
-    // track a STACK of bracket kinds so we can inspect which bracket the
-    // `--` sits inside when `bracket_depth > 0`.
-    let chars: Vec<char> = line.chars().collect();
-    let mut in_string = false;
-    let mut in_triple = false;
-    let mut interp_depths: Vec<usize> = Vec::new();
-    let mut block_depth: usize = 0;
-    let mut line_comment_start: Option<usize> = None;
-    // Stack of unclosed bracket-opener characters at the `--`'s position.
-    let mut bracket_stack: Vec<char> = Vec::new();
-    let mut line_comment_stack_top: Option<char> = None;
-    let mut i = 0;
-    while i < chars.len() {
-        let ch = chars[i];
-        if in_triple {
-            if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
-                in_triple = false;
-                i += 3;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' && i + 1 < chars.len() {
-                i += 2;
-                continue;
-            }
-            if ch == '{' {
-                interp_depths.push(0);
-                in_string = false;
-                i += 1;
-                continue;
-            }
-            if ch == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if block_depth > 0 {
-            if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-                block_depth += 1;
-                i += 2;
-                continue;
-            }
-            if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' {
-                block_depth -= 1;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
-            in_triple = true;
-            i += 3;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            i += 1;
-            continue;
-        }
-        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            if interp_depths.is_empty() {
-                line_comment_start = Some(i);
-                line_comment_stack_top = bracket_stack.last().copied();
-                break;
-            }
-            i += 2;
-            continue;
-        }
-        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            block_depth += 1;
-            i += 2;
-            continue;
-        }
-        if interp_depths.is_empty() {
-            if ch == '(' || ch == '[' || ch == '{' {
-                bracket_stack.push(ch);
-            } else if ch == ')' || ch == ']' || ch == '}' {
-                bracket_stack.pop();
-            }
-        }
-        if !interp_depths.is_empty() {
-            if ch == '{' {
-                if let Some(d) = interp_depths.last_mut() {
-                    *d += 1;
-                }
-                i += 1;
-                continue;
-            }
-            if ch == '}' {
-                if let Some(d) = interp_depths.last_mut() {
-                    if *d == 0 {
-                        interp_depths.pop();
-                        in_string = true;
-                    } else {
-                        *d -= 1;
-                    }
-                }
-                i += 1;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    let start = line_comment_start?;
+    let (chars, scan) = scan_line_for_comments(line);
+    let start = scan.line_comment_start?;
     // Must be inside an unclosed bracket pair. The plain trailing extractor
     // already handles `bracket_depth == 0`.
-    let top = line_comment_stack_top?;
+    let top = scan.line_comment_bracket_top?;
     // Innermost unclosed bracket must be a `{` — a block body where the
     // preceding code forms a complete inner statement. Claiming `(` / `[`
     // here would hoist mid-call / mid-array comments out of the call.
@@ -8130,5 +7914,68 @@ fn f() {
         );
         let twice = format(&formatted).unwrap();
         assert_eq!(formatted, twice, "formatting must be idempotent");
+    }
+
+    // ── Round-83 scanner-unify lock corpus ─────────────────────────────
+    //
+    // Locks the byte-equivalent outputs of the three line-comment
+    // extractors against a hand-computed corpus. Lands BEFORE the
+    // scanner refactor; must continue to pass after. If the refactor
+    // changes any of these outputs, the lock fails — exactly the
+    // semantic-no-op proof the audit prompt requires for dead-code /
+    // refactor fixes.
+    //
+    // F1 = extract_trailing_comment_from_line
+    // F2 = extract_bracket_interior_line_comment_from_line
+    // F3 = extract_block_body_trailing_comment_from_line
+    fn cases_round83() -> Vec<(&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>)> {
+        vec![
+            // ( input,                                 F1,                          F2,              F3                 )
+            ("let x = 1 -- note",                       Some("-- note"),             None,            None              ),
+            ("f( -- arg",                               None,                        Some("-- arg"),  None              ),
+            ("{ x -- note",                             None,                        None,            Some("-- note")   ),
+            ("foo() -- top",                            Some("-- top"),              None,            None              ),
+            ("\"hello -- world\"",                      None,                        None,            None              ),
+            ("\"\"\"raw -- text\"\"\"",                 None,                        None,            None              ),
+            ("let x = \"\"\"raw\"\"\"  -- after",       Some("-- after"),            None,            None              ),
+            ("x {- block -} -- mixed",                  Some("-- mixed"),            None,            None              ),
+            ("x = 1 {- block -}",                       Some("{- block -}"),         None,            None              ),
+            ("x = 1 {- block -} y",                     None,                        None,            None              ),
+            ("fn nc(){ --",                             None,                        Some("--"),      None              ),
+            ("{ -- only",                               None,                        Some("-- only"), None              ),
+            ("[ x -- lost",                             None,                        None,            None              ),
+            ("",                                        None,                        None,            None              ),
+            ("--",                                      Some("--"),                  None,            None              ),
+            ("\"hi {x --y}\"",                          None,                        None,            None              ),
+            ("x = 1 {- a {- b -} c -}",                 Some("{- a {- b -} c -}"),   None,            None              ),
+            ("   -- leading",                           Some("-- leading"),          None,            None              ),
+        ]
+    }
+
+    #[test]
+    fn round83_scanner_corpus_extract_trailing_comment_from_line() {
+        for (input, want, _, _) in cases_round83() {
+            let got = extract_trailing_comment_from_line(input);
+            let got_str = got.as_deref();
+            assert_eq!(got_str, want, "F1 mismatch on input {input:?}");
+        }
+    }
+
+    #[test]
+    fn round83_scanner_corpus_extract_bracket_interior_line_comment_from_line() {
+        for (input, _, want, _) in cases_round83() {
+            let got = extract_bracket_interior_line_comment_from_line(input);
+            let got_str = got.as_deref();
+            assert_eq!(got_str, want, "F2 mismatch on input {input:?}");
+        }
+    }
+
+    #[test]
+    fn round83_scanner_corpus_extract_block_body_trailing_comment_from_line() {
+        for (input, _, _, want) in cases_round83() {
+            let got = extract_block_body_trailing_comment_from_line(input);
+            let got_str = got.as_deref();
+            assert_eq!(got_str, want, "F3 mismatch on input {input:?}");
+        }
     }
 }
