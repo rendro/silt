@@ -56,3 +56,61 @@ fn inference_has_no_residual_errors_push_lines() {
          New error sites should use the `self.error(...)` helper."
     );
 }
+
+/// Round-84 extension: the bypass pattern is forbidden in *every*
+/// `src/typechecker/*.rs` module, not just `inference.rs`. The
+/// helper at `src/typechecker/mod.rs:2209` is the single source of
+/// truth for emitting `Severity::Error`; sibling modules
+/// (`resolve.rs`, `auto_derive.rs`, `effects_infer.rs`,
+/// `exhaustiveness.rs`, `suggest.rs`, `builtins.rs`, and any future
+/// additions) must funnel through it too.
+///
+/// We grep for the precise bypass shape
+/// `self.errors.push(crate::types::TypeError {` rather than the bare
+/// `self.errors.push(` — the helper's own definitions in `mod.rs`
+/// legitimately call `self.errors.push(TypeError { … })` (sibling
+/// path, no `crate::types::` prefix), and we don't want to flag
+/// those.
+#[test]
+fn round84_typechecker_no_raw_type_error_push_in_any_module() {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    dir.push("src/typechecker");
+    let entries = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+
+    let needle = "self.errors.push(crate::types::TypeError {";
+    let mut offenders: Vec<String> = Vec::new();
+    let mut files_scanned: usize = 0;
+    for entry in entries {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        // Skip subdirectories (e.g. `builtins/`); only top-level `.rs`
+        // files are part of the typechecker proper.
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        files_scanned += 1;
+        if src.contains(needle) {
+            offenders.push(path.display().to_string());
+        }
+    }
+    assert!(
+        files_scanned > 0,
+        "round 84 grep scanned 0 files in {}; the test would silently \
+         pass if the typechecker module layout changes — fix the path.",
+        dir.display()
+    );
+    assert!(
+        offenders.is_empty(),
+        "round 84 STYLE lock: the following typechecker modules \
+         contain a direct `{needle}` construction; use the \
+         `self.error(msg, span)` helper at \
+         src/typechecker/mod.rs:2209 instead so Severity stays a \
+         single point of truth. Offenders: {offenders:?}"
+    );
+}

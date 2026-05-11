@@ -194,3 +194,60 @@ fn round83_random_row_lists_only_real_functions() {
         );
     }
 }
+
+/// Round-84 extension: the `!net` row in the stdlib-coverage-map
+/// table uses module-wildcard tokens (`tcp.*`, `http.*`,
+/// `postgres.*`) plus a bare-module mention (`regex`, called out as
+/// pure). After stripping the `.*` suffix from each wildcard, every
+/// resulting name must be a real entry in `BUILTIN_MODULES`. Bare
+/// module names (no dot) must also be in `BUILTIN_MODULES`.
+///
+/// This locks the doc against module renames or removals — if a
+/// module disappears from the stdlib, the parity test fires so the
+/// doc is updated in the same PR.
+#[test]
+fn round84_net_row_lists_only_real_modules() {
+    let cells = coverage_row("`!net`");
+    let tokens = extract_tokens(&cells);
+    assert!(
+        !tokens.is_empty(),
+        "expected !net row to list at least one token, got: {:?}",
+        cells
+    );
+    let module_names: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+    let mut saw_any_module = false;
+    for tok in &tokens {
+        // Effect-row labels (e.g. ``!net`` in the parenthetical
+        // "(regex is pure — no !net)" call-out) are NOT module
+        // entries; they're meta-references. Skip them — the parity
+        // we're locking is module-name correctness, not effect-name
+        // correctness (the latter is owned by the effect-vocabulary
+        // tests elsewhere).
+        if tok.starts_with('!') {
+            continue;
+        }
+        // Wildcard form: `tcp.*` → check `tcp` is a real module.
+        let module_name = if let Some(stripped) = tok.strip_suffix(".*") {
+            stripped.to_string()
+        } else if !tok.contains('.') {
+            // Bare module name (e.g. `regex`).
+            tok.clone()
+        } else {
+            panic!(
+                "!net row contains an unexpected token shape {:?}; \
+                 expected `<module>.*` wildcards or bare `<module>` names",
+                tok
+            );
+        };
+        assert!(
+            module_names.contains(module_name.as_str()),
+            "!net row references module {:?} which is not in BUILTIN_MODULES",
+            module_name
+        );
+        saw_any_module = true;
+    }
+    assert!(
+        saw_any_module,
+        "!net row produced no module names after stripping wildcards"
+    );
+}

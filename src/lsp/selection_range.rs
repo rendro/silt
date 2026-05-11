@@ -12,11 +12,29 @@
 use lsp_types::SelectionRange;
 
 use crate::ast::*;
-use crate::lexer::Span;
 
 use super::Server;
-use super::conversions::{position_to_offset, span_to_range};
+use super::conversions::{offset_to_position, position_to_offset};
 use super::text_utils::{expr_extent, match_closing_brace};
+
+/// A byte-offset extent `[start, end)` collected during the AST walk.
+/// Replaces the previous `Vec<Span>` representation, which only carried
+/// the start offset and forced downstream `span_to_range` to derive an
+/// end via token-length lookup — that gave a 2-byte range for `fn`
+/// decls regardless of body extent. Carrying the explicit end here
+/// produces decl-level chain elements that actually ENCLOSE the cursor
+/// (round-84 lock; tier-2 `selection_range_returns_nested_chain`).
+#[derive(Copy, Clone)]
+struct Extent {
+    start: usize,
+    end: usize,
+}
+
+impl Extent {
+    fn width(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+}
 
 impl Server {
     pub(super) fn selection_range(
@@ -31,7 +49,7 @@ impl Server {
         let mut results = Vec::new();
         for pos in &params.positions {
             let cursor = position_to_offset(source, pos);
-            let mut ranges: Vec<Span> = Vec::new();
+            let mut ranges: Vec<Extent> = Vec::new();
             for decl in &program.decls {
                 collect_decl_ranges(decl, source, cursor, &mut ranges);
             }
@@ -47,7 +65,7 @@ impl Server {
                 continue;
             }
             // Sort innermost-first by extent width (smaller first).
-            ranges.sort_by_key(|sp| span_extent(sp, source));
+            ranges.sort_by_key(|e| e.width());
             let chain = build_chain(&ranges, source);
             results.push(chain);
         }
@@ -55,29 +73,14 @@ impl Server {
     }
 }
 
-fn span_extent(span: &Span, source: &str) -> usize {
-    let (end, _) = (
-        // Minimal: use offset + crude forward scan via source length clamp.
-        source
-            .len()
-            .min(span.offset + span_width_guess(span, source)),
-        span.offset,
-    );
-    end.saturating_sub(span.offset)
-}
-
-/// Very coarse span-width guess used only for sort ordering. The
-/// authoritative extent is computed via expr_extent where possible; for
-/// decl-level spans we fall back to the rest-of-source length.
-fn span_width_guess(span: &Span, source: &str) -> usize {
-    source.len().saturating_sub(span.offset)
-}
-
-fn build_chain(ranges: &[Span], source: &str) -> SelectionRange {
+fn build_chain(ranges: &[Extent], source: &str) -> SelectionRange {
     let mut parent: Option<Box<SelectionRange>> = None;
     // Walk outermost → innermost, building parents as we go.
-    for span in ranges.iter().rev() {
-        let range = span_to_range(span, source);
+    for ext in ranges.iter().rev() {
+        let range = lsp_types::Range::new(
+            offset_to_position(source, ext.start),
+            offset_to_position(source, ext.end),
+        );
         parent = Some(Box::new(SelectionRange { range, parent }));
     }
     match parent {
@@ -91,19 +94,25 @@ fn build_chain(ranges: &[Span], source: &str) -> SelectionRange {
 
 // ── Decl walkers ───────────────────────────────────────────────────
 
-fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<Span>) {
+fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<Extent>) {
     match decl {
         Decl::Fn(f) => {
             let (end, _) = expr_extent(&f.body, source);
             if cursor >= f.span.offset && cursor <= end {
-                out.push(f.span);
+                out.push(Extent {
+                    start: f.span.offset,
+                    end,
+                });
                 collect_expr_ranges(&f.body, source, cursor, out);
             }
         }
         Decl::Let { value, span, .. } => {
             let (end, _) = expr_extent(value, source);
             if cursor >= span.offset && cursor <= end {
-                out.push(*span);
+                out.push(Extent {
+                    start: span.offset,
+                    end,
+                });
                 collect_expr_ranges(value, source, cursor, out);
             }
         }
@@ -114,7 +123,10 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
             for method in &ti.methods {
                 let (end, _) = expr_extent(&method.body, source);
                 if cursor >= method.span.offset && cursor <= end {
-                    out.push(method.span);
+                    out.push(Extent {
+                        start: method.span.offset,
+                        end,
+                    });
                     collect_expr_ranges(&method.body, source, cursor, out);
                 }
             }
@@ -129,7 +141,10 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
             // not enclose its child — Shift+Alt+→ semantics broken).
             let end = type_decl_extent(td, source);
             if cursor >= td.span.offset && cursor <= end {
-                out.push(td.span);
+                out.push(Extent {
+                    start: td.span.offset,
+                    end,
+                });
             }
         }
         Decl::Trait(t) => {
@@ -138,7 +153,10 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
             // brace-delimited, so scan for the matching `}`.
             let end = match_closing_brace(source, t.span.offset).unwrap_or(source.len());
             if cursor >= t.span.offset && cursor <= end {
-                out.push(t.span);
+                out.push(Extent {
+                    start: t.span.offset,
+                    end,
+                });
             }
         }
         _ => {}
@@ -171,12 +189,15 @@ fn type_decl_extent(td: &TypeDecl, source: &str) -> usize {
     }
 }
 
-fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<Span>) {
+fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<Extent>) {
     let (end, _) = expr_extent(expr, source);
     if cursor < expr.span.offset || cursor > end {
         return;
     }
-    out.push(expr.span);
+    out.push(Extent {
+        start: expr.span.offset,
+        end,
+    });
     super::ast_walk::visit_expr_children(expr, |child| {
         collect_expr_ranges(child, source, cursor, out);
     });

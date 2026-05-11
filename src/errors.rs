@@ -244,15 +244,15 @@ pub(crate) fn use_color() -> bool {
 
 // ── ANSI color helpers ─────────────────────────────────────────────
 
-struct Colors {
-    red: &'static str,
-    yellow: &'static str,
-    cyan: &'static str,
-    bold: &'static str,
-    reset: &'static str,
+pub(crate) struct Colors {
+    pub(crate) red: &'static str,
+    pub(crate) yellow: &'static str,
+    pub(crate) cyan: &'static str,
+    pub(crate) bold: &'static str,
+    pub(crate) reset: &'static str,
 }
 
-const COLORS_ON: Colors = Colors {
+pub(crate) const COLORS_ON: Colors = Colors {
     red: "\x1b[31m",
     yellow: "\x1b[33m",
     cyan: "\x1b[36m",
@@ -260,7 +260,7 @@ const COLORS_ON: Colors = Colors {
     reset: "\x1b[0m",
 };
 
-const COLORS_OFF: Colors = Colors {
+pub(crate) const COLORS_OFF: Colors = Colors {
     red: "",
     yellow: "",
     cyan: "",
@@ -268,11 +268,24 @@ const COLORS_OFF: Colors = Colors {
     reset: "",
 };
 
+/// Returns the color palette appropriate for the current environment.
+/// Sibling modules (REPL helpers, etc.) that render error-shaped
+/// output to stderr should call this rather than rolling their own
+/// ANSI decisions, so `NO_COLOR` / `FORCE_COLOR` precedence stays in
+/// a single place.
+///
+/// Round-84 add: introduced to fix REPL
+/// `render_runtime_error_without_source` always emitting plain text;
+/// see `tests/round84_repl_render_runtime_error_force_color_tests.rs`.
+pub(crate) fn active_colors() -> &'static Colors {
+    if use_color() { &COLORS_ON } else { &COLORS_OFF }
+}
+
 // ── Display impl ───────────────────────────────────────────────────
 
 impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let c = if use_color() { &COLORS_ON } else { &COLORS_OFF };
+        let c = active_colors();
 
         // Error header: error[parse]: message  (or warning[type] for type warnings)
         let label_color = if self.is_warning { c.yellow } else { c.red };

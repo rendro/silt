@@ -333,13 +333,15 @@ fn selection_range_returns_nested_chain() {
     let mut client = LspClient::spawn();
     let file = "file:///tmp/silt_t2_sel.silt";
     let src = "fn main() {\n  1 + 2\n}\n";
+    let cursor_line: u64 = 1;
+    let cursor_char: u64 = 2;
     client.did_open_and_wait(file, src);
 
     let resp = client.request(
         "textDocument/selectionRange",
         json!({
             "textDocument": { "uri": file },
-            "positions": [ { "line": 1, "character": 2 } ]
+            "positions": [ { "line": cursor_line, "character": cursor_char } ]
         }),
     );
     let arr = resp
@@ -353,6 +355,35 @@ fn selection_range_returns_nested_chain() {
     assert!(
         has_parent,
         "expected a selection range with a parent; got {first:?}"
+    );
+
+    // Strengthened gate (round 84): walk to the root of the parent
+    // chain and assert its range encloses the cursor. A bug that
+    // mis-anchors the chain root (e.g. emits a sibling span instead
+    // of the enclosing one) would have the leaf cover the cursor but
+    // the root would fall off — the previous weak-gate check on
+    // `parent.is_some()` passes such a buggy response.
+    let mut node = first;
+    loop {
+        match node.get("parent") {
+            Some(parent) if parent.is_object() => node = parent,
+            _ => break,
+        }
+    }
+    let range = node.get("range").expect("root selection range has `range`");
+    let start = range.get("start").expect("range has `start`");
+    let end = range.get("end").expect("range has `end`");
+    let s_line = start.get("line").and_then(|v| v.as_u64()).unwrap();
+    let s_char = start.get("character").and_then(|v| v.as_u64()).unwrap();
+    let e_line = end.get("line").and_then(|v| v.as_u64()).unwrap();
+    let e_char = end.get("character").and_then(|v| v.as_u64()).unwrap();
+    let start_ok = s_line < cursor_line || (s_line == cursor_line && s_char <= cursor_char);
+    let end_ok = e_line > cursor_line || (e_line == cursor_line && e_char >= cursor_char);
+    assert!(
+        start_ok && end_ok,
+        "selection-range chain root must enclose the cursor \
+         (line={cursor_line}, char={cursor_char}); got root range \
+         start=({s_line},{s_char}) end=({e_line},{e_char}); full root={node:?}"
     );
     client.shutdown();
 }

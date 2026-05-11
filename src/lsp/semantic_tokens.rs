@@ -17,7 +17,7 @@ use crate::intern::{Symbol, resolve};
 
 use super::Server;
 use super::ast_walk::visit_expr_children;
-use super::conversions::span_to_position;
+use super::conversions::offset_to_position;
 use super::state::Document;
 use super::text_utils::find_ident_in_range;
 
@@ -307,25 +307,12 @@ fn push_token_at_offset(
     if offset > source.len() {
         return;
     }
-    // Reuse span_to_position for the UTF-16 column math. We synthesize a
-    // minimal Span; span_to_position derives line from source[..offset].
-    let synthetic = crate::lexer::Span {
-        line: 1, // value unused: span_to_position walks the source itself
-        col: 1,
-        offset,
-    };
-    let pos = span_to_position(&synthetic, source);
-    // span_to_position uses `span.line - 1` for its line output, which
-    // would give (1 - 1) = 0 for our synthetic span — but that's wrong
-    // for any non-first-line offset. Compute the real line by counting
-    // newlines up to `offset`.
-    let line = source[..offset.min(source.len())]
-        .bytes()
-        .filter(|&b| b == b'\n')
-        .count() as u32;
+    // Delegate UTF-16 line/column math to the canonical helper in
+    // `conversions` rather than re-implementing it here.
+    let pos = offset_to_position(source, offset);
     let length_utf16 = name.encode_utf16().count() as u32;
     out.push(RawToken {
-        line,
+        line: pos.line,
         col_utf16: pos.character,
         length_utf16,
         token_type,

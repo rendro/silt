@@ -38,7 +38,7 @@ use lsp_types::{
 };
 
 use super::Server;
-use super::conversions::position_to_offset;
+use super::conversions::{offset_to_position, position_to_offset};
 use super::state::Document;
 
 // ── QuickFix trait & catalog ─────────────────────────────────────────
@@ -280,21 +280,6 @@ impl QuickFix for WrapInOk {
             new_text,
         }])
     }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/// Byte offset → LSP `Position` (UTF-16). Only used within this module;
-/// mirrors the direction `position_to_offset` handles, but the reverse.
-fn offset_to_position(src: &str, offset: usize) -> Position {
-    let offset = offset.min(src.len());
-    let line_start = src[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line = src[..line_start].bytes().filter(|b| *b == b'\n').count() as u32;
-    let character: u32 = src[line_start..offset]
-        .chars()
-        .map(|c| c.len_utf16() as u32)
-        .sum();
-    Position::new(line, character)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────

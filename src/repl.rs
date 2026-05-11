@@ -31,7 +31,7 @@ use rustyline::{Context, Editor, Helper};
 
 use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
 use crate::compiler::{CompileError, Compiler};
-use crate::errors::SourceError;
+use crate::errors::{SourceError, active_colors};
 use crate::intern;
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
@@ -936,12 +936,36 @@ pub fn render_runtime_error_without_source(
         None => (message, None),
     };
 
+    // Round-84 fix: consult `active_colors()` so this helper honors
+    // `NO_COLOR` / `FORCE_COLOR` in the same way `SourceError::Display`
+    // does. Previously this branch always emitted plain text, leaving
+    // span-less / out-of-range runtime errors asymmetric with the
+    // span-in-range path (which routes through `SourceError::Display`
+    // and renders colored when appropriate). Lock:
+    // `tests/round84_repl_render_runtime_error_force_color_tests.rs`.
+    let c = active_colors();
+
     let mut out = String::new();
-    out.push_str("error[runtime]: ");
+    // Header: bold red `error[runtime]:` followed by bold message,
+    // matching the shape `SourceError::Display` emits for runtime
+    // errors with a real span.
+    out.push_str(c.bold);
+    out.push_str(c.red);
+    out.push_str("error[runtime]");
+    out.push_str(c.reset);
+    out.push_str(c.bold);
+    out.push_str(": ");
     out.push_str(header_msg);
+    out.push_str(c.reset);
 
     if show_declaration_locator {
-        out.push_str("\n --> <declaration>");
+        // Cyan `-->` arrow, matching the locator line in
+        // `SourceError::Display`.
+        out.push_str("\n ");
+        out.push_str(c.cyan);
+        out.push_str("-->");
+        out.push_str(c.reset);
+        out.push_str(" <declaration>");
     }
 
     // Multi-line body: first line becomes `= note:` (unless it
@@ -965,7 +989,18 @@ pub fn render_runtime_error_without_source(
                 ("       ", line)
             };
             out.push_str("\n  ");
-            out.push_str(prefix);
+            // Continuation-line gutter is colored cyan in the
+            // `SourceError::Display` path, but only for the `= note:`
+            // / `= help:` prefixes — pure-spacing continuation lines
+            // stay plain (otherwise the empty escape pair adds noise
+            // without any visible effect).
+            if prefix.starts_with('=') {
+                out.push_str(c.cyan);
+                out.push_str(prefix);
+                out.push_str(c.reset);
+            } else {
+                out.push_str(prefix);
+            }
             out.push(' ');
             out.push_str(content);
         }

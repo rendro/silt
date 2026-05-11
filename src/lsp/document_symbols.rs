@@ -6,7 +6,7 @@ use crate::ast::*;
 use crate::lexer::Span;
 
 use super::Server;
-use super::conversions::{span_to_position, span_to_range};
+use super::conversions::{offset_to_position, span_to_position, span_to_range};
 use super::text_utils::match_closing_brace;
 
 impl Server {
@@ -219,28 +219,4 @@ fn let_decl_range(start_span: &Span, source: &str) -> Range {
     }
     let end_pos = offset_to_position(source, i);
     Range::new(start, end_pos)
-}
-
-/// Convert a byte offset into the source to an LSP `Position`. Mirrors
-/// `span_to_position` but takes a raw offset rather than a `Span`.
-/// Used for end-of-range positions where we have an offset (from
-/// `match_closing_brace`) but no synthesized line/col.
-fn offset_to_position(source: &str, offset: usize) -> lsp_types::Position {
-    let bytes = source.as_bytes();
-    let offset = offset.min(bytes.len());
-    let line = source[..offset].bytes().filter(|&b| b == b'\n').count() as u32;
-    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let mut character: u32 = 0;
-    let mut idx = line_start;
-    while idx < offset {
-        let rest = &source[idx..];
-        let Some(ch) = rest.chars().next() else { break };
-        let ch_len = ch.len_utf8();
-        if idx + ch_len > offset {
-            break;
-        }
-        character += ch.len_utf16() as u32;
-        idx += ch_len;
-    }
-    lsp_types::Position::new(line, character)
 }

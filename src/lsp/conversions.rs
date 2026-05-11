@@ -170,6 +170,36 @@ pub(super) fn span_to_range(span: &Span, source: &str) -> Range {
     Range::new(start, end)
 }
 
+/// Convert a byte offset into the source to a 0-based LSP `Position`.
+///
+/// Mirrors [`span_to_position`] but takes a raw byte offset rather than
+/// a [`Span`] — useful when computing positions for arbitrary slice
+/// boundaries (e.g. matching-brace offsets, region endpoints) where no
+/// lexer span exists. Uses UTF-16 code-unit columns to match the LSP
+/// spec (see [`span_to_position`] for rationale).
+///
+/// Out-of-range offsets are clamped to the end of `source`; offsets that
+/// land mid-character are clamped to the previous char boundary so this
+/// function never panics on malformed input.
+pub(crate) fn offset_to_position(source: &str, offset: usize) -> Position {
+    let offset = offset.min(source.len());
+    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line = source[..line_start].bytes().filter(|&b| b == b'\n').count() as u32;
+    let mut character: u32 = 0;
+    let mut idx = line_start;
+    while idx < offset {
+        let rest = &source[idx..];
+        let Some(ch) = rest.chars().next() else { break };
+        let ch_len = ch.len_utf8();
+        if idx + ch_len > offset {
+            break;
+        }
+        character += ch.len_utf16() as u32;
+        idx += ch_len;
+    }
+    Position::new(line, character)
+}
+
 /// Convert an LSP 0-based line/character to a byte offset into the source.
 pub(super) fn position_to_offset(source: &str, pos: &Position) -> usize {
     let mut offset = 0;
@@ -210,25 +240,13 @@ pub(super) fn binding_range(source: &str, offset: usize, len: usize) -> Option<R
         return None;
     };
 
-    // Compute line/column for the start offset.
-    let mut line = 0u32;
-    let mut col = 0u32;
-    let mut idx = 0usize;
-    for ch in source.chars() {
-        if idx == offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += ch.len_utf16() as u32;
-        }
-        idx += ch.len_utf8();
-    }
-    let start = Position::new(line, col);
-    let end_col = col + utf16_len(&source[offset..end_byte]) as u32;
-    let end = Position::new(line, end_col);
+    // Delegate to the canonical `offset_to_position` for the start; the
+    // end is on the same line by construction (binding identifiers don't
+    // contain newlines), so we extend the start column by the UTF-16
+    // length of the binding text rather than re-walking from line start.
+    let start = offset_to_position(source, offset);
+    let end_col = start.character + utf16_len(&source[offset..end_byte]) as u32;
+    let end = Position::new(start.line, end_col);
     Some(Range::new(start, end))
 }
 
@@ -530,5 +548,96 @@ mod tests {
         // Out-of-bounds offset must not panic.
         assert_eq!(token_len_at("x", 99), 1);
         assert_eq!(token_len_at("", 0), 1);
+    }
+
+    // ── offset_to_position (round 84 dedup) ──────────────────────
+    //
+    // The four call sites that previously had near-identical copies of
+    // this function (document_symbols.rs, code_action.rs,
+    // semantic_tokens.rs, conversions.rs::binding_range) all relied on
+    // these exact behaviours. These tests pin the contract so the
+    // canonical helper can't silently regress.
+
+    #[test]
+    fn test_offset_to_position_ascii_first_line() {
+        let source = "hello world";
+        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
+        assert_eq!(offset_to_position(source, 5), Position::new(0, 5));
+        assert_eq!(offset_to_position(source, 10), Position::new(0, 10));
+    }
+
+    #[test]
+    fn test_offset_to_position_eol_and_past_end() {
+        let source = "abc\ndef";
+        // End of line 0, just before the newline.
+        assert_eq!(offset_to_position(source, 3), Position::new(0, 3));
+        // Just after the newline → start of line 1.
+        assert_eq!(offset_to_position(source, 4), Position::new(1, 0));
+        // End of source.
+        assert_eq!(offset_to_position(source, 7), Position::new(1, 3));
+        // Past end of source — must clamp, not panic.
+        assert_eq!(offset_to_position(source, 99), Position::new(1, 3));
+    }
+
+    #[test]
+    fn test_offset_to_position_multibyte_utf8_single_unit() {
+        // 'é' is 2 UTF-8 bytes but 1 UTF-16 code unit.
+        // Source: "héllo" — 'l' (second char) starts at byte 3.
+        let source = "héllo";
+        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
+        assert_eq!(offset_to_position(source, 1), Position::new(0, 1));
+        // After 'é': column 2 (UTF-16 units = chars for BMP).
+        assert_eq!(offset_to_position(source, 3), Position::new(0, 2));
+        assert_eq!(offset_to_position(source, 4), Position::new(0, 3));
+    }
+
+    #[test]
+    fn test_offset_to_position_utf16_surrogate_pair() {
+        // U+1D54A (𝕊) is 4 UTF-8 bytes, 2 UTF-16 code units.
+        // After it, columns should be 2, not 1.
+        let source = "𝕊x"; // 4 bytes + 1 byte = 5 bytes total
+        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
+        // After '𝕊': column 2 (TWO UTF-16 units, not one).
+        assert_eq!(offset_to_position(source, 4), Position::new(0, 2));
+        // After 'x': column 3.
+        assert_eq!(offset_to_position(source, 5), Position::new(0, 3));
+    }
+
+    #[test]
+    fn test_offset_to_position_multiline() {
+        // Three lines: "ab\ncde\nfg"
+        let source = "ab\ncde\nfg";
+        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
+        assert_eq!(offset_to_position(source, 3), Position::new(1, 0));
+        assert_eq!(offset_to_position(source, 5), Position::new(1, 2));
+        assert_eq!(offset_to_position(source, 7), Position::new(2, 0));
+        assert_eq!(offset_to_position(source, 9), Position::new(2, 2));
+    }
+
+    #[test]
+    fn test_offset_to_position_third_line_zero_indexed() {
+        // Spec called out: "Multi-line: offset on line 3 → assert
+        // line=2 (0-indexed), character correct."
+        let source = "alpha\nbeta\ngamma\ndelta";
+        // 'g' is at byte 11 (alpha\n = 6 bytes, beta\n = 5 bytes → 11).
+        assert_eq!(offset_to_position(source, 11), Position::new(2, 0));
+        assert_eq!(offset_to_position(source, 13), Position::new(2, 2));
+    }
+
+    /// Cross-check: `offset_to_position` and `span_to_position` should
+    /// agree for any well-formed span on a non-empty source.
+    #[test]
+    fn test_offset_to_position_agrees_with_span_to_position() {
+        let source = "let x = 1\nlet y = 2\nlet z = 3";
+        // 'y' at byte 14, line 2 (1-indexed), col 5 (1-indexed).
+        let span = Span {
+            line: 2,
+            col: 5,
+            offset: 14,
+        };
+        assert_eq!(
+            offset_to_position(source, 14),
+            span_to_position(&span, source)
+        );
     }
 }

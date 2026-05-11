@@ -1711,7 +1711,29 @@ impl PartialEq for Value {
             (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_ref(), *lo, *hi),
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
-            (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
+            // Round 84 (BROKEN, extends round 83): the typechecker's
+            // `unify_anon_nominal` (src/typechecker/mod.rs ~1556) widens
+            // `Type::Record(P, fields)` ⇄ `Type::AnonRecord{closed}` at
+            // unification edges (assignment, function-arg binding, dot-update
+            // on anon-typed nominal) WITHOUT any runtime tag rebrand. The
+            // original `Value::Record("P", ...)` flows through unchanged.
+            // Then `==` compares it to `Value::Record("<anon>", ...)` and
+            // a naive `na == nb && fa == fb` returns `false`, even though
+            // the type system has already DECIDED these are the same type.
+            //
+            // Fix: when at least one side carries `type_name == "<anon>"`,
+            // compare fields-only (ignore names). This respects the
+            // typechecker's edge decision at runtime. Two distinct nominal
+            // names (e.g. `Person{x:1}` vs `Car{x:1}`, neither anon) still
+            // compare unequal — the typechecker would never unify those.
+            (Value::Record(na, fa), Value::Record(nb, fb)) => {
+                let anon_either = na.as_str() == "<anon>" || nb.as_str() == "<anon>";
+                if anon_either {
+                    fa == fb
+                } else {
+                    na == nb && fa == fb
+                }
+            }
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a == b,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,

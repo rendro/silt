@@ -103,6 +103,56 @@ fn constant_comment(chunk: &Chunk, index: u16) -> String {
     }
 }
 
+/// Format an instruction whose operands are a u16 constant-index followed by
+/// a u8 (e.g. `CallMethod`, `CallBuiltin`, `MakeVariant`). The u16 is
+/// commented with the resolved constant; the u8 is printed as a bare number.
+///
+/// Returns `(formatted_line, next_offset)`. The next offset is `offset + 4`.
+fn fmt_u16_u8_with_const(
+    chunk: &Chunk,
+    code: &[u8],
+    offset: usize,
+    name: &str,
+) -> (String, usize) {
+    let index = read_u16(code, offset + 1);
+    let byte_operand = code[offset + 3];
+    let comment = constant_comment(chunk, index);
+    (
+        format!("{offset:04}  {name:<20} {index:<5} {byte_operand:<3} ; {comment}"),
+        offset + 4,
+    )
+}
+
+/// Format an instruction whose operands are a u8 count followed by
+/// `count` x u16 name-index entries (e.g. `RecordUpdate`,
+/// `RecordUpdateAnon`, `DestructRecordRest`). Each name-index is rendered on
+/// its own continuation line using `label_literal` as the per-entry prefix
+/// (e.g. `"field"` or `"exclude"`).
+///
+/// Returns `(formatted_line, next_offset)`.
+fn fmt_u8_count_then_u16_names(
+    chunk: &Chunk,
+    code: &[u8],
+    offset: usize,
+    name: &str,
+    label_literal: &str,
+) -> (String, usize) {
+    let field_count = code[offset + 1];
+    let mut line = format!("{offset:04}  {name:<20} {field_count}");
+    let mut next = offset + 2;
+    for _ in 0..field_count {
+        let field_name_index = read_u16(code, next);
+        let field_comment = constant_comment(chunk, field_name_index);
+        write!(
+            line,
+            "\n      |  {label_literal} {field_name_index:<5} ; {field_comment}"
+        )
+        .unwrap();
+        next += 2;
+    }
+    (line, next)
+}
+
 // ── Instruction disassembly ───────────────────────────────────────
 
 /// Disassemble a single instruction at `offset`.
@@ -251,37 +301,14 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             )
         }
 
-        // ── u16 + u8: CallMethod(method_name_index, argc) ─────
-        Op::CallMethod => {
-            let method_name_index = read_u16(code, offset + 1);
-            let argc = code[offset + 3];
-            let comment = constant_comment(chunk, method_name_index);
-            (
-                format!("{offset:04}  {name:<20} {method_name_index:<5} {argc:<3} ; {comment}"),
-                offset + 4,
-            )
-        }
-
-        // ── u16 + u8: CallBuiltin(name_index, argc) ──────────
-        Op::CallBuiltin => {
-            let name_index = read_u16(code, offset + 1);
-            let argc = code[offset + 3];
-            let comment = constant_comment(chunk, name_index);
-            (
-                format!("{offset:04}  {name:<20} {name_index:<5} {argc:<3} ; {comment}"),
-                offset + 4,
-            )
-        }
-
-        // ── u16 + u8: MakeVariant(name_index, field_count) ───
-        Op::MakeVariant => {
-            let name_index = read_u16(code, offset + 1);
-            let field_count = code[offset + 3];
-            let comment = constant_comment(chunk, name_index);
-            (
-                format!("{offset:04}  {name:<20} {name_index:<5} {field_count:<3} ; {comment}"),
-                offset + 4,
-            )
+        // ── u16 + u8 (with constant comment on the u16) ──────
+        //   CallMethod(method_name_index, argc)
+        //   CallBuiltin(name_index, argc)
+        //   MakeVariant(name_index, field_count)
+        // The three arms shared a byte-identical operand-decode shape
+        // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
+        Op::CallMethod | Op::CallBuiltin | Op::MakeVariant => {
+            fmt_u16_u8_with_const(chunk, code, offset, name)
         }
 
         // ── MakeClosure: u16 func_index, u8 upvalue_count, then descriptors
@@ -324,43 +351,16 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             (line, next)
         }
 
-        // ── RecordUpdate / RecordUpdateAnon: u8 field_count, then
-        // field_count x u16 field_name_index. The two opcodes share an
-        // operand layout — they differ only in the resulting Value's
-        // `type_name` (base's name vs `"<anon>"`).
+        // ── u8-count + count x u16 name_index (round 84) ─────
+        //   RecordUpdate / RecordUpdateAnon: label "field". The two
+        //     opcodes share an operand layout — they differ only in the
+        //     resulting Value's `type_name` (base's name vs `"<anon>"`).
+        //   DestructRecordRest:              label "exclude".
         Op::RecordUpdate | Op::RecordUpdateAnon => {
-            let field_count = code[offset + 1];
-            let mut line = format!("{offset:04}  {name:<20} {field_count}");
-            let mut next = offset + 2;
-            for _ in 0..field_count {
-                let field_name_index = read_u16(code, next);
-                let field_comment = constant_comment(chunk, field_name_index);
-                write!(
-                    line,
-                    "\n      |  field {field_name_index:<5} ; {field_comment}"
-                )
-                .unwrap();
-                next += 2;
-            }
-            (line, next)
+            fmt_u8_count_then_u16_names(chunk, code, offset, name, "field")
         }
-
-        // ── DestructRecordRest: u8 count, then count x u16 name_index
         Op::DestructRecordRest => {
-            let field_count = code[offset + 1];
-            let mut line = format!("{offset:04}  {name:<20} {field_count}");
-            let mut next = offset + 2;
-            for _ in 0..field_count {
-                let field_name_index = read_u16(code, next);
-                let field_comment = constant_comment(chunk, field_name_index);
-                write!(
-                    line,
-                    "\n      |  exclude {field_name_index:<5} ; {field_comment}"
-                )
-                .unwrap();
-                next += 2;
-            }
-            (line, next)
+            fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude")
         }
     }
 }
@@ -593,6 +593,113 @@ mod tests {
         let output = disassemble_chunk(&chunk, "update");
         assert!(output.contains("RecordUpdate"));
         assert!(output.contains("\"x\""));
+        // Round 84: the operand decode for RecordUpdate is now shared with
+        // RecordUpdateAnon via `fmt_u8_count_then_u16_names`. Lock the
+        // per-entry label literal to guard against accidentally swapping
+        // it with "exclude" (the DestructRecordRest label).
+        assert!(output.contains("field "));
+    }
+
+    #[test]
+    fn test_record_update_anon() {
+        // Sibling lock for `Op::RecordUpdateAnon` (round 83 added the
+        // discriminant; round 84 consolidates its disassembler arm with
+        // `RecordUpdate`). Verifies both the discriminant byte path and
+        // the rendered output (op name + "field" per-entry label).
+        let mut chunk = Chunk::new();
+        let span = dummy_span();
+
+        let y_idx = chunk.add_constant(Value::String("y".into())).unwrap();
+
+        chunk.emit_op(Op::RecordUpdateAnon, span);
+        chunk.emit_u8(1, span); // 1 field
+        chunk.emit_u16(y_idx, span);
+        chunk.emit_op(Op::Return, span);
+
+        // Discriminant sanity: the byte we just emitted must round-trip
+        // back through `Op::from_byte` to `Op::RecordUpdateAnon`. This
+        // catches a future regression where the emitter and decoder
+        // disagree on the byte assigned to `RecordUpdateAnon`.
+        let discrim_byte = chunk.code[0];
+        assert_eq!(
+            Op::from_byte(discrim_byte),
+            Some(Op::RecordUpdateAnon),
+            "RecordUpdateAnon discriminant round-trip failed",
+        );
+
+        let output = disassemble_chunk(&chunk, "update_anon");
+        assert!(output.contains("RecordUpdateAnon"));
+        assert!(output.contains("\"y\""));
+        // Same per-entry label as RecordUpdate (they share the helper).
+        assert!(output.contains("field "));
+    }
+
+    #[test]
+    fn test_destruct_record_rest_label() {
+        // Round 84: locks the `"exclude"` label used by the shared helper
+        // `fmt_u8_count_then_u16_names` for `Op::DestructRecordRest`.
+        // The other two opcodes routed through that helper use `"field"`
+        // — this test guards against accidentally collapsing the label
+        // argument or swapping the two literals.
+        let mut chunk = Chunk::new();
+        let span = dummy_span();
+
+        let name_idx = chunk.add_constant(Value::String("z".into())).unwrap();
+
+        chunk.emit_op(Op::DestructRecordRest, span);
+        chunk.emit_u8(1, span);
+        chunk.emit_u16(name_idx, span);
+        chunk.emit_op(Op::Return, span);
+
+        let output = disassemble_chunk(&chunk, "rest");
+        assert!(output.contains("DestructRecordRest"));
+        assert!(output.contains("exclude "));
+        // Must NOT use the sibling label — guards against the helper
+        // being called with the wrong label literal.
+        assert!(
+            !output.contains("field "),
+            "DestructRecordRest should render label 'exclude', not 'field'. Output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_call_method_format() {
+        // Round 84: locks the formatted output for `Op::CallMethod`,
+        // which now shares the operand-decode helper
+        // `fmt_u16_u8_with_const` with `CallBuiltin` and `MakeVariant`.
+        let mut chunk = Chunk::new();
+        let span = dummy_span();
+
+        let method_idx = chunk.add_constant(Value::String("len".into())).unwrap();
+
+        chunk.emit_op(Op::CallMethod, span);
+        chunk.emit_u16(method_idx, span);
+        chunk.emit_u8(0, span); // argc = 0
+        chunk.emit_op(Op::Return, span);
+
+        let output = disassemble_chunk(&chunk, "method");
+        assert!(output.contains("CallMethod"));
+        assert!(output.contains("\"len\""));
+    }
+
+    #[test]
+    fn test_make_variant_format() {
+        // Round 84: locks the formatted output for `Op::MakeVariant`,
+        // which now shares the operand-decode helper
+        // `fmt_u16_u8_with_const` with `CallMethod` and `CallBuiltin`.
+        let mut chunk = Chunk::new();
+        let span = dummy_span();
+
+        let name_idx = chunk.add_constant(Value::String("Some".into())).unwrap();
+
+        chunk.emit_op(Op::MakeVariant, span);
+        chunk.emit_u16(name_idx, span);
+        chunk.emit_u8(1, span); // field_count = 1
+        chunk.emit_op(Op::Return, span);
+
+        let output = disassemble_chunk(&chunk, "variant");
+        assert!(output.contains("MakeVariant"));
+        assert!(output.contains("\"Some\""));
     }
 
     #[test]

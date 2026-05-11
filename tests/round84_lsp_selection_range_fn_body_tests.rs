@@ -1,24 +1,28 @@
-//! Round-83 GAP lock: `textDocument/selectionRange` must bound the
-//! cursor on BOTH sides when collecting `Decl::Type` / `Decl::Trait`
-//! ranges. Pre-fix code only checked `cursor >= decl.span.offset`,
-//! letting an unrelated 4-byte `type` keyword span (or 5-byte `trait`)
-//! land in the selection chain whenever the cursor was anywhere AFTER
-//! the decl in source order. The chain was sorted by source-rest-length
-//! so the spurious keyword span landed OUTERMOST — yet it didn't
-//! enclose its supposed inner ranges (which sat inside a later
-//! function). Editor Shift+Alt+→ semantics broken.
+//! Round-84 LATENT lock: `textDocument/selectionRange` must compute a
+//! tight upper bound on `expr_extent` for **non-Block** expression
+//! bodies. Round 83 fixed the analogous issue for `Decl::Type` /
+//! `Decl::Trait` via a dedicated `type_decl_extent` helper, but the
+//! `Decl::Fn`, `Decl::Let`, and `Decl::TraitImpl` arms still flow through
+//! `expr_extent`, which pre-fix collapsed to `source.len()` for any
+//! `ExprKind` other than `Block`.
 //!
-//! Each test spins up a real `silt lsp` subprocess and issues a
-//! `textDocument/selectionRange` request, mirroring the harness shape in
-//! `tests/lsp_tier2_tests.rs`. The existing `selection_range_returns_
-//! nested_chain` test only asserts "first response has any parent" — a
-//! WEAK gate that wouldn't catch this bug. The bug-repro test below
-//! walks the full chain and asserts that the lone 4-byte `type` keyword
-//! (offset 0-4) is never a member of the chain when the cursor is in an
-//! unrelated later decl, AND that the chain's outermost element starts
-//! at or after the start of the cursor's enclosing decl (i.e. the chain
-//! root is anchored inside the cursor's own decl, not at the file's
-//! first decl).
+//! Concretely:
+//!
+//!   * `fn add(a, b) = a + b`         — body is `Binary`, not `Block`
+//!   * `let g = 99`                   — value is `Int`, not `Block`
+//!   * `fn show(self) = "foo"` in an impl — body is `StringLit`, not `Block`
+//!
+//! All three previously claimed to extend to EOF. Selection-range chains
+//! for any cursor in a later decl would drag the earlier decl's `fn`/`let`
+//! span in as a parent — Shift+Alt+→ in editors cycled into the unrelated
+//! function.
+//!
+//! Each test spawns a real `silt lsp` subprocess, opens a small source,
+//! asks for the selection range at a cursor in a later decl, and asserts
+//! that the chain is anchored inside the cursor's enclosing decl — not
+//! at the file's first decl's keyword span.
+//!
+//! Pattern mirrors `tests/round83_lsp_selection_range_decl_bounds_tests.rs`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -212,8 +216,8 @@ impl LspClient {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /// Convert an LSP `Position` (line, character) into a byte offset in
-/// `source`, treating each line as ASCII. The tests below use only
-/// ASCII source so column == byte offset within line.
+/// `source`, treating each line as ASCII (column == byte offset within
+/// line). All test sources here are ASCII.
 fn pos_to_byte_offset(source: &str, line: u64, character: u64) -> usize {
     let mut current_line: u64 = 0;
     let mut offset: usize = 0;
@@ -230,7 +234,7 @@ fn pos_to_byte_offset(source: &str, line: u64, character: u64) -> usize {
 }
 
 /// Walk the entire selection-range chain rooted at `node`, calling `f`
-/// on each `SelectionRange` value (including the root and every parent).
+/// on each `SelectionRange` value (root and every parent).
 fn walk_chain(node: &Value, f: &mut impl FnMut(&Value)) {
     f(node);
     if let Some(parent) = node.get("parent") {
@@ -241,9 +245,8 @@ fn walk_chain(node: &Value, f: &mut impl FnMut(&Value)) {
 }
 
 /// Pull `(start_line, start_char, end_line, end_char)` out of a
-/// SelectionRange's `range` field. Panics if any field is missing —
-/// signals a malformed response from the LSP, which is itself a test
-/// failure.
+/// SelectionRange's `range` field. Panics on a malformed response —
+/// that itself is a test failure.
 fn range_quad(node: &Value) -> (u64, u64, u64, u64) {
     let r = node.get("range").expect("selection range has range field");
     (
@@ -257,8 +260,7 @@ fn range_quad(node: &Value) -> (u64, u64, u64, u64) {
 }
 
 /// Compute the byte offsets `(start, end)` of an LSP range against the
-/// ASCII `source`. Used to detect "is this the lone 4-byte `type`
-/// keyword span at offset 0?"-style assertions.
+/// ASCII `source`.
 fn range_byte_span(source: &str, node: &Value) -> (usize, usize) {
     let (sl, sc, el, ec) = range_quad(node);
     (
@@ -267,10 +269,9 @@ fn range_byte_span(source: &str, node: &Value) -> (usize, usize) {
     )
 }
 
-/// Walk the chain to its outermost element (the topmost ancestor that
-/// has no parent). The LSP returns the chain rooted at the INNERMOST
-/// range, with `parent` pointing successively outward; we walk parents
-/// until none remain.
+/// Walk the chain to its outermost element (topmost ancestor with no
+/// parent). LSP roots chains at the INNERMOST range; `parent` points
+/// successively outward.
 fn outermost(node: &Value) -> &Value {
     let mut cur = node;
     while let Some(p) = cur.get("parent") {
@@ -285,25 +286,30 @@ fn outermost(node: &Value) -> &Value {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[test]
-fn type_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
-    // Bug repro: cursor on `+` inside `fn main` body. Pre-fix code
-    // pushed the `type` keyword span (offset 0-4) into the chain as an
-    // OUTERMOST range, even though `+` sits 16+ bytes past the end of
-    // the type decl. Fix: bound the cursor on both sides.
+fn fn_eq_expr_body_extent_does_not_extend_to_eof() {
+    // Bug repro: `fn add(a, b) = a + b` — body is `Binary`, NOT `Block`.
+    // Pre-fix `expr_extent` returned `source.len()` for non-Block, so the
+    // `fn add` decl's span was pushed into the chain for a cursor inside
+    // a later `fn main` body — outermost element of the chain anchored
+    // at byte 0 (`fn` keyword of `add`), not at `fn main`.
     let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r83_type_bug.silt";
-    //                  0123456789012  (offset on first line)
-    let src = "type Foo {}\nfn main() {\n  1 + 2\n}\n";
+    let file = "file:///tmp/silt_r84_fn_eq_expr.silt";
+    let src = "fn add(a: Int, b: Int) -> Int = a + b\n\
+               \n\
+               fn main() {\n\
+               \x20\x20let x = add(1, 2)\n\
+               \x20\x20println(x)\n\
+               }\n";
     client.did_open_and_wait(file, src);
 
-    // `+` is at line 2 (0-indexed), col 4 (also 0-indexed): line is
-    // `  1 + 2`, the `+` sits at column 4.
-    let cursor_line: u64 = 2;
-    let cursor_char: u64 = 4;
+    // Cursor on the `x` in `println(x)` — that's line 4 (0-indexed),
+    // column 10 (`  println(x)` → byte 10 is `x`).
+    let cursor_line: u64 = 4;
+    let cursor_char: u64 = 10;
     assert_eq!(
         src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
-        b'+',
-        "test source-shape sanity: cursor should point at `+`"
+        b'x',
+        "test source-shape sanity: cursor should point at `x`",
     );
 
     let resp = client.request(
@@ -320,28 +326,22 @@ fn type_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
     assert_eq!(arr.len(), 1, "exactly one position requested → one result");
     let first = &arr[0];
 
-    // STRONG ASSERTION 1: no element of the chain is the lone `type`
-    // keyword span. The keyword span is exactly the bytes 0..4 of the
-    // source (`type`). On the pre-fix code path this span was pushed
-    // outermost — a 4-byte unrelated keyword sitting in a chain whose
-    // inner ranges live in `fn main` 12+ bytes later.
+    // STRONG ASSERTION 1: no element of the chain is the lone `fn`
+    // keyword span of `add` (bytes 0..2). The keyword span sits at the
+    // file's very start. On pre-fix code paths this was the outermost
+    // chain element when the cursor lived in `fn main`.
     walk_chain(first, &mut |node| {
         let (start_off, end_off) = range_byte_span(src, node);
         assert!(
-            !(start_off == 0 && end_off == 4),
-            "the lone `type` keyword span (offset 0..4) must never appear \
-             in the chain when the cursor is in an unrelated later decl; \
+            !(start_off == 0 && end_off == 2),
+            "the lone `fn` keyword span of `add` (offset 0..2) must never \
+             appear in the chain when the cursor lives in `fn main`; \
              got {node:?}",
         );
     });
 
-    // STRONG ASSERTION 2: the outermost element of the chain starts at
-    // or AFTER the start of the cursor's enclosing decl (`fn main` at
-    // byte 12). Pre-fix the outermost was the `type` keyword at byte 0
-    // — well before `fn main`. This pins the regression directly: even
-    // if a future refactor changes what the chain elements look like,
-    // the chain root must never be anchored at the FILE's first decl
-    // when the cursor lives elsewhere.
+    // STRONG ASSERTION 2: the outermost element of the chain is anchored
+    // at or after the start of `fn main` (the cursor's enclosing decl).
     let root = outermost(first);
     let (root_start, _) = range_byte_span(src, root);
     let fn_main_start = src.find("fn main").expect("`fn main` exists in source");
@@ -356,18 +356,23 @@ fn type_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
 }
 
 #[test]
-fn type_decl_span_included_when_cursor_inside_type_body() {
-    // Positive case: cursor inside a `type Foo { x: Int }` body. The
-    // type-decl span SHOULD appear in the chain (and the chain should
-    // enclose the cursor at every level — sanity for the new bound).
+fn let_eq_expr_value_extent_does_not_extend_to_eof() {
+    // Top-level `let g = 99` — the let's `value` is `Int(99)`, a non-Block
+    // expression. Pre-fix the let-decl span was pushed for any cursor in
+    // a later decl.
     let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r83_type_positive.silt";
-    let src = "type Foo { x: Int }\n";
+    let file = "file:///tmp/silt_r84_let_eq_expr.silt";
+    let src = "let g = 99\n\
+               \n\
+               fn main() {\n\
+               \x20\x20let x = 1\n\
+               \x20\x20println(x)\n\
+               }\n";
     client.did_open_and_wait(file, src);
 
-    // Cursor on the `x` field name: line 0, character 11.
-    let cursor_line: u64 = 0;
-    let cursor_char: u64 = 11;
+    // Cursor on the `x` in `println(x)` — line 4, column 10.
+    let cursor_line: u64 = 4;
+    let cursor_char: u64 = 10;
     assert_eq!(
         src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
         b'x',
@@ -388,51 +393,61 @@ fn type_decl_span_included_when_cursor_inside_type_body() {
     assert_eq!(arr.len(), 1);
     let first = &arr[0];
 
-    // Mirror image of the bug-repro test: SOME chain element must be
-    // anchored at the type-decl's start (byte 0) when the cursor is
-    // inside the decl body. Round 84 widened these chain elements from
-    // a bare keyword-only span (0..4) to cover the whole decl extent
-    // (0..len) so the chain root encloses the cursor; the round-83
-    // anchor invariant (some element starts at byte 0) is preserved.
-    let mut saw_decl_anchor = false;
-    let cursor_off = pos_to_byte_offset(src, cursor_line, cursor_char);
-    walk_chain(first, &mut |node| {
-        let (s, e) = range_byte_span(src, node);
-        if s == 0 && e >= cursor_off {
-            saw_decl_anchor = true;
-        }
-    });
+    // The outermost chain element MUST be anchored at or after the start
+    // of `fn main`, NOT at the `let g` decl at byte 0.
+    let root = outermost(first);
+    let (root_start, _) = range_byte_span(src, root);
+    let fn_main_start = src.find("fn main").expect("`fn main` exists in source");
     assert!(
-        saw_decl_anchor,
-        "with cursor inside the type body, some chain element should be \
-         anchored at the type-decl's start (byte 0) and enclose the cursor \
-         (byte {cursor_off}); chain={first:?}",
+        root_start >= fn_main_start,
+        "outermost chain element must be anchored in the cursor's enclosing \
+         decl (`fn main` at byte {fn_main_start}); got root starting at byte \
+         {root_start}: {root:?}",
     );
+
+    // Defensive: also check that no chain element starts at byte 0 (the
+    // `let g` decl's start). This catches the case where some future
+    // refactor still pushes the let-decl span but happens to NOT make it
+    // outermost.
+    walk_chain(first, &mut |node| {
+        let (s, _e) = range_byte_span(src, node);
+        assert!(
+            s >= fn_main_start || s == pos_to_byte_offset(src, cursor_line, cursor_char),
+            "no chain element should be anchored before `fn main` for a \
+             cursor inside `fn main`; got start={s}, node={node:?}",
+        );
+    });
 
     client.shutdown();
 }
 
 #[test]
-fn trait_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
-    // Parallel to the Decl::Type case: `trait Bar { fn foo() }` at the
-    // top of the file, cursor inside an unrelated later `fn main`. The
-    // 5-byte `trait` keyword span (offset 0..5) must not appear in the
-    // chain.
+fn trait_impl_method_eq_expr_body_extent_does_not_extend_to_eof() {
+    // `TraitImpl` method body written as `fn show(self) = "foo"` — body
+    // is `StringLit`, a non-Block. Pre-fix the impl method's span would
+    // appear in the chain for any cursor in a later decl.
+    //
+    // The trait `Show` is defined first so the impl typechecks; then the
+    // impl with a non-Block method body; then `fn main` whose body is the
+    // cursor target.
     let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r83_trait_bug.silt";
-    // `trait Bar { fn foo() }` — a parameter-less trait with one
-    // method header. Followed by an unrelated `fn main` body whose `+`
-    // expression is the cursor target.
-    let src = "trait Bar { fn foo() }\nfn main() {\n  1 + 2\n}\n";
+    let file = "file:///tmp/silt_r84_traitimpl_eq_expr.silt";
+    let src = "trait Show { fn show(self) -> String }\n\
+               trait Show for Int { fn show(self) = \"foo\" }\n\
+               \n\
+               fn main() {\n\
+               \x20\x20let y = 7\n\
+               \x20\x20println(y)\n\
+               }\n";
     client.did_open_and_wait(file, src);
 
-    // Cursor on `+` inside `fn main`: line 2 (0-indexed), col 4.
-    let cursor_line: u64 = 2;
-    let cursor_char: u64 = 4;
+    // Cursor on the `y` in `println(y)` — line 5, column 10.
+    let cursor_line: u64 = 5;
+    let cursor_char: u64 = 10;
     assert_eq!(
         src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
-        b'+',
-        "test source-shape sanity: cursor should point at `+`"
+        b'y',
+        "test source-shape sanity: cursor should point at `y`",
     );
 
     let resp = client.request(
@@ -449,20 +464,9 @@ fn trait_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
     assert_eq!(arr.len(), 1);
     let first = &arr[0];
 
-    // The lone `trait` keyword span sits at offset 0..5 in source. It
-    // must NOT appear in the chain for a cursor on line 2.
-    walk_chain(first, &mut |node| {
-        let (s, e) = range_byte_span(src, node);
-        assert!(
-            !(s == 0 && e == 5),
-            "the lone `trait` keyword span (offset 0..5) must never \
-             appear in the chain for a cursor in an unrelated decl; \
-             got {node:?}",
-        );
-    });
-
-    // The outermost chain element must be anchored at or after the
-    // `fn main` decl (byte offset of `fn main` substring).
+    // The outermost chain element must be anchored at or after the start
+    // of `fn main`. Pre-fix the impl method's span (or any earlier decl's
+    // span dragged along via the broken extent) would land outermost.
     let root = outermost(first);
     let (root_start, _) = range_byte_span(src, root);
     let fn_main_start = src.find("fn main").expect("`fn main` exists in source");
@@ -471,6 +475,77 @@ fn trait_decl_keyword_span_not_pushed_when_cursor_lives_in_later_fn() {
         "outermost chain element must be anchored in the cursor's enclosing \
          decl (`fn main` at byte {fn_main_start}); got root starting at byte \
          {root_start}: {root:?}",
+    );
+
+    // No chain element should be anchored before `fn main`, period.
+    walk_chain(first, &mut |node| {
+        let (s, _) = range_byte_span(src, node);
+        assert!(
+            s >= fn_main_start,
+            "no chain element should be anchored before `fn main` for a \
+             cursor inside `fn main`; got start={s}, node={node:?}",
+        );
+    });
+
+    client.shutdown();
+}
+
+#[test]
+fn fn_eq_expr_body_extent_covers_cursor_inside_body() {
+    // Positive case: cursor inside the early `fn add(a, b) = a + b` body —
+    // the `fn add` decl span SHOULD appear in the chain. This verifies
+    // the new tight extent doesn't UNDER-extend either.
+    let mut client = LspClient::spawn();
+    let file = "file:///tmp/silt_r84_fn_eq_expr_positive.silt";
+    let src = "fn add(a: Int, b: Int) -> Int = a + b\n\
+               \n\
+               fn main() {\n\
+               \x20\x20println(add(1, 2))\n\
+               }\n";
+    client.did_open_and_wait(file, src);
+
+    // Cursor on the `+` in `a + b`: line 0, column 34.
+    let cursor_line: u64 = 0;
+    let cursor_char: u64 = 34;
+    assert_eq!(
+        src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
+        b'+',
+        "test source-shape sanity: cursor should point at `+`",
+    );
+
+    let resp = client.request(
+        "textDocument/selectionRange",
+        json!({
+            "textDocument": { "uri": file },
+            "positions": [ { "line": cursor_line, "character": cursor_char } ]
+        }),
+    );
+    let arr = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .expect("selection range result");
+    assert_eq!(arr.len(), 1);
+    let first = &arr[0];
+
+    // SOME chain element must be anchored at the `fn add` decl's start
+    // (byte 0) and enclose the cursor. Round 84 widened these chain
+    // elements from a bare keyword-only span to cover the whole decl
+    // extent; the anchor invariant (an element starts at byte 0) is
+    // preserved. This is the mirror image of the bug-repro assertion —
+    // it pins that the extent does NOT under-shoot.
+    let cursor_off = pos_to_byte_offset(src, cursor_line, cursor_char);
+    let mut saw_decl_anchor = false;
+    walk_chain(first, &mut |node| {
+        let (s, e) = range_byte_span(src, node);
+        if s == 0 && e >= cursor_off {
+            saw_decl_anchor = true;
+        }
+    });
+    assert!(
+        saw_decl_anchor,
+        "with cursor inside `fn add`'s body, some chain element should be \
+         anchored at the decl's start (byte 0) and enclose the cursor (byte \
+         {cursor_off}); chain={first:?}",
     );
 
     client.shutdown();

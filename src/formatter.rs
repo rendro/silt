@@ -1928,29 +1928,6 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
     (comments, trailing, leading_inline)
 }
 
-/// Extract the trailing comment from a line of code, if present.
-///
-/// Two kinds of trailing comments are recognized:
-///   1. A `--` line comment that follows code, e.g. `let x = 1 -- note`.
-///   2. A `{- ... -}` block comment (possibly nested) that follows code
-///      and whose closer is followed only by whitespace (or an even later
-///      trailing `--` line comment), e.g.
-///      `let x = 1 {- trailing -}`
-///      `let x = 1 {- {- nested -} -}`
-///      `let x = 1 {- block -} -- followed by line comment`
-///      A block comment with more code after its closer is NOT a trailing
-///      comment for the statement — it is an inline annotation.
-///
-/// `--` sequences that appear inside string literals or block comments are
-/// ignored, as are `{-` / `-}` pairs that appear inside string literals.
-///
-/// Triple-quoted strings (`"""..."""`) on the same line are also recognised:
-/// inside a triple-quoted string everything (including `"`, `--`, `{-`) is
-/// raw content with no escape processing or interpolation. Without this, a
-/// line like `let s = """"--"""` would have its three opening `"`s
-/// alternate-toggle the `in_string` flag and the `--` inside the string
-/// would be misread as a trailing comment, fabricating a phantom comment
-/// (`--"""}`) that grows on every formatter pass and breaks idempotency.
 /// Output of `scan_line_for_comments`. Captures the start indices and
 /// bracket-context snapshots at the moments the scanner first sees a
 /// `--` line comment and/or a `{-` block comment outside of strings,
@@ -2140,6 +2117,29 @@ fn scan_line_for_comments(line: &str) -> (Vec<char>, LineScanResult) {
     )
 }
 
+/// Extract the trailing comment from a line of code, if present.
+///
+/// Two kinds of trailing comments are recognized:
+///   1. A `--` line comment that follows code, e.g. `let x = 1 -- note`.
+///   2. A `{- ... -}` block comment (possibly nested) that follows code
+///      and whose closer is followed only by whitespace (or an even later
+///      trailing `--` line comment), e.g.
+///      `let x = 1 {- trailing -}`
+///      `let x = 1 {- {- nested -} -}`
+///      `let x = 1 {- block -} -- followed by line comment`
+///      A block comment with more code after its closer is NOT a trailing
+///      comment for the statement — it is an inline annotation.
+///
+/// `--` sequences that appear inside string literals or block comments are
+/// ignored, as are `{-` / `-}` pairs that appear inside string literals.
+///
+/// Triple-quoted strings (`"""..."""`) on the same line are also recognised:
+/// inside a triple-quoted string everything (including `"`, `--`, `{-`) is
+/// raw content with no escape processing or interpolation. Without this, a
+/// line like `let s = """"--"""` would have its three opening `"`s
+/// alternate-toggle the `in_string` flag and the `--` inside the string
+/// would be misread as a trailing comment, fabricating a phantom comment
+/// (`--"""}`) that grows on every formatter pass and breaks idempotency.
 fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     let (chars, scan) = scan_line_for_comments(line);
     // If a top-level `--` exists, it wins (the extracted text may
@@ -2198,6 +2198,36 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     Some(comment.trim_end().to_string())
 }
 
+/// Probe whether the immediate non-whitespace character before `start` in
+/// `chars` is a bracket opener (`(`, `[`, `{`). Walks back from `start`
+/// over whitespace; returns:
+///   * `None` — `start` is preceded only by whitespace back to column 0
+///     (i.e. the `--` is the entire content of the line). Callers treat
+///     this as "neither branch claims" — the bracket-interior helper
+///     requires a prev opener, the block-body-trailing helper requires
+///     prev non-opener; an all-whitespace prefix matches neither.
+///   * `Some(true)` — the immediate non-whitespace prev char IS one of
+///     `(` / `[` / `{`.
+///   * `Some(false)` — the immediate non-whitespace prev char is some
+///     other character (code).
+///
+/// Extracted from twin walks that lived inline in
+/// `extract_bracket_interior_line_comment_from_line` (claims when
+/// `Some(true)`) and `extract_block_body_trailing_comment_from_line`
+/// (claims when `Some(false)`) — the two predicates are inverses sharing
+/// the same `None` no-claim case.
+fn prev_nonws_is_bracket_opener(chars: &[char], start: usize) -> Option<bool> {
+    let mut k = start;
+    while k > 0 && chars[k - 1].is_whitespace() {
+        k -= 1;
+    }
+    if k == 0 {
+        return None;
+    }
+    let prev = chars[k - 1];
+    Some(prev == '(' || prev == '[' || prev == '{')
+}
+
 /// Extract a `--` line comment that sits inside an unclosed bracket pair
 /// on THIS line — i.e. the line OPENS a `(`/`[`/`{` and then ends with
 /// `<whitespace>? -- ...` without closing the bracket. Such a comment is
@@ -2238,15 +2268,7 @@ fn extract_bracket_interior_line_comment_from_line(line: &str) -> Option<String>
     // char before `--` is `)`, not an opener, so we do NOT claim it
     // here; the comment's recovery belongs to the per-stmt trailing
     // pathway which handles it on its own.
-    let mut k = start;
-    while k > 0 && chars[k - 1].is_whitespace() {
-        k -= 1;
-    }
-    if k == 0 {
-        return None;
-    }
-    let prev = chars[k - 1];
-    if !(prev == '(' || prev == '[' || prev == '{') {
+    if !prev_nonws_is_bracket_opener(&chars, start)? {
         return None;
     }
     let comment: String = chars[start..].iter().collect();
@@ -2297,16 +2319,10 @@ fn extract_block_body_trailing_comment_from_line(line: &str) -> Option<String> {
     }
     // Immediate-prev-char must NOT be a bracket opener; that case is owned
     // by `extract_bracket_interior_line_comment_from_line` (which records
-    // into `comments` for the empty-body / interior drains).
-    let mut k = start;
-    while k > 0 && chars[k - 1].is_whitespace() {
-        k -= 1;
-    }
-    if k == 0 {
-        return None;
-    }
-    let prev = chars[k - 1];
-    if prev == '(' || prev == '[' || prev == '{' {
+    // into `comments` for the empty-body / interior drains). The shared
+    // `prev_nonws_is_bracket_opener` helper returns `None` for the
+    // all-whitespace-before-`--` edge — that case is also rejected here.
+    if prev_nonws_is_bracket_opener(&chars, start)? {
         return None;
     }
     let comment: String = chars[start..].iter().collect();
@@ -4432,7 +4448,14 @@ fn format_delimited_collection<'a>(
         source_has_trailing_comma_at_offset(expr_span, open_char, close_char);
     let last_idx = items.len().saturating_sub(1);
     let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
+    // `prev_line` starts at `open_line - 1` (saturated, exclusive) so the
+    // first iteration's `take_comments_between(prev_line, anchor)` drain
+    // includes any bracket-interior `--` comment that `extract_comments`
+    // attributed to the open-delim's own source line (e.g.
+    // `let xs = ( -- note\n  1, 2\n)`). Without this, that comment is
+    // silently dropped on round-trip. Mirrors the `{` block-body drain
+    // in `format_body` which uses the same saturating-sub-1 lower bound.
+    let mut prev_line = open_line.saturating_sub(1);
     for (i, item) in items.into_iter().enumerate() {
         // Standalone comments between the previous boundary and this
         // element are emitted as indented comment lines.
@@ -4560,7 +4583,12 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let source_has_trailing_comma = call_args_source_has_trailing_comma(args);
     let last_idx = args.len().saturating_sub(1);
     let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
+    // `prev_line` starts at `open_line - 1` (saturated, exclusive) so a
+    // bracket-interior `-- note` on the open-paren line (e.g.
+    // `foo( -- note\n  x\n)`) is drained on the first iteration rather
+    // than silently dropped. See `format_delimited_collection` for the
+    // analogous fix on tuple / list / set / map literals.
+    let mut prev_line = open_line.saturating_sub(1);
     for (i, arg) in args.iter().enumerate() {
         let arg_line = arg_lines[i];
         let pre = take_comments_between(prev_line, arg_line);
@@ -4606,7 +4634,12 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
     let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
     let last_idx = fields.len().saturating_sub(1);
     let mut lines: Vec<String> = Vec::new();
-    let mut prev_line = open_line;
+    // `prev_line` starts at `open_line - 1` (saturated, exclusive) so a
+    // bracket-interior `-- note` on the open-brace line (e.g.
+    // `Point { -- start fields\n  x: 1,\n}`) is drained on the first
+    // iteration rather than silently dropped. See
+    // `format_delimited_collection` for the analogous fix.
+    let mut prev_line = open_line.saturating_sub(1);
     for (i, (fname, fexpr)) in fields.iter().enumerate() {
         let fline = field_lines[i];
         let pre = take_comments_between(prev_line, fline);
@@ -4703,7 +4736,15 @@ fn should_layout_multiline(open_line: usize, close_line: usize, elem_lines: &[us
     if elem_lines.iter().any(|&l| has_trailing_for_line(l)) {
         return true;
     }
-    has_comments_between(open_line, close_line)
+    // Lower bound is `open_line - 1` (saturated, exclusive) so a bracket-
+    // interior `--` line comment attributed to the open-delim's OWN source
+    // line forces multi-line layout. Without this, an input like
+    // `let xs = ( -- pending\n 1, 2, 3\n)` collapses to `(1, 2, 3)` on
+    // re-format and the comment is silently dropped — matching the way
+    // the `{` block-body case in `format_body` always emits multi-line
+    // and drains the open-line comment via `take_comments_between(
+    // open_line - 1, close_line)`.
+    has_comments_between(open_line.saturating_sub(1), close_line)
 }
 
 /// Format a pipe chain expression, preserving any trailing comments
