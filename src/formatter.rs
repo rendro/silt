@@ -4375,6 +4375,16 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     {
         return out;
     }
+    if let ExprKind::RecordUpdate { .. } = &expr.kind
+        && let Some(out) = format_record_update_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
+    if let ExprKind::AnonRecord { .. } = &expr.kind
+        && let Some(out) = format_anon_record_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
     if let ExprKind::Map(_) = &expr.kind
         && let Some(out) = format_map_expr_if_multiline(expr, depth)
     {
@@ -4667,6 +4677,154 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         lines.join("\n"),
         indent(depth)
     ))
+}
+
+/// Record-update multi-line emitter. Mirrors
+/// [`format_record_create_expr_if_multiline`] but emits `<expr>.{ ... }`
+/// form. Without this, `q.{ -- update\n  x: 10\n}` collapses to the
+/// inline `q.{ x: 10 }` form on round-trip and the bracket-interior
+/// `-- update` comment is silently dropped — the round-83 scanner
+/// already records the comment, the round-84 fix lowered
+/// `should_layout_multiline`'s open-line bound, but the inline emitter
+/// at `ExprKind::RecordUpdate` in `format_expr_inner` had no multi-line
+/// fallback to feed the recorded comment into.
+///
+/// The opener is `{` immediately after the `.`; `compute_bracket_end_line`
+/// scans forward from `expr.span.line` (the receiver's line, since
+/// `RecordUpdate.span` is the receiver's span — see parser.rs at the
+/// `Token::Dot` arm) and latches onto the first `{`, which (modulo
+/// receivers that contain unmatched `{`) is the record-update brace.
+fn format_record_update_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::RecordUpdate {
+        expr: recv,
+        fields,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '{', '}');
+    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| e.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &field_lines) {
+        return None;
+    }
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
+    let last_idx = fields.len().saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    // `prev_line` starts at `open_line - 1` (saturated, exclusive) so a
+    // bracket-interior `-- note` on the open-brace line is drained on
+    // the first iteration rather than silently dropped. Mirrors the
+    // round-84 fix in `format_record_create_expr_if_multiline`.
+    let mut prev_line = open_line.saturating_sub(1);
+    for (i, (fname, fexpr)) in fields.iter().enumerate() {
+        let fline = field_lines[i];
+        let pre = take_comments_between(prev_line, fline);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let val = format_expr(fexpr, depth + 1);
+        let trailing = take_trailing_for_line(fline)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!(
+            "{}{fname}: {val}{comma}{trailing}",
+            indent(depth + 1)
+        ));
+        prev_line = fline;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "{}.{{\n{}\n{}}}",
+        format_expr(recv, depth),
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Anonymous-record multi-line emitter. Mirrors
+/// [`format_record_create_expr_if_multiline`] but emits `{ ... }`
+/// (or `{ ...spread, ... }`) form. Without this, an input like
+/// `let r = { -- header\n  a: 1\n}` collapses to `let r = { a: 1 }` and
+/// the `-- header` interior comment is silently dropped.
+///
+/// `AnonRecord.span` points at the `{` (parser captures `self.span()`
+/// before `expect(LBrace)`), so `compute_bracket_end_line` and
+/// `source_has_trailing_comma_at_offset` both anchor correctly without
+/// needing to walk past a receiver.
+fn format_anon_record_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::AnonRecord { spread, fields } = &expr.kind else {
+        return None;
+    };
+    if fields.is_empty() && spread.is_none() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '{', '}');
+    // Anchor lines for layout decisions: include the spread's line (if
+    // present) so a multi-line `{ ...other,\n  x: 1\n}` is detected as
+    // multi-line by the trailing-comment check.
+    let mut anchor_lines: Vec<usize> = Vec::new();
+    if let Some(s) = spread {
+        anchor_lines.push(s.span.line);
+    }
+    anchor_lines.extend(fields.iter().map(|(_, e)| e.span.line));
+    if !should_layout_multiline(open_line, close_line, &anchor_lines) {
+        return None;
+    }
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
+    let total_items = fields.len() + spread.as_ref().map(|_| 1).unwrap_or(0);
+    let last_idx = total_items.saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line.saturating_sub(1);
+    let mut item_idx = 0usize;
+    if let Some(s) = spread {
+        let sline = s.span.line;
+        let pre = take_comments_between(prev_line, sline);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let val = format_expr(s, depth + 1);
+        let trailing = take_trailing_for_line(sline)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        let needs_comma = item_idx < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}...{}{comma}{trailing}", indent(depth + 1), val));
+        prev_line = sline;
+        item_idx += 1;
+    }
+    for (fname, fexpr) in fields.iter() {
+        let fline = fexpr.span.line;
+        let pre = take_comments_between(prev_line, fline);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let val = format_expr(fexpr, depth + 1);
+        let trailing = take_trailing_for_line(fline)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        let needs_comma = item_idx < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!(
+            "{}{fname}: {val}{comma}{trailing}",
+            indent(depth + 1)
+        ));
+        prev_line = fline;
+        item_idx += 1;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!("{{\n{}\n{}}}", lines.join("\n"), indent(depth)))
 }
 
 /// Map-literal multi-line emitter. Mirrors `format_list_expr_if_multiline`

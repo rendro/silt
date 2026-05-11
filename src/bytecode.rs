@@ -118,10 +118,20 @@ pub enum Op {
     /// `Value::Record` carries the synthetic name `"<anon>"` instead of
     /// inheriting the base's `type_name`. Emitted by the compiler when the
     /// typechecker reports the spread expression's static type as
-    /// `Type::AnonRecord` — required so the runtime value's `type_name`
-    /// matches the type-level shape, otherwise `==` between a spread of a
-    /// nominal record and an anon-record literal of the same shape would
-    /// return `false` (Value::Record's PartialEq compares the name first).
+    /// `Type::AnonRecord` — this normalizes the runtime `type_name` to
+    /// `<anon>` for any anon-typed value, keeping the runtime invariant
+    /// in lockstep with the type-level shape.
+    ///
+    /// Note: round 84 also made `Value::PartialEq` for `Value::Record`
+    /// treat `<anon>` as a wildcard on either side, so a spread of a
+    /// nominal record and an anon-record literal of the same shape now
+    /// compare equal under `==` even without the tag rebrand. The opcode
+    /// is therefore one closure of a dual gap (the PartialEq wildcard is
+    /// the other) — either approach alone suffices for `==`. The opcode
+    /// is retained because normalizing `type_name` to `<anon>` produces
+    /// a more consistent runtime invariant (e.g. `type_name()` reads,
+    /// debug output, future shape-aware dispatch) than relying on
+    /// PartialEq alone, which only catches the equality use site.
     RecordUpdateAnon, // operand: u8 field_count, then field_count × u16 field_name_index
     /// Create a lazy range (inclusive) from two ints on the stack.
     MakeRange,

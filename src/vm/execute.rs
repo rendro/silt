@@ -1662,11 +1662,24 @@ impl Vm {
                 //   * `RecordUpdateAnon` overrides the name to "<anon>" —
                 //     used for `{...base, ...}` spreads when the
                 //     typechecker reports the result as `Type::AnonRecord`.
-                //     Without the override, a spread of a nominal record
-                //     and an anon-record literal of the same shape would
-                //     compare unequal at runtime because
-                //     `Value::Record::eq` checks the name first
-                //     (src/value.rs ~1714).
+                //     Round 83 originally introduced this opcode because
+                //     `Value::Record::eq` checked the name first
+                //     (src/value.rs ~1714) and a spread of a nominal
+                //     record vs. an anon-record literal of the same shape
+                //     would compare unequal otherwise.
+                //
+                //     Round 84 also made `Value::PartialEq` for
+                //     `Value::Record` treat `<anon>` on either side as a
+                //     name wildcard. The opcode's tag-rebrand and the
+                //     PartialEq wildcard are now a dual closure of the
+                //     same gap — either approach alone suffices for `==`.
+                //     The opcode is retained because it normalizes the
+                //     runtime `type_name` to `<anon>` for any anon-typed
+                //     value, which is a more consistent invariant than
+                //     relying on PartialEq alone (e.g. `type_name()`
+                //     reads, debug output, future shape-aware dispatch
+                //     all see `<anon>` rather than the nominal base's
+                //     name).
                 let is_anon = matches!(op, Op::RecordUpdateAnon);
                 let field_count = self.read_u8()? as usize;
                 let mut field_names = Vec::with_capacity(field_count);

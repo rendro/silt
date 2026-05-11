@@ -28,7 +28,7 @@ pub(super) fn collect_local_bindings(program: &Program, source: &str) -> Vec<Loc
         match decl {
             Decl::Fn(f) => {
                 let body_start = f.body.span.offset;
-                let (body_end, _) = expr_extent(&f.body, source);
+                let body_end = expr_extent(&f.body, source);
                 // Function parameters: find each in the param-list region
                 // before the body start.
                 let params_search_end = body_start;
@@ -69,7 +69,7 @@ pub(super) fn collect_local_bindings(program: &Program, source: &str) -> Vec<Loc
                 }
                 for method in &ti.methods {
                     let body_start = method.body.span.offset;
-                    let (body_end, _) = expr_extent(&method.body, source);
+                    let body_end = expr_extent(&method.body, source);
                     for param in &method.params {
                         if let PatternKind::Ident(name) = &param.pattern.kind {
                             let name_str = resolve(*name);
@@ -203,7 +203,7 @@ fn collect_local_bindings_in_expr(
         }
         ExprKind::Lambda { params, body, .. } => {
             let body_start = body.span.offset;
-            let (body_end, _) = expr_extent(body, source);
+            let body_end = expr_extent(body, source);
             for p in params {
                 if let PatternKind::Ident(name) = &p.pattern.kind {
                     let name_str = resolve(*name);
@@ -229,7 +229,7 @@ fn collect_local_bindings_in_expr(
             }
             for arm in arms {
                 let arm_start = arm.body.span.offset;
-                let (arm_end, _) = expr_extent(&arm.body, source);
+                let arm_end = expr_extent(&arm.body, source);
                 collect_pattern_bindings(
                     &arm.pattern,
                     source,
@@ -250,7 +250,7 @@ fn collect_local_bindings_in_expr(
             body,
         } => {
             let body_start = body.span.offset;
-            let (body_end, _) = expr_extent(body, source);
+            let body_end = expr_extent(body, source);
             for (name, init) in loop_bindings {
                 let name_str = resolve(*name);
                 if let Some(off) =

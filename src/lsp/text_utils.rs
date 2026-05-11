@@ -6,7 +6,7 @@
 
 use crate::ast::*;
 
-/// Return the approximate (end_offset, _) extent of an expression in the source.
+/// Return the approximate end-offset extent of an expression in the source.
 /// For block expressions we scan forward to the matching `}` using a simple
 /// brace/paren-aware walker that skips string literals and comments. For
 /// other expression kinds we recursively walk children via
@@ -17,28 +17,28 @@ use crate::ast::*;
 /// e.g. `fn add(a, b) = a + b` would claim to extend to EOF, dragging the
 /// `fn add` decl into the selection chain of any later cursor in the file.
 /// Round-84 LATENT fix.
-pub(super) fn expr_extent(expr: &Expr, source: &str) -> (usize, ()) {
+pub(super) fn expr_extent(expr: &Expr, source: &str) -> usize {
     let start = expr.span.offset;
     if start >= source.len() {
-        return (source.len(), ());
+        return source.len();
     }
     // Block bodies have a definitive close-brace; scan for it.
     if matches!(&expr.kind, ExprKind::Block(_))
         && let Some(end) = match_closing_brace(source, start)
     {
-        return (end, ());
+        return end;
     }
     // For other kinds: walk children recursively, take max end. The
     // per-kind self-extent below ensures leaves (which have no children)
     // still cover their own bytes.
     let mut max_end = self_extent(expr, source);
     super::ast_walk::visit_expr_children(expr, |child| {
-        let (child_end, _) = expr_extent(child, source);
+        let child_end = expr_extent(child, source);
         if child_end > max_end {
             max_end = child_end;
         }
     });
-    (max_end.min(source.len()), ())
+    max_end.min(source.len())
 }
 
 /// Tight end-offset for an expression's own token(s), ignoring children.

@@ -35,7 +35,7 @@ pub(super) fn token_start(span: &crate::lexer::Span) -> usize {
 
 /// Find the inferred type of the deepest expression at the cursor byte offset.
 pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Type> {
-    let mut best: Option<&Type> = None;
+    let mut best: Option<Type> = None;
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
@@ -62,130 +62,35 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
             _ => {}
         }
     }
-    best.cloned()
+    best
 }
 
-fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Type>) {
+/// Recurse depth-first into `expr`, updating `best` with the deepest
+/// `expr.ty` whose span starts at or before the cursor. Delegates the
+/// child enumeration to [`visit_expr_children`] — there is no second
+/// inlined copy of the `ExprKind::*` arms here. The pre-check on the
+/// outer expression runs first so a deeper match overwrites it.
+///
+/// Round-85 dedup: prior to this refactor this function inlined a
+/// ~100-line second copy of `visit_expr_children`'s arm table. Drift
+/// in either copy would silently miss expression kinds; the two are
+/// now collapsed to a single source of truth. The `Option<&'a Type>`
+/// previously used to avoid an intermediate clone is now `Option<Type>`
+/// because `visit_expr_children`'s `FnMut(&Expr)` closure must accept
+/// any borrow lifetime (HRTB) and cannot escape a `&'a Type` borrow.
+/// The clone is cheap (one per visited typed expression on the cursor
+/// path) and the only caller, `find_type_at_offset`, was already
+/// `.cloned()`-ing the final result anyway.
+fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     let start = token_start(&expr.span);
     // The cursor must be at or after this expression's start.
     // We rely on depth-first traversal: the deepest (most specific) match wins.
     if cursor >= start
         && let Some(ref ty) = expr.ty
     {
-        *best = Some(ty);
+        *best = Some(ty.clone());
     }
-
-    // Recurse into children (inlined to satisfy the borrow checker).
-    match &expr.kind {
-        ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-            find_type_in_expr(l, cursor, best);
-            find_type_in_expr(r, cursor, best);
-        }
-        ExprKind::Unary(_, e)
-        | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _)
-        | ExprKind::Return(Some(e))
-        | ExprKind::FieldAccess(e, _) => find_type_in_expr(e, cursor, best),
-        ExprKind::Call(callee, args) => {
-            find_type_in_expr(callee, cursor, best);
-            for a in args {
-                find_type_in_expr(a, cursor, best);
-            }
-        }
-        ExprKind::Lambda { body, .. } => find_type_in_expr(body, cursor, best),
-        ExprKind::Match { expr, arms } => {
-            if let Some(e) = expr {
-                find_type_in_expr(e, cursor, best);
-            }
-            for arm in arms {
-                if let Some(ref g) = arm.guard {
-                    find_type_in_expr(g, cursor, best);
-                }
-                find_type_in_expr(&arm.body, cursor, best);
-            }
-        }
-        ExprKind::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Let { value, .. } => find_type_in_expr(value, cursor, best),
-                    Stmt::Expr(e) => find_type_in_expr(e, cursor, best),
-                    Stmt::When {
-                        expr, else_body, ..
-                    } => {
-                        find_type_in_expr(expr, cursor, best);
-                        find_type_in_expr(else_body, cursor, best);
-                    }
-                    Stmt::WhenBool {
-                        condition,
-                        else_body,
-                    } => {
-                        find_type_in_expr(condition, cursor, best);
-                        find_type_in_expr(else_body, cursor, best);
-                    }
-                }
-            }
-        }
-        ExprKind::List(elems) => {
-            for elem in elems {
-                match elem {
-                    ListElem::Single(e) | ListElem::Spread(e) => find_type_in_expr(e, cursor, best),
-                }
-            }
-        }
-        ExprKind::Map(entries) => {
-            for (k, v) in entries {
-                find_type_in_expr(k, cursor, best);
-                find_type_in_expr(v, cursor, best);
-            }
-        }
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-            for e in elems {
-                find_type_in_expr(e, cursor, best);
-            }
-        }
-        ExprKind::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                find_type_in_expr(v, cursor, best);
-            }
-        }
-        ExprKind::RecordUpdate { expr, fields, .. } => {
-            find_type_in_expr(expr, cursor, best);
-            for (_, v) in fields {
-                find_type_in_expr(v, cursor, best);
-            }
-        }
-        ExprKind::AnonRecord { spread, fields } => {
-            if let Some(s) = spread {
-                find_type_in_expr(s, cursor, best);
-            }
-            for (_, v) in fields {
-                find_type_in_expr(v, cursor, best);
-            }
-        }
-        ExprKind::Loop { bindings, body } => {
-            for (_, init) in bindings {
-                find_type_in_expr(init, cursor, best);
-            }
-            find_type_in_expr(body, cursor, best);
-        }
-        ExprKind::Recur(args) => {
-            for a in args {
-                find_type_in_expr(a, cursor, best);
-            }
-        }
-        ExprKind::StringInterp(parts) => {
-            for part in parts {
-                if let StringPart::Expr(e) = part {
-                    find_type_in_expr(e, cursor, best);
-                }
-            }
-        }
-        ExprKind::FloatElse(expr, fallback) => {
-            find_type_in_expr(expr, cursor, best);
-            find_type_in_expr(fallback, cursor, best);
-        }
-        _ => {}
-    }
+    visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
 }
 
 /// Find the identifier name at the cursor byte offset.

@@ -1873,18 +1873,33 @@ impl Ord for Value {
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
             (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
             (Value::Record(na, fa), Value::Record(nb, fb)) => {
-                na.cmp(nb).then_with(|| match na.as_str() {
-                    "Date" => cmp_record_field(fa, fb, "year")
-                        .then_with(|| cmp_record_field(fa, fb, "month"))
-                        .then_with(|| cmp_record_field(fa, fb, "day")),
-                    "Time" => cmp_record_field(fa, fb, "hour")
-                        .then_with(|| cmp_record_field(fa, fb, "minute"))
-                        .then_with(|| cmp_record_field(fa, fb, "second"))
-                        .then_with(|| cmp_record_field(fa, fb, "ns")),
-                    "DateTime" => cmp_record_field(fa, fb, "date")
-                        .then_with(|| cmp_record_field(fa, fb, "time")),
-                    _ => fa.iter().cmp(fb.iter()),
-                })
+                // Round 85: mirror the `<anon>`-wildcard logic from
+                // `PartialEq` (line ~1729). When either side carries
+                // `type_name == "<anon>"`, the typechecker has already
+                // decided these are the same type — Ord must agree so
+                // that `a == b ⇒ cmp(a, b) == Equal` (the contract the
+                // comment block at line ~1921-1928 calls out). Otherwise
+                // BTreeSet / BTreeMap silently treat equal-by-PartialEq
+                // values as distinct, breaking dedup. When neither side
+                // is anon, fall back to the original name-first
+                // comparison.
+                let anon_either = na.as_str() == "<anon>" || nb.as_str() == "<anon>";
+                if anon_either {
+                    fa.iter().cmp(fb.iter())
+                } else {
+                    na.cmp(nb).then_with(|| match na.as_str() {
+                        "Date" => cmp_record_field(fa, fb, "year")
+                            .then_with(|| cmp_record_field(fa, fb, "month"))
+                            .then_with(|| cmp_record_field(fa, fb, "day")),
+                        "Time" => cmp_record_field(fa, fb, "hour")
+                            .then_with(|| cmp_record_field(fa, fb, "minute"))
+                            .then_with(|| cmp_record_field(fa, fb, "second"))
+                            .then_with(|| cmp_record_field(fa, fb, "ns")),
+                        "DateTime" => cmp_record_field(fa, fb, "date")
+                            .then_with(|| cmp_record_field(fa, fb, "time")),
+                        _ => fa.iter().cmp(fb.iter()),
+                    })
+                }
             }
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
                 // Declaration-order comparison: every enum variant
@@ -2208,9 +2223,19 @@ impl Hash for Value {
                     v.hash(state);
                 }
             }
-            Value::Record(name, fields) => {
+            Value::Record(_name, fields) => {
                 state.write_u8(9);
-                name.hash(state);
+                // Round 85: do NOT hash the type name. `PartialEq` treats
+                // `Value::Record("<anon>", fields)` as equal to
+                // `Value::Record("P", fields)` (the `<anon>` wildcard at
+                // line ~1729) — so the Hash contract `a == b ⇒
+                // hash(a) == hash(b)` requires the same fields to hash
+                // to the same value regardless of name. Two distinct
+                // concrete nominals with the same fields (e.g.
+                // `Person{x:1}` vs `Car{x:1}`) still compare unequal via
+                // PartialEq's `na == nb && fa == fb` branch, so they
+                // just hash-collide and disambiguate via Eq — that is
+                // normal hash-collision behavior, not a bug.
                 for (k, v) in fields.iter() {
                     k.hash(state);
                     v.hash(state);

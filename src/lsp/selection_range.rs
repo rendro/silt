@@ -97,38 +97,17 @@ fn build_chain(ranges: &[Extent], source: &str) -> SelectionRange {
 fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<Extent>) {
     match decl {
         Decl::Fn(f) => {
-            let (end, _) = expr_extent(&f.body, source);
-            if cursor >= f.span.offset && cursor <= end {
-                out.push(Extent {
-                    start: f.span.offset,
-                    end,
-                });
-                collect_expr_ranges(&f.body, source, cursor, out);
-            }
+            try_push_body_extent(&f.body, f.span.offset, cursor, out, source);
         }
         Decl::Let { value, span, .. } => {
-            let (end, _) = expr_extent(value, source);
-            if cursor >= span.offset && cursor <= end {
-                out.push(Extent {
-                    start: span.offset,
-                    end,
-                });
-                collect_expr_ranges(value, source, cursor, out);
-            }
+            try_push_body_extent(value, span.offset, cursor, out, source);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
                 return;
             }
             for method in &ti.methods {
-                let (end, _) = expr_extent(&method.body, source);
-                if cursor >= method.span.offset && cursor <= end {
-                    out.push(Extent {
-                        start: method.span.offset,
-                        end,
-                    });
-                    collect_expr_ranges(&method.body, source, cursor, out);
-                }
+                try_push_body_extent(&method.body, method.span.offset, cursor, out, source);
             }
         }
         Decl::Type(td) => {
@@ -190,7 +169,7 @@ fn type_decl_extent(td: &TypeDecl, source: &str) -> usize {
 }
 
 fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<Extent>) {
-    let (end, _) = expr_extent(expr, source);
+    let end = expr_extent(expr, source);
     if cursor < expr.span.offset || cursor > end {
         return;
     }
@@ -201,4 +180,25 @@ fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<E
     super::ast_walk::visit_expr_children(expr, |child| {
         collect_expr_ranges(child, source, cursor, out);
     });
+}
+
+/// Shared body-extent boilerplate used by `Decl::Fn`, `Decl::Let`, and each
+/// `Decl::TraitImpl` method arm: compute the body's end offset, push the
+/// `[decl_start, end]` extent when the cursor is enclosed, and recurse into
+/// the body for nested expression ranges. Round-85 BLOAT-DUP fix.
+fn try_push_body_extent(
+    body: &Expr,
+    decl_start: usize,
+    cursor: usize,
+    out: &mut Vec<Extent>,
+    source: &str,
+) {
+    let end = expr_extent(body, source);
+    if cursor >= decl_start && cursor <= end {
+        out.push(Extent {
+            start: decl_start,
+            end,
+        });
+        collect_expr_ranges(body, source, cursor, out);
+    }
 }

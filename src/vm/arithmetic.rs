@@ -141,7 +141,19 @@ impl Vm {
             | (Value::List(_), Value::Range(..))
             | (Value::Range(..), Value::List(_))
             | (Value::Range(..), Value::Range(..)) => a.cmp(&b),
-            (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
+            // Round 85: mirror the `<anon>`-wildcard logic from
+            // `Value::PartialEq`/`Ord` (src/value.rs ~1729, ~1875).
+            // The typechecker normally rejects source-level ordering of
+            // anon-shaped records, but this is defensive for cases
+            // where a nominal flows through `unify_anon_nominal` and
+            // ends up compared against an anon-typed value at runtime —
+            // the `na == nb` guard alone would skip the dispatch and
+            // fall to the catch-all error.
+            (Value::Record(na, _), Value::Record(nb, _))
+                if na == nb || na.as_str() == "<anon>" || nb.as_str() == "<anon>" =>
+            {
+                a.cmp(&b)
+            }
             (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
             _ => {
                 return Err(VmError::new(format!(

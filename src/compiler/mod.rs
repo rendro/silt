@@ -2655,13 +2655,21 @@ impl Compiler {
                     // `{...base, ...}` spread as `Type::AnonRecord` even
                     // when `base` is a nominal record (see
                     // src/typechecker/inference.rs ~4099). The resulting
-                    // runtime `Value::Record`'s `type_name` must therefore
-                    // be `"<anon>"` to match an anon-record literal of the
-                    // same shape — `Value::Record::eq` checks the name
-                    // before the field map (src/value.rs ~1714), so
-                    // inheriting the nominal base's name made
-                    // `{...person} == { x: 1 }` return `false` despite
-                    // identical fields and identical static types.
+                    // runtime `Value::Record`'s `type_name` is therefore
+                    // normalized to `"<anon>"` so the runtime invariant
+                    // matches the type-level shape.
+                    //
+                    // Round 84 also made `Value::PartialEq` for
+                    // `Value::Record` treat `<anon>` as a name wildcard
+                    // on either side, so the tag-rebrand and the
+                    // PartialEq wildcard are now a dual closure of the
+                    // same gap — either approach alone suffices for
+                    // `==`. The opcode emission is retained because the
+                    // normalized `type_name` is a more consistent
+                    // invariant than relying on PartialEq alone (e.g.
+                    // `type_name()` reads, debug output, future
+                    // shape-aware dispatch all see `<anon>` rather than
+                    // the nominal base's name).
                     // Lock: tests/round83_anonrec_spread_eq_tests.rs.
                     self.compile_expr(base)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();

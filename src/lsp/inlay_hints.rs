@@ -26,7 +26,7 @@ use crate::types::Type;
 
 use super::Server;
 use super::ast_walk::{has_unresolved_vars, visit_expr_children};
-use super::conversions::span_to_range;
+use super::conversions::{position_to_offset, span_to_range};
 
 impl Server {
     pub(super) fn inlay_hints(&self, params: lsp_types::InlayHintParams) -> Option<Vec<InlayHint>> {
@@ -214,8 +214,3 @@ fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
     })
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
-
-fn position_to_offset(source: &str, pos: &Position) -> usize {
-    super::conversions::position_to_offset(source, pos)
-}

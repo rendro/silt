@@ -752,11 +752,18 @@ mod tests {
         let all = all_known_method_names(&prog);
         // User-declared impl method.
         assert!(all.contains(&"to_upper".to_string()), "got: {all:?}");
-        // Auto-derived built-in trait methods.
+        // Auto-derived built-in trait methods. `message` is part of the
+        // fallback list at the call site (src/lsp/completion.rs ~512)
+        // because the `Error` builtin trait exposes a `message` method;
+        // earlier rounds asserted only `display`/`compare`/`equal`/`hash`
+        // and dropped `message` silently when the trait registry was
+        // out of sync. Lock it explicitly so any future rename or
+        // accidental deletion fails this test.
         assert!(all.contains(&"display".to_string()), "got: {all:?}");
         assert!(all.contains(&"compare".to_string()), "got: {all:?}");
         assert!(all.contains(&"equal".to_string()), "got: {all:?}");
         assert!(all.contains(&"hash".to_string()), "got: {all:?}");
+        assert!(all.contains(&"message".to_string()), "got: {all:?}");
     }
 
     /// `canonicalize_target_name` mirrors the typechecker's reduction
