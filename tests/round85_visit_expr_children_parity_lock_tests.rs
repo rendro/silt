@@ -64,10 +64,9 @@ fn exprkind_variants() -> BTreeSet<String> {
     // confusing field bodies (depth > 1) with variant heads.
     let mut d = 0i32;
     let mut variants_seen = BTreeSet::new();
-    let mut chars = body.char_indices().peekable();
     let mut current_line_start_depth = 0i32;
     let mut line_buf = String::new();
-    while let Some((_, c)) = chars.next() {
+    for (_, c) in body.char_indices() {
         if c == '\n' {
             // Inspect `line_buf` at the depth at line start.
             if current_line_start_depth == 1 {

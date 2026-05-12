@@ -51,7 +51,7 @@ fn extract_runnable_from_watch_rs() -> Vec<String> {
 /// Locate the canonical sentence prefix and return the substring from the
 /// start of that sentence through the end of the line. Returns `None` if
 /// the prefix is not present.
-fn watch_sentence<'a>(doc: &'a str) -> Option<&'a str> {
+fn watch_sentence(doc: &str) -> Option<&str> {
     let prefix = "The `--watch` / `-w` flag works with";
     let start = doc.find(prefix)?;
     // Scan forward to end-of-line — list items live on the same line in
