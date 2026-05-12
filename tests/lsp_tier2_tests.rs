@@ -263,7 +263,9 @@ fn document_highlight_returns_all_ident_occurrences() {
         .iter()
         .filter_map(|h| {
             let line = h.pointer("/range/start/line").and_then(|v| v.as_u64())?;
-            let ch = h.pointer("/range/start/character").and_then(|v| v.as_u64())?;
+            let ch = h
+                .pointer("/range/start/character")
+                .and_then(|v| v.as_u64())?;
             Some((line, ch))
         })
         .collect();

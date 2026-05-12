@@ -83,7 +83,8 @@ fn main() -> Int {
     let errs = type_errors(src);
     // Must contain the rendered type with args, not the bare head.
     assert!(
-        errs.iter().any(|e| e.contains("Bag(String)") && e.contains("Box(Int)")),
+        errs.iter()
+            .any(|e| e.contains("Bag(String)") && e.contains("Box(Int)")),
         "round 80 B1 regression: Generic-vs-Generic mismatch should \
          render full parametric form `Bag(String)` and `Box(Int)`; \
          got: {errs:?}"
@@ -96,9 +97,7 @@ fn main() -> Int {
             // no parenthesised args attached — tolerate any prefix /
             // suffix but require neither `Box(` nor `Bag(` in the
             // exact failing message.
-            e.contains("expected Box, got Bag")
-                && !e.contains("Box(")
-                && !e.contains("Bag(")
+            e.contains("expected Box, got Bag") && !e.contains("Box(") && !e.contains("Bag(")
         }),
         "round 80 B1 regression: diagnostic dropped type args; got: {errs:?}"
     );
@@ -192,7 +191,8 @@ fn main() {}
 "#;
     let errs = type_errors(src);
     assert!(
-        errs.iter().any(|e| e.contains("shadows builtin type 'Int'")),
+        errs.iter()
+            .any(|e| e.contains("shadows builtin type 'Int'")),
         "round 80 B3 regression: `type Int {{ ... }}` should be \
          rejected with a builtin-shadow diagnostic at declaration \
          time; got: {errs:?}"
@@ -202,7 +202,9 @@ fn main() {}
     // it). Pre-fix this assertion fails because 6 cascade errors
     // referencing `unknown method 'x' on type Int` fire.
     assert!(
-        !errs.iter().any(|e| e.contains("unknown method 'x' on type Int")),
+        !errs
+            .iter()
+            .any(|e| e.contains("unknown method 'x' on type Int")),
         "round 80 B3 regression: builtin-shadow guard should suppress \
          the auto-derive cascade; got: {errs:?}"
     );
@@ -217,7 +219,8 @@ fn main() {}
 "#;
     let errs = type_errors(src);
     assert!(
-        errs.iter().any(|e| e.contains("shadows builtin type 'String'")),
+        errs.iter()
+            .any(|e| e.contains("shadows builtin type 'String'")),
         "round 80 B3 regression: `type String {{ ... }}` should be \
          rejected; got: {errs:?}"
     );
@@ -232,7 +235,8 @@ fn main() {}
 "#;
     let errs = type_errors(src);
     assert!(
-        errs.iter().any(|e| e.contains("shadows builtin type 'List'")),
+        errs.iter()
+            .any(|e| e.contains("shadows builtin type 'List'")),
         "round 80 B3 regression: `type List {{ ... }}` should be \
          rejected; got: {errs:?}"
     );

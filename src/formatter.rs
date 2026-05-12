@@ -4695,11 +4695,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
 /// `Token::Dot` arm) and latches onto the first `{`, which (modulo
 /// receivers that contain unmatched `{`) is the record-update brace.
 fn format_record_update_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
-    let ExprKind::RecordUpdate {
-        expr: recv,
-        fields,
-    } = &expr.kind
-    else {
+    let ExprKind::RecordUpdate { expr: recv, fields } = &expr.kind else {
         return None;
     };
     if fields.is_empty() {
@@ -8127,27 +8123,42 @@ fn f() {
     // F1 = extract_trailing_comment_from_line
     // F2 = extract_bracket_interior_line_comment_from_line
     // F3 = extract_block_body_trailing_comment_from_line
-    fn cases_round83() -> Vec<(&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>)> {
+    fn cases_round83() -> Vec<(
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+    )> {
         vec![
             // ( input,                                 F1,                          F2,              F3                 )
-            ("let x = 1 -- note",                       Some("-- note"),             None,            None              ),
-            ("f( -- arg",                               None,                        Some("-- arg"),  None              ),
-            ("{ x -- note",                             None,                        None,            Some("-- note")   ),
-            ("foo() -- top",                            Some("-- top"),              None,            None              ),
-            ("\"hello -- world\"",                      None,                        None,            None              ),
-            ("\"\"\"raw -- text\"\"\"",                 None,                        None,            None              ),
-            ("let x = \"\"\"raw\"\"\"  -- after",       Some("-- after"),            None,            None              ),
-            ("x {- block -} -- mixed",                  Some("-- mixed"),            None,            None              ),
-            ("x = 1 {- block -}",                       Some("{- block -}"),         None,            None              ),
-            ("x = 1 {- block -} y",                     None,                        None,            None              ),
-            ("fn nc(){ --",                             None,                        Some("--"),      None              ),
-            ("{ -- only",                               None,                        Some("-- only"), None              ),
-            ("[ x -- lost",                             None,                        None,            None              ),
-            ("",                                        None,                        None,            None              ),
-            ("--",                                      Some("--"),                  None,            None              ),
-            ("\"hi {x --y}\"",                          None,                        None,            None              ),
-            ("x = 1 {- a {- b -} c -}",                 Some("{- a {- b -} c -}"),   None,            None              ),
-            ("   -- leading",                           Some("-- leading"),          None,            None              ),
+            ("let x = 1 -- note", Some("-- note"), None, None),
+            ("f( -- arg", None, Some("-- arg"), None),
+            ("{ x -- note", None, None, Some("-- note")),
+            ("foo() -- top", Some("-- top"), None, None),
+            ("\"hello -- world\"", None, None, None),
+            ("\"\"\"raw -- text\"\"\"", None, None, None),
+            (
+                "let x = \"\"\"raw\"\"\"  -- after",
+                Some("-- after"),
+                None,
+                None,
+            ),
+            ("x {- block -} -- mixed", Some("-- mixed"), None, None),
+            ("x = 1 {- block -}", Some("{- block -}"), None, None),
+            ("x = 1 {- block -} y", None, None, None),
+            ("fn nc(){ --", None, Some("--"), None),
+            ("{ -- only", None, Some("-- only"), None),
+            ("[ x -- lost", None, None, None),
+            ("", None, None, None),
+            ("--", Some("--"), None, None),
+            ("\"hi {x --y}\"", None, None, None),
+            (
+                "x = 1 {- a {- b -} c -}",
+                Some("{- a {- b -} c -}"),
+                None,
+                None,
+            ),
+            ("   -- leading", Some("-- leading"), None, None),
         ]
     }
 

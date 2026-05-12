@@ -138,7 +138,11 @@ fn write_broken_import_fixture() -> PathBuf {
     main_path
 }
 
-fn run_silt_capture_stderr(main: &PathBuf, force_color: Option<&str>, no_color: Option<&str>) -> String {
+fn run_silt_capture_stderr(
+    main: &PathBuf,
+    force_color: Option<&str>,
+    no_color: Option<&str>,
+) -> String {
     let bin = env!("CARGO_BIN_EXE_silt");
     let mut cmd = Command::new(bin);
     cmd.arg("run").arg(main);
@@ -207,7 +211,10 @@ fn item2_inner_snippet_plain_under_no_color() {
     );
     // The inner-snippet glyphs must still be present as plain text.
     assert!(stderr.contains("-->"), "plain `-->` must still be present");
-    assert!(stderr.contains('^'), "plain `^` caret must still be present");
+    assert!(
+        stderr.contains('^'),
+        "plain `^` caret must still be present"
+    );
 }
 
 #[test]

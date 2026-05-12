@@ -1338,4 +1338,3 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
     }
     Ok(ok(Value::Unit))
 }
-

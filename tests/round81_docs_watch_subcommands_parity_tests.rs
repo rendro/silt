@@ -36,7 +36,9 @@ fn extract_runnable_from_watch_rs() -> Vec<String> {
         let stripped = trimmed
             .strip_prefix('"')
             .and_then(|s| s.strip_suffix('"'))
-            .unwrap_or_else(|| panic!("expected quoted string literal in RUNNABLE, got: {trimmed:?}"));
+            .unwrap_or_else(|| {
+                panic!("expected quoted string literal in RUNNABLE, got: {trimmed:?}")
+            });
         names.push(stripped.to_string());
     }
     assert!(

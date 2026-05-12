@@ -121,9 +121,7 @@ fn l6_callmethod_argc_exceeds_stack_returns_vm_error() {
 
     let mut vm = Vm::new();
     let result = vm.run(script);
-    let err = result.expect_err(
-        "Op::CallMethod with argc > stack.len() must surface as VmError",
-    );
+    let err = result.expect_err("Op::CallMethod with argc > stack.len() must surface as VmError");
     let msg = format!("{err}");
     // Either the original "exceeds stack size" wording or the new
     // unified `internal VM error:` wording is acceptable here — the

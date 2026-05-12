@@ -538,8 +538,7 @@ fn rename_source_uses_scope_aware_gate() {
     // top-level definitions map — locking the three-arm structure of
     // the new helper.
     assert!(
-        src.contains("find_local_binding_at_offset")
-            && src.contains("nearest_local_binding_for"),
+        src.contains("find_local_binding_at_offset") && src.contains("nearest_local_binding_for"),
         "scope-aware rename gate must consult `find_local_binding_at_offset` \
          (cursor on a local binder) AND `nearest_local_binding_for` (use-site \
          of a local in scope)."

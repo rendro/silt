@@ -25,8 +25,7 @@ use std::path::PathBuf;
 fn read_src(rel: &str) -> String {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push(rel);
-    std::fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 
 // ── DUP-1 locks ──────────────────────────────────────────────────────
@@ -81,7 +80,9 @@ fn tcp_stream_wrapper_inner_field_appears_once() {
 #[test]
 fn tcp_complete_io_handshake_body_appears_once() {
     let src = read_src("src/builtins/tcp.rs");
-    let count = src.matches("while self.inner.conn.is_handshaking()").count();
+    let count = src
+        .matches("while self.inner.conn.is_handshaking()")
+        .count();
     assert_eq!(
         count, 1,
         "expected exactly one `while self.inner.conn.is_handshaking()` loop \

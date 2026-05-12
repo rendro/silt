@@ -90,7 +90,11 @@ fn round83_no_local_ok_clone_in_tcp_stream_postgres() {
 
     let forbidden = "fn ok(v: Value) -> Value";
 
-    for (name, src) in [("tcp.rs", tcp), ("stream.rs", stream), ("postgres.rs", postgres)] {
+    for (name, src) in [
+        ("tcp.rs", tcp),
+        ("stream.rs", stream),
+        ("postgres.rs", postgres),
+    ] {
         assert!(
             !src.contains(forbidden),
             "src/builtins/{name} must not redefine `{forbidden}` — the \
@@ -102,10 +106,13 @@ fn round83_no_local_ok_clone_in_tcp_stream_postgres() {
         // either a bare `use super::common::ok;` line OR a
         // brace-grouped import that names `ok`.
         let has_bare = src.contains("use super::common::ok;");
-        let has_grouped =
-            src.contains("use super::common::{") && src.lines().any(|l| {
+        let has_grouped = src.contains("use super::common::{")
+            && src.lines().any(|l| {
                 l.contains("use super::common::{")
-                    && (l.contains(" ok,") || l.contains(" ok}") || l.contains("{ok,") || l.contains("{ok}"))
+                    && (l.contains(" ok,")
+                        || l.contains(" ok}")
+                        || l.contains("{ok,")
+                        || l.contains("{ok}"))
             });
         assert!(
             has_bare || has_grouped,

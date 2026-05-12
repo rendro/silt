@@ -75,8 +75,8 @@ fn inference_has_no_residual_errors_push_lines() {
 fn round84_typechecker_no_raw_type_error_push_in_any_module() {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.push("src/typechecker");
-    let entries = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    let entries =
+        std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
 
     let needle = "self.errors.push(crate::types::TypeError {";
     let mut offenders: Vec<String> = Vec::new();

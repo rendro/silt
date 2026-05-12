@@ -50,13 +50,21 @@ fn parser_binop_arms() -> Vec<(&'static str, Vec<&'static str>, u8)> {
     vec![
         ("Token::OrOr", vec!["BinOp::Or"], 20),
         ("Token::AndAnd", vec!["BinOp::And"], 30),
-        ("Token::EqEq | Token::NotEq", vec!["BinOp::Eq", "BinOp::Neq"], 40),
+        (
+            "Token::EqEq | Token::NotEq",
+            vec!["BinOp::Eq", "BinOp::Neq"],
+            40,
+        ),
         (
             "Token::Lt | Token::Gt | Token::LtEq | Token::GtEq",
             vec!["BinOp::Lt", "BinOp::Gt", "BinOp::Leq", "BinOp::Geq"],
             50,
         ),
-        ("Token::Plus | Token::Minus", vec!["BinOp::Add", "BinOp::Sub"], 70),
+        (
+            "Token::Plus | Token::Minus",
+            vec!["BinOp::Add", "BinOp::Sub"],
+            70,
+        ),
         (
             "Token::Star | Token::Slash | Token::Percent",
             vec!["BinOp::Mul", "BinOp::Div", "BinOp::Mod"],
@@ -198,11 +206,17 @@ fn binop_mixed_precedence_idempotent_and_no_spurious_parens() {
             &["1 + 2 * 3"], // expected substring in output
         ),
         // Cmp (50) inside And (30): both children are higher precedence than parent.
-        ("fn main() { let x = a == b && c < d }", &["a == b && c < d"]),
+        (
+            "fn main() { let x = a == b && c < d }",
+            &["a == b && c < d"],
+        ),
         // And (30) inside Or (20): right child is higher precedence, no parens.
         ("fn main() { let x = a || b && c }", &["a || b && c"]),
         // Mul (80) and Div (80) inside Add/Sub (70): all unparenthesised.
-        ("fn main() { let x = a + b * c - d / e }", &["a + b * c - d / e"]),
+        (
+            "fn main() { let x = a + b * c - d / e }",
+            &["a + b * c - d / e"],
+        ),
         // Eq inside And, And inside Or — full ladder of decreasing prec.
         (
             "fn main() { let x = a || b && c == d }",

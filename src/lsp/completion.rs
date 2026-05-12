@@ -50,12 +50,7 @@ impl Server {
             // Falls back to the cached program when the fix-up doesn't
             // change anything (no parse error to recover from).
             let fixup_program = self.dot_completion_fixup_program(doc, &pos);
-            let items = self.dot_completions(
-                doc,
-                fixup_program.as_ref(),
-                &prefix,
-                cursor,
-            );
+            let items = self.dot_completions(doc, fixup_program.as_ref(), &prefix, cursor);
             return Some(CompletionResponse::Array(items));
         }
 
@@ -357,11 +352,7 @@ impl Server {
     /// Returns `None` if there's no `.` immediately before the cursor
     /// (so the standard non-fix-up path runs) or if reparsing somehow
     /// fails to produce a usable Program (defensive).
-    fn dot_completion_fixup_program(
-        &self,
-        doc: &Document,
-        pos: &Position,
-    ) -> Option<Program> {
+    fn dot_completion_fixup_program(&self, doc: &Document, pos: &Position) -> Option<Program> {
         let cursor = position_to_offset(&doc.source, pos);
         // Sanity: the byte just before the cursor must be `.`. If not,
         // the dot-completion context was extracted from a different
@@ -733,9 +724,18 @@ mod tests {
         assert!(!m_list.contains(&"to_upper".to_string()), "got: {m_list:?}");
 
         let m_string = methods_for_canon_name(&prog, "String");
-        assert!(m_string.contains(&"to_upper".to_string()), "got: {m_string:?}");
-        assert!(m_string.contains(&"display".to_string()), "got: {m_string:?}");
-        assert!(!m_string.contains(&"head_int".to_string()), "got: {m_string:?}");
+        assert!(
+            m_string.contains(&"to_upper".to_string()),
+            "got: {m_string:?}"
+        );
+        assert!(
+            m_string.contains(&"display".to_string()),
+            "got: {m_string:?}"
+        );
+        assert!(
+            !m_string.contains(&"head_int".to_string()),
+            "got: {m_string:?}"
+        );
     }
 
     /// `all_known_method_names` is the fallback path's source — every

@@ -31,8 +31,8 @@ fn locate<F: Fn(&str) -> bool>(pred: F) -> Option<(usize, String, String)> {
 }
 
 fn assert_has_err_fallback(label: &str, locator: impl Fn(&str) -> bool) {
-    let (i, raw, joined) = locate(locator)
-        .unwrap_or_else(|| panic!("could not locate {} line in install.sh", label));
+    let (i, raw, joined) =
+        locate(locator).unwrap_or_else(|| panic!("could not locate {} line in install.sh", label));
     assert!(
         joined.contains("|| err"),
         "install.sh {} step at line {} lacks `|| err` fallback (G2): {}",
@@ -55,9 +55,7 @@ fn install_sh_tar_extract_has_err_fallback() {
 #[test]
 fn install_sh_unzip_extract_has_err_fallback() {
     // Mirror lock for the Windows .zip path.
-    assert_has_err_fallback("unzip extract", |l| {
-        l.trim_start().starts_with("unzip ")
-    });
+    assert_has_err_fallback("unzip extract", |l| l.trim_start().starts_with("unzip "));
 }
 
 #[test]

@@ -164,7 +164,8 @@ impl Compiler {
                 // Test tag if present
                 if let Some(type_name) = name {
                     let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
-                    self.current_chunk().emit_op_u16(Op::TestRecordTag, idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push(tag_jump);
                 }
@@ -178,7 +179,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
                         let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
@@ -199,7 +201,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
                         let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
@@ -211,7 +214,8 @@ impl Compiler {
             PatternKind::Range(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Int(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Int(*hi), span)?;
-                self.current_chunk().emit_op_u16(Op::TestIntRange, lo_idx, span);
+                self.current_chunk()
+                    .emit_op_u16(Op::TestIntRange, lo_idx, span);
                 self.current_chunk().emit_u16(hi_idx, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
@@ -220,7 +224,8 @@ impl Compiler {
             PatternKind::FloatRange(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Float(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Float(*hi), span)?;
-                self.current_chunk().emit_op_u16(Op::TestFloatRange, lo_idx, span);
+                self.current_chunk()
+                    .emit_op_u16(Op::TestFloatRange, lo_idx, span);
                 self.current_chunk().emit_u16(hi_idx, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
@@ -376,7 +381,8 @@ impl Compiler {
                     self.current_chunk().emit_u8(idx, span);
                 } else {
                     let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk().emit_op_u16(Op::GetGlobal, name_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::GetGlobal, name_idx, span);
                 }
 
                 // Stack: [... scrutinee, scrutinee_copy, pin_value]
@@ -392,14 +398,16 @@ impl Compiler {
                 for (key, sub_pat) in entries {
                     // Test if key exists
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk().emit_op_u16(Op::TestMapHasKey, key_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::TestMapHasKey, key_idx, span);
                     let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push(key_jump);
 
                     // Test sub-pattern if refutable
                     if !self.pattern_is_irrefutable(sub_pat) {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructMapValue, key_idx2, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructMapValue, key_idx2, span);
                         let sub_fails = self.compile_pattern_test(sub_pat, span)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
@@ -464,7 +472,8 @@ impl Compiler {
             PatternKind::Range(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Int(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Int(*hi), span)?;
-                self.current_chunk().emit_op_u16(Op::TestIntRange, lo_idx, span);
+                self.current_chunk()
+                    .emit_op_u16(Op::TestIntRange, lo_idx, span);
                 self.current_chunk().emit_u16(hi_idx, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![(jump, base_depth)])
@@ -473,7 +482,8 @@ impl Compiler {
             PatternKind::FloatRange(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Float(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Float(*hi), span)?;
-                self.current_chunk().emit_op_u16(Op::TestFloatRange, lo_idx, span);
+                self.current_chunk()
+                    .emit_op_u16(Op::TestFloatRange, lo_idx, span);
                 self.current_chunk().emit_u16(hi_idx, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![(jump, base_depth)])
@@ -488,7 +498,8 @@ impl Compiler {
                     self.current_chunk().emit_u8(idx, span);
                 } else {
                     let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk().emit_op_u16(Op::GetGlobal, name_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::GetGlobal, name_idx, span);
                 }
                 self.current_chunk().emit_op(Op::Eq, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -594,7 +605,8 @@ impl Compiler {
 
                 if let Some(type_name) = name {
                     let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
-                    self.current_chunk().emit_op_u16(Op::TestRecordTag, idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push((tag_jump, base_depth));
                 }
@@ -607,7 +619,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -628,7 +641,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -643,13 +657,15 @@ impl Compiler {
 
                 for (key, sub_pat) in entries {
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk().emit_op_u16(Op::TestMapHasKey, key_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::TestMapHasKey, key_idx, span);
                     let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push((key_jump, base_depth));
 
                     if !self.pattern_is_irrefutable(sub_pat) {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
-                        self.current_chunk().emit_op_u16(Op::DestructMapValue, key_idx2, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::DestructMapValue, key_idx2, span);
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pat, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -1002,11 +1018,13 @@ impl Compiler {
         // The Dup'd copy becomes a hidden local.
         self.current_chunk().emit_op(Op::Dup, span);
         let parent_slot = self.add_local(intern("__bind_parent__"));
-        self.current_chunk().emit_op_u16(Op::SetLocal, parent_slot, span);
+        self.current_chunk()
+            .emit_op_u16(Op::SetLocal, parent_slot, span);
 
         for (kind, sub_pat) in &items {
             // Push the parent value from the known slot
-            self.current_chunk().emit_op_u16(Op::GetLocal, parent_slot, span);
+            self.current_chunk()
+                .emit_op_u16(Op::GetLocal, parent_slot, span);
 
             // Destruct to get the sub-value
             match kind {
@@ -1028,7 +1046,8 @@ impl Compiler {
                 }
                 BindDestructKind::RecordField(name) => {
                     let field_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk().emit_op_u16(Op::DestructRecordField, field_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::DestructRecordField, field_idx, span);
                 }
                 BindDestructKind::RecordRest(names) => {
                     // `Op::DestructRecordRest` pops its input and pushes the
@@ -1046,7 +1065,8 @@ impl Compiler {
                 }
                 BindDestructKind::MapValue(key) => {
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk().emit_op_u16(Op::DestructMapValue, key_idx, span);
+                    self.current_chunk()
+                        .emit_op_u16(Op::DestructMapValue, key_idx, span);
                 }
             }
 

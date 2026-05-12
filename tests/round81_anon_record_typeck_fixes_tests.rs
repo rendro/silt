@@ -162,9 +162,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("==")
-            || e.contains("comparable")
-            || e.contains("requires")),
+        errs.iter()
+            .any(|e| e.contains("==") || e.contains("comparable") || e.contains("requires")),
         "expected `==` on open-row AnonRecord to be rejected at typecheck; got: {errs:?}"
     );
 }
@@ -184,12 +183,14 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("did you mean") && e.contains("name")),
+        errs.iter()
+            .any(|e| e.contains("did you mean") && e.contains("name")),
         "expected a did-you-mean hint pointing at `name`; got: {errs:?}"
     );
     // Sanity: the original message body is still present.
     assert!(
-        errs.iter().any(|e| e.contains("anon record has no field") && e.contains("nam")),
+        errs.iter()
+            .any(|e| e.contains("anon record has no field") && e.contains("nam")),
         "expected the original 'anon record has no field' wording to remain; got: {errs:?}"
     );
 }
@@ -226,7 +227,8 @@ fn main() {
         "expected a typecheck error mentioning the bogus field 'nam'; got: {errs:?}"
     );
     assert!(
-        errs.iter().any(|e| e.contains("did you mean") && e.contains("name")),
+        errs.iter()
+            .any(|e| e.contains("did you mean") && e.contains("name")),
         "expected did-you-mean hint pointing at `name`; got: {errs:?}"
     );
 }
@@ -254,12 +256,14 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("did you mean") && e.contains("name")),
+        errs.iter()
+            .any(|e| e.contains("did you mean") && e.contains("name")),
         "expected did-you-mean hint pointing at `name` on closed anon record-update; got: {errs:?}"
     );
     // Sanity: the original body wording is preserved.
     assert!(
-        errs.iter().any(|e| e.contains("unknown field") && e.contains("nam")),
+        errs.iter()
+            .any(|e| e.contains("unknown field") && e.contains("nam")),
         "expected the original 'unknown field' wording to remain; got: {errs:?}"
     );
 }

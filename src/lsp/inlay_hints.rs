@@ -213,4 +213,3 @@ fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
         data: None,
     })
 }
-

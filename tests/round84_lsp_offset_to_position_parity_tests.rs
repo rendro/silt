@@ -28,7 +28,9 @@ use std::path::Path;
 /// imports, doc comments, and string-literal mentions are NOT counted.
 #[test]
 fn offset_to_position_is_defined_exactly_once_in_lsp_tree() {
-    let lsp_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("lsp");
+    let lsp_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("lsp");
     let mut definers: Vec<String> = Vec::new();
 
     for entry in fs::read_dir(&lsp_dir).expect("read src/lsp") {
@@ -79,7 +81,9 @@ fn offset_to_position_is_defined_exactly_once_in_lsp_tree() {
 /// re-verify the call path still goes through the canonical helper.
 #[test]
 fn original_duplicate_sites_now_reference_canonical_helper() {
-    let lsp_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("lsp");
+    let lsp_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("lsp");
     // Files that previously held a duplicate implementation. Each must
     // now mention `offset_to_position` (either by importing or by
     // calling it) — otherwise the dedup was incomplete.
@@ -93,8 +97,8 @@ fn original_duplicate_sites_now_reference_canonical_helper() {
     ];
     for f in &consumers {
         let path = lsp_dir.join(f);
-        let src = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+        let src =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
         assert!(
             src.contains("offset_to_position"),
             "{} no longer references `offset_to_position`; either the \

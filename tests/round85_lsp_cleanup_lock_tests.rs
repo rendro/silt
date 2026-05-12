@@ -19,8 +19,7 @@ const SELECTION_RANGE_PATH: &str = "src/lsp/selection_range.rs";
 const INLAY_HINTS_PATH: &str = "src/lsp/inlay_hints.rs";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("failed to read {path}: {err}"))
+    fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"))
 }
 
 #[test]

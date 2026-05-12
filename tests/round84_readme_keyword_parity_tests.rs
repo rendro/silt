@@ -23,7 +23,7 @@
 
 use std::collections::BTreeSet;
 
-use silt::lexer::{KEYWORDS, KEYWORD_LITERALS};
+use silt::lexer::{KEYWORD_LITERALS, KEYWORDS};
 
 const README: &str = include_str!("../README.md");
 

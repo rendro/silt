@@ -107,12 +107,7 @@ fn constant_comment(chunk: &Chunk, index: u16) -> String {
 /// commented with the resolved constant; the u8 is printed as a bare number.
 ///
 /// Returns `(formatted_line, next_offset)`. The next offset is `offset + 4`.
-fn fmt_u16_u8_with_const(
-    chunk: &Chunk,
-    code: &[u8],
-    offset: usize,
-    name: &str,
-) -> (String, usize) {
+fn fmt_u16_u8_with_const(chunk: &Chunk, code: &[u8], offset: usize, name: &str) -> (String, usize) {
     let index = read_u16(code, offset + 1);
     let byte_operand = code[offset + 3];
     let comment = constant_comment(chunk, index);
@@ -357,9 +352,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         // which previously shared this arm — see `bytecode.rs` for the
         // dual-closure note.)
         Op::RecordUpdate => fmt_u8_count_then_u16_names(chunk, code, offset, name, "field"),
-        Op::DestructRecordRest => {
-            fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude")
-        }
+        Op::DestructRecordRest => fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude"),
     }
 }
 

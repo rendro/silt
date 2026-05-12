@@ -480,9 +480,7 @@ fn round80_l4_fn_type_preserved_for_unreferenced_params() {
     let label = sig
         .pointer("/signatures/0/label")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            panic!("signatureHelp must have /signatures/0/label; got: {sig}")
-        });
+        .unwrap_or_else(|| panic!("signatureHelp must have /signatures/0/label; got: {sig}"));
     // The signature label must include both param types. The exact
     // form produced by `build_signature_from_def` is
     // `fn ignore(a: Int, b: Int) -> Int`. We check the "Int, Int"

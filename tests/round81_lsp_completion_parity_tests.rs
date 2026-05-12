@@ -271,11 +271,10 @@ fn lsp_auto_derive_method_names_match_typechecker_trait_names() {
     // mapping must be revisited (and `builtin_trait_decls` will need
     // to be the source of truth instead of a string transform).
     let typechecker_non_ordering: &[&str] = &["Equal", "Hash", "Display"];
-    let expected_lsp_methods: std::collections::BTreeSet<String> =
-        typechecker_non_ordering
-            .iter()
-            .map(|t| t.to_lowercase())
-            .collect();
+    let expected_lsp_methods: std::collections::BTreeSet<String> = typechecker_non_ordering
+        .iter()
+        .map(|t| t.to_lowercase())
+        .collect();
 
     // Parse the LSP arm's method list directly out of the source. We
     // locate the arm head `"Tuple" | "Map" | "Set" =>` and grab the
@@ -285,24 +284,23 @@ fn lsp_auto_derive_method_names_match_typechecker_trait_names() {
     // its contents inline — the only inline constants are the
     // typechecker trait names, which we re-derive method names from.
     let arm_head = "\"Tuple\" | \"Map\" | \"Set\" =>";
-    let arm_head_idx = completion_norm
-        .find(arm_head)
-        .expect("Step 1 already locked the arm-head presence; \
-                 unreachable if Step 1 passed");
+    let arm_head_idx = completion_norm.find(arm_head).expect(
+        "Step 1 already locked the arm-head presence; \
+                 unreachable if Step 1 passed",
+    );
     let after_head = &completion_norm[arm_head_idx + arm_head.len()..];
-    let slice_open = after_head
-        .find("&[")
-        .expect("LSP non-ordering arm has no `&[` slice literal after \
+    let slice_open = after_head.find("&[").expect(
+        "LSP non-ordering arm has no `&[` slice literal after \
                  `=>` — the arm shape changed; update this test to \
-                 match.");
-    let slice_close_rel = after_head[slice_open..]
-        .find(']')
-        .expect("LSP non-ordering arm `&[` has no matching `]` — the \
-                 arm shape changed; update this test to match.");
+                 match.",
+    );
+    let slice_close_rel = after_head[slice_open..].find(']').expect(
+        "LSP non-ordering arm `&[` has no matching `]` — the \
+                 arm shape changed; update this test to match.",
+    );
     let slice_body = &after_head[slice_open + 2..slice_open + slice_close_rel];
 
-    let mut lsp_methods: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
+    let mut lsp_methods: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut chars = slice_body.char_indices();
     while let Some((_, ch)) = chars.next() {
         if ch == '"' {
@@ -347,17 +345,15 @@ fn lsp_auto_derive_arm_names_subset_of_typechecker() {
     // Locate the `auto_derived_methods_for` function body. Anchor on
     // the exact `fn auto_derived_methods_for` signature and stop at
     // the next top-level `fn ` or the end of file.
-    let fn_start = COMPLETION_RS
-        .find("fn auto_derived_methods_for(")
-        .expect(
-            "src/lsp/completion.rs no longer defines \
+    let fn_start = COMPLETION_RS.find("fn auto_derived_methods_for(").expect(
+        "src/lsp/completion.rs no longer defines \
              `fn auto_derived_methods_for(` — round 81 DX-LATENT-1 \
              relies on this function being the canonical LSP-side \
              registry of canonical-head auto-derived type names. If \
              the function was renamed or refactored into a shared \
              module, update this parity lock to point at the new \
              home.",
-        );
+    );
     // Find the function body's closing brace by walking forward from
     // the opening brace and tracking depth. Simple but robust.
     let body_start = COMPLETION_RS[fn_start..]
@@ -391,11 +387,11 @@ fn lsp_auto_derive_arm_names_subset_of_typechecker() {
     // false-positive otherwise.
     //
     // Easier path: hand-list the method-name tokens to ignore.
-    let ignore: std::collections::BTreeSet<&str> =
-        ["display", "compare", "equal", "hash"].into_iter().collect();
+    let ignore: std::collections::BTreeSet<&str> = ["display", "compare", "equal", "hash"]
+        .into_iter()
+        .collect();
 
-    let mut found_names: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
+    let mut found_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut chars = body.char_indices().peekable();
     while let Some((_, ch)) = chars.next() {
         if ch == '"' {
@@ -449,12 +445,11 @@ fn lsp_auto_derive_arm_names_subset_of_typechecker() {
     // And the symmetric direction we already enforced above: the
     // expected union must be a subset of `found_names`. This makes
     // sure the LSP arm wasn't trimmed without updating the test.
-    let expected_union: std::collections::BTreeSet<String> =
-        EXPECTED_ALL_FOUR_TRAITS
-            .iter()
-            .chain(EXPECTED_NON_ORDERING.iter())
-            .map(|s| (*s).to_string())
-            .collect();
+    let expected_union: std::collections::BTreeSet<String> = EXPECTED_ALL_FOUR_TRAITS
+        .iter()
+        .chain(EXPECTED_NON_ORDERING.iter())
+        .map(|s| (*s).to_string())
+        .collect();
     let missing: Vec<&String> = expected_union
         .iter()
         .filter(|n| !found_names.contains(*n))

@@ -52,8 +52,9 @@ fn doc_index_from_source_is_pub_crate() {
 #[test]
 fn doc_for_decl_at_line_is_pub_crate() {
     assert!(
-        PARSER_RS
-            .contains("pub(crate) fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {"),
+        PARSER_RS.contains(
+            "pub(crate) fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {"
+        ),
         "expected `pub(crate) fn doc_for_decl_at_line` in src/parser.rs; \
          visibility lock fired"
     );
