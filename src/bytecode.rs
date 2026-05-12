@@ -113,26 +113,18 @@ pub enum Op {
     MakeVariant, // operands: u16 name_index, u8 field_count
     /// Functional record update.
     RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
-    /// Functional record update whose result is an anon (row-poly) record.
-    /// Same layout/semantics as `RecordUpdate`, but the resulting
-    /// `Value::Record` carries the synthetic name `"<anon>"` instead of
-    /// inheriting the base's `type_name`. Emitted by the compiler when the
-    /// typechecker reports the spread expression's static type as
-    /// `Type::AnonRecord` — this normalizes the runtime `type_name` to
-    /// `<anon>` for any anon-typed value, keeping the runtime invariant
-    /// in lockstep with the type-level shape.
-    ///
-    /// Note: round 84 also made `Value::PartialEq` for `Value::Record`
-    /// treat `<anon>` as a wildcard on either side, so a spread of a
-    /// nominal record and an anon-record literal of the same shape now
-    /// compare equal under `==` even without the tag rebrand. The opcode
-    /// is therefore one closure of a dual gap (the PartialEq wildcard is
-    /// the other) — either approach alone suffices for `==`. The opcode
-    /// is retained because normalizing `type_name` to `<anon>` produces
-    /// a more consistent runtime invariant (e.g. `type_name()` reads,
-    /// debug output, future shape-aware dispatch) than relying on
-    /// PartialEq alone, which only catches the equality use site.
-    RecordUpdateAnon, // operand: u8 field_count, then field_count × u16 field_name_index
+    //
+    // Round-85 follow-up: removed `RecordUpdateAnon` (the sibling opcode
+    // round 83 added to normalize the runtime `type_name` to `"<anon>"`
+    // for spread expressions whose typed result was `Type::AnonRecord`).
+    // Round 84's `Value::PartialEq` `<anon>` wildcard plus round 85's
+    // mirrored `Ord`/`Hash` wildcards close the equality, hashing, and
+    // ordering surfaces uniformly; the runtime tag-rebrand is therefore
+    // strictly redundant for correctness, and removing it gives one
+    // canonical opcode for record updates ("one way to do things"). The
+    // displayed name in `println(r)` for a spread-of-nominal now reads
+    // the nominal base's name rather than `<anon>` — strictly more
+    // informative for debugging.
     /// Create a lazy range (inclusive) from two ints on the stack.
     MakeRange,
     /// Concatenate two lists/ranges on the stack into a single list.
@@ -271,7 +263,6 @@ impl Op {
             b if b == Op::MakeRecord as u8 => Some(Op::MakeRecord),
             b if b == Op::MakeVariant as u8 => Some(Op::MakeVariant),
             b if b == Op::RecordUpdate as u8 => Some(Op::RecordUpdate),
-            b if b == Op::RecordUpdateAnon as u8 => Some(Op::RecordUpdateAnon),
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
             b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
             b if b == Op::GetField as u8 => Some(Op::GetField),

@@ -49,7 +49,6 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeRecord => "MakeRecord",
         Op::MakeVariant => "MakeVariant",
         Op::RecordUpdate => "RecordUpdate",
-        Op::RecordUpdateAnon => "RecordUpdateAnon",
         Op::MakeRange => "MakeRange",
         Op::ListConcat => "ListConcat",
         Op::GetField => "GetField",
@@ -352,13 +351,12 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         }
 
         // ── u8-count + count x u16 name_index (round 84) ─────
-        //   RecordUpdate / RecordUpdateAnon: label "field". The two
-        //     opcodes share an operand layout — they differ only in the
-        //     resulting Value's `type_name` (base's name vs `"<anon>"`).
-        //   DestructRecordRest:              label "exclude".
-        Op::RecordUpdate | Op::RecordUpdateAnon => {
-            fmt_u8_count_then_u16_names(chunk, code, offset, name, "field")
-        }
+        //   RecordUpdate:        label "field".
+        //   DestructRecordRest:  label "exclude".
+        // (Round 85 follow-up removed the sibling `RecordUpdateAnon`
+        // which previously shared this arm — see `bytecode.rs` for the
+        // dual-closure note.)
+        Op::RecordUpdate => fmt_u8_count_then_u16_names(chunk, code, offset, name, "field"),
         Op::DestructRecordRest => {
             fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude")
         }
@@ -593,44 +591,12 @@ mod tests {
         let output = disassemble_chunk(&chunk, "update");
         assert!(output.contains("RecordUpdate"));
         assert!(output.contains("\"x\""));
-        // Round 84: the operand decode for RecordUpdate is now shared with
-        // RecordUpdateAnon via `fmt_u8_count_then_u16_names`. Lock the
-        // per-entry label literal to guard against accidentally swapping
-        // it with "exclude" (the DestructRecordRest label).
-        assert!(output.contains("field "));
-    }
-
-    #[test]
-    fn test_record_update_anon() {
-        // Sibling lock for `Op::RecordUpdateAnon` (round 83 added the
-        // discriminant; round 84 consolidates its disassembler arm with
-        // `RecordUpdate`). Verifies both the discriminant byte path and
-        // the rendered output (op name + "field" per-entry label).
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let y_idx = chunk.add_constant(Value::String("y".into())).unwrap();
-
-        chunk.emit_op(Op::RecordUpdateAnon, span);
-        chunk.emit_u8(1, span); // 1 field
-        chunk.emit_u16(y_idx, span);
-        chunk.emit_op(Op::Return, span);
-
-        // Discriminant sanity: the byte we just emitted must round-trip
-        // back through `Op::from_byte` to `Op::RecordUpdateAnon`. This
-        // catches a future regression where the emitter and decoder
-        // disagree on the byte assigned to `RecordUpdateAnon`.
-        let discrim_byte = chunk.code[0];
-        assert_eq!(
-            Op::from_byte(discrim_byte),
-            Some(Op::RecordUpdateAnon),
-            "RecordUpdateAnon discriminant round-trip failed",
-        );
-
-        let output = disassemble_chunk(&chunk, "update_anon");
-        assert!(output.contains("RecordUpdateAnon"));
-        assert!(output.contains("\"y\""));
-        // Same per-entry label as RecordUpdate (they share the helper).
+        // Round 84: the operand decode for RecordUpdate uses
+        // `fmt_u8_count_then_u16_names`. Round 85 follow-up: the
+        // sibling `RecordUpdateAnon` was removed (PartialEq/Ord/Hash
+        // wildcards close the gap from the other side). Lock the
+        // per-entry label literal to guard against accidentally
+        // swapping it with "exclude" (the DestructRecordRest label).
         assert!(output.contains("field "));
     }
 
@@ -707,10 +673,12 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 73 variants (round 83 audit added
-        // `RecordUpdateAnon` to fix the spread-vs-anon-literal `==`
-        // divergence — see src/bytecode.rs for the design note).
-        const EXPECTED_OP_COUNT: usize = 73;
+        // tables. Last verified: 72 variants. Round 83 had added
+        // `RecordUpdateAnon` (count 73); round-85 follow-up removed it
+        // — PartialEq/Ord/Hash `<anon>` wildcards (rounds 84-85) close
+        // the soundness gap from the other side, leaving the sibling
+        // opcode strictly redundant.
+        const EXPECTED_OP_COUNT: usize = 72;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

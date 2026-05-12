@@ -209,16 +209,33 @@ fn format_module_source_error(
         // `SourceError::Display`.
         let caret_spacing: String = crate::errors::caret_spacing(src_line, col);
 
+        // Round-85 follow-up: route the inner snippet glyphs through
+        // `active_colors()` so this site honors NO_COLOR / FORCE_COLOR
+        // symmetrically with the outer `SourceError::Display` path.
+        // Previously the inner `-->` / `|` / `^` glyphs were always
+        // plain text, producing colored outer header + plain inner
+        // snippet under FORCE_COLOR=1 in a TTY.
+        let c = crate::errors::active_colors();
         out.push_str(&format!(
-            "\n --> {file_path}:{line}:{col}",
+            "\n {arrow} {file_path}:{line}:{col}",
+            arrow = format_args!("{}-->{}", c.cyan, c.reset),
             file_path = file_path,
             line = line_num,
             col = clamped_span.col,
         ));
-        out.push_str(&format!("\n {gutter_blank} |"));
-        out.push_str(&format!("\n {line_num} | {src_line}"));
         out.push_str(&format!(
-            "\n {gutter_blank} | {caret_spacing}^ {inner_message}"
+            "\n {gutter_blank} {bar}",
+            bar = format_args!("{}|{}", c.cyan, c.reset),
+        ));
+        out.push_str(&format!(
+            "\n {gutter_lit} {bar} {src_line}",
+            gutter_lit = format_args!("{}{}{}", c.cyan, line_num, c.reset),
+            bar = format_args!("{}|{}", c.cyan, c.reset),
+        ));
+        out.push_str(&format!(
+            "\n {gutter_blank} {bar} {caret_spacing}{caret} {inner_message}",
+            bar = format_args!("{}|{}", c.cyan, c.reset),
+            caret = format_args!("{}{}^{}", c.bold, c.red, c.reset),
         ));
     }
 
@@ -2649,34 +2666,24 @@ impl Compiler {
                     // Extend op: compile base, then RecordUpdate-style merge
                     // (RecordUpdate already supports adding new fields too).
                     //
-                    // Round 83 LATENT (AnonRecord spread `==` divergence):
-                    // emit `RecordUpdateAnon` rather than `RecordUpdate`
-                    // here. The typechecker reports the result of a
-                    // `{...base, ...}` spread as `Type::AnonRecord` even
-                    // when `base` is a nominal record (see
-                    // src/typechecker/inference.rs ~4099). The resulting
-                    // runtime `Value::Record`'s `type_name` is therefore
-                    // normalized to `"<anon>"` so the runtime invariant
-                    // matches the type-level shape.
-                    //
-                    // Round 84 also made `Value::PartialEq` for
-                    // `Value::Record` treat `<anon>` as a name wildcard
-                    // on either side, so the tag-rebrand and the
-                    // PartialEq wildcard are now a dual closure of the
-                    // same gap — either approach alone suffices for
-                    // `==`. The opcode emission is retained because the
-                    // normalized `type_name` is a more consistent
-                    // invariant than relying on PartialEq alone (e.g.
-                    // `type_name()` reads, debug output, future
-                    // shape-aware dispatch all see `<anon>` rather than
-                    // the nominal base's name).
-                    // Lock: tests/round83_anonrec_spread_eq_tests.rs.
+                    // Round 83 originally emitted a sibling `RecordUpdateAnon`
+                    // opcode that rebranded the result's `type_name` to
+                    // `"<anon>"` so a spread of a nominal record would
+                    // compare equal to an anon-record literal of the same
+                    // shape. Round 85 follow-up removed the sibling opcode:
+                    // rounds 84-85 made `Value::PartialEq` / `Value::Ord` /
+                    // `Value::Hash` treat `<anon>` as a wildcard on either
+                    // side, which closes the equality, ordering, and
+                    // hashing surfaces uniformly without a runtime
+                    // rebrand. Locks: tests/round83_anonrec_spread_eq_tests.rs
+                    // (PartialEq), tests/round85_anonrec_hash_ord_contract_tests.rs
+                    // (Hash + Ord + Set contract).
                     self.compile_expr(base)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     for (_, val) in fields {
                         self.compile_expr(val)?;
                     }
-                    self.current_chunk().emit_op(Op::RecordUpdateAnon, span);
+                    self.current_chunk().emit_op(Op::RecordUpdate, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
                     for fname in &field_names {
                         let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;

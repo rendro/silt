@@ -68,15 +68,24 @@ fn disasm_consolidated_u16_u8_arm_uses_helper() {
 }
 
 #[test]
-fn disasm_consolidated_record_update_arm_uses_helper() {
+fn disasm_record_update_arm_uses_helper() {
     let src = read_disasm();
-    // RecordUpdate and RecordUpdateAnon must share an arm (same label
-    // "field"); DestructRecordRest gets its own arm with label "exclude".
+    // RecordUpdate must use `fmt_u8_count_then_u16_names` with label
+    // "field"; DestructRecordRest uses the same helper with label
+    // "exclude". (Round 85 follow-up removed the sibling
+    // `RecordUpdateAnon` that round 83 had added — see
+    // src/bytecode.rs for the dual-closure note.)
     assert!(
-        src.contains("Op::RecordUpdate | Op::RecordUpdateAnon"),
-        "Combined match arm `Op::RecordUpdate | Op::RecordUpdateAnon` \
-         must be present in {DISASSEMBLE_RS} so they share the \
-         `fmt_u8_count_then_u16_names` call with label \"field\"."
+        src.contains("Op::RecordUpdate => fmt_u8_count_then_u16_names"),
+        "RecordUpdate must route through `fmt_u8_count_then_u16_names` \
+         with label \"field\" in {DISASSEMBLE_RS}."
+    );
+    assert!(
+        !src.contains("Op::RecordUpdateAnon"),
+        "`Op::RecordUpdateAnon` was removed in the round-85 follow-up; \
+         no code-level uses (qualified `Op::RecordUpdateAnon`) should \
+         remain in {DISASSEMBLE_RS}. (Historical comments mentioning \
+         the bare name `RecordUpdateAnon` for context are allowed.)"
     );
 }
 

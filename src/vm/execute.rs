@@ -1653,34 +1653,18 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::Variant(name, fields));
             }
-            Op::RecordUpdate | Op::RecordUpdateAnon => {
-                // Round 83: `RecordUpdateAnon` shares the operand layout
-                // and merge logic with `RecordUpdate`. The only difference
-                // is the resulting `Value::Record`'s `type_name`:
-                //   * `RecordUpdate` preserves the base's name — used for
-                //     nominal `.{...}` updates where the type is unchanged.
-                //   * `RecordUpdateAnon` overrides the name to "<anon>" —
-                //     used for `{...base, ...}` spreads when the
-                //     typechecker reports the result as `Type::AnonRecord`.
-                //     Round 83 originally introduced this opcode because
-                //     `Value::Record::eq` checked the name first
-                //     (src/value.rs ~1714) and a spread of a nominal
-                //     record vs. an anon-record literal of the same shape
-                //     would compare unequal otherwise.
-                //
-                //     Round 84 also made `Value::PartialEq` for
-                //     `Value::Record` treat `<anon>` on either side as a
-                //     name wildcard. The opcode's tag-rebrand and the
-                //     PartialEq wildcard are now a dual closure of the
-                //     same gap — either approach alone suffices for `==`.
-                //     The opcode is retained because it normalizes the
-                //     runtime `type_name` to `<anon>` for any anon-typed
-                //     value, which is a more consistent invariant than
-                //     relying on PartialEq alone (e.g. `type_name()`
-                //     reads, debug output, future shape-aware dispatch
-                //     all see `<anon>` rather than the nominal base's
-                //     name).
-                let is_anon = matches!(op, Op::RecordUpdateAnon);
+            Op::RecordUpdate => {
+                // Functional record update: preserves the base's
+                // `type_name`. Used for both nominal `.{...}` updates
+                // and `{...base, ...}` spreads. Round 83 had introduced
+                // a sibling `RecordUpdateAnon` that rebranded the
+                // result's `type_name` to `"<anon>"` for spread
+                // expressions whose typed result was `Type::AnonRecord`
+                // — round 85's follow-up removed it because round 84's
+                // `Value::PartialEq` + round 85's `Value::Ord` /
+                // `Value::Hash` `<anon>` wildcards close the soundness
+                // gap from the other side, leaving the rebrand strictly
+                // redundant.
                 let field_count = self.read_u8()? as usize;
                 let mut field_names = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
@@ -1702,12 +1686,7 @@ impl Vm {
                     for (name, val) in field_names.into_iter().zip(new_values) {
                         fields.insert(name, val);
                     }
-                    let result_name = if is_anon {
-                        "<anon>".to_string()
-                    } else {
-                        type_name
-                    };
-                    self.push(Value::Record(result_name, existing));
+                    self.push(Value::Record(type_name, existing));
                 } else {
                     return Err(VmError::new(format!(
                         "record update `.{{...}}` requires a record, got {}",
