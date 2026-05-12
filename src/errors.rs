@@ -215,31 +215,12 @@ pub(crate) fn use_color() -> bool {
     if std::env::var_os("FORCE_COLOR").is_some_and(|v| !v.is_empty()) {
         return true;
     }
-    #[cfg(unix)]
-    {
-        unsafe extern "C" {
-            #[link_name = "isatty"]
-            fn libc_isatty(fd: i32) -> i32;
-        }
-        unsafe { libc_isatty(2) != 0 }
-    }
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetStdHandle(nStdHandle: u32) -> *mut core::ffi::c_void;
-            fn GetConsoleMode(hConsoleHandle: *mut core::ffi::c_void, lpMode: *mut u32) -> i32;
-        }
-        const STD_ERROR_HANDLE: u32 = -12i32 as u32;
-        unsafe {
-            let handle = GetStdHandle(STD_ERROR_HANDLE);
-            let mut mode: u32 = 0;
-            GetConsoleMode(handle, &mut mode) != 0
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        false
-    }
+    // Stable since Rust 1.70; cross-platform (Unix `isatty(2)` + Windows
+    // `GetConsoleMode`). Replaces the previous hand-rolled FFI block that
+    // declared `unsafe extern` for `isatty` / `GetStdHandle` / `GetConsoleMode`
+    // and wrapped the calls in `unsafe { ... }` — 5 of this crate's 16 unsafe
+    // occurrences. Now zero unsafe in this function.
+    std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
 // ── ANSI color helpers ─────────────────────────────────────────────
