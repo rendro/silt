@@ -572,7 +572,24 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
             f(expr);
             f(fallback);
         }
-        _ => {}
+        // ── Leaf variants: no child `Expr` to recurse into. ────────
+        // Listed exhaustively (rather than collapsed under a `_`
+        // wildcard) so that the Rust compiler enforces parity
+        // whenever a new `ExprKind` variant is added — the omission
+        // of a walker arm becomes a compile error rather than a
+        // silent functional regression in LSP find-references /
+        // hover / inlay-hints / selection-range / folding. Round-85
+        // G3 fix: removed the prior wildcard catch-all arm; the
+        // source-grep parity-lock in
+        // `tests/round85_visit_expr_children_parity_lock_tests.rs`
+        // is now belt-and-suspenders behind compiler exhaustiveness.
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::StringLit(_, _)
+        | ExprKind::Ident(_)
+        | ExprKind::Unit
+        | ExprKind::Return(None) => {}
     }
 }
 

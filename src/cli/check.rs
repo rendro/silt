@@ -260,12 +260,25 @@ fn print_json_errors(errors: &[&SourceError]) {
                     }
                 }
             }
+            // Round-86 fix (B1): JSON output is machine-readable; it must
+            // never carry ANSI escape sequences regardless of upstream
+            // signal (TTY, FORCE_COLOR, etc). `format_module_source_error`
+            // at `src/compiler/mod.rs:218-239` routes its inner snippet
+            // through `active_colors()` and bakes ANSI codes into the
+            // message string under FORCE_COLOR=1 or a real TTY — which
+            // then leak into `head` and `hints` here, corrupting output
+            // for editor plugins / LSP / CI. Strip at the boundary: this
+            // is the only place JSON crosses out of the process, so a
+            // single defensive sweep keeps the contract simple and
+            // covers any future color sources we forget about.
+            let head_clean = strip_ansi(head);
+            let hints_clean: Vec<String> = hints.iter().map(|h| strip_ansi(h)).collect();
             serde_json::json!({
                 "file": e.file.as_deref().unwrap_or("<unknown>"),
                 "line": e.span.line,
                 "col": e.span.col,
-                "message": head,
-                "hints": hints,
+                "message": head_clean,
+                "hints": hints_clean,
                 "severity": if e.is_warning { "warning" } else { "error" },
                 "kind": e.kind.to_string(),
             })
@@ -277,5 +290,79 @@ fn print_json_errors(errors: &[&SourceError]) {
             eprintln!("internal error: failed to serialize diagnostics: {e}");
             process::exit(1);
         }
+    }
+}
+
+/// Strip ANSI SGR escape sequences (`ESC [ ... m`) from `s`.
+///
+/// Round-86 fix (B1): JSON-formatted diagnostics must be plain text so
+/// editor plugins / LSP / CI consumers can parse them safely. Upstream
+/// renderers like `format_module_source_error`
+/// (`src/compiler/mod.rs:218-239`) honor FORCE_COLOR / TTY and bake
+/// ANSI codes into the message string; we sweep them out here at the
+/// JSON boundary to keep that surface contract simple.
+///
+/// Recognizes the CSI-SGR form we actually emit: `\x1b[` followed by
+/// any run of digits and `;`, terminated by `m`. Anything that isn't a
+/// well-formed SGR is passed through unchanged so unrelated `\x1b`
+/// bytes (if any ever leak in) are still visible to the consumer
+/// rather than silently absorbed.
+fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            // Scan params: digits and `;` until terminator `m`.
+            let mut j = i + 2;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b';') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'm' {
+                // Consume the entire `\x1b[...m` sequence.
+                i = j + 1;
+                continue;
+            }
+            // Malformed / non-SGR — emit the ESC byte literally and
+            // advance one. The next iteration will pick up `[` etc as
+            // normal text.
+            out.push(bytes[i] as char);
+            i += 1;
+        } else {
+            // Push the byte as a char. All our color sequences operate
+            // on plain ASCII surrounding text, so direct byte-as-char
+            // is safe for ASCII; for any non-ASCII bytes we'd need to
+            // reconstruct the UTF-8 boundary. Since `s` is `&str`
+            // (already valid UTF-8) and we only skip whole ASCII SGR
+            // sequences, the surviving bytes still form valid UTF-8.
+            // Push the raw byte through `str::from_utf8` of a slice to
+            // preserve multi-byte chars.
+            // Find the next UTF-8 char boundary and copy that slice.
+            let ch_len = utf8_char_len(bytes[i]);
+            let end = (i + ch_len).min(bytes.len());
+            // Safety: `s` is valid UTF-8 and `i` is on a char boundary
+            // (we only ever advance by full `\x1b[...m` (ASCII) or by
+            // `ch_len`). So `&s[i..end]` is a valid str slice.
+            out.push_str(&s[i..end]);
+            i = end;
+        }
+    }
+    out
+}
+
+/// Length in bytes of the UTF-8 char starting at `b` (the leading byte).
+/// Falls back to 1 for any byte that doesn't look like a valid leader,
+/// so a malformed input degrades gracefully rather than panicking.
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b < 0xC0 {
+        1 // continuation byte; treat as 1 to avoid stalling
+    } else if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
     }
 }

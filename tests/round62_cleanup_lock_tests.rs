@@ -107,12 +107,16 @@ fn vim_and_vscode_grammars_share_operator_set() {
     let vim_ops = vim_operator_literals(&vim);
     let vscode_ops = vscode_operator_literals(&vscode);
 
-    // Sanity: both extractors must find the round-62 known-good set.
-    // If either of these baseline asserts fails, the extractor is
-    // broken — fix the extractor before debugging grammar drift.
+    // Sanity: both extractors must find the round-62 known-good set,
+    // extended in round 86 with the `...` (DotDotDot, record spread/
+    // rest) and `::` (ColonColon, assoc-type projection) operators
+    // that the lexer has long emitted but the grammars had silently
+    // omitted. If either of these baseline asserts fails, the
+    // extractor is broken — fix the extractor before debugging
+    // grammar drift.
     let baseline: BTreeSet<&'static str> = [
-        "|>", "->", "..", "?", "^", "&&", "||", "==", "!=", "<=", ">=", "!", "+", "-", "*", "/",
-        "%", "=", "<", ">",
+        "|>", "->", "...", "..", "::", "?", "^", "&&", "||", "==", "!=", "<=", ">=", "!", "+",
+        "-", "*", "/", "%", "=", "<", ">",
     ]
     .into_iter()
     .collect();

@@ -259,103 +259,36 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // yet. Stamp the enum-section body onto every variant so hover on
     // `IoNotFound` surfaces the IoError table. Per-variant prose is
     // not phase-2 scope.
-    super::docs::attach_enum_variant_docs(
-        env,
-        super::docs::ERRORS_MD,
-        &[
-            (
-                "IoError",
-                &[
-                    "IoNotFound",
-                    "IoPermissionDenied",
-                    "IoAlreadyExists",
-                    "IoInvalidInput",
-                    "IoInterrupted",
-                    "IoUnexpectedEof",
-                    "IoWriteZero",
-                    "IoUnknown",
-                ],
-            ),
-            (
-                "JsonError",
-                &[
-                    "JsonSyntax",
-                    "JsonTypeMismatch",
-                    "JsonMissingField",
-                    "JsonUnknown",
-                ],
-            ),
-            (
-                "TomlError",
-                &[
-                    "TomlSyntax",
-                    "TomlTypeMismatch",
-                    "TomlMissingField",
-                    "TomlUnknown",
-                ],
-            ),
-            (
-                "ParseError",
-                &[
-                    "ParseEmpty",
-                    "ParseInvalidDigit",
-                    "ParseOverflow",
-                    "ParseUnderflow",
-                ],
-            ),
-            (
-                "HttpError",
-                &[
-                    "HttpConnect",
-                    "HttpTls",
-                    "HttpTimeout",
-                    "HttpInvalidUrl",
-                    "HttpInvalidResponse",
-                    "HttpClosedEarly",
-                    "HttpStatusCode",
-                    "HttpUnknown",
-                ],
-            ),
-            (
-                "TcpError",
-                &[
-                    "TcpConnect",
-                    "TcpTls",
-                    "TcpClosed",
-                    "TcpTimeout",
-                    "TcpUnknown",
-                ],
-            ),
-            (
-                "PgError",
-                &[
-                    "PgConnect",
-                    "PgTls",
-                    "PgAuthFailed",
-                    "PgQuery",
-                    "PgTypeMismatch",
-                    "PgNoSuchColumn",
-                    "PgClosed",
-                    "PgTimeout",
-                    "PgTxnAborted",
-                    "PgUnknown",
-                ],
-            ),
-            ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
-            (
-                "BytesError",
-                &[
-                    "BytesInvalidUtf8",
-                    "BytesInvalidHex",
-                    "BytesInvalidBase64",
-                    "BytesByteOutOfRange",
-                    "BytesOutOfBounds",
-                ],
-            ),
-            ("ChannelError", &["ChannelClosed", "ChannelTimeout"]),
-            ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
-        ],
-    );
+    //
+    // Round-86 PARALLEL-ARRAY-DRIFT fix: the per-enum variant lists
+    // are derived from the authoritative registry at
+    // `module::builtin_error_enum_variants_with_arity` rather than
+    // hand-rolled here. Adding a new typed-error variant now requires
+    // updating only the registry; this site picks it up automatically.
+    // The cfg-aware filter for `PgError`/`TcpError` mirrors the
+    // `enum_names` loop above so the variant-doc attach skips enums
+    // whose features are off (matching the typechecker registrations).
+    let variant_lists: Vec<(&'static str, Vec<&'static str>)> =
+        crate::module::builtin_error_enum_variants_with_arity()
+            .iter()
+            .filter(|(_name, _variants)| {
+                #[cfg(not(feature = "postgres"))]
+                if *_name == "PgError" {
+                    return false;
+                }
+                #[cfg(not(feature = "tcp"))]
+                if *_name == "TcpError" {
+                    return false;
+                }
+                true
+            })
+            .map(|(name, variants)| (*name, variants.iter().map(|(v, _)| *v).collect()))
+            .collect();
+    let variant_slices: Vec<(&str, &[&str])> = variant_lists
+        .iter()
+        .map(|(name, variants)| (*name, variants.as_slice()))
+        .collect();
+    super::docs::attach_enum_variant_docs(env, super::docs::ERRORS_MD, &variant_slices);
 }
 
 /// Register a concrete (no type parameters) builtin enum + its variants.

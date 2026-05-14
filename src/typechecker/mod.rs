@@ -6518,9 +6518,26 @@ impl TypeChecker {
 /// Phase B helper: canonicalise a type-name [`Symbol`] so dispatch
 /// tables (`trait_impl_set`, `method_table`, `impl_constraints`,
 /// `impl_trait_args`, the legacy `"<T>.<m>"` TypeEnv key) all use the
-/// single canonical name. Today the only collapse is `Range -> List`,
-/// matching `crate::types::canonical::canonical_name`'s reduction
-/// rule. Other names round-trip unchanged.
+/// single canonical name. The collapse rules mirror the authoritative
+/// implementation in [`crate::types::canonical::canonicalize_type_name`]:
+///
+/// - `Range` -> `List` (nominal alias of `List`; the compiler emits
+///   `for List(a)` impls under the same key both List and Range
+///   receivers reach at dispatch time).
+/// - `Fun`   -> `Fn` (deprecated surface alias of the function-type
+///   name; the VM dispatches `VmClosure`/`BuiltinFn`/`VariantConstructor`
+///   under `"Fn"`, so a user `trait T for Fun { ... }` impl must
+///   register under `("T", "Fn")` or method lookup misses).
+/// - `()`    -> `Unit` (surface alias collapses onto the canonical
+///   primitive name; matches `canonical_name(Type::Unit) = "Unit"`
+///   and `dispatch_name_for_value(&Value::Unit) = "Unit"`).
+/// - Registered user aliases route to the canonical head of their
+///   target (Phase D). `type Bytes = List(Int)` collapses to `"List"`;
+///   `type Pair(a) = (a, a)` collapses to `"Tuple"`. Chained aliases
+///   (`type B = A; type A = List(Int)`) collapse fully via recursion.
+///
+/// Other names round-trip unchanged, so the function is safe to apply
+/// unconditionally to any target-type symbol.
 ///
 /// Used by `register_trait_impl` so that `trait Foo for Range(a)`
 /// registers under `"List"` — the same key both List and Range

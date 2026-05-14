@@ -16,12 +16,60 @@
 //! through `self.error(...)` (or `self.warning(...)`) so the
 //! Severity field stays a single point of truth.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn read_src(rel: &str) -> String {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push(rel);
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+}
+
+/// The bypass-shape source-grep used by round84's lock. Centralized
+/// so the live `src/typechecker/` scan and the planted-offender unit
+/// test use the *same* detection logic — if the detector regresses,
+/// both call sites fail together.
+const BYPASS_NEEDLE: &str = "self.errors.push(crate::types::TypeError {";
+
+/// Recursively walk `root` and return every `(path, line_number)`
+/// pair where `BYPASS_NEEDLE` appears inside a `.rs` file.
+///
+/// `files_scanned` is returned alongside so callers can sanity-check
+/// that the walker actually reached subdirectories — without this,
+/// the lock would silently pass if the recursion was broken or if
+/// the typechecker layout changed.
+fn find_offenders(root: &Path) -> (Vec<(PathBuf, usize)>, usize) {
+    let mut offenders: Vec<(PathBuf, usize)> = Vec::new();
+    let mut files_scanned: usize = 0;
+    walk_rs(root, &mut offenders, &mut files_scanned);
+    (offenders, files_scanned)
+}
+
+fn walk_rs(dir: &Path, offenders: &mut Vec<(PathBuf, usize)>, files_scanned: &mut usize) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    for entry in entries {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        let ft = entry.file_type().expect("file_type");
+        if ft.is_dir() {
+            walk_rs(&path, offenders, files_scanned);
+            continue;
+        }
+        if !ft.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        *files_scanned += 1;
+        for (i, line) in src.lines().enumerate() {
+            if line.contains(BYPASS_NEEDLE) {
+                offenders.push((path.clone(), i + 1));
+            }
+        }
+    }
 }
 
 /// `src/typechecker/inference.rs` must not push raw `TypeError`
@@ -75,42 +123,114 @@ fn inference_has_no_residual_errors_push_lines() {
 fn round84_typechecker_no_raw_type_error_push_in_any_module() {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.push("src/typechecker");
-    let entries =
-        std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    let (offenders, files_scanned) = find_offenders(&dir);
 
-    let needle = "self.errors.push(crate::types::TypeError {";
-    let mut offenders: Vec<String> = Vec::new();
-    let mut files_scanned: usize = 0;
-    for entry in entries {
-        let entry = entry.expect("dir entry");
-        let path = entry.path();
-        // Skip subdirectories (e.g. `builtins/`); only top-level `.rs`
-        // files are part of the typechecker proper.
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
-            continue;
-        }
-        let src = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        files_scanned += 1;
-        if src.contains(needle) {
-            offenders.push(path.display().to_string());
-        }
-    }
+    // Sentinel-count: there are 9 top-level files
+    // (auto_derive/builtins/effects_infer/exhaustiveness/inference/
+    // mod/resolve/suggest + 1) and 26 files in `builtins/`, totalling
+    // 34+ `.rs` files at audit time. We assert a floor of 30 so the
+    // lock fails loudly if the recursive walker regresses to
+    // top-level-only (the round83 bug — `builtins/*.rs` was silently
+    // exempt) or if the typechecker layout shrinks dramatically.
+    // Floor is below current count to tolerate small refactors; it
+    // is far enough above 9 (top-level only) that a regression to
+    // non-recursive scanning trips the assert.
     assert!(
-        files_scanned > 0,
-        "round 84 grep scanned 0 files in {}; the test would silently \
-         pass if the typechecker module layout changes — fix the path.",
+        files_scanned >= 30,
+        "round 84 grep scanned only {files_scanned} files under {}; \
+         expected >=30 (>=9 top-level + >=21 in `builtins/`). The \
+         recursive walker may be broken, or the typechecker layout \
+         changed enough that the lock no longer covers the intended \
+         surface. If the shrink is intentional, lower this floor \
+         deliberately.",
         dir.display()
     );
     assert!(
         offenders.is_empty(),
         "round 84 STYLE lock: the following typechecker modules \
-         contain a direct `{needle}` construction; use the \
+         contain a direct `{BYPASS_NEEDLE}` construction; use the \
          `self.error(msg, span)` helper at \
          src/typechecker/mod.rs:2209 instead so Severity stays a \
          single point of truth. Offenders: {offenders:?}"
+    );
+}
+
+/// Positive proof-of-lock: plant an offender file inside a
+/// *subdirectory* of a tmp scratch root and assert
+/// `find_offenders` actually finds it. Without the recursive
+/// walker (the round83 bug), this test fails because the offender
+/// lives one level below the scan root — exactly mirroring the
+/// situation where `src/typechecker/builtins/*.rs` was silently
+/// exempt from the live lock.
+#[test]
+fn round84_find_offenders_detects_planted_offender_in_subdir() {
+    // Unique tmp root per test invocation so parallel test runs and
+    // re-runs don't collide.
+    let mut root = std::env::temp_dir();
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    root.push(format!(
+        "silt_round84_proof_of_lock_{pid}_{nanos}"
+    ));
+    // Clean up any prior leftover.
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("create tmp root");
+
+    // Subdir analogous to `src/typechecker/builtins/`.
+    let subdir = root.join("builtins_like");
+    std::fs::create_dir_all(&subdir).expect("create subdir");
+
+    // Clean file at top level (to verify scan walks both layers).
+    let clean_top = root.join("clean.rs");
+    std::fs::write(
+        &clean_top,
+        "pub fn ok() { self.error(\"msg\", span); }\n",
+    )
+    .expect("write clean_top");
+
+    // Planted offender inside the subdirectory.
+    let planted = subdir.join("offender.rs");
+    let planted_body = "pub fn bad() {\n    \
+         self.errors.push(crate::types::TypeError { \
+         message: \"x\".into(), span, severity: \
+         Severity::Error });\n}\n";
+    std::fs::write(&planted, planted_body).expect("write planted offender");
+
+    // Also plant a non-`.rs` file containing the needle — it must
+    // be ignored by the extension filter.
+    let decoy = subdir.join("offender.txt");
+    std::fs::write(&decoy, planted_body).expect("write decoy");
+
+    let (offenders, files_scanned) = find_offenders(&root);
+
+    // Tear down before assertions so a failure doesn't leak the
+    // tmpdir; copy out the data we need first.
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        files_scanned, 2,
+        "expected to scan exactly 2 `.rs` files (1 clean top-level + \
+         1 planted offender in subdir); scanned {files_scanned}. The \
+         recursive walker is broken or the extension filter is wrong."
+    );
+    assert_eq!(
+        offenders.len(),
+        1,
+        "expected exactly 1 planted offender, found {} -> {:?}",
+        offenders.len(),
+        offenders
+    );
+    let (off_path, off_line) = &offenders[0];
+    assert!(
+        off_path.ends_with("builtins_like/offender.rs"),
+        "offender path mismatch: {}",
+        off_path.display()
+    );
+    assert_eq!(
+        *off_line, 2,
+        "offender line mismatch (planted on line 2): got {off_line}"
     );
 }

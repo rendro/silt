@@ -156,7 +156,9 @@
       "patterns": [
         { "name": "keyword.operator.pipe.silt", "match": "\\|>" },
         { "name": "keyword.operator.arrow.silt", "match": "->" },
+        { "name": "keyword.operator.spread.silt", "match": "\\.\\.\\." },
         { "name": "keyword.operator.range.silt", "match": "\\.\\." },
+        { "name": "keyword.operator.path.silt", "match": "::" },
         { "name": "keyword.operator.comparison.silt", "match": "==|!=|<=|>=" },
         { "name": "keyword.operator.logical.silt", "match": "&&|\\|\\||!" },
         { "name": "keyword.operator.question.silt", "match": "\\?" },

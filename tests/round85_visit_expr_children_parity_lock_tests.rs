@@ -2,10 +2,18 @@
 //! enumerates child-bearing `ExprKind` variants. The LSP walker is the
 //! foundation for find-references, hover, inlay-hints, selection-range,
 //! and folding. Adding a new `ExprKind` variant without updating the
-//! walker silently degrades every one of those features, so we lock the
-//! variant set with a source-grep parity test.
+//! walker silently degrades every one of those features.
 //!
-//! Strategy:
+//! Round-85 G3 follow-up: the prior `_ => {}` catch-all has been
+//! removed from `visit_expr_children`. **Compiler exhaustiveness is now
+//! the primary gate** — adding a new `ExprKind` variant without a
+//! walker arm fails the `cargo build` step. The source-grep parity
+//! lock in this file is now belt-and-suspenders: it catches the
+//! specific regression where someone re-introduces a `_ => {}`
+//! wildcard (which would silently re-open the gap), and it cross-
+//! checks the `ExprKind` ↔ walker mapping at the source-text level.
+//!
+//! Strategy (retained for belt-and-suspenders coverage):
 //!   * Read `src/ast.rs` via `include_str!`; parse every top-level
 //!     `ExprKind::Variant(...)` / `ExprKind::Variant { ... }` /
 //!     `Variant,` head from inside the `pub enum ExprKind { ... }` block.
@@ -15,12 +23,8 @@
 //!   * Assert that every variant from `ExprKind` is either (a) named in
 //!     the walker body OR (b) explicitly allowed as a "leaf" with no
 //!     child expressions to walk (literals, idents, unit, etc.).
-//!
-//! Additionally, since `visit_expr_children` currently uses an `_ => {}`
-//! catch-all at the bottom, the test also surfaces that fact as a soft
-//! property: when the catch-all is removed (which would let the Rust
-//! compiler enforce parity automatically), the test below skips its
-//! source-grep entirely and just asserts the match is exhaustive.
+//!   * Additionally, assert that the walker body does NOT contain a
+//!     `_ => {}` catch-all (round-85 G3 lock).
 
 use std::collections::BTreeSet;
 
@@ -293,26 +297,30 @@ fn walker_does_not_mention_phantom_variants() {
 }
 
 #[test]
-fn walker_uses_catchall_arm_today() {
-    // Documents the current state: `visit_expr_children` ends with
-    // `_ => {}`. This is the GAP that necessitates this parity test — if
-    // the match were exhaustive (no `_`), the Rust compiler would
-    // enforce parity automatically and this test file could shrink to a
-    // single one-line assertion.
+fn walker_has_no_catchall_arm() {
+    // Round-85 G3 lock: `visit_expr_children` MUST NOT contain a
+    // `_ => {}` catch-all. The match is now exhaustive over
+    // `ExprKind`, so the Rust compiler enforces parity at compile time
+    // (adding a new variant without an arm fails `cargo build`). A
+    // future edit that re-introduces `_ => {}` would silently re-open
+    // the gap — this test guards against that regression.
     //
-    // When a future round makes the match exhaustive, this assertion
-    // flips: change `contains("_ => {}")` to `!contains("_ => {}")` and
-    // promote the lock to compile-time.
+    // The other tests in this file (`every_exprkind_variant_is_either_walked_or_a_known_leaf`,
+    // `walker_does_not_mention_phantom_variants`, `known_leaf_list_only_contains_real_variants`)
+    // are retained as belt-and-suspenders cross-checks against the
+    // source text in case the leaf-arm pattern is renamed or
+    // refactored in a way that bypasses the compiler check.
     let body = walker_body();
     let has_catchall = body.contains("_ => {}") || body.contains("_ => {\n");
     assert!(
-        has_catchall,
-        "`visit_expr_children` no longer has a `_ => {{}}` catch-all arm. \
-         That's GREAT — the Rust compiler now enforces parity at compile time \
-         and this test is no longer load-bearing. Flip the assertion to \
-         `!has_catchall` (or delete this test entirely) and consider deleting \
-         `every_exprkind_variant_is_either_walked_or_a_known_leaf` too if the \
-         match is fully exhaustive."
+        !has_catchall,
+        "`visit_expr_children` re-introduced a `_ => {{}}` catch-all arm. \
+         This silently regresses LSP find-references / hover / inlay-hints \
+         whenever a new `ExprKind` variant is added without a walker arm. \
+         Remove the wildcard and enumerate every variant explicitly — \
+         leaf variants (literals, Ident, Unit, Return(None)) should be \
+         listed under an empty `... => {{}}` arm so future additions \
+         force a compile error rather than a silent regression."
     );
 }
 

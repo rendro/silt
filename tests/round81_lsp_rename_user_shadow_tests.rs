@@ -414,20 +414,25 @@ fn rename_use_site_of_actual_builtin_int_is_rejected() {
         }),
     );
 
-    // Acceptable rejection shapes: error set, result null, or no
-    // changes (mirrors `lsp_rename_gated_constructor_rejection_tests`).
+    // Tightened (round 86 L4): the server MUST explicitly respond —
+    // either with an `error` (preferred) or with a present `result`
+    // that is null / has empty changes. A bare `{}` (no `result`, no
+    // `error` — e.g. server stopped responding) must NOT pass.
     let has_error = resp.get("error").is_some();
     let result = resp.get("result");
-    let result_is_null = result.map(|v| v.is_null()).unwrap_or(true);
+    let result_present = result.is_some();
+    let result_is_null = result.map(|v| v.is_null()).unwrap_or(false);
     let changes_empty = result
         .and_then(|r| r.get("changes"))
         .and_then(|c| c.as_object())
         .map(|o| o.is_empty())
-        .unwrap_or(true);
+        .unwrap_or(false);
     assert!(
-        has_error || result_is_null || changes_empty,
-        "rename on real builtin `Int` must be rejected (error) or \
-         produce no edits (null result / empty changes); got {resp}"
+        has_error || (result_present && (result_is_null || changes_empty)),
+        "rename on real builtin `Int` must be explicitly rejected \
+         (error response) or explicitly empty (present null result / \
+         present empty changes); a missing-both shape (no `error`, no \
+         `result`) means the server did not respond — got {resp}"
     );
     client.shutdown();
 }
@@ -505,10 +510,16 @@ fn prepare_rename_user_shadow_returns_range() {
             "position": { "line": 0, "character": 12 }
         }),
     );
-    let result_b = resp_b.get("result");
-    let is_null_b = result_b.map(|v| v.is_null()).unwrap_or(true);
+    // Tightened (round 86 L4): server must explicitly respond with a
+    // `result` field that is null. A bare `{}` (no `result` at all)
+    // means the server did not respond and must NOT pass.
+    let result_b = resp_b.get("result").expect(
+        "prepareRename on real-builtin must include an explicit \
+         `result` field (null is the rejection signal — absence \
+         means the server did not respond)",
+    );
     assert!(
-        is_null_b,
+        result_b.is_null(),
         "prepareRename on real-builtin `println` use-site must be null; got {resp_b}"
     );
 

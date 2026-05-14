@@ -63,10 +63,14 @@ syntax match siltNumber "\<\d\+\>"
 " ── Operators ───────────────────────────────────────────────────────
 " Multi-character operators are listed first so vim's longest-match
 " rule prefers them over the single-character forms below (e.g. `==`
-" beats `=`, `->` beats `-`, `<=` beats `<`).
+" beats `=`, `->` beats `-`, `<=` beats `<`). Within the multi-char
+" group, `...` must appear before `..` so the three-dot spread/rest
+" token wins over the two-dot range token on shared prefix matches.
 syntax match siltOperator "|>"
 syntax match siltOperator "->"
+syntax match siltOperator "\.\.\."
 syntax match siltOperator "\.\."
+syntax match siltOperator "::"
 syntax match siltOperator "?"
 syntax match siltOperator "\^"
 syntax match siltOperator "&&"

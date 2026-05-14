@@ -7,6 +7,16 @@ use std::time::{Duration, Instant};
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
+/// Build the canonical closed-channel-send VmError (message wording is
+/// pinned by tests in `tests/error_tests.rs` and `tests/integration.rs`,
+/// and the round86 regression-lock test asserts the `format!` literal for
+/// it appears in exactly one place in this file). Route every
+/// closed-channel try_send branch through this helper so the message
+/// cannot drift across the 5 sites.
+fn closed_channel_send_err(id: usize) -> VmError {
+    VmError::new(format!("send on closed channel {id}"))
+}
+
 /// Dispatch the builtin `trait Error for ChannelError` method table.
 /// Scaffolding lives in `super::dispatch_error_trait`; this site just
 /// supplies the variant → message rendering.
@@ -56,7 +66,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             match ch.try_send(val.clone()) {
                 TrySendResult::Sent => return Ok(Value::Unit),
                 TrySendResult::Closed => {
-                    return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                    return Err(closed_channel_send_err(ch.id));
                 }
                 TrySendResult::Full => {}
             }
@@ -988,7 +998,7 @@ fn main_thread_wait_for_send(
         match ch.try_send(val) {
             TrySendResult::Sent => return Ok(Value::Unit),
             TrySendResult::Closed => {
-                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                return Err(closed_channel_send_err(ch.id));
             }
             TrySendResult::Full => {
                 return Err(VmError::new(
@@ -1029,7 +1039,7 @@ fn main_thread_wait_for_send(
             TrySendResult::Closed => {
                 drop(reg);
                 unpark_main(vm);
-                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                return Err(closed_channel_send_err(ch.id));
             }
             TrySendResult::Full => {}
         }
@@ -1056,7 +1066,7 @@ fn main_thread_wait_for_send(
             TrySendResult::Closed => {
                 drop(reg);
                 unpark_main(vm);
-                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                return Err(closed_channel_send_err(ch.id));
             }
             TrySendResult::Full => {}
         }
@@ -1071,7 +1081,7 @@ fn main_thread_wait_for_send(
                 TrySendResult::Closed => {
                     drop(reg);
                     unpark_main(vm);
-                    return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                    return Err(closed_channel_send_err(ch.id));
                 }
                 TrySendResult::Full => {}
             }

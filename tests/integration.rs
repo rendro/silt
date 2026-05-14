@@ -8618,7 +8618,10 @@ fn main() {
 
 #[test]
 fn test_async_io_read_file_in_task() {
-    let tmp = std::env::temp_dir().join("silt_test_async.txt");
+    let tmp = std::env::temp_dir().join(format!(
+        "silt_test_async_{}.txt",
+        std::process::id()
+    ));
     let tmp = tmp.to_str().unwrap().replace('\\', "/");
     let input = format!(
         r#"
@@ -8643,8 +8646,9 @@ fn main() {{
 
 #[test]
 fn test_async_io_parallel_reads() {
-    let tmp_a = std::env::temp_dir().join("silt_a.txt");
-    let tmp_b = std::env::temp_dir().join("silt_b.txt");
+    let pid = std::process::id();
+    let tmp_a = std::env::temp_dir().join(format!("silt_a_{pid}.txt"));
+    let tmp_b = std::env::temp_dir().join(format!("silt_b_{pid}.txt"));
     let tmp_a = tmp_a.to_str().unwrap().replace('\\', "/");
     let tmp_b = tmp_b.to_str().unwrap().replace('\\', "/");
     let input = format!(
@@ -9369,7 +9373,10 @@ fn main() { math.asin(1.0) }
 
 #[test]
 fn test_fs_mkdir_and_remove() {
-    let dir = std::env::temp_dir().join("silt_test_mkdir_42");
+    let dir = std::env::temp_dir().join(format!(
+        "silt_test_mkdir_42_{}",
+        std::process::id()
+    ));
     let dir = dir.to_str().unwrap().replace('\\', "/");
     let input = format!(
         r#"
@@ -9393,8 +9400,9 @@ fn main() {{
 
 #[test]
 fn test_fs_rename() {
-    let src = std::env::temp_dir().join("silt_test_rename_src.txt");
-    let dst = std::env::temp_dir().join("silt_test_rename_dst.txt");
+    let pid = std::process::id();
+    let src = std::env::temp_dir().join(format!("silt_test_rename_src_{pid}.txt"));
+    let dst = std::env::temp_dir().join(format!("silt_test_rename_dst_{pid}.txt"));
     let src = src.to_str().unwrap().replace('\\', "/");
     let dst = dst.to_str().unwrap().replace('\\', "/");
     let input = format!(
