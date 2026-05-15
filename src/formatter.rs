@@ -5436,7 +5436,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
         }
 
         ExprKind::QuestionMark(expr) => {
-            // Postfix `?` bp = 110. Any child whose top-level l_bp < 110
+            // Postfix `?` bp = 54. Any child whose top-level l_bp < 54
             // must be parenthesized, otherwise re-parsing attaches `?`
             // to the inner tail instead of the whole expression.
             format!("{}?", paren_wrap_if_needed(expr, bp::QUESTIONMARK, depth))

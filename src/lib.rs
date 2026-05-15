@@ -23,6 +23,7 @@ pub mod compiler;
 pub mod diagnostic_filters;
 pub mod disassemble;
 pub mod errors;
+pub mod file_discovery;
 pub mod formatter;
 pub mod fuzz_invariants;
 pub mod git;

@@ -16,6 +16,7 @@ use silt::vm::Vm;
 use crate::cli::help::test_usage_banner;
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::package_setup_for_file;
+use crate::cli::paths::find_silt_files;
 use crate::cli::pipeline::{is_unknown_module_warning, resolve_strict_effects};
 
 /// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
@@ -77,24 +78,21 @@ pub(crate) fn dispatch(args: &[String]) {
     run_tests(file.as_deref(), filter, strict_effects);
 }
 
+/// Walk `dir` for files named `*_test.silt` or `*.test.silt`. Delegates
+/// the recursive scan to `cli::paths::find_silt_files` so the
+/// skip-list policy (`target/`, `.git/`, `node_modules/`,
+/// `fuzz/corpus/…`) and the sort order live in exactly one place.
+/// Pre-round-87, this function was a byte-identical clone of
+/// `find_silt_files` *without* the skip filter, which meant `silt test`
+/// would happily try to execute `.silt` files that had been deposited
+/// under `target/` or vendored under `node_modules/`. Test-file suffix
+/// filtering happens here so the canonical scanner stays
+/// suffix-agnostic.
 fn find_test_files(dir: &Path) -> Vec<String> {
-    let mut results = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return results;
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_dir() {
-            results.extend(find_test_files(&path));
-        } else {
-            let name = path.to_string_lossy().to_string();
-            if name.ends_with("_test.silt") || name.ends_with(".test.silt") {
-                results.push(name);
-            }
-        }
-    }
-    results.sort();
-    results
+    find_silt_files(dir)
+        .into_iter()
+        .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
+        .collect()
 }
 
 fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Option<bool>) {

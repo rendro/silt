@@ -35,12 +35,17 @@
 //!
 //! Two test forms are used:
 //!   1. **In-process**: drive each shape end-to-end (typecheck →
-//!      compile → run) without asserting stdout. A synth-pipeline
-//!      bug here surfaces as a panic during compile or a runtime
-//!      error caught by the in-process runner.
+//!      compile → run). `run_silt_inproc` asserts `vm.run` returns
+//!      Ok, so a runtime error from any synth path (catch-all in
+//!      `dispatch_trait_method`, missing qualified-global, dispatch
+//!      arm regression, etc.) surfaces as a test failure. Stdout is
+//!      not asserted here.
 //!   2. **Out-of-process**: run via `silt run` and lock stdout
 //!      against the expected output, so the full path including
-//!      the binary entrypoint is exercised.
+//!      the binary entrypoint is exercised. Shapes 1-6 are covered
+//!      by `user_type_barrage_produces_expected_results`; shapes
+//!      7-10 (self-recursive enums and 3+-field/variant types) by
+//!      `user_type_barrage_extended_shapes_produce_expected_results`.
 
 use std::process::Command;
 use std::sync::Arc;
@@ -74,8 +79,18 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 }
 
 /// In-process synth-pipeline driver. Each shape is fed through
-/// typecheck → compile → vm.run; a panic at any stage surfaces
-/// as a test failure. Mirrors `tests/integration.rs::run`.
+/// typecheck → compile → vm.run; a panic or runtime error at any
+/// stage surfaces as a test failure. Mirrors `tests/integration.rs::run`.
+///
+/// Earlier rounds discarded the `vm.run` Err return with `let _ = …`,
+/// trusting Test 3's CLI-subprocess pass to lock observable outputs.
+/// That left a behavioural gap for any shape (7-10: self-recursive
+/// enums and 3+-field/variant types) not exercised by Test 3:
+/// a dispatch regression like an off-by-one in `dispatch_trait_method`
+/// affecting only those shapes would surface as a silent runtime
+/// error that no assertion caught. We now require `vm.run` to succeed
+/// and panic on Err so every shape fed through this driver locks
+/// "no runtime error from the synth path" end-to-end.
 fn run_silt_inproc(src: &str) {
     let tokens = Lexer::new(src).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
@@ -84,18 +99,24 @@ fn run_silt_inproc(src: &str) {
     let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
-    let _ = vm.run(script);
+    if let Err(err) = vm.run(script) {
+        panic!(
+            "vm.run failed in run_silt_inproc — synth-pipeline regression in dispatch_trait_method or an arm above it: {err:?}"
+        );
+    }
 }
 
 // ── 1. User-type barrage: every shape × every trait × every call form
 
 /// Drive a comprehensive barrage of user-typed Compare/Equal/Hash/
-/// Display calls. Every shape compiles and runs successfully — the
-/// in-process runner lets vm.run errors surface as test failures
-/// indirectly via panic on `compile_program.expect` (compile errors)
-/// and via `vm.run`'s Err return (runtime errors are silently
-/// dropped by the `let _ = …` here, so test 3 below also locks the
-/// observable outputs through the CLI).
+/// Display calls. Every shape compiles and runs successfully —
+/// `run_silt_inproc` panics on either a compile error
+/// (`compile_program.expect`) or a runtime error (`vm.run` Err is
+/// asserted). The companion CLI tests
+/// (`user_type_barrage_produces_expected_results` for shapes 1-6 and
+/// `user_type_barrage_extended_shapes_produce_expected_results` for
+/// shapes 7-10) additionally lock the observable outputs end-to-end
+/// through the `silt run` binary.
 #[test]
 fn user_types_compile_and_run_through_synth_globals() {
     // Shape 1: non-generic enum, nullary variants
@@ -279,10 +300,10 @@ fn main() {
 /// synth pipeline as user-declared types. Every call below
 /// resolves through a synth-emitted `<Type>.<method>` global at
 /// runtime; a regression that drops the synth would surface as a
-/// `cmp_gen(Monday, Friday)` runtime error, which `vm.run` would
-/// report and the in-process runner would let through silently —
-/// the matching CLI test (`builtin_compare_via_cli_subprocess`)
-/// below catches that case via stdout assertion.
+/// `cmp_gen(Monday, Friday)` runtime error and fail the test via
+/// `run_silt_inproc`'s `vm.run` assertion. The matching CLI test
+/// (`builtin_compare_via_cli_subprocess`) below additionally locks
+/// the observable outputs via stdout assertion.
 #[test]
 fn builtin_types_compile_and_run_through_synth_globals() {
     // Weekday — non-generic built-in enum.
@@ -377,6 +398,86 @@ fn main() {
     assert_eq!(
         lines,
         vec!["-1", "1", "true", "-1", "Wrapped { value: 42 }", "-1"]
+    );
+}
+
+/// Companion to Test 3 for shapes that the original behaviour pass
+/// did not exercise: self-recursive enum (`Tree`), self-recursive
+/// generic enum (`GTree(a)`), 3+-field record (`Big`), and 3+-variant
+/// enum (`Status`). Without this, a regression in
+/// `dispatch_trait_method` (or in the auto-derive synth pass) that
+/// only affected these shapes would not fail any test — the
+/// in-process barrage above would either panic (now that
+/// `run_silt_inproc` asserts vm.run success) OR, for stricter
+/// behavioural correctness (e.g. wrong tag ordinal in `cmp`, wrong
+/// field count in `display`), would still execute without error but
+/// produce a wrong value that nothing checks.
+///
+/// Locking stdout via CLI for these four shapes closes both holes
+/// simultaneously: silent runtime errors surface as a missing stdout
+/// line, and silent semantic regressions surface as a mismatch on
+/// the asserted output strings.
+#[test]
+fn user_type_barrage_extended_shapes_produce_expected_results() {
+    let out = run_silt_ok(
+        "extended_shapes_barrage",
+        r#"
+type Tree { Leaf, Node(Tree, Tree), }
+type GTree(a) { GLeaf, GNode(GTree(a), GTree(a)), }
+type Big { a: Int, b: Int, c: Int, d: String, }
+type Status { Active(Int), Pending, Done, Cancelled(String), Failed(Int, String), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    -- Shape 7: self-recursive enum
+    println(cmp_gen(Leaf, Node(Leaf, Leaf)))
+    println(eq_gen(Node(Leaf, Leaf), Node(Leaf, Leaf)))
+    println(d(Node(Leaf, Leaf)))
+
+    -- Shape 8: self-recursive generic enum
+    let gl: GTree(Int) = GLeaf
+    let gn: GTree(Int) = GNode(GLeaf, GLeaf)
+    println(cmp_gen(gl, gn))
+    println(d(gl))
+
+    -- Shape 9: 3+ field record
+    let p = Big { a: 1, b: 2, c: 3, d: "x" }
+    let q = Big { a: 1, b: 2, c: 3, d: "y" }
+    let r = Big { a: 1, b: 2, c: 3, d: "x" }
+    println(cmp_gen(p, q))
+    println(eq_gen(p, r))
+    println(d(p))
+
+    -- Shape 10: 3+ variant enum
+    println(cmp_gen(Active(1), Pending))
+    println(cmp_gen(Cancelled("x"), Failed(1, "y")))
+    println(eq_gen(Pending, Done))
+    println(d(Failed(2, "z")))
+}
+"#,
+    );
+    let lines: Vec<&str> = out.trim().split('\n').collect();
+    assert_eq!(
+        lines,
+        vec![
+            // Shape 7
+            "-1",
+            "true",
+            "Node(Leaf, Leaf)",
+            // Shape 8
+            "-1",
+            "GLeaf",
+            // Shape 9
+            "-1",
+            "true",
+            "Big { a: 1, b: 2, c: 3, d: x }",
+            // Shape 10
+            "-1",
+            "-1",
+            "false",
+            "Failed(2, z)",
+        ]
     );
 }
 

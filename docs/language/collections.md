@@ -49,7 +49,8 @@ Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 `list.group_by`, `list.fold_until`, `list.unfold`.
 
 For the full reference, hover over any `list.*` call in your editor
-(the LSP renders the inlined builtin docs) or run `silt --help`.
+(the LSP renders the inlined builtin docs), or browse the LSP's
+completion popup on `list.` to scan the full menu of entry points.
 
 ## Maps
 
@@ -84,7 +85,8 @@ Key functions: `map.get`, `map.set`, `map.delete`, `map.contains`,
 `map.merge`, `map.filter`, `map.map`, `map.each`, `map.update`.
 
 For the full reference, hover over any `map.*` call in your editor
-(the LSP renders the inlined builtin docs) or run `silt --help`.
+(the LSP renders the inlined builtin docs), or browse the LSP's
+completion popup on `map.` to scan the full menu of entry points.
 
 ## Sets
 
@@ -108,4 +110,5 @@ Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
 `set.fold`.
 
 For the full reference, hover over any `set.*` call in your editor
-(the LSP renders the inlined builtin docs) or run `silt --help`.
+(the LSP renders the inlined builtin docs), or browse the LSP's
+completion popup on `set.` to scan the full menu of entry points.

@@ -106,7 +106,7 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `set` | Hash-set construction and bulk operations |
 | `math` | Trigonometry, exponentials, and numeric constants |
 | `time` | Instants, durations, calendar dates, and weekdays |
-| `http` | HTTP client (`http.get`, `http.post`, `http.request`) |
+| `http` | HTTP client and server (`http.get`, `http.request`, `http.serve`, `http.serve_all`, `http.segments`, `http.parse_query`) |
 | `fs` | Filesystem queries (`fs.list_dir`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`) |
 | `env` | Process environment access (`env.get`, `env.set`, `env.remove`, `env.vars`) |
 | `postgres` | PostgreSQL client with typed parameters (opt-in feature; build with `cargo build --features postgres`, not enabled in the default release binary) |

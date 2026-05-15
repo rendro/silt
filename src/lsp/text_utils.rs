@@ -116,10 +116,39 @@ fn self_extent(expr: &Expr, source: &str) -> usize {
 /// matching `}` (exclusive end). Skips string literals, char escapes, and
 /// line/block comments so we don't get fooled by `"}"` or `// }`.
 pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
+    // Inclusive offset of the matching `}` from the scanner, +1 for
+    // exclusive-end semantics.
+    find_matching_close_brace(source, start).map(|(off, _)| off + 1)
+}
+
+/// Shared scanner used by both `match_closing_brace` (for offset-only
+/// callers) and `folding::compute_span_end_line` (which needs the line
+/// number of the matching `}`). Walks `source` from `start`, finds the
+/// first real `{`, then advances depth until a real `}` brings depth back
+/// to zero, skipping over silt comments and string literals:
+///
+///   * `--` line comments,
+///   * `{- ... -}` block comments (nestable; the leading `{` and trailing
+///     `}` do NOT count toward brace depth),
+///   * `"..."` strings (with `\`-escapes),
+///   * `"""..."""` triple-quoted strings.
+///
+/// Returns `(offset_of_matching_close_brace, newlines_consumed_from_start)`
+/// where `offset_of_matching_close_brace` points AT the `}` byte (not one
+/// past it). `newlines_consumed_from_start` counts `\n` bytes seen in
+/// `source[start..=offset_of_matching_close_brace]`, including any inside
+/// skipped comments or strings. Returns `None` if no `{` is ever found or
+/// the input is unbalanced.
+pub(super) fn find_matching_close_brace(source: &str, start: usize) -> Option<(usize, u32)> {
     let bytes = source.as_bytes();
-    // Find the first `{` at or after `start`.
     let mut i = start;
+    let mut newlines: u32 = 0;
+    // Find the first `{` at or after `start`. Count newlines we cross so
+    // that callers tracking line numbers don't lose any before the body.
     while i < bytes.len() && bytes[i] != b'{' {
+        if bytes[i] == b'\n' {
+            newlines += 1;
+        }
         i += 1;
     }
     if i >= bytes.len() {
@@ -141,6 +170,9 @@ pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
                         comment_depth -= 1;
                         i += 2;
                     } else {
+                        if bytes[i] == b'\n' {
+                            newlines += 1;
+                        }
                         i += 1;
                     }
                 }
@@ -151,10 +183,10 @@ pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
             }
             b'}' => {
                 depth -= 1;
-                i += 1;
                 if depth == 0 {
-                    return Some(i);
+                    return Some((i, newlines));
                 }
+                i += 1;
             }
             b'"' => {
                 // Triple-quoted string?
@@ -163,6 +195,9 @@ pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
                     while i + 2 < bytes.len()
                         && !(bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
                     {
+                        if bytes[i] == b'\n' {
+                            newlines += 1;
+                        }
                         i += 1;
                     }
                     i = (i + 3).min(bytes.len());
@@ -170,8 +205,15 @@ pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
                     i += 1;
                     while i < bytes.len() && bytes[i] != b'"' {
                         if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                            // Count any newline in a 2-byte escape window.
+                            if bytes[i + 1] == b'\n' {
+                                newlines += 1;
+                            }
                             i += 2;
                         } else {
+                            if bytes[i] == b'\n' {
+                                newlines += 1;
+                            }
                             i += 1;
                         }
                     }
@@ -181,10 +223,16 @@ pub(super) fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
                 }
             }
             b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
-                // Skip `--` line comment to end of line.
+                // Skip `--` line comment to end of line. The trailing `\n`
+                // (if any) is left for the outer loop to count via the
+                // default arm.
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
+            }
+            b'\n' => {
+                newlines += 1;
+                i += 1;
             }
             _ => i += 1,
         }

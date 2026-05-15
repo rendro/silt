@@ -90,7 +90,8 @@ cannot contain any matching test are skipped entirely.
 The `test` module provides assertion functions. Hover over any
 `test.*` call in your editor for the full signature and per-function
 documentation (the LSP surfaces it from the inlined builtin docs);
-`silt --help` also lists the assertion entry points.
+the LSP's completion popup on `test.` also enumerates every assertion
+entry point.
 
 | Function | Description |
 |----------|-------------|

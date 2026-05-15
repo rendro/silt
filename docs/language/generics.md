@@ -672,9 +672,13 @@ fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode
 fn from_toml(content: String, type a) -> Result(a, ParseError) where a: Decode
 
 -- call sites
-let config = toml.from_toml(raw, AppConfig)?
+let config = from_toml(raw, AppConfig)?
 body |> json.parse(Todo)
 ```
+
+The stdlib follows the same shape: `json.parse(src, T)` and `toml.parse(src, T)`
+are the built-in type-directed decoders — hover either name in your editor
+for the full per-call documentation surfaced by the LSP.
 
 ### Conversion
 

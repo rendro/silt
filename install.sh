@@ -33,7 +33,7 @@ main() {
     printf "  Installing silt %s (%s)\n" "$version" "$target"
     printf "  Target: %s\n\n" "$INSTALL_DIR/$bin"
 
-    tmpdir="$(mktemp -d)"
+    tmpdir="$(mktemp -d)" || err "mktemp -d failed"
     trap 'rm -rf "$tmpdir"' EXIT
 
     printf "  Downloading %s\n" "$url"

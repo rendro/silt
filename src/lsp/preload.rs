@@ -109,29 +109,19 @@ fn walk(server: &mut Server, dir: &Path, depth: usize) {
     }
 }
 
+/// Skip-list policy: delegate to the crate-wide `file_discovery`
+/// module so the LSP preloader and the CLI's recursive `.silt`
+/// discovery (`src/cli/paths.rs::find_silt_files`) share a single
+/// definition of "directories to skip when hunting for source files".
+/// Audit round 87 LATENT: pre-fix, this rule lived only in preload.rs
+/// and the CLI walkers happily descended into `target/`, `.git/`,
+/// `node_modules/`, and `fuzz/corpus/` — so `silt fmt`/`silt test`
+/// could rewrite or execute vendored / generated `.silt` files the
+/// LSP correctly ignored. The helper is kept here as a thin shim so
+/// the surrounding `walk` reads naturally; the policy itself now lives
+/// in one place.
 fn should_skip_dir(path: &Path) -> bool {
-    let name = match path.file_name().and_then(|s| s.to_str()) {
-        Some(n) => n,
-        None => return false,
-    };
-    if name == "target" || name == ".git" || name == "node_modules" {
-        return true;
-    }
-    // Skip any directory under `fuzz/corpus/…`. The corpus dir itself
-    // (`fuzz/corpus`) can have named children per fuzz target
-    // (`fuzz_formatter`, …) and each of *those* carries thousands of
-    // 1-byte files we don't want to parse. We detect the ancestor chain
-    // by looking for a `corpus` segment whose parent is `fuzz`.
-    let mut comps = path.components().rev();
-    while let Some(c) = comps.next() {
-        if c.as_os_str() == "corpus"
-            && let Some(parent) = comps.next()
-            && parent.as_os_str() == "fuzz"
-        {
-            return true;
-        }
-    }
-    false
+    crate::file_discovery::should_skip_dir(path)
 }
 
 fn load_file(server: &mut Server, path: &Path) {

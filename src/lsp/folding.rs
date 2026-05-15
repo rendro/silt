@@ -18,7 +18,7 @@ use crate::ast::*;
 use crate::lexer::Span;
 
 use super::Server;
-use super::text_utils::expr_extent;
+use super::text_utils::{expr_extent, find_matching_close_brace};
 
 impl Server {
     pub(super) fn folding_range(
@@ -130,50 +130,22 @@ fn push_block_fold(span: &Span, expr: &Expr, source: &str, out: &mut Vec<Folding
 
 fn compute_span_end_line(span: &Span, source: &str) -> u32 {
     // The Span struct only records a start line/col; walk forward from
-    // `span.offset` counting newlines until we hit a matching `}` at
-    // depth 0. For `trait`, `type`, `fn` the header ends at `{` and the
-    // body runs to the matching `}`.
+    // `span.offset` until we hit a matching `}` at depth 0. For `trait`,
+    // `type`, `fn` the header ends at `{` and the body runs to the
+    // matching `}`. We delegate the scan to the shared
+    // `find_matching_close_brace` helper in `text_utils` so that we
+    // correctly skip `--` line comments, `{- ... -}` block comments
+    // (nestable), and `"..."` / `"""..."""` strings — anything else
+    // would let a `}` inside a comment or string close the body
+    // prematurely (round-87 LATENT fix).
     //
-    // Fallback heuristic: scan until depth returns to zero after seeing
-    // the first `{`. If no `{` appears (type with unit variants?) fall
-    // back to the start line.
-    let bytes = source.as_bytes();
-    let mut depth: i32 = 0;
-    let mut seen_open = false;
-    let mut line = span.line.saturating_sub(1) as u32;
-    let mut i = span.offset;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'{' => {
-                depth += 1;
-                seen_open = true;
-            }
-            b'}' => {
-                depth -= 1;
-                if seen_open && depth == 0 {
-                    return line;
-                }
-            }
-            b'\n' => line += 1,
-            b'"' => {
-                // Skip a simple string literal to avoid counting braces inside.
-                i += 1;
-                while i < bytes.len() && bytes[i] != b'"' {
-                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                        i += 2;
-                        continue;
-                    }
-                    if bytes[i] == b'\n' {
-                        line += 1;
-                    }
-                    i += 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
+    // Fallback: if no balanced `{...}` is found from `span.offset` (e.g.
+    // a `type` with unit variants), fall back to the start line.
+    let start_line = span.line.saturating_sub(1) as u32;
+    match find_matching_close_brace(source, span.offset) {
+        Some((_offset, newlines)) => start_line + newlines,
+        None => start_line,
     }
-    line
 }
 
 fn offset_to_line(source: &str, offset: usize) -> u32 {

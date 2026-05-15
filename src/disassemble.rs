@@ -348,9 +348,6 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         // ── u8-count + count x u16 name_index (round 84) ─────
         //   RecordUpdate:        label "field".
         //   DestructRecordRest:  label "exclude".
-        // (Round 85 follow-up removed the sibling `RecordUpdateAnon`
-        // which previously shared this arm — see `bytecode.rs` for the
-        // dual-closure note.)
         Op::RecordUpdate => fmt_u8_count_then_u16_names(chunk, code, offset, name, "field"),
         Op::DestructRecordRest => fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude"),
     }
@@ -585,11 +582,9 @@ mod tests {
         assert!(output.contains("RecordUpdate"));
         assert!(output.contains("\"x\""));
         // Round 84: the operand decode for RecordUpdate uses
-        // `fmt_u8_count_then_u16_names`. Round 85 follow-up: the
-        // sibling `RecordUpdateAnon` was removed (PartialEq/Ord/Hash
-        // wildcards close the gap from the other side). Lock the
-        // per-entry label literal to guard against accidentally
-        // swapping it with "exclude" (the DestructRecordRest label).
+        // `fmt_u8_count_then_u16_names`. Lock the per-entry label
+        // literal to guard against accidentally swapping it with
+        // "exclude" (the DestructRecordRest label).
         assert!(output.contains("field "));
     }
 
@@ -666,11 +661,7 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 72 variants. Round 83 had added
-        // `RecordUpdateAnon` (count 73); round-85 follow-up removed it
-        // — PartialEq/Ord/Hash `<anon>` wildcards (rounds 84-85) close
-        // the soundness gap from the other side, leaving the sibling
-        // opcode strictly redundant.
+        // tables. Last verified: 72 variants.
         const EXPECTED_OP_COUNT: usize = 72;
 
         // Sweep every possible byte value. For each one that decodes,

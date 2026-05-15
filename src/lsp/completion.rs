@@ -432,6 +432,17 @@ fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
     }
 }
 
+/// Fallback set of built-in trait method names used when the receiver
+/// type cannot be inferred. Hoisted as a module-level const so the
+/// parity test (`fallback_builtin_methods_covers_auto_derive_union`)
+/// can compare it against the union of every RHS in
+/// `auto_derived_methods_for`. `message` is included because it comes
+/// from the `Error` builtin trait, which is NOT covered by
+/// `auto_derived_methods_for` (those arms only mirror
+/// Display/Compare/Equal/Hash for primitives/containers).
+const FALLBACK_BUILTIN_METHODS: &[&str] =
+    &["display", "compare", "equal", "hash", "message"];
+
 /// Return the method names available on a value whose canonical type
 /// name is `canon_name`. Walks `program.decls` for `TraitImpl` entries
 /// targeting the canonical name (both user-written and synthesized
@@ -500,7 +511,12 @@ fn all_known_method_names(program: &Program) -> Vec<String> {
     // Always include the auto-derived built-in trait methods. They are
     // never written into the AST for primitives, but a user might be
     // typing on any of the primitive heads, so include them here.
-    for m in &["display", "compare", "equal", "hash", "message"] {
+    // Sourced from `FALLBACK_BUILTIN_METHODS`; the parity test
+    // `fallback_builtin_methods_covers_auto_derive_union` locks that
+    // const against the union of `auto_derived_methods_for`'s arms,
+    // so adding a 6th auto-derived method without updating the const
+    // fails CI.
+    for m in FALLBACK_BUILTIN_METHODS {
         out.insert((*m).to_string());
     }
     let mut v: Vec<String> = out.into_iter().collect();
@@ -764,6 +780,70 @@ mod tests {
         assert!(all.contains(&"equal".to_string()), "got: {all:?}");
         assert!(all.contains(&"hash".to_string()), "got: {all:?}");
         assert!(all.contains(&"message".to_string()), "got: {all:?}");
+    }
+
+    /// Parity lock: `FALLBACK_BUILTIN_METHODS` must equal the union of
+    /// every method name returned by `auto_derived_methods_for` across
+    /// every canonical-name arm, plus `"message"` (which comes from
+    /// the `Error` builtin trait — NOT covered by
+    /// `auto_derived_methods_for`, whose arms only mirror
+    /// Display/Compare/Equal/Hash for primitives/containers).
+    ///
+    /// Why this exists: prior rounds had a hardcoded 5-string fallback
+    /// list at the call site in `all_known_method_names`. If a 6th
+    /// auto-derive (e.g. `read`) was added to `auto_derived_methods_for`,
+    /// the fallback would silently fail to expose it on unknown
+    /// receivers, breaking the "narrowing only ever reduces, never
+    /// hides" contract — and no existing test would fail (the original
+    /// 5 strings would still be present). Computing the expected union
+    /// dynamically from `auto_derived_methods_for` and comparing to
+    /// the static const closes that gap: adding to either side without
+    /// the other now fails this test.
+    #[test]
+    fn fallback_builtin_methods_covers_auto_derive_union() {
+        // Every canonical name with a non-empty arm in
+        // `auto_derived_methods_for` (see the `match` at the function's
+        // body — keep this list in sync with the arms there).
+        let canon_names = [
+            "Int", "Float", "ExtFloat", "Bool", "String", "Unit", "List", "Tuple", "Map", "Set",
+        ];
+        let mut expected: HashSet<String> = HashSet::new();
+        for name in &canon_names {
+            for m in auto_derived_methods_for(name) {
+                expected.insert((*m).to_string());
+            }
+        }
+        // `message` is the Error-trait method; not covered by
+        // `auto_derived_methods_for` arms, but the fallback list must
+        // still expose it so completion on an unknown receiver doesn't
+        // hide it.
+        expected.insert("message".to_string());
+
+        let actual: HashSet<String> = FALLBACK_BUILTIN_METHODS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+
+        assert_eq!(
+            actual, expected,
+            "FALLBACK_BUILTIN_METHODS must equal union(auto_derived_methods_for arms) ∪ {{\"message\"}}.\n\
+             actual:   {actual:?}\n\
+             expected: {expected:?}"
+        );
+
+        // Sanity: every canonical name in the harness above actually
+        // resolves to a non-empty arm. Catches the case where someone
+        // renames an arm and forgets to update this list — the union
+        // would silently shrink and the equality check above might
+        // still pass against a stale const.
+        for name in &canon_names {
+            assert!(
+                !auto_derived_methods_for(name).is_empty(),
+                "harness lists `{name}` as a covered arm, but \
+                 auto_derived_methods_for returned an empty slice — \
+                 update the canon_names list to match the match arms."
+            );
+        }
     }
 
     /// `canonicalize_target_name` mirrors the typechecker's reduction

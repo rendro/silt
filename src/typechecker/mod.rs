@@ -8168,10 +8168,6 @@ pub(super) mod test_helpers {
         check(&mut program)
     }
 
-    pub(super) fn check_program(input: &str) -> Vec<TypeError> {
-        check_errors(input)
-    }
-
     pub(super) fn assert_no_errors(input: &str) {
         let errors = check_errors(input);
         let hard: Vec<_> = errors
@@ -9080,7 +9076,7 @@ fn main() {
     #[test]
     fn test_trait_impl_validates_methods() {
         // Complete impl should have no errors about missing methods
-        let errors = check_program(
+        let errors = check_errors(
             r#"
             trait Greet {
                 fn greet(self) -> String {
@@ -9113,7 +9109,7 @@ fn main() {
         // in the impl is genuinely missing — not silently filled in by a
         // default. With the default-method feature, a method with a body
         // would be synthesized into the impl rather than reported.
-        let errors = check_program(
+        let errors = check_errors(
             r#"
             trait Showable {
                 fn show(self) -> String
@@ -9135,7 +9131,7 @@ fn main() {
 
     #[test]
     fn test_trait_impl_unknown_trait() {
-        let errors = check_program(
+        let errors = check_errors(
             r#"
             trait Nonexistent for Thing {
                 fn foo(self) -> Int { 0 }
@@ -9150,7 +9146,7 @@ fn main() {
     #[test]
     fn test_builtin_display_trait_exists() {
         // Implementing Display should not produce "trait not declared" error
-        let errors = check_program(
+        let errors = check_errors(
             r#"
             type Color { Red, Blue }
             trait Display for Color {
@@ -9177,7 +9173,7 @@ fn main() {
 
     #[test]
     fn test_where_unknown_trait_warning() {
-        let errors = check_program(
+        let errors = check_errors(
             r#"
             fn show(x) where x: Nonexistent {
                 x
@@ -10081,7 +10077,7 @@ fn main() {
         // this strengthened check would fail where the old OR-substring
         // check could still pass. The current code passes both — this is a
         // correct-just-under-locked scenario, so the strengthening is valid.
-        let errors = check_program(
+        let errors = check_errors(
             r#"
 fn main() {
   loop i = 0, acc = 0 {
@@ -10119,7 +10115,7 @@ fn main() {
         // Both trait methods are declared abstract (no body) so the impl
         // genuinely owes both. Methods with default bodies are now
         // synthesized into impls rather than reported as missing.
-        let errors = check_program(
+        let errors = check_errors(
             r#"
 trait Describable {
   fn describe(self) -> String
@@ -10160,7 +10156,7 @@ fn main() { 0 }
 
     #[test]
     fn test_where_clause_unknown_trait() {
-        let errors = check_program(
+        let errors = check_errors(
             r#"
 fn do_thing(x) where x: FakeTrait {
   x
@@ -10179,7 +10175,7 @@ fn main() { 0 }
     #[test]
     fn test_multiple_trait_impls_for_same_type() {
         // Implementing two different traits for the same type should be fine
-        let errors = check_program(
+        let errors = check_errors(
             r#"
 trait Printable {
   fn print(self) -> String { "default" }

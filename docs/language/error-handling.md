@@ -28,7 +28,9 @@ and `ChannelError`. Each variant is module-prefixed so pattern names never
 collide: `IoNotFound`, `JsonSyntax`, `HttpTimeout`, and so on. The full
 catalog is registered alongside the builtin signatures in the compiler;
 hover over an error type in your editor (the LSP surfaces the variants
-inline) or run `silt --help` to enumerate the modules that produce them.
+inline), or consult the per-module reference under `docs/language/`
+and `src/typechecker/builtins/*.rs` for the full list of variants each
+module raises.
 
 You can either pattern-match on a specific variant, or fall back to
 `.message()` for a rendered string:

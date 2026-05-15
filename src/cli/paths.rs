@@ -7,6 +7,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Recursively find all .silt files in a directory.
+///
+/// Skips directories that the LSP preloader also skips (the shared
+/// `silt::file_discovery::should_skip_dir` policy): `target/`, `.git/`,
+/// `node_modules/`, and anything under `fuzz/corpus/`. Without that
+/// filter, `silt fmt <dir>` would happily rewrite vendored or generated
+/// `.silt` files (a workspace that vendors a sibling silt project under
+/// `vendor/silt-src/target/`, or has a `.silt` artefact deposited under
+/// `target/`, would otherwise see its contents rewritten by an
+/// unsuspecting `silt fmt .`), and `silt test` would try to run them.
+/// Audit round 87 LATENT.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     let mut results = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -15,6 +25,9 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
+            if silt::file_discovery::should_skip_dir(&path) {
+                continue;
+            }
             results.extend(find_silt_files(&path));
         } else {
             let name = path.to_string_lossy().to_string();
