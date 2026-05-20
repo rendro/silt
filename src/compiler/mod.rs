@@ -444,6 +444,19 @@ pub struct Compiler {
     /// enums (Result, Option, IoError, etc.) support the same qualifier
     /// syntax as user-declared enums.
     known_enum_variants: HashMap<String, HashSet<String>>,
+    /// Names of known unit (nullary) enum variants — i.e. those
+    /// registered globally as `Value::Variant(name, [])`. Used to gate
+    /// the bare-variant method-dispatch rewrite: `Red.display()` must
+    /// lower to `GetGlobal("Red"); CallMethod("display", 1)` rather
+    /// than the qualified-global `GetGlobal("Red.display")` (which
+    /// produces a runtime `undefined global: Red.display`). Only unit
+    /// variants are tracked here; payload variants like `Blue(5)` go
+    /// through the receiver-expression path naturally because their
+    /// receiver is `ExprKind::Call(Blue, [5])`, not `ExprKind::Ident`.
+    /// Seeded from `module::builtin_*_enum_variants_with_arity()` so
+    /// builtin unit variants (`None`, `IoInterrupted`, etc.) are also
+    /// recognised.
+    known_unit_variants: HashSet<String>,
     /// Round 64 item 6A: producer-side typecheck snapshots for every
     /// user module the compiler has loaded. Keyed by the module name
     /// as it appears in `import` statements. Populated incrementally
@@ -482,6 +495,29 @@ fn initial_known_enum_variants() -> HashMap<String, HashSet<String>> {
     map
 }
 
+/// Seed `known_unit_variants` with all builtin nullary variants. Routes
+/// through the arity-aware registries so adding a new builtin variant
+/// (whether stdlib-error or prelude) automatically gates the
+/// bare-variant method-dispatch rewrite — no edit here is required.
+fn initial_known_unit_variants() -> HashSet<String> {
+    let mut set = HashSet::new();
+    for (_enum_name, variants) in module::builtin_error_enum_variants_with_arity() {
+        for (vname, arity) in *variants {
+            if *arity == 0 {
+                set.insert((*vname).to_string());
+            }
+        }
+    }
+    for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity() {
+        for (vname, arity) in *variants {
+            if *arity == 0 {
+                set.insert((*vname).to_string());
+            }
+        }
+    }
+    set
+}
+
 impl Default for Compiler {
     fn default() -> Self {
         Self::new()
@@ -509,6 +545,7 @@ impl Compiler {
             module_private_fns: HashMap::new(),
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
+            known_unit_variants: initial_known_unit_variants(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
@@ -547,6 +584,7 @@ impl Compiler {
             module_private_fns: HashMap::new(),
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
+            known_unit_variants: initial_known_unit_variants(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
@@ -847,6 +885,11 @@ impl Compiler {
                                 let val_idx = self.add_constant(val, span)?;
                                 self.current_chunk()
                                     .emit_op_u16(Op::Constant, val_idx, span);
+                                // Track for the bare-variant method-dispatch
+                                // rewrite in `Call` codegen — so `Red.display()`
+                                // lowers to a value-method call rather than the
+                                // qualified-global `GetGlobal("Red.display")`.
+                                self.known_unit_variants.insert(vname.clone());
                             } else {
                                 // Variant constructor
                                 let val = Value::VariantConstructor(vname.clone(), arity);
@@ -2205,6 +2248,40 @@ impl Compiler {
                             self.current_chunk().emit_op(Op::Call, span);
                             self.current_chunk().emit_u8(argc, span);
                         }
+                    } else if let ExprKind::Ident(name) = &receiver.kind
+                        && is_module_call
+                        && self.known_unit_variants.contains(&resolve(*name))
+                    {
+                        // Bare unit-variant method call: `Red.display(args)`
+                        // where `Red` is a known nullary variant. Push the
+                        // variant value as receiver and dispatch via
+                        // `CallMethod`, which the VM routes through
+                        // `__type_of__<tag>` to find `<EnumName>.display`.
+                        // Without this rewrite, the `is_module_call` branch
+                        // below would emit `GetGlobal("Red.display")` and
+                        // fail at runtime with `undefined global`.
+                        let variant_str = resolve(*name);
+                        if args.len() >= u8::MAX as usize {
+                            return Err(CompileError {
+                                message: format!(
+                                    "method call has {} arguments (plus receiver); silt calls are limited to 255",
+                                    args.len()
+                                ),
+                                span,
+                            });
+                        }
+                        let var_idx = self.add_constant(Value::String(variant_str), span)?;
+                        self.current_chunk()
+                            .emit_op_u16(Op::GetGlobal, var_idx, span);
+                        for arg in args {
+                            self.compile_expr(arg)?;
+                        }
+                        let argc = (args.len() + 1) as u8; // receiver + args
+                        let method_idx =
+                            self.add_constant(Value::String(resolve(*method)), span)?;
+                        self.current_chunk()
+                            .emit_op_u16(Op::CallMethod, method_idx, span);
+                        self.current_chunk().emit_u8(argc, span);
                     } else if is_module_call {
                         if let ExprKind::Ident(module) = &receiver.kind {
                             // Gate: require import for builtin modules

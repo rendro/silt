@@ -52,13 +52,13 @@ it.
 Three forms:
 
 ```silt
-import math                   -- qualified:  math.add(1, 2)
-import math.{ add, Point }    -- direct:     add(1, 2)
-import math as m              -- aliased:    m.add(1, 2)
+import geometry                   -- qualified:  geometry.add(1, 2)
+import geometry.{ add, Point }    -- direct:     add(1, 2)
+import geometry as g              -- aliased:    g.add(1, 2)
 ```
 
-`import math.{ add }` brings only `add` into scope. To also use other items
-as `math.sub`, add a separate `import math`.
+`import geometry.{ add }` brings only `add` into scope. To also use other
+items as `geometry.sub`, add a separate `import geometry`.
 
 ## Multi-file projects
 

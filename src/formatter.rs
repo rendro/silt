@@ -5912,17 +5912,6 @@ fn escape_string(s: &str) -> String {
         .replace('}', "\\}")
 }
 
-fn precedence(op: BinOp) -> u8 {
-    match op {
-        BinOp::Or => 1,
-        BinOp::And => 2,
-        BinOp::Eq | BinOp::Neq => 3,
-        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 4,
-        BinOp::Add | BinOp::Sub => 5,
-        BinOp::Mul | BinOp::Div | BinOp::Mod => 6,
-    }
-}
-
 /// Binding powers mirroring `parse_expr_bp` in src/parser.rs. These are
 /// the parser's `(l_bp, r_bp)` pairs for each infix/postfix construct.
 /// When re-emitting `<child> OP ...` or `... OP <child>`, a child whose
@@ -6006,22 +5995,15 @@ fn paren_wrap_if_needed(expr: &Expr, required_min_bp: u8, depth: usize) -> Strin
 }
 
 fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: usize) -> String {
-    // 1) Same-family Binary-within-Binary precedence (existing behavior).
-    if let ExprKind::Binary(_, child_op, _) = &expr.kind {
-        let parent_prec = precedence(parent_op);
-        let child_prec = precedence(*child_op);
-        // Need parens if child has lower precedence, or same precedence
-        // on the right (for left-associative operators).
-        if child_prec < parent_prec || (child_prec == parent_prec && !is_left) {
-            return format!("({})", format_expr(expr, depth));
-        }
-    }
-    // 2) Cross-family: the child might be a lower-bp construct (FloatElse,
-    //    Range, Pipe, Ascription, QuestionMark). Compute the parent
-    //    Binary position's required min_bp and wrap if the child's top bp
-    //    is lower. All our Binary operators are left-associative
-    //    (l_bp, l_bp+1), so the left child uses l_bp and the right child
-    //    uses l_bp+1.
+    // Compute the parent Binary position's required min_bp and wrap the
+    // child if its top binding power is lower. All Binary operators are
+    // left-associative `(l_bp, l_bp+1)`, so the left child uses `l_bp`
+    // and the right child uses `l_bp+1`. This single check subsumes both
+    // the same-family Binary-within-Binary case (where
+    // `expr_top_l_bp(child) == bp::binop_l_bp(child_op)`) and the cross-
+    // family case (FloatElse, Range, Pipe, Ascription, QuestionMark) —
+    // round 88 collapsed an earlier dual-encoded same-family branch into
+    // this one. See `bp::binop_l_bp` for the single source of truth.
     let parent_l_bp = bp::binop_l_bp(parent_op);
     let required = if is_left {
         parent_l_bp

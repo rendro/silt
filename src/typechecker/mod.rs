@@ -641,12 +641,15 @@ pub struct TypeChecker {
     pub(super) last_field_access_was_method: bool,
     /// Trait-orphan check (round 63 item 5): the package symbol whose
     /// source we're currently typechecking. `Some(pkg)` is set by
-    /// `check_with_package` when the compiler invokes the typechecker
-    /// for an imported module so per-package decls (traits/enums/
-    /// records) are stamped with the right `defined_in`. `None` means
-    /// "scratch / REPL / ad-hoc script": treat every decl as local
-    /// (sentinel `__builtin__`) so the orphan rule never trips on a
-    /// program that has no package context.
+    /// `check_with_package_and_imports_options_resolver` (the
+    /// production entrypoint used by the compiler, CLI, and LSP) when
+    /// the typechecker is invoked for an imported module so per-package
+    /// decls (traits/enums/records) are stamped with the right
+    /// `defined_in`. (`check_with_package` is a test-only convenience
+    /// wrapper around the same plumbing.) `None` means "scratch /
+    /// REPL / ad-hoc script": treat every decl as local (sentinel
+    /// `__builtin__`) so the orphan rule never trips on a program that
+    /// has no package context.
     pub(super) current_package: Option<Symbol>,
     /// Round 56 item 4: the set of module names visible through `import`
     /// statements in the current program. Populated at the start of
@@ -2717,12 +2720,14 @@ impl TypeChecker {
         // Built-in registration must run with `current_package = None`
         // so every built-in trait/enum/record decl is stamped with the
         // `__builtin__` sentinel via `defining_package()`. Without this
-        // RAII swap, calling `check_with_package(prog, Some("myapp"))`
-        // would stamp `Display` (and every other built-in) with
-        // `defined_in = "myapp"`, defeating the orphan rule's
-        // built-in counterparty arm: `trait Display for List(a)` in
-        // user code would then look "trait-local" and silently
-        // register. Round 63 item 5.
+        // RAII swap, calling
+        // `check_with_package_and_imports_options_resolver(prog, Some("myapp"), …)`
+        // (the production entrypoint; `check_with_package` is the
+        // test-only convenience wrapper) would stamp `Display` (and
+        // every other built-in) with `defined_in = "myapp"`, defeating
+        // the orphan rule's built-in counterparty arm: `trait Display
+        // for List(a)` in user code would then look "trait-local" and
+        // silently register. Round 63 item 5.
         let saved_current_pkg = self.current_package.take();
 
         // Register builtins in the type environment
@@ -4256,12 +4261,16 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::Record(name, fields) => {
-                if visiting.contains(name) {
-                    let mut chain = visiting.clone();
-                    chain.push(*name);
-                    return Some(chain);
-                }
+            Type::Record(_name, fields) => {
+                // Dead-arm cleanup (round 88 item D3): a prior version
+                // also tested `visiting.contains(name)` here, but
+                // `visiting` is seeded only with alias-decl names and
+                // `register_type_decl` rejects duplicate top-level
+                // names — so an alias name can never collide with a
+                // record name. The guard was unreachable. Field
+                // recursion below remains: it descends into nested
+                // alias references inside record fields, which IS how
+                // a real alias cycle can route through a record.
                 for (_, t) in fields {
                     if let Some(c) = self.find_alias_cycle(t, visiting) {
                         return Some(c);

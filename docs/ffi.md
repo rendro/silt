@@ -13,7 +13,7 @@ functions that are callable from silt code with the same syntax as builtins.
 ## Quick Start
 
 ```rust
-use silt::{Vm, Value, VmError};
+use silt::{Vm, Value};
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;

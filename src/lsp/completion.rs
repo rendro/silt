@@ -782,6 +782,128 @@ mod tests {
         assert!(all.contains(&"message".to_string()), "got: {all:?}");
     }
 
+    /// Source of `src/lsp/completion.rs` itself, used by the round-88
+    /// structural parity lock below to derive `canon_names` from the
+    /// **actual match arms** of `auto_derived_methods_for` rather than
+    /// a hand-rolled list. See
+    /// `fallback_builtin_methods_covers_auto_derive_union`.
+    const COMPLETION_RS_SRC: &str = include_str!("./completion.rs");
+
+    /// Extract every quoted canonical-name literal from the body of
+    /// `fn auto_derived_methods_for` in this file's source text. Returns
+    /// the set of names that appear on the LHS of a match arm (i.e.
+    /// every `"X"` token between the `match canon_name {` line and the
+    /// closing `_ => &[]` arm).
+    ///
+    /// Round-88 hardening: previously, `canon_names` in the parity test
+    /// was a hand-written `const &[&str]` of 10 names. If a new arm was
+    /// added to `auto_derived_methods_for` (e.g. `"Channel" => &["wakable"]`)
+    /// without updating `canon_names`, the union below would be computed
+    /// over the stale list and miss the new method — the equality check
+    /// against `FALLBACK_BUILTIN_METHODS` would still pass against an
+    /// equally stale const, and the regression would slip through.
+    /// Deriving `canon_names` from the source ensures the two sides
+    /// can't drift independently.
+    fn auto_derive_arm_names_from_source() -> Vec<String> {
+        let needle = "fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {";
+        let start = COMPLETION_RS_SRC.find(needle).expect(
+            "completion.rs no longer contains `fn auto_derived_methods_for(...)` — \
+             has the function been renamed or its signature changed? Update this lock.",
+        );
+        // Walk brace depth from the opening `{` to find the function's
+        // closing `}` so we only scan within the function body.
+        let bytes = COMPLETION_RS_SRC.as_bytes();
+        let mut i = start + needle.len() - 1; // points at the opening `{`
+        let mut depth = 0i32;
+        let mut end = i;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        assert!(
+            end > start,
+            "could not locate closing brace of `auto_derived_methods_for`"
+        );
+        let body = &COMPLETION_RS_SRC[start..end];
+        // The body contains a `match canon_name { ... }`. We want only
+        // the names on the LHS (between `match canon_name {` and the
+        // `_ => &[]` wildcard arm); the RHS arrays hold method names
+        // like `"display"` which we must NOT mis-classify as canonical
+        // type names. Slice between the match-block braces explicitly.
+        let match_head = "match canon_name {";
+        let match_start = body
+            .find(match_head)
+            .expect("auto_derived_methods_for no longer contains `match canon_name {` — update this lock.");
+        // Find the matching `}` for the match block.
+        let mbytes = body.as_bytes();
+        let mut j = match_start + match_head.len() - 1; // points at `{`
+        let mut d = 0i32;
+        let mut match_end = j;
+        while j < mbytes.len() {
+            match mbytes[j] {
+                b'{' => d += 1,
+                b'}' => {
+                    d -= 1;
+                    if d == 0 {
+                        match_end = j + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let match_body = &body[match_start..match_end];
+
+        // Walk the match body line by line. For every line whose
+        // arm-LHS ends with `=>`, extract every `"Foo"` literal on the
+        // LHS as a canonical name. Skip the wildcard `_ => &[]` arm.
+        let mut out = Vec::new();
+        for line in match_body.lines() {
+            let trimmed = line.trim();
+            // Only arm-head lines (those containing `=>`) carry LHS
+            // type-name literals. RHS-only lines like `&["display", ...]`
+            // never appear above `=>`, so a simple split is safe.
+            let Some(arrow_at) = trimmed.find("=>") else {
+                continue;
+            };
+            let lhs = &trimmed[..arrow_at];
+            // Skip wildcard arm.
+            if lhs.trim().starts_with('_') {
+                continue;
+            }
+            // Extract every `"..."` token on the LHS.
+            let mut chars = lhs.char_indices().peekable();
+            while let Some((idx, c)) = chars.next() {
+                if c == '"' {
+                    // Scan until the closing quote.
+                    let rest = &lhs[idx + 1..];
+                    if let Some(close) = rest.find('"') {
+                        let name = &rest[..close];
+                        if !name.is_empty() {
+                            out.push(name.to_string());
+                        }
+                        // Advance the iterator past the closing quote.
+                        for _ in 0..close + 1 {
+                            chars.next();
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Parity lock: `FALLBACK_BUILTIN_METHODS` must equal the union of
     /// every method name returned by `auto_derived_methods_for` across
     /// every canonical-name arm, plus `"message"` (which comes from
@@ -799,17 +921,37 @@ mod tests {
     /// dynamically from `auto_derived_methods_for` and comparing to
     /// the static const closes that gap: adding to either side without
     /// the other now fails this test.
+    ///
+    /// Round-88 hardening: `canon_names` is no longer a hand-written
+    /// list — it is parsed from the **actual match arms** of
+    /// `auto_derived_methods_for` via `include_str!`. If a new arm is
+    /// added (e.g. `"Channel" => &["wakable"]`) without updating any
+    /// hand-rolled list, the parsed `canon_names` automatically grows
+    /// to include `"Channel"`, the union picks up `"wakable"`, and the
+    /// equality check against `FALLBACK_BUILTIN_METHODS` fails until
+    /// the const is updated. The two sides cannot drift independently.
     #[test]
     fn fallback_builtin_methods_covers_auto_derive_union() {
-        // Every canonical name with a non-empty arm in
-        // `auto_derived_methods_for` (see the `match` at the function's
-        // body — keep this list in sync with the arms there).
-        let canon_names = [
-            "Int", "Float", "ExtFloat", "Bool", "String", "Unit", "List", "Tuple", "Map", "Set",
-        ];
+        // Drive `canon_names` from the source of `auto_derived_methods_for`
+        // rather than a hand-rolled list (round-88 LATENT-lock fix).
+        let canon_names = auto_derive_arm_names_from_source();
+        assert!(
+            !canon_names.is_empty(),
+            "auto_derive_arm_names_from_source returned no names — \
+             the source-scan parser is broken or the match has been removed."
+        );
+
         let mut expected: HashSet<String> = HashSet::new();
         for name in &canon_names {
-            for m in auto_derived_methods_for(name) {
+            let methods = auto_derived_methods_for(name);
+            assert!(
+                !methods.is_empty(),
+                "source-scanned canonical name `{name}` resolves to an \
+                 empty arm in auto_derived_methods_for — the parser \
+                 picked up a stray string literal (bug in \
+                 auto_derive_arm_names_from_source)."
+            );
+            for m in methods {
                 expected.insert((*m).to_string());
             }
         }
@@ -827,23 +969,81 @@ mod tests {
         assert_eq!(
             actual, expected,
             "FALLBACK_BUILTIN_METHODS must equal union(auto_derived_methods_for arms) ∪ {{\"message\"}}.\n\
+             canon_names (source-scanned): {canon_names:?}\n\
              actual:   {actual:?}\n\
              expected: {expected:?}"
         );
+    }
 
-        // Sanity: every canonical name in the harness above actually
-        // resolves to a non-empty arm. Catches the case where someone
-        // renames an arm and forgets to update this list — the union
-        // would silently shrink and the equality check above might
-        // still pass against a stale const.
+    /// Round-88 meta-lock for `fallback_builtin_methods_covers_auto_derive_union`.
+    ///
+    /// Demonstrates that the source-scan-driven parity check would
+    /// reject a new arm if it isn't reflected in `FALLBACK_BUILTIN_METHODS`.
+    /// We simulate the drift scenario by:
+    ///   1. Taking the real source-scanned `canon_names`.
+    ///   2. Pretending a new arm `"Channel" => &["wakable"]` has been
+    ///      added by computing what the expected union would look like
+    ///      if `auto_derived_methods_for("Channel")` returned a new
+    ///      method `"wakable"`.
+    ///   3. Asserting that union ≠ current `FALLBACK_BUILTIN_METHODS`
+    ///      — i.e. the drift would be caught by the parity lock above.
+    ///
+    /// If this test ever fails, it means either:
+    ///   * `"wakable"` was legitimately added to the fallback const
+    ///     (rename the simulated method here), OR
+    ///   * the source-scan parser is silently returning an empty list
+    ///     and the parity lock above is no longer load-bearing.
+    #[test]
+    fn auto_derive_arm_source_scan_would_catch_new_arm_drift() {
+        let canon_names = auto_derive_arm_names_from_source();
+        assert!(
+            !canon_names.is_empty(),
+            "source-scan returned no names — parser is broken; the \
+             parity lock would silently pass against any stale const."
+        );
+
+        // Sanity: every scanned name resolves to a real (non-empty)
+        // arm. Catches false-positive extractions (e.g. picking up a
+        // string literal from a comment or a doc reference).
         for name in &canon_names {
             assert!(
                 !auto_derived_methods_for(name).is_empty(),
-                "harness lists `{name}` as a covered arm, but \
-                 auto_derived_methods_for returned an empty slice — \
-                 update the canon_names list to match the match arms."
+                "source-scanned name `{name}` does not correspond to a \
+                 real arm in auto_derived_methods_for — the parser is \
+                 picking up stray string literals."
             );
         }
+
+        // Simulate adding a new arm `"Channel" => &["wakable"]` without
+        // touching `FALLBACK_BUILTIN_METHODS`. The simulated union must
+        // differ from the current const, proving the parity lock above
+        // would catch the drift.
+        let mut simulated: HashSet<String> = HashSet::new();
+        for name in &canon_names {
+            for m in auto_derived_methods_for(name) {
+                simulated.insert((*m).to_string());
+            }
+        }
+        simulated.insert("message".to_string());
+        // Pretend a future arm added `"wakable"` as a method.
+        simulated.insert("wakable".to_string());
+
+        let actual: HashSet<String> = FALLBACK_BUILTIN_METHODS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+
+        assert_ne!(
+            simulated, actual,
+            "Meta-lock failure: a simulated new method `\"wakable\"` was \
+             added to the expected union, but `FALLBACK_BUILTIN_METHODS` \
+             already contains it. Either the fallback const is now a \
+             superset of the auto-derive union (the parity lock above \
+             would still pass against drift in that direction — fix \
+             the lock to assert strict equality, not just superset), \
+             or `\"wakable\"` was legitimately added and this meta-lock \
+             needs a different placeholder method name."
+        );
     }
 
     /// `canonicalize_target_name` mirrors the typechecker's reduction

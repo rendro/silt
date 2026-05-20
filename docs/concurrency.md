@@ -906,15 +906,21 @@ fn spawn_worker(id, jobs, outcomes) {
   task.spawn(fn() { worker_body(id, jobs, outcomes) })
 }
 
-fn supervise(jobs, outcomes, remaining_restarts) {
+fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
+  when outstanding > 0 else { return }
   when let Message((id, outcome)) = channel.receive(outcomes) else { return }
   match outcome {
-    Finished -> supervise(jobs, outcomes, remaining_restarts)
+    Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
     Crashed(msg) -> {
       println("worker {id} failed: {msg}")
-      when remaining_restarts > 0 else { return }
+      when remaining_restarts > 0 else {
+        -- restart budget exhausted: drop this worker without respawning
+        supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
+        return
+      }
       spawn_worker(id, jobs, outcomes)
-      supervise(jobs, outcomes, remaining_restarts - 1)
+      -- restart replaces the crashed worker 1-for-1: outstanding unchanged
+      supervise(jobs, outcomes, outstanding, remaining_restarts - 1)
     }
   }
 }
@@ -926,7 +932,10 @@ fn main() {
   spawn_worker(1, jobs, outcomes)
   spawn_worker(2, jobs, outcomes)
 
-  let sup = task.spawn(fn() { supervise(jobs, outcomes, 3) })
+  -- Two workers are spawned, so two outcomes are expected before the
+  -- supervisor returns. Each restart-on-Crashed adds one more outcome
+  -- to wait for; the bounded restart budget caps that growth.
+  let sup = task.spawn(fn() { supervise(jobs, outcomes, 2, 3) })
 
   channel.send(jobs, "a")
   channel.send(jobs, "b")

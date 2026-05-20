@@ -709,10 +709,23 @@ impl TypeChecker {
                 for (i, super_name) in info.supertraits.iter().enumerate() {
                     let arg_exprs = info.supertrait_args.get(i);
                     let resolved_args: Vec<Type> = match arg_exprs {
-                        Some(exprs) if !exprs.is_empty() => exprs
-                            .iter()
-                            .map(|te| resolve_supertrait_arg(te, &info, &base_args))
-                            .collect(),
+                        Some(exprs) if !exprs.is_empty() => {
+                            // LATENT (round 88): before resolving, walk each
+                            // supertrait-arg TypeExpr and emit a diagnostic
+                            // when a bare parametric type name (e.g. `Box`
+                            // where `type Box(a) { ... }`) is used without
+                            // its type arguments — the free resolver would
+                            // otherwise silently produce a 0-arity Generic
+                            // that fails to match any impl downstream with
+                            // no user-facing error.
+                            for te in exprs.iter() {
+                                self.check_supertrait_arg_parametric_arity(te, &info);
+                            }
+                            exprs
+                                .iter()
+                                .map(|te| resolve_supertrait_arg(te, &info, &base_args))
+                                .collect()
+                        }
                         _ => continue,
                     };
                     self.trait_arg_bindings
@@ -4754,6 +4767,93 @@ impl TypeChecker {
                     let rest_ty = self.apply(&rest_ty);
                     env.define(*rest_name, Scheme::mono(rest_ty));
                 }
+            }
+        }
+    }
+
+    /// LATENT (round 88): walk a supertrait-arg `TypeExpr` and emit a
+    /// diagnostic at every `Named(sym)` that refers to a *parametric*
+    /// user-defined type (enum, record, or alias with arity > 0) used
+    /// without its arguments — e.g. `trait Sub: Super(Box)` where
+    /// `type Box(a) { ... }`. `resolve_supertrait_arg` falls through
+    /// such names to `Type::Generic(sym, [])`, which then never matches
+    /// any downstream impl's actual args, so the obligation silently
+    /// goes unsatisfied. With this check the user sees a clean arity
+    /// diagnostic at the supertrait declaration's span instead.
+    ///
+    /// Names that map to a trait param (`info.params`), builtin
+    /// primitives, or any name we don't recognise are left to the
+    /// existing handling — the latter are diagnosed elsewhere as
+    /// "unknown type" at the type-expr resolve site.
+    ///
+    /// Skips emission when the same message+span is already in
+    /// `self.errors` so multiple constrained fn-body passes (one per
+    /// fn whose param is bound on the trait) don't pile on duplicates.
+    pub(super) fn check_supertrait_arg_parametric_arity(
+        &mut self,
+        te: &TypeExpr,
+        trait_info: &TraitInfo,
+    ) {
+        match &te.kind {
+            TypeExprKind::Named(sym) => {
+                // Trait params are substituted, not type references.
+                if trait_info.params.iter().any(|p| p == sym) {
+                    return;
+                }
+                // Builtins like Int/Float/String are 0-arity by design.
+                match resolve(*sym).as_str() {
+                    "Int" | "Float" | "Bool" | "String" => return,
+                    _ => {}
+                }
+                let arity = if let Some(info) = self.enums.get(sym) {
+                    info.params.len()
+                } else if let Some(ids) = self.record_param_var_ids.get(sym) {
+                    ids.len()
+                } else if let Some(info) = self.resolver.lookup_alias(*sym) {
+                    info.params.len()
+                } else {
+                    // Unknown name — leave to other diagnostics.
+                    return;
+                };
+                if arity == 0 {
+                    return;
+                }
+                let msg = format!(
+                    "type '{}' expects {} {}, got 0 in supertrait bound",
+                    resolve(*sym),
+                    arity,
+                    plural(arity, "type argument", "type arguments"),
+                );
+                let already = self
+                    .errors
+                    .iter()
+                    .any(|e| e.message == msg && e.span == te.span);
+                if !already {
+                    self.error(msg, te.span);
+                }
+            }
+            TypeExprKind::Generic(_, args) => {
+                for a in args {
+                    self.check_supertrait_arg_parametric_arity(a, trait_info);
+                }
+            }
+            TypeExprKind::Tuple(elems) => {
+                for e in elems {
+                    self.check_supertrait_arg_parametric_arity(e, trait_info);
+                }
+            }
+            TypeExprKind::Function(params, ret) => {
+                for p in params {
+                    self.check_supertrait_arg_parametric_arity(p, trait_info);
+                }
+                self.check_supertrait_arg_parametric_arity(ret, trait_info);
+            }
+            TypeExprKind::SelfType
+            | TypeExprKind::AssocProj { .. }
+            | TypeExprKind::AnonRecord { .. } => {
+                // These either aren't meaningful as supertrait args
+                // (handled elsewhere) or carry no bare-name parametric
+                // reference at the top level. Nothing to validate here.
             }
         }
     }

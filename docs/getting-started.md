@@ -115,9 +115,9 @@ fn area(shape) {
 Every `.silt` file is a module. Items are private unless marked `pub`. Import a module to use its contents:
 
 ```silt
-import list                    -- qualified:  list.map(xs, f)
-import list.{ map, filter }    -- direct:     map(xs, f)
-import list as l               -- aliased:    l.map(xs, f)
+import geometry                    -- qualified:  geometry.area(3, 4)
+import geometry.{ area, perim }    -- direct:     area(3, 4)
+import geometry as g               -- aliased:    g.area(3, 4)
 ```
 
 `import` brings in both stdlib modules (`list`, `io`, `channel`, …) and your own files. If `src/geometry.silt` defines a `pub fn area`, then any other file in the package can `import geometry` and call `geometry.area(...)`:

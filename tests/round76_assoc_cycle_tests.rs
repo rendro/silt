@@ -74,12 +74,42 @@ fn t1_direct_self_reference_rejected_with_error() {
 fn t1_direct_self_reference_no_stack_overflow_at_runtime_path() {
     let runner = InProcessRunner::new(T1_DIRECT_CYCLE).with_budget(Duration::from_secs(5));
     let outcome = runner.run_trial();
-    // We don't assert success — typecheck rejects it. We assert the
-    // runner returned a verdict at all (i.e. did not abort the
-    // process). The Outcome being constructible is the witness; if
-    // the run aborted via stack overflow the test process would
-    // crash before reaching here.
-    let _ = outcome;
+    // Three positive locks, in decreasing order of "directness":
+    //
+    // 1. The runner returned a verdict at all — reaching this line at
+    //    all is the primary witness that the process didn't abort via
+    //    `fatal runtime error: stack overflow`, which is the
+    //    regression we're guarding.
+    // 2. The trial did not time out. Pre-fix, the typecheck step
+    //    looped forever on the self-referential `AssocProj`; a
+    //    timeout here would mean we re-introduced the looping shape
+    //    (just not the stack-overflow variant).
+    // 3. If the runner produced any error message, it must not be a
+    //    stack-overflow-ish string. The in-process runner catches VM
+    //    panics into `error_message` — a recursive shape that
+    //    overflowed inside the worker thread would surface here as a
+    //    `panic in vm thread: ...stack overflow...` rather than
+    //    aborting the test process. Either form (clean error,
+    //    successful Value, or non-overflow error) is acceptable; the
+    //    regression we lock against is specifically the recursive
+    //    blow-up.
+    assert!(
+        !outcome.timed_out,
+        "self-referential assoc-type compile path timed out — \
+         the typecheck/compile path may have re-introduced a \
+         non-terminating recursion (pre-fix shape, just without \
+         the explicit stack overflow). elapsed={:?}",
+        outcome.elapsed
+    );
+    if let Some(msg) = &outcome.error_message {
+        let lower = msg.to_ascii_lowercase();
+        assert!(
+            !lower.contains("stack overflow"),
+            "self-referential assoc-type lowering caught a panic \
+             whose message mentions stack overflow — the recursive \
+             AssocProj shape is back. error_message={msg}"
+        );
+    }
 }
 
 /// Mutual cycle through two distinct trait/assoc pairs:

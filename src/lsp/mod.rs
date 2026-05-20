@@ -518,6 +518,14 @@ pub fn run() {
     }
 
     server.run();
+    // After `run` returns (the LSP `exit` notification arrived), the
+    // reader thread has already exited but the writer thread is still
+    // parked on its channel's receive. The writer's `Sender` lives
+    // inside `connection.sender`, which `server` owns. Dropping
+    // `server` here closes the channel so the writer thread observes
+    // disconnection and exits — without this, `io_threads.join()`
+    // hangs forever and a graceful client shutdown needs SIGKILL.
+    drop(server);
     if let Err(e) = io_threads.join() {
         eprintln!("silt-lsp: I/O thread error: {e}");
     }
