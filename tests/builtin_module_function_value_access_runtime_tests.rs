@@ -60,14 +60,24 @@
 //! arm of the `match module` in `builtin_module_functions` will fail at
 //! runtime, not just at typecheck.
 //!
-//! `every_typechecker_registration_is_value_accessible` is the
-//! parity-lock proper: it walks the curated set of names called out in
+//! `sampled_typechecker_registrations_are_value_accessible` is a
+//! behavioral SAMPLE: it walks the curated set of names called out in
 //! the round-72 finding (representative of every affected module) and
-//! asserts each binds-as-value-then-prints at runtime. If a future
-//! round adds another `intern("foo.bar")` to a typechecker submodule
-//! without widening `builtin_module_functions`, the test fails with a
-//! clear "undefined global: foo.bar" message and points back to the
-//! fix site.
+//! asserts each binds-as-value-then-prints at runtime via the real
+//! `silt run` pipeline. It proves the bound value is actually callable,
+//! but it does NOT prove completeness — a future `intern("foo.bar")`
+//! added without a matching `builtin_module_functions` arm would slip
+//! past this sample.
+//!
+//! The COMPREHENSIVE parity invariant lives in
+//! `tests/comprehensive_module_function_parity_tests.rs`
+//! (`every_typechecker_module_function_is_value_accessible`). That test
+//! enumerates the typechecker's registrations authoritatively via
+//! `silt::typechecker::builtin_type_signatures()` and asserts each
+//! `module.func` is seeded as a runtime global (present in
+//! `builtin_module_functions` or `builtin_module_constants`), so no
+//! hand-maintenance is required and the round-72 class cannot silently
+//! re-open.
 //!
 //! ## Companion
 //!
@@ -182,20 +192,30 @@ fn main() {
     );
 }
 
-/// Parity-lock proper: every name from the round-72 finding (one
-/// representative per affected module) binds as a value at runtime.
-/// Each name is exercised through `let f = <module>.<name>` so the
-/// failure mode is `undefined global: <module>.<name>` — the exact
-/// shape the original bug surfaced. A pure typecheck pass is NOT
-/// enough — the typechecker registers these names regardless; only
-/// the runtime path catches the missing-global drift.
+/// Behavioral smoke test: a SAMPLE of names from the round-72 finding
+/// (one representative per affected module) binds as a value at runtime
+/// AND produces the right result end-to-end. Each name is exercised
+/// through `let f = <module>.<name>` so the failure mode is
+/// `undefined global: <module>.<name>` — the exact shape the original
+/// bug surfaced — and the printed output confirms the bound value is
+/// actually callable, not merely defined.
+///
+/// This is NOT the comprehensive parity lock. It is a hand-curated
+/// sample that exercises the real `silt run` pipeline (compile + VM)
+/// for representative names. The FULL parity invariant — that *every*
+/// typechecker-registered `module.func` is value-accessible — is
+/// locked statically and exhaustively by
+/// `comprehensive_module_function_parity_tests.rs`
+/// (`every_typechecker_module_function_is_value_accessible`), which
+/// enumerates the typechecker's registrations authoritatively instead
+/// of relying on this hand-maintained list.
 ///
 /// If this test fails after a future audit round adds a new
 /// `intern("foo.bar")` to a typechecker submodule, widen the matching
 /// arm of `builtin_module_functions` in `src/module.rs` to include
 /// `bar`. That is the same fix shape applied in round 72 itself.
 #[test]
-fn every_typechecker_registration_is_value_accessible() {
+fn sampled_typechecker_registrations_are_value_accessible() {
     // (module, function, snippet that binds the function as a value
     // and uses it). The call shape varies per function arity — we just
     // need each one to resolve as a global, then exercise it once.

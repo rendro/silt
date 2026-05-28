@@ -2418,6 +2418,26 @@ impl TypeChecker {
                         expr.ty = Some(fresh.clone());
                         return fresh;
                     }
+                    // Round 89 (BROKEN): the same misleading "undefined
+                    // variable '<module>'" appears for USER modules. When the
+                    // LHS is a known imported module (the symbol the user
+                    // wrote — bare name or alias, both tracked in
+                    // `imported_modules`) and the qualified `module.field`
+                    // lookup above failed, the fault is that `field` is not a
+                    // member of that module, not that the module name is an
+                    // undefined variable. Mirror the builtin branch and emit a
+                    // member-specific diagnostic on the field span. User-module
+                    // exports are not enumerable here, so no did-you-mean hint.
+                    if self.imported_modules.contains(&module_name) {
+                        let field_str = resolve(field);
+                        self.error(
+                            format!("unknown function '{field_str}' on module '{module_str}'"),
+                            span,
+                        );
+                        let fresh = self.fresh_var();
+                        expr.ty = Some(fresh.clone());
+                        return fresh;
+                    }
                 }
 
                 // Could be record.field — infer the object type

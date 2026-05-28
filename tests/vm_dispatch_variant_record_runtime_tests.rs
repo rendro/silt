@@ -24,20 +24,51 @@
 //!    structurally. Fix: add `Value::Record(..)` to the allowlist.
 //!
 //! ROUND-62 STATUS: After the auto-derive synthesis pass extension to
-//! generic types, USER enums and records (Color, Point) now route
-//! through the synthesized `<Type>.<method>` global emitted by the
-//! typechecker — `Op::CallMethod`'s qualified-global lookup resolves
-//! the call BEFORE falling through to `dispatch_trait_method`. The
-//! deadness proof (`tests/auto_derive_dead_arm_proof_tests.rs`)
-//! confirms user-type counters stay zero through an exhaustive
-//! barrage. BUILT-IN enums (Weekday and friends), however, are
-//! registered directly into `self.enums` without a user `Decl::Type`
-//! and so are not processed by the synth pass; they continue to hit
-//! the dispatch arms below.
+//! generic types, a fully-derivable USER enum/record (every field
+//! supports the trait) routes through the synthesized `<Type>.<method>`
+//! global emitted by the typechecker — `Op::CallMethod`'s qualified-
+//! global lookup resolves the call BEFORE falling through to
+//! `dispatch_trait_method`. The deadness proof
+//! (`tests/auto_derive_dead_arm_proof_tests.rs`) confirms those user-
+//! type counters stay zero through an exhaustive barrage. BUILT-IN
+//! enums (Weekday and friends), however, are registered directly into
+//! `self.enums` without a user `Decl::Type` and so are not processed
+//! by the synth pass; they continue to hit the dispatch arms below.
 //!
-//! Tests below stay as behaviour locks: the user-typed cases are now
-//! served by the synth global; the Weekday case still serves as the
-//! reachability proof for built-in dispatch.
+//! ROUND-89 RETARGET (this finding): the three user-typed cases below
+//! were originally written over fully-derivable types (Color, Point),
+//! which means they were served by the synth global, NOT the dispatch
+//! arms their names claim to lock — deleting the
+//! `(Variant,Variant)`/`(Record,Record)` compare arms or the
+//! Variant/Record hash allowlist entry would NOT have turned them red.
+//! They were misleading.
+//!
+//! The synth pass at `src/typechecker/mod.rs:5397-5567` gates emission
+//! on per-field trait support (`compare_ok`/`hash_ok`): if ANY field
+//! does not support the trait, NO `<Type>.<method>` global is emitted
+//! and the call provably falls through to `dispatch_trait_method`. The
+//! two `compare_*` tests are RETARGETED onto user types carrying a
+//! non-derivable field (a `Channel` payload on the variant, a tuple
+//! field on the record), so they now genuinely lock the compare arms
+//! AND retain a meaningful ordering assertion (-1) that the
+//! equal-only cases in `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`
+//! do not cover. The variant ordinal registry (registered
+//! unconditionally in `register_type_decl`,
+//! `src/typechecker/mod.rs:3784`, independent of synth gating) still
+//! seeds declaration-order ordinals, so `Value::cmp`
+//! (`src/value.rs:1875/1904`) orders the fall-through cases by ordinal /
+//! field-wise.
+//!
+//! The `hash_runs_on_user_record` case is kept as-is over the fully-
+//! derivable `Point`: retargeting it onto a non-derivable field would
+//! exactly duplicate `hash_runs_on_user_record_with_channel_field` /
+//! `hash_runs_on_user_record_with_tuple_field` in the unsupportable
+//! suite. Its comment is corrected to state plainly that it locks the
+//! SYNTH path (not the dispatch arm); the Variant/Record hash dispatch
+//! arms are locked in `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`.
+//!
+//! The Weekday case still serves as the reachability proof for built-in
+//! variant dispatch.
 //!
 //! These tests exercise the runtime end-to-end via the `silt` CLI
 //! (mirroring `tests/vm_trait_dispatch_runtime_tests.rs`) so they fail
@@ -72,19 +103,29 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 
 // ── Bug 1: Variant-vs-Variant `.compare()` via `Compare` bound ──────
 
-/// `Compare` on a user-declared enum-style variant must dispatch through
-/// the runtime `"compare"` arm. `Value::cmp` orders variants by their
-/// declaration-order ordinal (registered into the global variant-ordinal
-/// registry by the typechecker when it processes the enum decl). For
-/// `type Color { Red, Green, Blue }` we have Red=0, Green=1, Blue=2, so
-/// `Red.compare(Green)` = Less = -1. (Pre-round-61 this was alphabetical
-/// fallback returning 1.)
+/// `Compare` on a user-declared enum must dispatch through the runtime
+/// `(Variant, Variant)` `"compare"` arm. To force fall-through (and so
+/// make this test a genuine lock on that arm rather than on the synth
+/// global), the enum carries a NON-DERIVABLE `Channel(Int)` payload on
+/// one variant: `Channel` has no `Compare` derive, so the synth gate at
+/// `src/typechecker/mod.rs:5478` leaves `compare_ok = false` and emits
+/// NO `Color.compare` global. `Op::CallMethod`'s qualified-global lookup
+/// therefore misses and execution falls through to
+/// `dispatch_trait_method`'s `(Variant, Variant) => receiver.cmp(other)`
+/// arm. `Value::cmp` (`src/value.rs:1904`) orders variants by their
+/// declaration-order ordinal — registered unconditionally in
+/// `register_type_decl` (`src/typechecker/mod.rs:3784`), independent of
+/// synth gating — so for `type Color { Red, Green, Holding(Channel) }`
+/// we have Red=0, Green=1, and `Red.compare(Green)` = Less = -1.
+/// Deleting the `(Variant, Variant)` compare arm turns this red with
+/// `error[runtime]: compare() not supported between Variant and Variant`.
 #[test]
 fn compare_runs_on_user_variant() {
     let out = run_silt_ok(
         "variant_user",
         r#"
-type Color { Red, Green, Blue, }
+import channel
+type Color { Red, Green, Holding(Channel(Int)), }
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() { println(cmp_gen(Red, Green)) }
 "#,
@@ -114,19 +155,32 @@ fn main() { println(cmp_gen(Monday, Friday)) }
 // ── Bug 2: Record-vs-Record `.compare()` via `Compare` bound ────────
 
 /// `Compare` on a user-declared record must dispatch through the
-/// runtime `"compare"` arm. `Value::cmp` orders records by name then
-/// field-wise (`src/value.rs:1537`); `Point { x: 1, y: 2 }` vs
-/// `Point { x: 1, y: 3 }` => Less = -1.
+/// runtime `(Record, Record)` `"compare"` arm. To force fall-through
+/// (so this test genuinely locks that arm and not the synth global),
+/// the record carries a NON-DERIVABLE tuple field `t: (Int, Int)`:
+/// tuples have no user-side `Compare` derive, so the synth gate at
+/// `src/typechecker/mod.rs:5536` leaves `compare_ok = false` and emits
+/// NO `Point.compare` global — `Op::CallMethod` falls through to
+/// `dispatch_trait_method`'s `(Record, Record) => receiver.cmp(other)`
+/// arm. `Value::cmp` (`src/value.rs:1875`) orders records by name then
+/// field-wise; record fields are stored in a `BTreeMap` keyed by field
+/// name, so iteration is alphabetical — field `n` (the Int) is compared
+/// before field `t` (the tuple), which is identical on both sides. With
+/// `n: 1` vs `n: 2`, the Int decides: Less = -1. (Unlike the equal-only
+/// `cmp_gen(d, d) == 0` cases in the unsupportable suite, this asserts a
+/// real ordering, so a broken field-wise comparison would also flag.)
+/// Deleting the `(Record, Record)` compare arm turns this red with
+/// `error[runtime]: compare() not supported between Record and Record`.
 #[test]
 fn compare_runs_on_user_record() {
     let out = run_silt_ok(
         "record_user",
         r#"
-type Point { x: Int, y: Int, }
+type Point { n: Int, t: (Int, Int), }
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() {
-    let p = Point { x: 1, y: 2 }
-    let q = Point { x: 1, y: 3 }
+    let p = Point { n: 1, t: (0, 0) }
+    let q = Point { n: 2, t: (0, 0) }
     println(cmp_gen(p, q))
 }
 "#,
@@ -136,8 +190,21 @@ fn main() {
 
 // ── Bug 3: Record `.hash()` via `Hash` bound ────────────────────────
 
-/// `Hash` on a user-declared record dispatches through the synthesized
-/// `Point.hash` global emitted by the auto-derive pass (round 62).
+/// LOCKS THE SYNTH PATH, NOT THE DISPATCH ARM. `Point` is fully
+/// derivable (both fields are `Int`), so the synth gate at
+/// `src/typechecker/mod.rs:5560` emits a `Point.hash` global and
+/// `Op::CallMethod`'s qualified-global lookup resolves the call there —
+/// it never reaches the Variant/Record hash allowlist in
+/// `dispatch_trait_method`. (Deleting that allowlist entry would NOT
+/// turn this red.) This test therefore locks the auto-derive SYNTH
+/// path; the Variant/Record HASH DISPATCH ARM is locked by
+/// `hash_runs_on_user_record_with_channel_field` /
+/// `hash_runs_on_user_record_with_tuple_field` in
+/// `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`, which use
+/// non-derivable fields to force fall-through. (It is kept user-typed
+/// here rather than retargeted onto a non-derivable field precisely to
+/// avoid duplicating those.)
+///
 /// The synthesized body combines field hashes with a mod-prime FNV-
 /// style combine to avoid integer-overflow under silt's checked
 /// arithmetic — see `combine_hash_expr` in

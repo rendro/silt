@@ -14,7 +14,7 @@ silt's module system maps directly to the filesystem. There is no `module` or
 Each `.silt` file is a module named after the file:
 
 ```silt
--- File: src/math.silt
+-- File: src/geometry.silt
 pub fn add(a, b) { a + b }
 fn helper(x) { x * 2 }   -- private
 ```
@@ -24,7 +24,7 @@ A file in a subdirectory is imported with a dotted path:
 ```
 src/
   main.silt
-  math.silt          -- imported as `math`
+  geometry.silt      -- imported as `geometry`
   net/
     http.silt        -- imported as `net.http`
 ```

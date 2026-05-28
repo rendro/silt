@@ -800,18 +800,144 @@ impl TypeChecker {
         let first_constructors = self.constructors_for_query(query_first, &first_ty);
 
         for ctor in &first_constructors {
-            // Specialize: keep rows whose first column matches this constructor,
-            // replace with the remaining columns.
+            // BROKEN (round 89): the old code kept any row whose first
+            // column matched the ctor NAME (`first_col_matches`, a
+            // name-only compare) and pushed `ps[1..]` into the rest
+            // matrix — DROPPING `ps[0]`'s sub-pattern entirely. So a
+            // refining first-column row like `(Yes(true), _)` collapsed
+            // to the same rest-row as `(Yes(a), _)`, hiding the
+            // `(Yes(false), _)` witness and wrongly certifying the match
+            // exhaustive. The single-column path
+            // (`is_constructor_useful` PatternKind::Constructor) and the
+            // non-enumerable first-column path (B1/B3 above) both perform
+            // full Maranget specialization; only this enumerable-enum
+            // tuple branch was missing it.
+            //
+            // Fix: perform full Maranget specialization. When the ctor is
+            // an enum constructor `Constructor(name, args)` of arity `k`,
+            // decompose each kept row's first-column sub-patterns into `k`
+            // NEW leading columns prepended to `ps[1..]`, and prepend `k`
+            // wildcard columns to the query. Wildcard/ident first-column
+            // rows contribute `k` wildcard columns. A refining sub-pattern
+            // (`Yes(true)`) thus stays a `true` literal in the new leading
+            // column rather than vanishing, so `(Yes(false), _)` is no
+            // longer masked. Bool ctors (`Bool(b)`) and nullary enum
+            // ctors have `k == 0`, leaving the prior behaviour intact.
+            let (ctor_name, ctor_field_count) = match &ctor.kind {
+                PatternKind::Constructor(name, sub) => (Some(*name), sub.len()),
+                _ => (None, 0usize),
+            };
+
+            // Only the rows whose first column matches this ctor are
+            // relevant. If NONE of them refine the ctor's payload (every
+            // matched first column is a wildcard/ident or a ctor whose
+            // sub-patterns are all fully covering), then decomposing the
+            // payload columns would only add wildcard columns — wasteful,
+            // and on a recursive variant type (e.g. `Pair(Expr, Expr)`)
+            // it would re-expand at every level until the depth bound
+            // trips and a genuinely-exhaustive match is reported as
+            // "could not verify". In that case fall back to the cheap
+            // rest-only specialization (sound, because every matched row
+            // covers the entire payload). We decompose ONLY when some
+            // matched row carries a refining sub-pattern (`Yes(true)`),
+            // which is exactly the case the soundness fix must handle.
+            let any_refining_first_col = ctor_field_count > 0
+                && matrix.iter().any(|pat| match &pat.kind {
+                    PatternKind::Tuple(ps)
+                        if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
+                    {
+                        matches!(&ps[0].kind, PatternKind::Constructor(..))
+                            && !Self::is_fully_covering_pattern(&ps[0])
+                    }
+                    _ => false,
+                });
+
+            if !any_refining_first_col {
+                // Cheap path (original behaviour, sound here): keep
+                // matching rows, drop the first column, recurse on the
+                // rest columns only.
+                let mut specialized_rest: Vec<Pattern> = Vec::new();
+                for pat in matrix {
+                    match &pat.kind {
+                        PatternKind::Tuple(ps)
+                            if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
+                        {
+                            specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
+                        }
+                        PatternKind::Wildcard | PatternKind::Ident(_) => {
+                            let wilds: Vec<Pattern> = (0..arity - 1)
+                                .map(|_| synth(PatternKind::Wildcard))
+                                .collect();
+                            specialized_rest.push(synth(PatternKind::Tuple(wilds)));
+                        }
+                        _ => {}
+                    }
+                }
+                let rest_refs: Vec<&Pattern> = specialized_rest.iter().collect();
+                if self.is_useful(&rest_refs, &query_rest, &rest_ty, depth + 1) {
+                    return true;
+                }
+                continue;
+            }
+
+            // Column types for the new query: the ctor's field types
+            // (decomposed from the variant) followed by the existing rest
+            // columns. Combined arity = ctor_field_count + (arity - 1).
+            let mut combined_col_tys: Vec<Type> = Vec::new();
+            if ctor_field_count > 0 {
+                let ctor_sub_ty = match ctor_name {
+                    Some(name) => self.sub_type_for_constructor(name, &first_ty),
+                    None => Type::Error,
+                };
+                if ctor_field_count == 1 {
+                    combined_col_tys.push(ctor_sub_ty);
+                } else if let Type::Tuple(fts) = &ctor_sub_ty {
+                    combined_col_tys.extend(fts.iter().cloned());
+                } else {
+                    combined_col_tys.extend((0..ctor_field_count).map(|_| Type::Error));
+                }
+            }
+            if let Type::Tuple(rest) = &rest_ty {
+                combined_col_tys.extend(rest.iter().cloned());
+            } else {
+                combined_col_tys.push(rest_ty.clone());
+            }
+            let combined_ty = Type::Tuple(combined_col_tys);
+
+            // Query columns: `ctor_field_count` wildcards (the ctor's
+            // wildcard args) followed by the original query rest columns.
+            let mut combined_query: Vec<Pattern> = (0..ctor_field_count)
+                .map(|_| synth(PatternKind::Wildcard))
+                .collect();
+            combined_query.extend(sub_pats[1..].iter().cloned());
+
+            // Specialize: keep rows whose first column matches this
+            // constructor, decomposing the matched first column into its
+            // sub-pattern columns prepended to the remaining columns.
             let mut specialized_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
                 match &pat.kind {
                     PatternKind::Tuple(ps)
                         if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
                     {
-                        specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
+                        // Leading columns from the first column's
+                        // sub-patterns; pad with wildcards when the first
+                        // column is itself a wildcard/ident (or otherwise
+                        // doesn't expose `ctor_field_count` sub-patterns).
+                        let lead: Vec<Pattern> = match &ps[0].kind {
+                            PatternKind::Constructor(_, sub) if sub.len() == ctor_field_count => {
+                                sub.clone()
+                            }
+                            _ => (0..ctor_field_count)
+                                .map(|_| synth(PatternKind::Wildcard))
+                                .collect(),
+                        };
+                        let mut cols = lead;
+                        cols.extend(ps[1..].iter().cloned());
+                        specialized_rest.push(synth(PatternKind::Tuple(cols)));
                     }
                     PatternKind::Wildcard | PatternKind::Ident(_) => {
-                        let wilds: Vec<Pattern> = (0..arity - 1)
+                        let wilds: Vec<Pattern> = (0..ctor_field_count + arity - 1)
                             .map(|_| synth(PatternKind::Wildcard))
                             .collect();
                         specialized_rest.push(synth(PatternKind::Tuple(wilds)));
@@ -820,7 +946,17 @@ impl TypeChecker {
                 }
             }
             let rest_refs: Vec<&Pattern> = specialized_rest.iter().collect();
-            if self.is_useful(&rest_refs, &query_rest, &rest_ty, depth + 1) {
+            // Route the combined (decomposed-ctor-columns ++ rest-columns)
+            // query back through `is_useful` rather than calling
+            // `is_tuple_useful_recursive` directly. `is_useful` enforces
+            // the `MAX_EXHAUSTIVENESS_DEPTH` bound at entry — essential
+            // here because decomposing an enum ctor's sub-columns can
+            // recurse on a recursive variant type (e.g.
+            // `Pair(Expr, Expr)`), and the bound is what stops that from
+            // overflowing the stack. The single-column path delegates
+            // through `is_useful` for the same reason.
+            let combined_query_pat = synth(PatternKind::Tuple(combined_query));
+            if self.is_useful(&rest_refs, &combined_query_pat, &combined_ty, depth + 1) {
                 return true;
             }
         }
