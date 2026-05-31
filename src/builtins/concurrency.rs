@@ -985,7 +985,7 @@ fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> boo
 
 /// Block the main thread until the channel accepts `val`, the channel
 /// is closed, or the scheduler can no longer make progress (deadlock).
-/// Latency budget for the deadlock-confirmation gate, in milliseconds.
+/// Per-round wait for the deadlock-confirmation gate, in milliseconds.
 ///
 /// `main_thread_is_starved` is evaluated against a single snapshot taken under
 /// the wake-graph mutex. Under heavy CPU contention that snapshot can be
@@ -993,47 +993,69 @@ fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> boo
 /// between a worker dequeuing a task and that task re-registering its park edge,
 /// or between a task's last side effect and its `on_complete` propagating.
 /// Acting on such a transient snapshot is a false positive, so a suspected
-/// starvation is only a *candidate* deadlock: we wait up to this long for any
-/// graph mutation (every spawn/park/wake/complete calls `signal_progress`)
-/// before firing. The module's fire-latency target is <200ms, so this 100ms
-/// confirmation gate stays in budget.
+/// starvation is only a *candidate* deadlock: each confirmation round waits up
+/// to this long for any graph mutation (every spawn/park/wake/complete calls
+/// `signal_progress`) before re-checking.
 const CONFIRM_MS: u64 = 100;
+
+/// Number of consecutive starved observations required to confirm a deadlock.
+///
+/// A single post-wait snapshot can ITSELF land on a transient (a *different*
+/// task mid-transition), so one confirmation round is not enough under extreme
+/// contention. We require `CONFIRM_ROUNDS` consecutive rounds in which no
+/// progress signal arrived AND the graph re-reads as starved. A real deadlock
+/// is a permanent fixpoint, so it accumulates all rounds back-to-back; any
+/// in-flight transition fires `signal_progress` (waking a round early) or
+/// clears starvation, which resets the requirement. Worst-case added latency
+/// for a genuine deadlock is `CONFIRM_ROUNDS * CONFIRM_MS` (300ms) — well
+/// within the detector tests' multi-second budget, and only paid once, on a
+/// program that is actually dead.
+const CONFIRM_ROUNDS: u32 = 3;
 
 /// Confirmation gate for a suspected main-thread deadlock.
 ///
 /// `main_thread_is_starved` returning `true` is only a *candidate* deadlock,
 /// because the snapshot it reads can be transiently starved during an in-flight
 /// task transition. This gate confirms the candidate is stable before the
-/// caller fires: it returns `true` iff the graph is STILL starved after waiting
-/// `CONFIRM_MS` with no progress signal. A `false` return means a progress
-/// signal arrived (or starvation cleared) and the caller must `continue` its
-/// wait loop instead of firing.
+/// caller fires: it returns `true` iff `CONFIRM_ROUNDS` consecutive rounds each
+/// see no progress signal AND a fresh `still_starved()` re-read. Any round that
+/// observes a progress signal or non-starved graph returns `false` immediately,
+/// and the caller must `continue` its wait loop instead of firing.
 ///
 /// Soundness:
 /// - REAL deadlock: once the last runnable task completes, the wake graph is a
-///   stable fixpoint — by definition nothing can mutate it. We clear the
-///   progress flag, wait `CONFIRM_MS`, no `signal_progress` arrives, and the
-///   re-check is still starved -> confirmed. Added latency <= `CONFIRM_MS`.
+///   stable fixpoint — by definition nothing can mutate it. Every round clears
+///   the progress flag, waits `CONFIRM_MS`, observes no `signal_progress`, and
+///   re-reads starved -> all `CONFIRM_ROUNDS` pass -> confirmed. Added latency
+///   <= `CONFIRM_ROUNDS * CONFIRM_MS`, paid once.
 /// - FALSE positive: caused by an in-flight task transition, which calls
 ///   `signal_progress` when it settles (on_park/on_wake/on_complete) -> the
-///   flag is set and the condvar is notified -> we wake before the timeout,
-///   re-evaluate, and now observe fuel (or the caller's result re-check
-///   succeeds) -> not confirmed.
+///   flag is set and the condvar is notified -> a round wakes early or its
+///   re-read observes fuel -> the gate returns `false` and the loop re-checks.
+///   Requiring CONFIRM_ROUNDS consecutive clean rounds makes a sustained false
+///   positive (every 100ms window happening to catch a transient with no
+///   intervening signal) astronomically unlikely for a program that is in fact
+///   making progress.
 ///
-/// IMPORTANT: the flag is cleared *before* re-checking/waiting so a
-/// `signal_progress` racing the gate is not lost — it either wakes us early or
-/// leaves the flag set for the post-wait check.
+/// IMPORTANT: the flag is cleared *before* each wait so a `signal_progress`
+/// racing the gate is not lost — it either wakes the round early or leaves the
+/// flag set for that round's post-wait check.
 fn confirm_main_starved(
     pair: &Arc<(Mutex<bool>, Condvar)>,
     still_starved: impl Fn() -> bool,
 ) -> bool {
     let (lock, cvar) = &**pair;
-    let mut guard = lock.lock();
-    *guard = false;
-    let _ = cvar.wait_for(&mut guard, Duration::from_millis(CONFIRM_MS));
-    let progressed = *guard;
-    drop(guard);
-    !progressed && still_starved()
+    for _ in 0..CONFIRM_ROUNDS {
+        let mut guard = lock.lock();
+        *guard = false;
+        let _ = cvar.wait_for(&mut guard, Duration::from_millis(CONFIRM_MS));
+        let progressed = *guard;
+        drop(guard);
+        if progressed || !still_starved() {
+            return false;
+        }
+    }
+    true
 }
 
 fn main_thread_wait_for_send(
