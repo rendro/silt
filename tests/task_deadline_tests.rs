@@ -512,17 +512,27 @@ import task
 import time
 
 fn main() {{
-  let outcome = task.spawn_until(time.ms(50), fn() {{
-    match tcp.connect("{addr}") {{
-      Ok(s) -> match tcp.read(s, 1024) {{
-        Ok(_) -> "unexpected-ok"
-        Err(TcpTimeout) -> "tcp-timeout"
-        Err(other) -> "other:" + other.message()
-      }}
-      Err(e) -> "connect-err:" + e.message()
+  // Connect OUTSIDE the spawn_until budget so the deadline applies only
+  // to the parked `tcp.read` — the actual regression target. With connect
+  // inside the 50ms budget, a slow loopback connect on a loaded CI runner
+  // (observed on the Windows "concurrency" partition) consumed the whole
+  // budget, so the watchdog fired on connect and the program printed
+  // "connect-err:tcp operation timed out" before reaching the read path.
+  // connect's own deadline-at-entry behaviour is covered separately by
+  // test_task_deadline_covers_tcp_connect_at_entry.
+  match tcp.connect("{addr}") {{
+    Ok(s) -> {{
+      let outcome = task.spawn_until(time.ms(50), fn() {{
+        match tcp.read(s, 1024) {{
+          Ok(_) -> "unexpected-ok"
+          Err(TcpTimeout) -> "tcp-timeout"
+          Err(other) -> "other:" + other.message()
+        }}
+      }})
+      println(task.join(outcome))
     }}
-  }})
-  println(task.join(outcome))
+    Err(e) -> println("connect-err:" + e.message())
+  }}
 }}
 "#
     );
