@@ -44,6 +44,7 @@ CONCURRENCY_TESTS=(
   scheduler_race_tests
   concurrency_stress_property_tests
   docs_stdlib_println_parity_tests
+  docs_round88_supervisor_runs_tests
   channel_timeout_tests
   channel_op_shape_negative_tests
   cancel_path_waker_leak_tests
