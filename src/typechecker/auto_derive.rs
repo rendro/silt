@@ -624,7 +624,7 @@ pub(super) fn synth_hash_impl_for_enum(
 /// surface syntax without bypassing the overflow check, each side is
 /// reduced modulo a large prime first:
 ///
-///   ((a mod P) * 31 + (b mod P)) mod (i64-safe bound)
+///   (a mod P) * 31 + (b mod P)
 ///
 /// `P = 1_000_003` (prime, small enough that `P * 31 ≈ 3.1e7` and
 /// `(P * 31) + P` fits in i64 with room to spare). This trades a small
