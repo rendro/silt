@@ -163,19 +163,20 @@ fn supervision_snippet_runs_to_completion_without_deadlock() {
          stdout:\n{stdout}\n\nstderr:\n{stderr}"
     );
 
-    // Both workers process exactly one of the two jobs ("a", "b"); the
-    // exact assignment is scheduler-dependent, so we assert on each
-    // worker's `handled` line independently.
+    // Both JOBS ("a" and "b") must be handled exactly once. We assert on
+    // the jobs, NOT on which worker handled them: the two workers share a
+    // single `jobs` channel via `channel.each`, so assignment is
+    // scheduler-dependent (the snippet says so). Under load one worker can
+    // legitimately grab both jobs before the other wakes — a correct
+    // outcome that an "each worker handled one" assertion would flake on.
+    // What the program actually guarantees is that every job is processed
+    // by some worker.
     assert!(
-        stdout.contains("worker 1 handled"),
-        "stdout must contain a `worker 1 handled <job>` line — worker 1 \
-         is one of the two spawned workers and must have processed one \
-         of {{a, b}}.\nstdout:\n{stdout}"
+        stdout.contains("handled a"),
+        "stdout must show job `a` was handled by some worker.\nstdout:\n{stdout}"
     );
     assert!(
-        stdout.contains("worker 2 handled"),
-        "stdout must contain a `worker 2 handled <job>` line — worker 2 \
-         is one of the two spawned workers and must have processed one \
-         of {{a, b}}.\nstdout:\n{stdout}"
+        stdout.contains("handled b"),
+        "stdout must show job `b` was handled by some worker.\nstdout:\n{stdout}"
     );
 }
