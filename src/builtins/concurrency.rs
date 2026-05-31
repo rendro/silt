@@ -985,6 +985,57 @@ fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> boo
 
 /// Block the main thread until the channel accepts `val`, the channel
 /// is closed, or the scheduler can no longer make progress (deadlock).
+/// Latency budget for the deadlock-confirmation gate, in milliseconds.
+///
+/// `main_thread_is_starved` is evaluated against a single snapshot taken under
+/// the wake-graph mutex. Under heavy CPU contention that snapshot can be
+/// *transiently* starved during a task state transition — e.g. the window
+/// between a worker dequeuing a task and that task re-registering its park edge,
+/// or between a task's last side effect and its `on_complete` propagating.
+/// Acting on such a transient snapshot is a false positive, so a suspected
+/// starvation is only a *candidate* deadlock: we wait up to this long for any
+/// graph mutation (every spawn/park/wake/complete calls `signal_progress`)
+/// before firing. The module's fire-latency target is <200ms, so this 100ms
+/// confirmation gate stays in budget.
+const CONFIRM_MS: u64 = 100;
+
+/// Confirmation gate for a suspected main-thread deadlock.
+///
+/// `main_thread_is_starved` returning `true` is only a *candidate* deadlock,
+/// because the snapshot it reads can be transiently starved during an in-flight
+/// task transition. This gate confirms the candidate is stable before the
+/// caller fires: it returns `true` iff the graph is STILL starved after waiting
+/// `CONFIRM_MS` with no progress signal. A `false` return means a progress
+/// signal arrived (or starvation cleared) and the caller must `continue` its
+/// wait loop instead of firing.
+///
+/// Soundness:
+/// - REAL deadlock: once the last runnable task completes, the wake graph is a
+///   stable fixpoint — by definition nothing can mutate it. We clear the
+///   progress flag, wait `CONFIRM_MS`, no `signal_progress` arrives, and the
+///   re-check is still starved -> confirmed. Added latency <= `CONFIRM_MS`.
+/// - FALSE positive: caused by an in-flight task transition, which calls
+///   `signal_progress` when it settles (on_park/on_wake/on_complete) -> the
+///   flag is set and the condvar is notified -> we wake before the timeout,
+///   re-evaluate, and now observe fuel (or the caller's result re-check
+///   succeeds) -> not confirmed.
+///
+/// IMPORTANT: the flag is cleared *before* re-checking/waiting so a
+/// `signal_progress` racing the gate is not lost — it either wakes us early or
+/// leaves the flag set for the post-wait check.
+fn confirm_main_starved(
+    pair: &Arc<(Mutex<bool>, Condvar)>,
+    still_starved: impl Fn() -> bool,
+) -> bool {
+    let (lock, cvar) = &**pair;
+    let mut guard = lock.lock();
+    *guard = false;
+    let _ = cvar.wait_for(&mut guard, Duration::from_millis(CONFIRM_MS));
+    let progressed = *guard;
+    drop(guard);
+    !progressed && still_starved()
+}
+
 fn main_thread_wait_for_send(
     ch: &Arc<crate::value::Channel>,
     val: Value,
@@ -1072,6 +1123,8 @@ fn main_thread_wait_for_send(
         }
         // Pre-wait starvation check: see `main_thread_wait_for_receive`.
         if main_thread_is_starved(vm, &target) {
+            // Candidate deadlock. First catch a send slot that raced
+            // open between the re-check above and this BFS.
             match ch.try_send(val.clone()) {
                 TrySendResult::Sent => {
                     drop(reg);
@@ -1085,11 +1138,33 @@ fn main_thread_wait_for_send(
                 }
                 TrySendResult::Full => {}
             }
-            drop(reg);
-            unpark_main(vm);
-            return Err(VmError::new(
-                "deadlock on main thread: channel send with no counterparty".into(),
-            ));
+            // Confirm the starvation is STABLE before firing: a single
+            // snapshot can be transiently starved during a task state
+            // transition under load. Wait up to CONFIRM_MS for any
+            // `signal_progress`; only fire if still starved afterward.
+            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
+            match ch.try_send(val.clone()) {
+                TrySendResult::Sent => {
+                    drop(reg);
+                    unpark_main(vm);
+                    return Ok(Value::Unit);
+                }
+                TrySendResult::Closed => {
+                    drop(reg);
+                    unpark_main(vm);
+                    return Err(closed_channel_send_err(ch.id));
+                }
+                TrySendResult::Full => {}
+            }
+            if confirmed {
+                drop(reg);
+                unpark_main(vm);
+                return Err(VmError::new(
+                    "deadlock on main thread: channel send with no counterparty".into(),
+                ));
+            }
+            // Progress signalled or starvation cleared: re-evaluate.
+            continue;
         }
         // Indefinite wait: woken by either our send-waker firing
         // (a real progress event on the channel) or the wake-graph
@@ -1228,6 +1303,9 @@ fn main_thread_wait_for_receive(
         // racing wake might be in flight. This mirrors the pre-Phase-4
         // "give one last try" pattern.
         if main_thread_is_starved(vm, &target) {
+            // Candidate deadlock. First catch a value that raced into
+            // flight (a sender's `try_send` may have landed AND completed
+            // between the re-check above and this BFS).
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     drop(reg);
@@ -1241,11 +1319,33 @@ fn main_thread_wait_for_receive(
                 }
                 TryReceiveResult::Empty => {}
             }
-            drop(reg);
-            unpark_main(vm);
-            return Err(VmError::new(
-                "deadlock on main thread: channel receive with no counterparty".into(),
-            ));
+            // Confirm the starvation is STABLE before firing: a single
+            // snapshot can be transiently starved during a task state
+            // transition under load. Wait up to CONFIRM_MS for any
+            // `signal_progress`; only fire if still starved afterward.
+            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
+            match ch.try_receive() {
+                TryReceiveResult::Value(val) => {
+                    drop(reg);
+                    unpark_main(vm);
+                    return Ok(Value::Variant("Message".into(), vec![val]));
+                }
+                TryReceiveResult::Closed => {
+                    drop(reg);
+                    unpark_main(vm);
+                    return Ok(Value::Variant("Closed".into(), vec![]));
+                }
+                TryReceiveResult::Empty => {}
+            }
+            if confirmed {
+                drop(reg);
+                unpark_main(vm);
+                return Err(VmError::new(
+                    "deadlock on main thread: channel receive with no counterparty".into(),
+                ));
+            }
+            // Progress signalled or starvation cleared: re-evaluate.
+            continue;
         }
         // Indefinite wait — woken by the recv-waker (channel state
         // change) or the wake-graph signal callback (any scheduler
@@ -1321,14 +1421,30 @@ fn main_thread_wait_for_join(
         // join-waker may have fired between the try above and the BFS,
         // racing the `on_complete` that flipped the graph empty.
         if main_thread_is_starved(vm, &target) {
+            // Candidate deadlock. First catch a result that raced into
+            // flight (the join-waker may have fired between the try
+            // above and the BFS, racing the `on_complete`).
             if let Some(result) = handle.try_get() {
                 unpark_main(vm);
                 return result;
             }
-            unpark_main(vm);
-            return Err(VmError::new(
-                "deadlock on main thread: task.join with no progress possible".into(),
-            ));
+            // Confirm the starvation is STABLE before firing: a single
+            // snapshot can be transiently starved during a task state
+            // transition under load. Wait up to CONFIRM_MS for any
+            // `signal_progress`; only fire if still starved afterward.
+            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
+            if let Some(result) = handle.try_get() {
+                unpark_main(vm);
+                return result;
+            }
+            if confirmed {
+                unpark_main(vm);
+                return Err(VmError::new(
+                    "deadlock on main thread: task.join with no progress possible".into(),
+                ));
+            }
+            // Progress signalled or starvation cleared: re-evaluate.
+            continue;
         }
         // Indefinite wait — woken by the join-waker (joinee completed)
         // or the wake-graph signal callback.

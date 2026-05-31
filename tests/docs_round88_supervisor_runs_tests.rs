@@ -131,73 +131,30 @@ fn supervision_snippet_is_extractable_from_concurrency_doc() {
 fn supervision_snippet_runs_to_completion_without_deadlock() {
     let doc = read_concurrency_doc();
     let snippet = extract_supervision_snippet(&doc);
+    let (stdout, stderr, ok) = run_silt_raw("runs", &snippet);
 
-    // Retry-until-success with a deterministic floor on what "success"
-    // means. This is NOT a weak gate — here is why the retry is sound:
-    //
-    //   * A genuinely non-terminating supervisor (the round-88 BROKEN
-    //     shape, or any revert to it) deadlocks DETERMINISTICALLY: the
-    //     scheduler's wake-graph BFS proves no task can drive the joinee
-    //     forward and fires the detector on EVERY run. So a real
-    //     regression fails all ATTEMPTS and this test still fails.
-    //   * The correct (terminating) supervisor can still trip the
-    //     main-thread join deadlock detector as a rare FALSE POSITIVE
-    //     under extreme CPU contention: a worker task can be starved in
-    //     the documented window between dequeue and waker registration
-    //     (`unsettled_tasks`, src/scheduler.rs), during which the BFS
-    //     transiently sees no runnable/IO/pending node and fires
-    //     "task.join with no progress possible" even though the joinee
-    //     was about to make progress. This was observed only on the
-    //     heavily-loaded Windows CI runner, never on a quiescent run.
-    //
-    // Retrying distinguishes the two: the false positive clears on a
-    // subsequent attempt; the real deadlock never does. We accept the
-    // first clean attempt and only fail if EVERY attempt tripped the
-    // detector. (The detector false-positive-under-extreme-contention is
-    // itself a real latent scheduler bug, tracked separately; this test
-    // locks the DOC SNIPPET's termination semantics, not the scheduler's
-    // contention behaviour.)
-    const ATTEMPTS: usize = 5;
-    let mut last: Option<(String, String, bool)> = None;
-    let mut tripped_detector_every_time = true;
-
-    for attempt in 0..ATTEMPTS {
-        let label = format!("runs{attempt}");
-        let (stdout, stderr, ok) = run_silt_raw(&label, &snippet);
-
-        let tripped = stderr.contains("deadlock on main thread")
-            || stderr.contains("task.join with no progress possible");
-        if !tripped {
-            tripped_detector_every_time = false;
-        }
-
-        let workers_ok = stdout.contains("worker 1 handled") && stdout.contains("worker 2 handled");
-
-        if ok && !tripped && workers_ok {
-            // Clean run: the snippet compiled, ran to completion without
-            // tripping the detector, and both workers reported.
-            return;
-        }
-        last = Some((stdout, stderr, ok));
-    }
-
-    let (stdout, stderr, ok) = last.expect("at least one attempt ran");
-
-    // If we got here, no attempt was fully clean. Disambiguate.
+    // Single-shot: the deadlock detector now confirms a suspected
+    // starvation behind a bounded condvar gate (`confirm_main_starved`
+    // in src/builtins/concurrency.rs) before firing, so this correct
+    // program no longer false-fires under load. No retry needed. A
+    // genuine regression (supervisor reverted to a non-terminating
+    // shape) still deadlocks DETERMINISTICALLY and fails this test.
     assert!(
-        !tripped_detector_every_time,
-        "the supervision snippet tripped the join deadlock detector on \
-         all {ATTEMPTS} attempts. A correct supervisor false-positives \
-         only intermittently under load; tripping every time means the \
-         supervisor reverted to a non-terminating shape (the round-88 \
-         BROKEN snippet) — the recursive `channel.receive` loops forever \
-         on a never-closed outcomes channel because `supervise` no longer \
-         returns once the outstanding-worker count reaches zero.\n\
+        !stderr.contains("deadlock on main thread"),
+        "the supervision snippet tripped the deadlock detector. The \
+         supervisor must terminate after every spawned worker has \
+         reported its outcome — the recursive `channel.receive` cannot \
+         loop forever on a never-closed outcomes channel.\n\
          stdout:\n{stdout}\n\nstderr:\n{stderr}"
     );
-    // Detector did NOT trip every time, so the failures are about
-    // exit-status or the worker lines — those are real content failures,
-    // not the load flake. Surface them with the original assertions.
+    assert!(
+        !stderr.contains("task.join with no progress possible"),
+        "the supervision snippet tripped `task.join with no progress \
+         possible`. The supervisor task is blocked on outcomes after \
+         every worker has already finished — the supervise loop must \
+         exit when the outstanding-worker count reaches zero.\n\
+         stdout:\n{stdout}\n\nstderr:\n{stderr}"
+    );
     assert!(
         ok,
         "the supervision snippet must exit 0; the round-88 fix threads \
@@ -205,6 +162,10 @@ fn supervision_snippet_runs_to_completion_without_deadlock() {
          once every spawned worker has reported.\n\
          stdout:\n{stdout}\n\nstderr:\n{stderr}"
     );
+
+    // Both workers process exactly one of the two jobs ("a", "b"); the
+    // exact assignment is scheduler-dependent, so we assert on each
+    // worker's `handled` line independently.
     assert!(
         stdout.contains("worker 1 handled"),
         "stdout must contain a `worker 1 handled <job>` line — worker 1 \
