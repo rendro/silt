@@ -354,10 +354,11 @@ fn strip_ansi(s: &str) -> String {
 /// Falls back to 1 for any byte that doesn't look like a valid leader,
 /// so a malformed input degrades gracefully rather than panicking.
 fn utf8_char_len(b: u8) -> usize {
-    if b < 0x80 {
+    if b < 0xC0 {
+        // ASCII (< 0x80) or a UTF-8 continuation byte (0x80..0xC0):
+        // either way advance by 1 — for a continuation byte this treats
+        // malformed input as a single byte to avoid stalling.
         1
-    } else if b < 0xC0 {
-        1 // continuation byte; treat as 1 to avoid stalling
     } else if b < 0xE0 {
         2
     } else if b < 0xF0 {
