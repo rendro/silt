@@ -39,7 +39,11 @@
 /// existing user muscle memory and downstream tooling that greps for
 /// it (and the regression test at
 /// `tests/round88_disabled_feature_help_tests.rs`) continue to work.
-pub fn disabled_feature_response(args: &[String], feature: &str, usage_text: &str) -> (i32, String) {
+pub fn disabled_feature_response(
+    args: &[String],
+    feature: &str,
+    usage_text: &str,
+) -> (i32, String) {
     for arg in args {
         if arg == "--help" || arg == "-h" {
             return (0, usage_text.to_string());

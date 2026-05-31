@@ -56,10 +56,8 @@ fn extract_doc_above_fn(src: &str, signature_needle: &str) -> String {
 
 #[test]
 fn typechecker_doc_enumerates_every_authoritative_collapse() {
-    let typechecker_doc = extract_doc_above_fn(
-        TYPECHECKER_SRC,
-        "pub(super) fn canonicalize_type_name(",
-    );
+    let typechecker_doc =
+        extract_doc_above_fn(TYPECHECKER_SRC, "pub(super) fn canonicalize_type_name(");
     assert!(
         !typechecker_doc.is_empty(),
         "typechecker-side `canonicalize_type_name` has no doc-comment — \
@@ -72,15 +70,13 @@ fn typechecker_doc_enumerates_every_authoritative_collapse() {
     // typechecker's own function body.
     let required_terms = [
         // Range → List collapse (Phase B).
-        "Range",
-        // Fun → Fn collapse (Round 71 follow-up).
+        "Range", // Fun → Fn collapse (Round 71 follow-up).
         "Fun",
         // () / Unit collapse (Round 75 TYPE-3).
         // Either spelling is sufficient — the doc mentions both, but
         // we assert "Unit" because it's the canonical side and the
         // typechecker doc should always mention it.
-        "Unit",
-        // Phase D user-declared aliases.
+        "Unit", // Phase D user-declared aliases.
         "alias",
     ];
 
@@ -108,10 +104,7 @@ fn authoritative_doc_or_body_mentions_each_collapse_term() {
     // authoritative source ever loses one of these terms (e.g.
     // because a collapse rule was removed), this test fires and
     // forces a coordinated update across both copies.
-    let canonical_doc = extract_doc_above_fn(
-        CANONICAL_SRC,
-        "pub fn canonicalize_type_name(",
-    );
+    let canonical_doc = extract_doc_above_fn(CANONICAL_SRC, "pub fn canonicalize_type_name(");
     // Also grab the function body so the assertion is satisfied
     // whether a term shows up in the doc or in the implementation.
     let body_start = CANONICAL_SRC

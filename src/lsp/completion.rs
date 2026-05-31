@@ -440,8 +440,7 @@ fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
 /// from the `Error` builtin trait, which is NOT covered by
 /// `auto_derived_methods_for` (those arms only mirror
 /// Display/Compare/Equal/Hash for primitives/containers).
-const FALLBACK_BUILTIN_METHODS: &[&str] =
-    &["display", "compare", "equal", "hash", "message"];
+const FALLBACK_BUILTIN_METHODS: &[&str] = &["display", "compare", "equal", "hash", "message"];
 
 /// Return the method names available on a value whose canonical type
 /// name is `canon_name`. Walks `program.decls` for `TraitImpl` entries
@@ -841,9 +840,9 @@ mod tests {
         // like `"display"` which we must NOT mis-classify as canonical
         // type names. Slice between the match-block braces explicitly.
         let match_head = "match canon_name {";
-        let match_start = body
-            .find(match_head)
-            .expect("auto_derived_methods_for no longer contains `match canon_name {` — update this lock.");
+        let match_start = body.find(match_head).expect(
+            "auto_derived_methods_for no longer contains `match canon_name {` — update this lock.",
+        );
         // Find the matching `}` for the match block.
         let mbytes = body.as_bytes();
         let mut j = match_start + match_head.len() - 1; // points at `{`

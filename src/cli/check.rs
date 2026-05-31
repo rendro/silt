@@ -367,3 +367,35 @@ fn utf8_char_len(b: u8) -> usize {
         4
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Round-90 lock: `utf8_char_len` collapses the ASCII (< 0x80) and
+    // continuation-byte (0x80..0xC0) cases into a single `b < 0xC0 => 1`
+    // arm. They were two adjacent identical arms that clippy 1.96 flags as
+    // `if_same_then_else` (an error under CI's `-D warnings`). This pins the
+    // full leading-byte → width mapping so the merge stays a behavioural
+    // no-op and a future edit can't silently widen the continuation-byte
+    // case to a different length.
+    #[test]
+    fn utf8_char_len_maps_leading_bytes_to_widths() {
+        // ASCII (< 0x80) → 1
+        assert_eq!(utf8_char_len(0x00), 1);
+        assert_eq!(utf8_char_len(b'a'), 1);
+        assert_eq!(utf8_char_len(0x7F), 1);
+        // Continuation bytes (0x80..0xC0) → 1 (malformed-input guard)
+        assert_eq!(utf8_char_len(0x80), 1);
+        assert_eq!(utf8_char_len(0xBF), 1);
+        // 2-byte leader (0xC0..0xE0)
+        assert_eq!(utf8_char_len(0xC0), 2);
+        assert_eq!(utf8_char_len(0xDF), 2);
+        // 3-byte leader (0xE0..0xF0)
+        assert_eq!(utf8_char_len(0xE0), 3);
+        assert_eq!(utf8_char_len(0xEF), 3);
+        // 4-byte leader (>= 0xF0)
+        assert_eq!(utf8_char_len(0xF0), 4);
+        assert_eq!(utf8_char_len(0xFF), 4);
+    }
+}

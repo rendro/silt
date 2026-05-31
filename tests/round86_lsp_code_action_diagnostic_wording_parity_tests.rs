@@ -131,9 +131,7 @@ fn wrap_in_ok_matcher_matches_live_typechecker_error() {
     // (src/lsp/code_action.rs:258) requires.
     let src = "fn produce() -> Result(Int, Int) { 21 }\n";
     let tokens = Lexer::new(src).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let errors = typechecker::check(&mut program);
     let messages: Vec<String> = errors
         .into_iter()

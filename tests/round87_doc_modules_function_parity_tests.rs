@@ -36,10 +36,7 @@ fn builtin_modules_table() -> &'static str {
         .find("## Built-in modules")
         .expect("modules.md must contain a `## Built-in modules` heading");
     let rest = &MODULES_MD[start..];
-    let end_rel = rest[1..]
-        .find("\n## ")
-        .map(|i| i + 1)
-        .unwrap_or(rest.len());
+    let end_rel = rest[1..].find("\n## ").map(|i| i + 1).unwrap_or(rest.len());
     &rest[..end_rel]
 }
 
@@ -155,8 +152,7 @@ fn modules_doc_function_refs_exist_per_silt_check() {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        let unknown_fn_marker =
-            format!("unknown function '{func}' on module '{module}'");
+        let unknown_fn_marker = format!("unknown function '{func}' on module '{module}'");
         if combined.contains(&unknown_fn_marker) {
             bogus.push((module.clone(), func.clone(), combined.clone()));
         }

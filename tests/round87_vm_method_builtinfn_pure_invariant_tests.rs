@@ -240,7 +240,10 @@ fn round87_single_qualified_method_builtinfn_registration_site() {
             _ => {}
         }
     }
-    assert!(end > body_start, "could not find end of register_builtins body");
+    assert!(
+        end > body_start,
+        "could not find end of register_builtins body"
+    );
     let body = &DISPATCH_SRC[body_start..=end];
 
     // Count distinct registration sites that construct a `<Type>.method`

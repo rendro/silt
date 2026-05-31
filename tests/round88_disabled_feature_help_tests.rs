@@ -73,8 +73,7 @@ fn help_flag_returns_usage_and_zero_exit_for_repl() {
 fn help_flag_returns_usage_and_zero_exit_for_lsp() {
     let _pid = test_pid();
     let args = vec!["--help".to_string()];
-    let usage =
-        "Usage: silt lsp\n\nStart the silt language server. Communicates over stdio...\n";
+    let usage = "Usage: silt lsp\n\nStart the silt language server. Communicates over stdio...\n";
     let (code, out) = silt::feature_stub::disabled_feature_response(&args, "lsp", usage);
     assert_eq!(code, 0, "--help must exit 0, got {code}");
     assert!(

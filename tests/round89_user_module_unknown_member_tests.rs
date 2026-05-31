@@ -164,7 +164,9 @@ fn main() {
         "expected 'unknown function 'nope' on module 'mylib''; got: {msgs:?}"
     );
     assert!(
-        !msgs.iter().any(|m| m.contains("undefined variable 'mylib'")),
+        !msgs
+            .iter()
+            .any(|m| m.contains("undefined variable 'mylib'")),
         "must NOT emit the misleading 'undefined variable 'mylib''; got: {msgs:?}"
     );
 }

@@ -115,8 +115,8 @@ fn vim_and_vscode_grammars_share_operator_set() {
     // extractor is broken — fix the extractor before debugging
     // grammar drift.
     let baseline: BTreeSet<&'static str> = [
-        "|>", "->", "...", "..", "::", "?", "^", "&&", "||", "==", "!=", "<=", ">=", "!", "+",
-        "-", "*", "/", "%", "=", "<", ">",
+        "|>", "->", "...", "..", "::", "?", "^", "&&", "||", "==", "!=", "<=", ">=", "!", "+", "-",
+        "*", "/", "%", "=", "<", ">",
     ]
     .into_iter()
     .collect();

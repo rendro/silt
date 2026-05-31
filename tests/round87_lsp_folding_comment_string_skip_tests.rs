@@ -249,10 +249,7 @@ fn folding_type_body_with_line_comment_containing_close_brace() {
     //   2:   bar: Int,
     //   3: }
     let src = "type Foo {\n  -- the close } here\n  bar: Int,\n}\n";
-    let folds = folds_for(
-        "file:///tmp/silt_r87_fold_line_comment.silt",
-        src,
-    );
+    let folds = folds_for("file:///tmp/silt_r87_fold_line_comment.silt", src);
     // Exactly one fold (the type decl) and it spans 0..3.
     assert_eq!(
         folds.len(),
@@ -279,10 +276,7 @@ fn folding_type_body_with_block_comment_containing_close_brace() {
     //   2:   bar: Int,
     //   3: }
     let src = "type Foo {\n  {- the close } here -}\n  bar: Int,\n}\n";
-    let folds = folds_for(
-        "file:///tmp/silt_r87_fold_block_comment.silt",
-        src,
-    );
+    let folds = folds_for("file:///tmp/silt_r87_fold_block_comment.silt", src);
     assert_eq!(
         folds.len(),
         1,
@@ -328,10 +322,7 @@ trait Greet for Foo {
   }
 }
 ";
-    let folds = folds_for(
-        "file:///tmp/silt_r87_fold_triple_string.silt",
-        src,
-    );
+    let folds = folds_for("file:///tmp/silt_r87_fold_triple_string.silt", src);
 
     // The fold we care about is the trait-impl span (starts at line 1).
     // It must end on line 5 (the real `}` of the trait impl), not

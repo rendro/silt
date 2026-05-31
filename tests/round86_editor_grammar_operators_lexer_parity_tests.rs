@@ -61,17 +61,17 @@ use std::path::PathBuf;
 /// covered by `collection-prefix` / `siltCollectionPrefix` in the
 /// grammars; they are excluded here.
 const MULTI_CHAR_OPERATORS: &[&str] = &[
-    "==", // EqEq
-    "!=", // NotEq
-    "<=", // LtEq
-    ">=", // GtEq
-    "&&", // AndAnd
-    "||", // OrOr
-    "|>", // Pipe
-    "..", // DotDot
+    "==",  // EqEq
+    "!=",  // NotEq
+    "<=",  // LtEq
+    ">=",  // GtEq
+    "&&",  // AndAnd
+    "||",  // OrOr
+    "|>",  // Pipe
+    "..",  // DotDot
     "...", // DotDotDot — round 86 added
-    "->", // Arrow
-    "::", // ColonColon — round 86 added
+    "->",  // Arrow
+    "::",  // ColonColon — round 86 added
 ];
 
 fn repo_root() -> PathBuf {
@@ -141,7 +141,8 @@ fn multi_char_operator_list_matches_lexer_display_impl() {
     }
     let expected: BTreeSet<String> = MULTI_CHAR_OPERATORS.iter().map(|s| s.to_string()).collect();
     assert_eq!(
-        found, expected,
+        found,
+        expected,
         "Display impl multi-char operator arms drifted from \
          MULTI_CHAR_OPERATORS.\nin Display but not listed: {:?}\n\
          listed but not in Display: {:?}",

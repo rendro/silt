@@ -133,8 +133,7 @@ fn find_handrolled_variant_table_rows(
             // are `(`, that's the `register_enum` shape — skip.
             if let Some(bracket_pos) = window.find("&[") {
                 let after = &window[bracket_pos + 2..];
-                let first_non_ws =
-                    after.chars().find(|c| !c.is_whitespace()).unwrap_or(' ');
+                let first_non_ws = after.chars().find(|c| !c.is_whitespace()).unwrap_or(' ');
                 if first_non_ws == '"' && window.contains(&variant_lit) {
                     hits.push(i);
                 }

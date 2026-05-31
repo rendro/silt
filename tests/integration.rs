@@ -8618,10 +8618,7 @@ fn main() {
 
 #[test]
 fn test_async_io_read_file_in_task() {
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_test_async_{}.txt",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("silt_test_async_{}.txt", std::process::id()));
     let tmp = tmp.to_str().unwrap().replace('\\', "/");
     let input = format!(
         r#"
@@ -9373,10 +9370,7 @@ fn main() { math.asin(1.0) }
 
 #[test]
 fn test_fs_mkdir_and_remove() {
-    let dir = std::env::temp_dir().join(format!(
-        "silt_test_mkdir_42_{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("silt_test_mkdir_42_{}", std::process::id()));
     let dir = dir.to_str().unwrap().replace('\\', "/");
     let input = format!(
         r#"

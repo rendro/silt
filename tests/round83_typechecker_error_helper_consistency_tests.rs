@@ -172,9 +172,7 @@ fn round84_find_offenders_detects_planted_offender_in_subdir() {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    root.push(format!(
-        "silt_round84_proof_of_lock_{pid}_{nanos}"
-    ));
+    root.push(format!("silt_round84_proof_of_lock_{pid}_{nanos}"));
     // Clean up any prior leftover.
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create tmp root");
@@ -185,11 +183,8 @@ fn round84_find_offenders_detects_planted_offender_in_subdir() {
 
     // Clean file at top level (to verify scan walks both layers).
     let clean_top = root.join("clean.rs");
-    std::fs::write(
-        &clean_top,
-        "pub fn ok() { self.error(\"msg\", span); }\n",
-    )
-    .expect("write clean_top");
+    std::fs::write(&clean_top, "pub fn ok() { self.error(\"msg\", span); }\n")
+        .expect("write clean_top");
 
     // Planted offender inside the subdirectory.
     let planted = subdir.join("offender.rs");

@@ -108,12 +108,7 @@ fn getting_started_doc_modules_section_uses_non_stdlib_placeholder() {
     // imports" and runs until the next `## ` heading ("## 6.
     // Errors as values"). Constrain to that slice — later sections
     // may legitimately import stdlib modules in examples.
-    let slice = slice_between(
-        GETTING_STARTED_DOC,
-        "## 5. Modules and imports",
-        "## 6.",
-    )
-    .expect(
+    let slice = slice_between(GETTING_STARTED_DOC, "## 5. Modules and imports", "## 6.").expect(
         "docs/getting-started.md must contain a `## 5. Modules and imports` section \
          followed by a `## 6.` section. If headings were renumbered, update this test.",
     );
@@ -121,10 +116,7 @@ fn getting_started_doc_modules_section_uses_non_stdlib_placeholder() {
     // example after the placeholder snippet. `geometry` is NOT in
     // BUILTIN_MODULES, so it's safe — the assertion below catches
     // any stdlib name in the whole section.
-    assert_no_stdlib_collision(
-        slice,
-        "docs/getting-started.md `## 5. Modules and imports`",
-    );
+    assert_no_stdlib_collision(slice, "docs/getting-started.md `## 5. Modules and imports`");
 }
 
 /// Extract user-module placeholder names from `-- File: src/<name>.silt`
@@ -235,12 +227,11 @@ fn modules_doc_file_module_block_uses_non_stdlib_placeholder() {
     // to the next `## ` heading ("## Visibility"). This covers BOTH the
     // `-- File: src/<name>.silt` code block and the directory-tree
     // example that follows.
-    let slice = slice_between(MODULES_DOC, "## File = module", "## Visibility")
-        .expect(
-            "docs/language/modules.md must contain a `## File = module` section \
+    let slice = slice_between(MODULES_DOC, "## File = module", "## Visibility").expect(
+        "docs/language/modules.md must contain a `## File = module` section \
              followed by a `## Visibility` section. If headings changed, update \
              this test.",
-        );
+    );
 
     let file_names = file_comment_module_names(slice);
     assert_names_no_stdlib_collision(
