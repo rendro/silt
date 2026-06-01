@@ -105,14 +105,16 @@ fn round70_old_inline_empty_function_list_guard_does_not_recur() {
     //
     // After dedup, the literal `eprintln!("internal error: empty function list")`
     // lives only inside `take_first_function`. The literal string ALSO appears
-    // inside the `#[cfg(test)]` helper `eval_expression_value` (which returns
-    // it as a `String` error rather than printing — different surface, doesn't
-    // share the helper). So we expect EXACTLY 2 occurrences of the bare string:
+    // inside the shared `#[cfg(test)]` helper `first_script_or_err` (which
+    // returns it as a `String` error rather than printing — different surface,
+    // and is itself shared by the `eval_expression_value` /
+    // `eval_declaration_value` test helpers so neither re-inlines it). So we
+    // expect EXACTLY 2 occurrences of the bare string:
     //   * 1 inside `take_first_function` (the eprintln)
-    //   * 1 inside `eval_expression_value` (the .ok_or_else literal)
+    //   * 1 inside `first_script_or_err` (the .ok_or_else literal)
     //
-    // A third occurrence indicates one of `eval_declaration` or
-    // `eval_expression` re-inlined the eprintln guard.
+    // A third occurrence indicates one of `eval_declaration` /
+    // `eval_expression` (or a test helper) re-inlined the guard.
     let count = occurrences(REPL_SRC, "internal error: empty function list");
     assert_eq!(
         count, 2,

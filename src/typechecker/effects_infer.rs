@@ -233,14 +233,29 @@ fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet
             // for the effects walker, which doesn't share the
             // typechecker's TypeEnv mutations across passes.
             let val_effects = walk_expr(value, env, aliases);
-            if let PatternKind::Ident(name) = &pattern.kind
-                && let Some(src) = callee_name(value)
-            {
-                // The value is a simple aliasing reference. Look up
-                // the source's effects through the same path the
-                // Call site uses (env + previous aliases).
-                let src_eff = scheme_effects_of(src, env, aliases);
-                aliases.insert(*name, src_eff);
+            if let PatternKind::Ident(name) = &pattern.kind {
+                if let Some(src) = callee_name(value) {
+                    // The value is a simple aliasing reference. Look up
+                    // the source's effects through the same path the
+                    // Call site uses (env + previous aliases).
+                    let src_eff = scheme_effects_of(src, env, aliases);
+                    aliases.insert(*name, src_eff);
+                } else {
+                    // Soundness fix: the value is NOT a simple aliasing
+                    // name (e.g. a Call returning a fn). A prior aliasing
+                    // `let name = pure_fn` would have cached
+                    // `name -> EMPTY` in `aliases`; this shadowing rebind
+                    // must invalidate that stale entry, or a later
+                    // `name()` call would consult the stale EMPTY via
+                    // `scheme_effects_of` (which checks `aliases` first)
+                    // and UNDER-approximate effects — letting an
+                    // under-annotated fn slip past `--strict-effects`.
+                    // Removing the entry makes `scheme_effects_of` fall
+                    // through to `env.lookup`, yielding the real/TOP
+                    // effects (the conservative over-approximating
+                    // direction the Phase-A invariant requires).
+                    aliases.remove(name);
+                }
             }
             val_effects
         }
@@ -341,5 +356,89 @@ mod tests {
             Span::new(0, 0),
         );
         assert!(callee_name(&inner_call).is_none());
+    }
+
+    use crate::ast::{PatternKind, Stmt};
+    use crate::types::Scheme;
+    use crate::types::effects::EffectSet;
+
+    fn call(callee: Expr, args: Vec<Expr>) -> Expr {
+        Expr::new(ExprKind::Call(Box::new(callee), args), Span::new(0, 0))
+    }
+
+    fn let_stmt(name: &str, value: Expr) -> Stmt {
+        Stmt::Let {
+            pattern: crate::ast::Pattern::new(
+                PatternKind::Ident(crate::intern::intern(name)),
+                Span::new(0, 0),
+            ),
+            ty: None,
+            value,
+        }
+    }
+
+    /// Soundness lock (latent finding, round 64 alias-map): a shadowing
+    /// `let f = <call expr>` must invalidate a prior aliasing
+    /// `let f = <pure_name>` cache entry. Otherwise a later `f()` consults
+    /// the stale `f -> EMPTY` alias and UNDER-approximates effects.
+    ///
+    /// Block:
+    ///   let f = pure_fn      // caches f -> EMPTY (aliasing name)
+    ///   let f = make_f()     // shadowing rebind to a non-name Call value
+    ///   f()                  // later call — must see make_f's real effects
+    ///
+    /// `f` is registered in `env` with the rebound fn's real effects (io),
+    /// `pure_fn` with EMPTY. Before the fix the block infers EMPTY (stale);
+    /// after the fix the alias entry is removed so `f()` resolves via
+    /// `env.lookup(f)` to io.
+    #[test]
+    fn shadowing_rebind_invalidates_stale_pure_alias() {
+        let mut env = TypeEnv::new();
+        // The pure source aliased first — caches `f -> EMPTY`.
+        env.define(
+            crate::intern::intern("pure_fn"),
+            Scheme::with_effects(crate::types::Type::Unit, EffectSet::EMPTY),
+        );
+        // `make_f` is irrelevant to the alias result (it's the value of a
+        // Call, not a name being aliased), but give it a scheme so the
+        // walk over the Call body is well-defined.
+        env.define(
+            crate::intern::intern("make_f"),
+            Scheme::with_effects(crate::types::Type::Unit, EffectSet::EMPTY),
+        );
+        // After the shadowing rebind, the *runtime* binding of `f` is the
+        // result of `make_f()`. The env carries `f`'s real effects (io) —
+        // this stands in for the rebound fn's actual declared effects that
+        // `scheme_effects_of` must reach by falling through to env.lookup.
+        env.define(
+            crate::intern::intern("f"),
+            Scheme::with_effects(crate::types::Type::Unit, EffectSet::io()),
+        );
+
+        let block = Expr::new(
+            ExprKind::Block(vec![
+                // let f = pure_fn   (aliasing name -> caches f -> EMPTY)
+                let_stmt("f", ident("pure_fn")),
+                // let f = make_f()  (shadowing rebind to a non-name value)
+                let_stmt("f", call(ident("make_f"), vec![])),
+                // f()               (later call)
+                Stmt::Expr(call(ident("f"), vec![])),
+            ]),
+            Span::new(0, 0),
+        );
+
+        let effects = infer_expr_effects(&block, &env);
+
+        // Must NOT be the stale EMPTY. After the fix the rebound `f`'s real
+        // effects (io) surface.
+        assert_ne!(
+            effects,
+            EffectSet::EMPTY,
+            "stale pure alias was consulted after shadowing rebind — effects under-approximated"
+        );
+        assert!(
+            effects.contains(crate::types::effects::Effect::Io),
+            "rebound fn's real io effect should surface; got {effects:?}"
+        );
     }
 }

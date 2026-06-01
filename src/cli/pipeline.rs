@@ -253,13 +253,16 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
     result
         .type_errors
         .iter()
-        .filter(|e| !is_unknown_module_warning(e))
         // When the program imports a user module the type checker can't
-        // see, every name it exports surfaces as "undefined". The
-        // compiler does resolve those at link time, so we demote them
-        // here and let the compile-or-runtime stage be the source of
-        // truth for name resolution.
-        .filter(|e| !(has_user_import_warning && is_user_import_resolvable_error(e)))
+        // see, both the "unknown module" warning AND every name it
+        // exports surfacing as "undefined" must be suppressed. The
+        // compiler resolves those at link time, so we demote them here
+        // and let the compile-or-runtime stage be the source of truth
+        // for name resolution. `silt test` routes through the SAME
+        // `should_suppress_import_cascade` predicate so the two paths
+        // cannot drift (round 91 GAP: test.rs previously only filtered
+        // the warning, leaking the undefined-name cascade).
+        .filter(|e| !should_suppress_import_cascade(e, has_user_import_warning))
         // B9 (round 60): the typechecker and the compiler both emit
         // "module 'X' is not imported" for the same call site. Without
         // this filter, `silt check main.silt` prints the identical
@@ -272,6 +275,25 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
         // via `typechecker::check` directly.
         .filter(|e| !is_module_not_imported_typecheck_error(e))
         .collect()
+}
+
+/// Single shared predicate deciding whether a typechecker diagnostic for a
+/// user-module import should be suppressed from CLI output. Both the
+/// `silt run`/`silt check` path (`reportable_type_errors`) and the
+/// `silt test` loop route through this so they cannot drift: a file that
+/// imports a sibling user module must behave identically under all three.
+///
+/// Suppress when the diagnostic is the "unknown module" warning itself, OR
+/// (when that warning is present) when it is one of the follow-on
+/// undefined-name / trait-cascade errors the compiler resolves at link
+/// time. `has_user_import_warning` must be computed across the whole
+/// diagnostic set by the caller (i.e. `iter().any(is_unknown_module_warning)`).
+pub(crate) fn should_suppress_import_cascade(
+    err: &SourceError,
+    has_user_import_warning: bool,
+) -> bool {
+    is_unknown_module_warning(err)
+        || (has_user_import_warning && is_user_import_resolvable_error(err))
 }
 
 /// Returns true iff `err` is the "unknown module" warning that the type

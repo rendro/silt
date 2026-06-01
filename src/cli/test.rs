@@ -17,7 +17,9 @@ use crate::cli::help::test_usage_banner;
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::package_setup_for_file;
 use crate::cli::paths::find_silt_files;
-use crate::cli::pipeline::{is_unknown_module_warning, resolve_strict_effects};
+use crate::cli::pipeline::{
+    is_unknown_module_warning, resolve_strict_effects, should_suppress_import_cascade,
+};
 
 /// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -241,9 +243,19 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         );
         let mut has_type_error = false;
         let mut printed_type_errors: usize = 0;
+        // Mirror the `silt run`/`silt check` path exactly: when this file
+        // imports a sibling user module the typechecker can't see into, it
+        // emits an "unknown module" warning plus a cascade of undefined-name
+        // / trait errors the compiler resolves at link time. Suppress BOTH
+        // via the shared `should_suppress_import_cascade` predicate so
+        // `silt test` reaches parity with `silt run` (round 91 GAP: the
+        // cascade was previously leaked, failing tests `silt run` accepts).
+        let has_user_import_warning = type_errors
+            .iter()
+            .any(|te| is_unknown_module_warning(&SourceError::from_type_error(te, &source, path)));
         for te in &type_errors {
             let source_err = SourceError::from_type_error(te, &source, path);
-            if is_unknown_module_warning(&source_err) {
+            if should_suppress_import_cascade(&source_err, has_user_import_warning) {
                 continue;
             }
             if printed_type_errors > 0 {

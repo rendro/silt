@@ -12,6 +12,26 @@ use std::time::{Duration, Instant, SystemTime};
 /// preserve that substring.
 const WATCH_BANNER: &str = "\n[watch] Watching for changes...";
 
+/// Clear-screen + cursor-home escape sequence, gated on stderr being a
+/// real terminal. When stderr is redirected (e.g. `silt run app.silt
+/// --watch 2> watch.log`), this returns `""` so the literal escape bytes
+/// (`^[[2J^[[H`) are never written into the log. Honors `NO_COLOR` for
+/// parity with the rest of silt's terminal-control gating (see
+/// `src/errors.rs`'s `is_terminal`-based color decision).
+///
+/// Behavior on a TTY is unchanged: the full sequence is emitted before
+/// every (re)run.
+fn clear_screen_seq() -> &'static str {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return "";
+    }
+    if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        "\x1B[2J\x1B[H"
+    } else {
+        ""
+    }
+}
+
 /// Returns true if any of the given paths has a `.silt` extension.
 /// Extracted so the filtering logic can be unit-tested in isolation
 /// from the `notify` event stream and the subprocess rerun loop.
@@ -97,7 +117,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     let mut last_run_system = SystemTime::now();
 
     // Initial run
-    eprint!("\x1B[2J\x1B[H");
+    eprint!("{}", clear_screen_seq());
     let _ = std::process::Command::new(&exe).args(args).status();
     eprintln!("{WATCH_BANNER}");
 
@@ -137,7 +157,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
 
                 last_run = Instant::now();
                 last_run_system = SystemTime::now();
-                eprint!("\x1B[2J\x1B[H");
+                eprint!("{}", clear_screen_seq());
                 let _ = std::process::Command::new(&exe).args(args).status();
                 eprintln!("{WATCH_BANNER}");
             }
@@ -163,7 +183,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
 
                     last_run = Instant::now();
                     last_run_system = SystemTime::now();
-                    eprint!("\x1B[2J\x1B[H");
+                    eprint!("{}", clear_screen_seq());
                     let _ = std::process::Command::new(&exe).args(args).status();
                     eprintln!("{WATCH_BANNER}");
                 } else {
@@ -183,6 +203,30 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── clear_screen_seq TTY guard ────────────────────────────────
+    //
+    // Regression lock for round 91: the clear-screen escape must be
+    // gated so it is NOT written when stderr is redirected. Under
+    // `cargo test` stderr is captured (not a terminal), so the helper
+    // must return "" — never the raw escape. This complements the
+    // source-grep lock in
+    // `tests/round91_watch_clear_tty_guard_tests.rs`.
+    #[test]
+    fn clear_screen_seq_empty_when_not_terminal() {
+        // stderr is not a TTY under the test harness; the sequence must
+        // be suppressed so redirected logs stay clean.
+        assert_eq!(
+            clear_screen_seq(),
+            "",
+            "clear_screen_seq() must return \"\" when stderr is not a terminal"
+        );
+        // And it must never leak the raw escape in that case.
+        assert!(
+            !clear_screen_seq().contains('\x1B'),
+            "clear_screen_seq() must not emit the ANSI escape when not a terminal"
+        );
+    }
 
     // ── any_silt_path_changed ─────────────────────────────────────
 

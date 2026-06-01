@@ -707,6 +707,21 @@ fn take_first_function<F>(functions: Vec<F>) -> Option<Arc<F>> {
     }
 }
 
+/// Take the first compiled function as the runnable script, or a canonical
+/// error string. Shared by the `#[cfg(test)]` eval helpers
+/// (`eval_expression_value` / `eval_declaration_value`) so the
+/// "empty function list" guard literal is not duplicated across them — the
+/// round-70 dedup lock (round70_repl_eval_dedup_lock_tests) asserts the
+/// literal appears exactly twice (here and in `take_first_function`).
+#[cfg(test)]
+fn first_script_or_err<F>(functions: Vec<F>) -> Result<Arc<F>, String> {
+    functions
+        .into_iter()
+        .next()
+        .map(Arc::new)
+        .ok_or_else(|| "internal error: empty function list".to_string())
+}
+
 /// Compile and run `input` as an expression, returning the resulting Value
 /// (or an error message). This is the testable core of `eval_expression`;
 /// the interactive version adds formatted error reporting and stdout output.
@@ -736,17 +751,55 @@ fn eval_expression_value(
         return Err(format!("type error: {}", err.message));
     }
     let mut compiler = Compiler::new();
+    // Match the production order in `eval_expression`: enable REPL mode
+    // *before* importing builtins so the in-file tests exercise the same
+    // codegen branch as the live REPL. Without this, `name.field` against a
+    // previously-bound REPL value compiles via the non-REPL
+    // `GetGlobal("name.field")` path instead of the repl_mode
+    // `GetGlobal(name)` + `GetField(field)` path.
+    compiler.set_repl_mode(true);
     compiler.import_all_builtins();
     let functions = compiler
         .compile_program_with_entry(&program, &wrapper_name)
         .map_err(|e| format!("compile error: {}", e.message))?;
-    let script = functions
-        .into_iter()
-        .next()
-        .ok_or_else(|| "internal error: empty function list".to_string())?;
-    let script = Arc::new(script);
+    let script = first_script_or_err(functions)?;
     vm.run(script)
         .map_err(|e| format!("runtime error: {}", e.message))
+}
+
+/// Compile and run a declaration (`let`/`fn`/`type`) into the persistent VM
+/// and type context, mirroring the live `eval_declaration` path. This is the
+/// testable core that lets expression-eval tests first bind a REPL value
+/// (e.g. `let p = Point { x: 42 }`) so a subsequent `eval_expression_value`
+/// can exercise the repl_mode `name.field` codegen path against it.
+#[cfg(test)]
+fn eval_declaration_value(
+    vm: &mut Vm,
+    type_ctx: &mut ReplTypeContext,
+    input: &str,
+) -> Result<(), String> {
+    let tokens = Lexer::new(input)
+        .tokenize()
+        .map_err(|e| format!("lex error: {}", e.message))?;
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .map_err(|e| format!("parse error: {}", e.message))?;
+    let type_errors = type_ctx.check(&mut program);
+    if let Some(err) = type_errors
+        .iter()
+        .find(|e| e.severity == typechecker::Severity::Error)
+    {
+        return Err(format!("type error: {}", err.message));
+    }
+    let mut compiler = Compiler::new();
+    compiler.import_all_builtins();
+    let functions = compiler
+        .compile_declarations(&program)
+        .map_err(|e| format!("compile error: {}", e.message))?;
+    let script = first_script_or_err(functions)?;
+    vm.run(script)
+        .map_err(|e| format!("runtime error: {}", e.message))?;
+    Ok(())
 }
 
 fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
@@ -1344,6 +1397,40 @@ mod tests {
         let mut ctx = ReplTypeContext::new();
         let value = eval_expression_value(&mut vm, &mut ctx, "true").unwrap();
         assert_eq!(format!("{value}"), "true");
+    }
+
+    // ── repl_mode field-access lock ───────────────────────────────
+    //
+    // Regression lock for the latent gap where `eval_expression_value`
+    // omitted `compiler.set_repl_mode(true)`, so the in-file tests ran the
+    // non-REPL codegen branch and never exercised the repl_mode
+    // `name.field` path of `compile_expr`.
+    //
+    // Here we bind a record value `p` as a REPL global, then read `p.x`
+    // through an expression. In repl_mode the compiler emits
+    // `GetGlobal("p")` + `GetField("x")`, resolving the field against the
+    // stored record. With set_repl_mode(false) (the pre-fix behaviour) the
+    // compiler instead emits `GetGlobal("p.x")`, which is not a registered
+    // global and fails at runtime — so this test FAILS if the flag is
+    // removed and PASSES with it set.
+    #[test]
+    fn eval_repl_mode_field_access_on_bound_record() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        // Declare a record type and bind a value as a REPL global.
+        eval_declaration_value(&mut vm, &mut ctx, "type Point { x: Int, y: Int }")
+            .expect("type declaration should succeed");
+        eval_declaration_value(&mut vm, &mut ctx, "let p = Point { x: 42, y: 7 }")
+            .expect("value binding should succeed");
+        // Read a field via the repl_mode `name.field` codegen path.
+        let value = eval_expression_value(&mut vm, &mut ctx, "p.x")
+            .expect("repl_mode field access should resolve against the bound record");
+        assert_eq!(
+            format!("{value}"),
+            "42",
+            "p.x must resolve to the bound record's field via the repl_mode \
+             GetGlobal(p)+GetField(x) path"
+        );
     }
 
     // ── Error recovery ────────────────────────────────────────────

@@ -37,3 +37,33 @@ pub fn is_user_import_resolvable_error_message(message: &str) -> bool {
         || message.starts_with("unknown field")
         || message.contains("does not implement")
 }
+
+/// Single shared decision — operating on the already-rendered
+/// (severity, message) pair of a `Type`-kind diagnostic — for whether a
+/// user-module import diagnostic should be suppressed from CLI output.
+///
+/// Lives here (the library's `pub` filter module) rather than in the
+/// binary-only `cli` module so the `silt run`/`silt check` path
+/// (`reportable_type_errors`) and the `silt test` loop can BOTH route
+/// through the identical logic without drifting, and so it is reachable
+/// from integration tests. The CLI's `should_suppress_import_cascade`
+/// is a thin `SourceError`-shaped adapter over this.
+///
+/// `is_warning` is the diagnostic's own severity; `has_user_import_warning`
+/// is whether ANY diagnostic in the same compile produced the "unknown
+/// module" warning (the caller computes this across the whole set).
+///
+/// Suppress when the diagnostic IS the unknown-module warning, OR — only
+/// when that warning is present in the set — when it is one of the
+/// follow-on undefined-name / trait-cascade errors the compiler resolves
+/// at link time.
+pub fn should_suppress_import_cascade_message(
+    message: &str,
+    is_warning: bool,
+    has_user_import_warning: bool,
+) -> bool {
+    (is_warning && is_unknown_module_warning_message(message))
+        || (has_user_import_warning
+            && !is_warning
+            && is_user_import_resolvable_error_message(message))
+}

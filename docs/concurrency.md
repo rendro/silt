@@ -1020,7 +1020,7 @@ scheduler runs a watchdog that can surface a timeout error to any I/O builtin
 that blocks for too long.
 
 The `SILT_IO_TIMEOUT` environment variable enables this watchdog globally.
-Setting `SILT_IO_TIMEOUT=5000` (or `SILT_IO_TIMEOUT=5s`) makes every I/O
+Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
 
@@ -1034,8 +1034,9 @@ the matching typed error enum. `time.sleep` is the one exception: it returns
 `Unit`, so when a task's deadline has already elapsed the sleep returns
 immediately with no error.
 
-Accepted formats: bare integer (milliseconds), or a suffixed duration
-`5s`, `500ms`, `2m`, `1h`.
+Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
+A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
+fails to parse and silently disables the watchdog (infinite wait).
 
 ```sh
 # Any I/O that stalls > 5s surfaces the module's typed timeout variant.
