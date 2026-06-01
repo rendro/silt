@@ -1007,10 +1007,18 @@ const CONFIRM_MS: u64 = 100;
 /// is a permanent fixpoint, so it accumulates all rounds back-to-back; any
 /// in-flight transition fires `signal_progress` (waking a round early) or
 /// clears starvation, which resets the requirement. Worst-case added latency
-/// for a genuine deadlock is `CONFIRM_ROUNDS * CONFIRM_MS` (300ms) — well
+/// for a genuine deadlock is `CONFIRM_ROUNDS * CONFIRM_MS` (200ms) — well
 /// within the detector tests' multi-second budget, and only paid once, on a
 /// program that is actually dead.
-const CONFIRM_ROUNDS: u32 = 3;
+///
+/// Two rounds is the floor that still gives a SECOND independent observation
+/// after the initial `is_main_starved` candidate: the bug was a single
+/// transient snapshot, and two clean rounds (plus the candidate check that
+/// got us here) means three consecutive starved reads with no intervening
+/// `signal_progress`. Raise this only if a sustained false positive ever
+/// resurfaces under heavier contention than the CI Windows concurrency
+/// partition.
+const CONFIRM_ROUNDS: u32 = 2;
 
 /// Confirmation gate for a suspected main-thread deadlock.
 ///
