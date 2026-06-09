@@ -80,7 +80,11 @@ jobs:
   test-macos:
     name: Test macOS
     runs-on: macos-latest
-    timeout-minutes: 25
+    # macOS runs the whole suite unpartitioned; round 92 grew it past the
+    # old 25-min budget (job died at 5158/5160 with zero failures). The
+    # inner perl alarm below must stay shorter than this job timeout so
+    # nextest is killed with output rather than by the runner.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust toolchain
@@ -93,7 +97,7 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: cargo nextest
         run: |
-          CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' cargo nextest run --all-features
+          CI=1 perl -e 'alarm 2040; exec @ARGV or die "exec: $!"' cargo nextest run --all-features
 
   # Windows runners are 3-5× slower than Linux/macOS at file I/O and
   # process spawning, so a single-job sweep of 3800+ tests pushes past
