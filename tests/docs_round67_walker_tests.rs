@@ -72,7 +72,7 @@ fn f4_operators_md_table_does_not_list_bracket_indexing() {
         "operators.md precedence table must not pair `f(...)` with \
          `xs[i]` — silt's parser rejects bracket indexing. The row \
          should list function call only, with a separate note pointing \
-         to list.get / map.get / string.char_at."
+         to list.get / map.get / string.slice."
     );
     // Positive shape: the doc still has the postfix-call row.
     assert!(
@@ -111,8 +111,8 @@ fn f4_silt_parser_rejects_bracket_indexing() {
     );
     // Parity with the user-facing replacement note in operators.md.
     assert!(
-        stderr.contains("list.get") && stderr.contains("string.char_at"),
-        "the parser's diagnostic must still suggest `list.get` and `string.char_at`; got:\n{stderr}"
+        stderr.contains("list.get") && stderr.contains("string.slice"),
+        "the parser's diagnostic must still suggest `list.get` and `string.slice`; got:\n{stderr}"
     );
 }
 

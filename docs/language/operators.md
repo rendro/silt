@@ -34,9 +34,9 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 `?` is postfix and sits between comparison (`<`, `>=`) and pipe (`|>`).
 
 silt has **no postfix bracket indexing** (`xs[i]`). The parser rejects it
-with `postfix indexing is not supported; use list.get(xs, i), map.get(m, k), or string.char_at(s, i)`.
+with `postfix indexing is not supported; use list.get(xs, i), map.get(m, k), or string.slice(s, i, i + 1)`.
 Use the explicit module function for the collection you have:
-`list.get(xs, i)`, `map.get(m, k)`, `string.char_at(s, i)`.
+`list.get(xs, i)`, `map.get(m, k)`, `string.slice(s, i, i + 1)`.
 
 ## Reading the Table
 

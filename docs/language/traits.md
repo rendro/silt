@@ -58,8 +58,10 @@ cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
 (four of silt's five built-in traits — `Equal`, `Hash`, `Compare`,
-`Display` — are auto-derived for every type, so the obligation is
-satisfied automatically; the fifth, `Error`, is not auto-derived).
+`Display` — are auto-derived for every user-defined type and the
+displayable builtins, so the obligation is satisfied automatically;
+channels and function values are the exception — they do not implement
+`Display`. The fifth built-in, `Error`, is not auto-derived).
 
 **`Equal` vs `==` for `ExtFloat` (NaN divergence).** For `ExtFloat`,
 `a.equal(b)` is reflexive by bit pattern (so `NaN.equal(NaN) = true`)

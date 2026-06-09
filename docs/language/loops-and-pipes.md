@@ -86,9 +86,11 @@ let math = "sum is {1 + 2 + 3}"       -- "sum is 6"
 println("{user.name} is {user.age}")   -- field access in interpolation
 ```
 
-String interpolation automatically invokes the `Display` trait. All types
-(primitive and user-defined) implement `Display` automatically. No need to
-call `.display()` explicitly.
+String interpolation automatically invokes the `Display` trait. User-defined
+types and the displayable builtins implement `Display` automatically;
+channels and function values are the exception — they do not implement
+`Display`, so interpolating them is a compile error. No need to call
+`.display()` explicitly.
 
 Escape literal braces with backslash: `"\{not interpolation}"`.
 

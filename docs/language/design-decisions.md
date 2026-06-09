@@ -96,7 +96,7 @@ let y = 10
 
 (Bracket indexing `xs[i]` is reserved syntax but is not a real postfix
 operator -- silt's parser rejects it. Use `list.get(xs, i)`,
-`map.get(m, k)`, or `string.char_at(s, i)` instead.)
+`map.get(m, k)`, or `string.slice(s, i, i + 1)` instead.)
 
 Trailing closures must start on the same line as the function call:
 

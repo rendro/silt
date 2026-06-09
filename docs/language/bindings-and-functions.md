@@ -138,7 +138,7 @@ match xs {
 }
 
 -- `when let` is a statement that binds in the surrounding scope on success;
--- the `else` branch must diverge (return/raise) so the bindings are sound.
+-- the `else` branch must diverge (return or panic) so the bindings are sound.
 when let [a, b, c] = xs else { return handle_other_shape() }
 use(a, b, c)
 ```

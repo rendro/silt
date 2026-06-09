@@ -24,6 +24,50 @@
 
 use silt::diagnostic_filters::should_suppress_import_cascade_message;
 
+/// Round 92: the tests below pin the predicate; these two pin the
+/// WIRING at the bug site. Without them, reverting the `silt test`
+/// loop to the pre-round-91 warning-only filter left the whole suite
+/// green. See tests/round92_test_import_filter_e2e_tests.rs for the
+/// behavioral (binary-level) lock of the same wiring.
+const CLI_TEST_RS: &str = include_str!("../src/cli/test.rs");
+
+/// The `silt test` type-error loop must route through the shared
+/// predicate, threading the loop-local `source_err` AND the
+/// whole-compile `has_user_import_warning` flag (the flag is what
+/// makes cascade suppression conditional on the warning's presence).
+#[test]
+fn silt_test_loop_calls_shared_predicate_at_the_bug_site() {
+    assert!(
+        CLI_TEST_RS
+            .contains("should_suppress_import_cascade(&source_err, has_user_import_warning)"),
+        "src/cli/test.rs no longer routes its type-error loop through \
+         `should_suppress_import_cascade(&source_err, has_user_import_warning)` — \
+         the round-91 import-cascade parity fix has been unwired. If the call \
+         was legitimately refactored, it must still suppress BOTH the \
+         unknown-module warning and the undefined-name cascade; update this \
+         lock to the new spelling only after confirming that."
+    );
+}
+
+/// The exact pre-round-91 buggy form must never return. The old loop
+/// read `if is_unknown_module_warning(&source_err)` — warning-only,
+/// leaking the cascade. The string is unambiguous: the only legitimate
+/// `is_unknown_module_warning` call left in test.rs (computing
+/// `has_user_import_warning`) takes an inline
+/// `&SourceError::from_type_error(...)`, never the loop-local
+/// `&source_err` binding.
+#[test]
+fn silt_test_loop_does_not_regress_to_warning_only_filter() {
+    assert!(
+        !CLI_TEST_RS.contains("is_unknown_module_warning(&source_err)"),
+        "src/cli/test.rs contains `is_unknown_module_warning(&source_err)` — \
+         the pre-round-91 warning-only filter shape. That filter skipped only \
+         the unknown-module warning and leaked the undefined-name/trait \
+         cascade, failing test files that `silt run` accepts. Route the loop \
+         through `should_suppress_import_cascade` instead."
+    );
+}
+
 /// The "unknown module" warning itself is always suppressed (this is the
 /// part `silt test` already handled before the fix).
 #[test]

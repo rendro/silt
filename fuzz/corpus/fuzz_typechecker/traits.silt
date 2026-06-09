@@ -1,0 +1,36 @@
+import list
+
+type Shape {
+  Circle(Float),
+  Rect(Float, Float)
+}
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+    }
+  }
+}
+
+fn area(shape) {
+  match shape {
+    Circle(r) -> 3.14159 * r * r
+    Rect(w, h) -> w * h
+  }
+}
+
+fn main() {
+  let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
+  println("-- Shapes --")
+  shapes
+  |> list.each { s -> println("{s.display()} -> area = {area(s)}") }
+  let total = shapes
+  |> list.map { s -> area(s) }
+  |> list.fold(0.0) { acc, a -> acc + a }
+  println("\nTotal area: {total}")
+  let big = shapes
+  |> list.filter { s -> area(s) > 10.0 }
+  println("Shapes with area > 10: {list.length(big)}")
+}

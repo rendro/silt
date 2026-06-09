@@ -1,0 +1,209 @@
+import int
+import list
+import map
+import option
+import regex
+import result
+import string
+
+-- Encoding and cipher toolkit: Caesar cipher, ROT13, run-length encoding,
+-- and Atbash substitution cipher with round-trip verification.
+-- ============================================================
+-- Caesar Cipher (using regex.replace_all_with)
+-- ============================================================
+
+fn shift_char(c, shift) {
+  match {
+    string.is_upper(c) -> {
+      let code = string.char_code(c) - 65
+      string.from_char_code((code + shift) % 26 + 65)
+    }
+    string.is_lower(c) -> {
+      let code = string.char_code(c) - 97
+      string.from_char_code((code + shift) % 26 + 97)
+    }
+    _ -> c
+  }
+}
+
+fn encode_caesar(text, shift) {
+  let normalized = (shift % 26 + 26) % 26
+  regex.replace_all_with("[a-zA-Z]", text) { m -> shift_char(m, normalized) }
+}
+
+fn decode_caesar(text, shift) {
+  encode_caesar(text, -shift)
+}
+
+-- ============================================================
+-- ROT13 (special case of Caesar with shift=13, via replace_all_with)
+-- ============================================================
+
+fn rot13(text) {
+  regex.replace_all_with("[a-zA-Z]", text) { c -> match {
+    string.is_upper(c) -> {
+      let code = string.char_code(c) - 65
+      string.from_char_code((code + 13) % 26 + 65)
+    }
+    string.is_lower(c) -> {
+      let code = string.char_code(c) - 97
+      string.from_char_code((code + 13) % 26 + 97)
+    }
+    _ -> c
+  } }
+}
+
+-- ============================================================
+-- Run-Length Encoding
+-- ============================================================
+
+fn rle_encode(text) {
+  let chars = string.chars(text)
+  match chars {
+    [] -> ""
+    _ -> {
+      let first = chars
+      |> list.head
+      |> option.unwrap_or("")
+      let rest = list.tail(chars)
+      let output = rest
+      |> list.fold((first, 1, "")) { acc, c ->
+        let (current, count, built) = acc
+        match c == current {
+          true -> (current, count + 1, built)
+          _ -> (c, 1, "{built}{count}{current}")
+        }
+      }
+      let (last_char, last_count, built) = output
+      "{built}{last_count}{last_char}"
+    }
+  }
+  -- fold over chars, accumulating (current_char, count, result_string)
+}
+
+fn rle_decode(text) {
+  -- Use regex to find all (count, char) pairs like "3a", "2b", "1c"
+  let pairs = regex.captures_all("(\\d+)([a-zA-Z ])", text)
+  pairs
+  |> list.map { capture ->
+    let count_str = list.get(capture, 1)
+    |> option.unwrap_or("1")
+    let ch = list.get(capture, 2)
+    |> option.unwrap_or("")
+    let count = int.parse(count_str)
+    |> result.unwrap_or(1)
+    string.repeat(ch, count)
+  }
+  |> string.join("")
+}
+
+-- ============================================================
+-- Substitution Cipher (map-based key)
+-- ============================================================
+
+fn make_substitution_key() {
+  -- A simple scrambled alphabet mapping (Atbash cipher: a->z, b->y, ...)
+  let plain = string.chars("abcdefghijklmnopqrstuvwxyz")
+  let cipher = string.chars("zyxwvutsrqponmlkjihgfedcba")
+  let forward = list.zip(plain, cipher)
+  |> map.from_entries
+  let reverse = list.zip(cipher, plain)
+  |> map.from_entries
+  (forward, reverse)
+}
+
+fn substitution_encode(text, key_map) {
+  string.chars(text)
+  |> list.map { c -> match {
+    string.is_lower(c) -> map.get(key_map, c)
+    |> option.unwrap_or(c)
+    string.is_upper(c) -> {
+      let lower_c = string.to_lower(c)
+      let mapped = map.get(key_map, lower_c)
+      |> option.unwrap_or(lower_c)
+      string.to_upper(mapped)
+    }
+    _ -> c
+  } }
+  |> string.join("")
+}
+
+fn substitution_decode(text, reverse_map) {
+  substitution_encode(text, reverse_map)
+}
+
+-- ============================================================
+-- Helpers for formatted output
+-- ============================================================
+
+fn print_separator() {
+  println(string.repeat("-", 72))
+}
+
+fn print_table_header(title: String) {
+  println("")
+  println(title)
+  print_separator()
+  println("{string.pad_right("Original", 24, " ")} {string.pad_right("Encoded", 24, " ")} {string.pad_right("Decoded", 24, " ")}")
+  print_separator()
+}
+
+fn print_table_row(original, encoded, decoded) {
+  println("{string.pad_right(original, 24, " ")} {string.pad_right(encoded, 24, " ")} {string.pad_right(decoded, 24, " ")}")
+}
+
+fn check_roundtrip(name, original, decoded) {
+  match original == decoded {
+    true -> println("  [PASS] {name} round-trip OK")
+    _ -> println("  [FAIL] {name} round-trip FAILED: got '{decoded}'")
+  }
+}
+
+-- ============================================================
+-- Main
+-- ============================================================
+
+fn main() {
+  let test_strings = ["Hello World", "Attack at dawn", "Silt is great", "ABCxyz"]
+  -- ---- Caesar Cipher ----
+  let shift = 7
+  print_table_header("Caesar Cipher (shift={shift})")
+  test_strings
+  |> list.each { text ->
+    let encoded = encode_caesar(text, shift)
+    let decoded = decode_caesar(encoded, shift)
+    print_table_row(text, encoded, decoded)
+    check_roundtrip("Caesar", text, decoded)
+  }
+  -- ---- ROT13 ----
+  print_table_header("ROT13 (shift=13, self-inverse)")
+  test_strings
+  |> list.each { text ->
+    let encoded = rot13(text)
+    let decoded = rot13(encoded)
+    print_table_row(text, encoded, decoded)
+    check_roundtrip("ROT13", text, decoded)
+  }
+  -- ---- Run-Length Encoding ----
+  let rle_strings = ["aaabbc", "aaaaaa", "abcdef", "aaabbbbccd", "x"]
+  print_table_header("Run-Length Encoding")
+  rle_strings
+  |> list.each { text ->
+    let encoded = rle_encode(text)
+    let decoded = rle_decode(encoded)
+    print_table_row(text, encoded, decoded)
+    check_roundtrip("RLE", text, decoded)
+  }
+  -- ---- Substitution Cipher (Atbash) ----
+  let (forward_key, reverse_key) = make_substitution_key()
+  print_table_header("Substitution Cipher (Atbash)")
+  test_strings
+  |> list.each { text ->
+    let encoded = substitution_encode(text, forward_key)
+    let decoded = substitution_decode(encoded, reverse_key)
+    print_table_row(text, encoded, decoded)
+    check_roundtrip("Substitution", text, decoded)
+  }
+  println("")
+  println("All tests complete.")
+}

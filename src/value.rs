@@ -2191,13 +2191,41 @@ impl Hash for Value {
                     x.hash(state);
                 }
             }
+            // Round 92 (BROKEN): the element-by-element walk below used to be
+            // unconditional, so `(0..4_000_000_000).hash()` spun ~4e9
+            // iterations inside a single opcode — uninterruptible by the
+            // time-slice scheduler — and `0..i64::MAX` hung forever. The walk
+            // is now capped at `MAX_RANGE_MATERIALIZE`; over-cap ranges hash a
+            // closed form of their endpoints instead. This preserves the
+            // Hash/Eq contract (`a == b ⇒ hash(a) == hash(b)`, round 74):
+            //   - within the cap: identical byte stream to the equal `List`
+            //     (`tag 5, len, Int(lo) .. Int(hi)`), so List ↔ Range equal
+            //     pairs still hash equal;
+            //   - over the cap: every list-producing site enforces
+            //     `MAX_RANGE_MATERIALIZE` (vm/execute.rs, builtins/*), so no
+            //     `Value::List` can ever have > cap elements and no List can
+            //     compare equal to an over-cap Range. The only values equal
+            //     to such a Range are Ranges, and non-empty equal Ranges have
+            //     identical endpoints (see `PartialEq` ~line 1693), so
+            //     hashing `(len, lo, hi)` is contract-safe. (Empty ranges all
+            //     compare equal regardless of endpoints; they take the
+            //     `len == 0` path and hash only `(tag, 0)`, as before.)
+            // Doing the cap inside `impl Hash` (rather than erroring in the
+            // dispatch arm) also bounds nested walks for free: auto-derived
+            // `.hash()` on records/variants/tuples/lists recurses into this
+            // arm for embedded range fields.
             Value::Range(lo, hi) => {
                 state.write_u8(5);
                 let len = range_len(*lo, *hi);
                 (len as usize).hash(state);
                 if len > 0 {
-                    for n in *lo..=*hi {
-                        Value::Int(n).hash(state);
+                    if len as u128 <= MAX_RANGE_MATERIALIZE as u128 {
+                        for n in *lo..=*hi {
+                            Value::Int(n).hash(state);
+                        }
+                    } else {
+                        lo.hash(state);
+                        hi.hash(state);
                     }
                 }
             }

@@ -131,6 +131,32 @@ fn build_client_config(trust_ca_pem: &str, client_identity: Option<(&str, &str)>
     }
 }
 
+/// Connect to `addr`, retrying for up to 10 seconds. The silt server
+/// runs the full lex/parse/typecheck/compile/VM pipeline on a source
+/// file with ~30KB of hex-embedded PEM before `tcp.listen` binds the
+/// port — ~0.5s in a debug build on a loaded machine — so a fixed
+/// pre-connect sleep is a race (this exact race is what got the mTLS
+/// tests quarantined in d17ff85: the client connected before the bind,
+/// got ECONNREFUSED, and the server then hung in `accept()` forever).
+/// Retrying the *handshake* connection itself, rather than probing
+/// with a throwaway connect, matters: the server accepts exactly one
+/// connection, so a successful probe would be consumed as the mTLS
+/// peer and break the test.
+fn connect_with_retry(addr: &str) -> Result<TcpStream, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(sock) => return Ok(sock),
+            Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("connect: {e} (server not up after 10s)"));
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+}
+
 /// Drive a rustls client handshake against `addr`. Returns Ok(()) if
 /// the TLS handshake succeeded (including mTLS cert presentation when
 /// requested), Err(msg) otherwise.
@@ -145,7 +171,7 @@ fn rustls_client_handshake(
         ServerName::try_from(server_name.to_string()).map_err(|e| format!("server name: {e}"))?;
     let mut conn = ClientConnection::new(Arc::new(config), server_name)
         .map_err(|e| format!("client conn: {e}"))?;
-    let mut sock = TcpStream::connect(addr).map_err(|e| format!("connect: {e}"))?;
+    let mut sock = connect_with_retry(addr)?;
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     sock.set_write_timeout(Some(Duration::from_secs(5))).ok();
     // Drive the handshake synchronously. `complete_io` runs both
@@ -228,22 +254,16 @@ fn hex_char(n: u8) -> char {
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-// QUARANTINED — pre-existing mTLS test failures + hangs.
-//
-// `mtls_accept_accepts_client_with_valid_cert` fails immediately;
-// `mtls_accept_rejects_client_without_cert` and
-// `mtls_accept_rejects_client_with_wrong_ca_cert` block indefinitely
-// waiting on a TLS handshake the silt server side never completes.
-//
-// All three were already broken before the recent type-system batch
-// landed. They are not blocking any user-visible silt feature; mTLS
-// itself is opt-in via the `tcp-tls` feature flag and remains
-// behaviourally usable. The test fixtures need re-evaluation against
-// rustls 0.23's stricter client-auth defaults.
-//
-// Lift the #[ignore]s once the rcgen/rustls fixtures are repaired.
-// `mtls_typechecks` (typecheck-only) is unaffected and stays live.
-#[ignore = "QUARANTINED: pre-existing handshake hang/failure; see comment block above"]
+// Quarantine lifted (round 92). The d17ff85 quarantine blamed
+// "rustls 0.23's stricter client-auth defaults", but the fixtures and
+// the product mTLS path were both fine. The real bug was a startup
+// race in this harness: the tests slept a fixed 150ms after spawning
+// the silt server, but the server needs ~0.5s (debug build) to compile
+// its 30KB source and bind. The client's connect was refused; the
+// valid-cert test then failed its assert, and the two reject tests —
+// which discard the client result — left the server blocked forever in
+// `accept()` (the "hang"). Fixed by retrying the handshake connection
+// until the listener is up (`connect_with_retry`).
 #[test]
 fn mtls_accept_rejects_client_without_cert() {
     // rustls 0.23 defaults `WebPkiClientVerifier::builder(...).build()`
@@ -258,7 +278,6 @@ fn mtls_accept_rejects_client_without_cert() {
         pki.server_key_pem.clone(),
         pki.ca_cert_pem.clone(),
     );
-    thread::sleep(Duration::from_millis(150));
     // Client trusts the server CA but presents *no* client cert. The
     // server-side outcome is what this test locks down: silt returns
     // `Err(_)` because the handshake fails with `certificate_required`
@@ -273,7 +292,6 @@ fn mtls_accept_rejects_client_without_cert() {
     );
 }
 
-#[ignore = "QUARANTINED: pre-existing handshake failure; see comment block above mtls_accept_rejects_client_without_cert"]
 #[test]
 fn mtls_accept_accepts_client_with_valid_cert() {
     // Happy path: client presents a cert signed by the CA the server
@@ -286,7 +304,6 @@ fn mtls_accept_accepts_client_with_valid_cert() {
         pki.server_key_pem.clone(),
         pki.ca_cert_pem.clone(),
     );
-    thread::sleep(Duration::from_millis(150));
     let client_result = rustls_client_handshake(
         &addr,
         "localhost",
@@ -304,7 +321,6 @@ fn mtls_accept_accepts_client_with_valid_cert() {
     );
 }
 
-#[ignore = "QUARANTINED: pre-existing handshake hang; see comment block above mtls_accept_rejects_client_without_cert"]
 #[test]
 fn mtls_accept_rejects_client_with_wrong_ca_cert() {
     // Client presents a cert signed by a *different* CA. The server's
@@ -318,7 +334,6 @@ fn mtls_accept_rejects_client_with_wrong_ca_cert() {
         server_pki.server_key_pem.clone(),
         server_pki.ca_cert_pem.clone(), // server trusts only server_pki's CA
     );
-    thread::sleep(Duration::from_millis(150));
     // The client trusts the server CA (so server-side cert verifies
     // fine), but its own client cert is signed by a foreign CA. That
     // must be rejected by the server's `WebPkiClientVerifier`. As with

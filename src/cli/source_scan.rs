@@ -18,6 +18,17 @@ pub(crate) fn is_missing_main_error(e: &silt::vm::VmError) -> bool {
     msg.starts_with("undefined global: ") && msg.contains("main")
 }
 
+/// Strip a single leading UTF-8 BOM (U+FEFF) before line scanning.
+///
+/// The lexer skips a leading BOM (see `Lexer::new`), so these textual
+/// heuristics must too — otherwise the first line of a BOM-prefixed
+/// file (the Windows Notepad / PowerShell `>` default) never matches
+/// its `fn ` / `pub fn ` / `test.` prefix and e.g. `silt check` would
+/// report "program has no main() function" for a file that has one.
+fn skip_bom(source: &str) -> &str {
+    source.strip_prefix('\u{FEFF}').unwrap_or(source)
+}
+
 /// Heuristic: does this source look like a test-only file?
 ///
 /// Returns true if the source defines any `fn test_...` function OR contains
@@ -28,7 +39,7 @@ pub(crate) fn is_missing_main_error(e: &silt::vm::VmError) -> bool {
 /// with `fn test_`, `fn skip_test_`, or `test.` so commented-out code and
 /// string literals containing those substrings don't trigger a false positive.
 pub(crate) fn looks_like_test_file(source: &str) -> bool {
-    for line in source.lines() {
+    for line in skip_bom(source).lines() {
         let t = line.trim_start();
         if t.starts_with("fn test_")
             || t.starts_with("fn skip_test_")
@@ -47,7 +58,7 @@ pub(crate) fn looks_like_test_file(source: &str) -> bool {
 /// suppress the missing-main diagnostic on files that are intended to
 /// be imported rather than run directly.
 pub(crate) fn looks_like_library_module(source: &str) -> bool {
-    for line in source.lines() {
+    for line in skip_bom(source).lines() {
         let t = line.trim_start();
         if t.starts_with("pub fn ") {
             return true;
@@ -62,7 +73,7 @@ pub(crate) fn looks_like_library_module(source: &str) -> bool {
 /// positive here would suppress the missing-main diagnostic for a program
 /// that actually needs it.
 pub(crate) fn program_has_main(source: &str) -> bool {
-    for line in source.lines() {
+    for line in skip_bom(source).lines() {
         let t = line.trim_start();
         let rest = if let Some(r) = t.strip_prefix("pub fn ") {
             r

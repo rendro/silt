@@ -23,8 +23,10 @@ immutable — every "mutating" operation returns a new collection.
 Rule of thumb: if you know the field names at compile time, use a record or
 tuple. Reach for a map only when keys are dynamic.
 
-Pattern matching works on all three — see [Pattern Matching](pattern-matching.md)
-for `[head, ..tail]`, `#{ "k": v }`, and set patterns.
+Pattern matching works on lists and maps — see
+[Pattern Matching](pattern-matching.md) for `[head, ..tail]` and
+`#{ "k": v }`. Sets have no pattern form; test membership with
+`set.contains` instead.
 
 ## Lists
 

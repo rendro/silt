@@ -170,6 +170,136 @@ fn let_stmt(name: Symbol, value: Expr) -> Stmt {
     }
 }
 
+// ── Depth-bounded combinators (round 92) ─────────────────────────────
+//
+// The original derive bodies were built as *left-leaning* chains: a
+// fold of `Binary`/`Block` nodes nesting one level per field/variant
+// arg. The typechecker's and compiler's expression walkers recurse per
+// AST level, so an N-field record synthesized an O(N)-deep expression
+// and a ~70-field record overflowed the 8 MiB silt-main stack on
+// `silt check` (debug-build frames are tens of KiB). The helpers below
+// produce the *same observable semantics* with O(log N) (balanced
+// trees) or O(1) (statement sequences) expression depth, so derive
+// depth no longer scales with record/variant width at all.
+
+/// Fold a non-empty list of expressions into a **balanced** binary
+/// tree with `combine`, preserving the left-to-right order of the
+/// leaves. Reduction is pairwise per round: `[e0, e1, e2, e3, e4]` →
+/// `[c(e0,e1), c(e2,e3), e4]` → … — depth is ⌈log2 N⌉ instead of the
+/// N-1 of a left fold.
+///
+/// Semantics caveat for callers: this changes the *grouping* of
+/// `combine` applications, so it is only valid when `combine` is
+/// associative AND its evaluation order over the leaves matches the
+/// left fold's (true for `&&`, string `+`, and the compare
+/// first-non-zero combinator used below — each evaluates its left
+/// operand fully before deciding whether to evaluate the right one,
+/// so leaves still run strictly left-to-right with identical
+/// short-circuiting).
+fn balanced_fold(mut items: Vec<Expr>, combine: &mut dyn FnMut(Expr, Expr) -> Expr) -> Expr {
+    debug_assert!(!items.is_empty(), "balanced_fold requires >= 1 item");
+    while items.len() > 1 {
+        let mut next: Vec<Expr> = Vec::with_capacity(items.len().div_ceil(2));
+        let mut iter = items.into_iter();
+        while let Some(a) = iter.next() {
+            match iter.next() {
+                Some(b) => next.push(combine(a, b)),
+                None => next.push(a),
+            }
+        }
+        items = next;
+    }
+    items.pop().expect("balanced_fold invariant: one item left")
+}
+
+/// Balanced string concatenation: `+`-join the pieces with O(log N)
+/// nesting. String concatenation is associative and `+` always
+/// evaluates left then right, so the resulting string — and the order
+/// in which the embedded `.display()` calls run — is identical to the
+/// left-fold chain this replaces.
+fn concat_all(pieces: Vec<Expr>) -> Expr {
+    balanced_fold(pieces, &mut |a, b| bin(a, BinOp::Add, b))
+}
+
+/// Balanced `&&`-join. `&&` is associative, and the balanced grouping
+/// preserves the left fold's observable behavior exactly: operands
+/// still evaluate strictly left-to-right, and evaluation still stops
+/// at the first `false` (a false left subtree short-circuits its whole
+/// right sibling). Used by the Equal derives.
+fn and_all(pieces: Vec<Expr>) -> Expr {
+    balanced_fold(pieces, &mut |a, b| bin(a, BinOp::And, b))
+}
+
+/// Combine two compare results in the "first non-zero wins" monoid:
+///
+/// ```silt
+/// { let __d_bcK__ = <left>
+///   match __d_bcK__ { 0 -> <right>, _ -> __d_bcK__ } }
+/// ```
+///
+/// This combinator is **associative** — `(a ⊕ b) ⊕ c` and `a ⊕ (b ⊕ c)`
+/// both yield the first non-zero of `a, b, c` (or 0) — which is exactly
+/// the lexicographic-compare contract, so a *balanced* fold of the
+/// per-field compares is semantically identical to the old
+/// left-leaning `match`-nest: the first field pair (in declaration
+/// order) whose compare is non-zero decides the result. Short-circuit
+/// order is also preserved: the right subtree is evaluated only when
+/// the left subtree's combined result is 0, i.e. only when every
+/// earlier field compared equal. `counter` supplies fresh binding
+/// names per combine node (`prefix` distinguishes the enum/record
+/// call sites for greppability).
+fn compare_combine(prefix: &str, counter: &mut usize, left: Expr, right: Expr) -> Expr {
+    let c_sym = intern(&format!("{prefix}{counter}__"));
+    *counter += 1;
+    let arms = vec![
+        arm(Pattern::new(PatternKind::Int(0), Span::synthetic()), right),
+        arm(wildcard_pat(), ident_expr(c_sym)),
+    ];
+    block_expr(vec![
+        let_stmt(c_sym, left),
+        Stmt::Expr(match_expr(ident_expr(c_sym), arms)),
+    ])
+}
+
+/// Sequence the hash combine as a flat statement list:
+///
+/// ```silt
+/// { let __d_hc0__ = <leaf0>
+///   let __d_hc1__ = combine(__d_hc0__, <leaf1>)
+///   ...
+///   __d_hc{n-1}__ }
+/// ```
+///
+/// The hash combine `(a mod P) * 31 + (b mod P)` is **not**
+/// associative, so unlike Compare/Equal/Display it cannot be folded
+/// into a balanced tree without changing the numeric output (which
+/// tests lock). A statement sequence computes the exact same
+/// left-fold arithmetic — same values, same leaf evaluation order —
+/// while keeping expression depth O(1): block statements are walked
+/// iteratively, not recursively, by both the typechecker and the
+/// compiler.
+fn hash_combine_block(prefix: &str, leaves: Vec<Expr>) -> Expr {
+    debug_assert!(!leaves.is_empty(), "hash_combine_block requires >= 1 leaf");
+    if leaves.len() == 1 {
+        return leaves.into_iter().next().expect("len checked above");
+    }
+    let mut stmts: Vec<Stmt> = Vec::with_capacity(leaves.len() + 1);
+    let mut prev: Option<Symbol> = None;
+    for (i, leaf) in leaves.into_iter().enumerate() {
+        let sym = intern(&format!("{prefix}{i}__"));
+        let value = match prev {
+            None => leaf,
+            Some(p) => combine_hash_expr(ident_expr(p), leaf),
+        };
+        stmts.push(let_stmt(sym, value));
+        prev = Some(sym);
+    }
+    stmts.push(Stmt::Expr(ident_expr(
+        prev.expect("loop ran at least once"),
+    )));
+    block_expr(stmts)
+}
+
 fn named_te(name: Symbol) -> TypeExpr {
     TypeExpr::new(TypeExprKind::Named(name), Span::synthetic())
 }
@@ -484,31 +614,23 @@ pub(super) fn synth_compare_impl_for_enum(
     )
 }
 
-/// Build `let c0 = a0.compare(b0); match c0 { 0 -> let c1 = a1.compare(b1); ..., _ -> c0 }`
-/// for n field pairs. Recurses through positions; the innermost call is
-/// `a_{n-1}.compare(b_{n-1})`.
+/// Lexicographic compare of n field pairs: first non-zero
+/// `a_i.compare(b_i)` (in declaration order) wins; all-zero → 0.
+/// Round 92: built as a *balanced* fold of the associative
+/// first-non-zero combinator (see [`compare_combine`] for the
+/// associativity/short-circuit argument) instead of the old
+/// left-leaning `match`-nest, so expression depth is O(log n) and a
+/// wide variant no longer overflows the typechecker's recursive walk.
 fn build_lex_compare_chain(a_names: &[Symbol], b_names: &[Symbol]) -> Expr {
-    fn chain(a_names: &[Symbol], b_names: &[Symbol], i: usize) -> Expr {
-        let cur = method_call(
-            ident_expr(a_names[i]),
-            intern("compare"),
-            vec![ident_expr(b_names[i])],
-        );
-        if i + 1 == a_names.len() {
-            return cur;
-        }
-        let c_sym = intern(&format!("__d_c{i}__"));
-        let inner = chain(a_names, b_names, i + 1);
-        let arms = vec![
-            arm(Pattern::new(PatternKind::Int(0), Span::synthetic()), inner),
-            arm(wildcard_pat(), ident_expr(c_sym)),
-        ];
-        block_expr(vec![
-            let_stmt(c_sym, cur),
-            Stmt::Expr(match_expr(ident_expr(c_sym), arms)),
-        ])
-    }
-    chain(a_names, b_names, 0)
+    let leaves: Vec<Expr> = a_names
+        .iter()
+        .zip(b_names)
+        .map(|(a, b)| method_call(ident_expr(*a), intern("compare"), vec![ident_expr(*b)]))
+        .collect();
+    let mut counter = 0usize;
+    balanced_fold(leaves, &mut |l, r| {
+        compare_combine("__d_c", &mut counter, l, r)
+    })
 }
 
 /// `match scrut { V0 -> 0, V1(_, _) -> 1, ... }` — produces the
@@ -546,21 +668,19 @@ pub(super) fn synth_equal_impl_for_enum(
             if a_names.is_empty() {
                 bool_expr(true)
             } else {
-                // a0.equal(b0) && a1.equal(b1) && ... — left-fold
-                let mut chain: Expr = method_call(
-                    ident_expr(a_names[0]),
-                    intern("equal"),
-                    vec![ident_expr(b_names[0])],
-                );
-                for i in 1..a_names.len() {
-                    let next = method_call(
-                        ident_expr(a_names[i]),
-                        intern("equal"),
-                        vec![ident_expr(b_names[i])],
-                    );
-                    chain = bin(chain, BinOp::And, next);
-                }
-                chain
+                // a0.equal(b0) && a1.equal(b1) && ... — balanced
+                // `&&`-join (round 92): same left-to-right
+                // short-circuit semantics as the old left fold, but
+                // O(log n) deep so wide variants don't overflow the
+                // typechecker's recursive walk.
+                let leaves: Vec<Expr> = a_names
+                    .iter()
+                    .zip(b_names)
+                    .map(|(a, b)| {
+                        method_call(ident_expr(*a), intern("equal"), vec![ident_expr(*b)])
+                    })
+                    .collect();
+                and_all(leaves)
             }
         },
         // Catch-all: false. Only emitted when there's more than one
@@ -604,14 +724,17 @@ pub(super) fn synth_hash_impl_for_enum(
         variants,
         "__d_h",
         |i, _v, arg_names| {
-            // tag = i; combine = tag.hash(); for each arg:
-            //   combine = combine_hash(combine, arg.hash())
-            let mut combine: Expr = method_call(int_expr(i as i64), intern("hash"), vec![]);
+            // Leaves: tag.hash(), arg0.hash(), arg1.hash(), ...
+            // Sequenced as a flat let-block (round 92) computing the
+            // exact same left-fold combine arithmetic as before —
+            // identical numeric output (locked by tests) — with O(1)
+            // expression depth instead of O(arity).
+            let mut leaves: Vec<Expr> =
+                vec![method_call(int_expr(i as i64), intern("hash"), vec![])];
             for arg_name in arg_names {
-                let arg_hash = method_call(ident_expr(*arg_name), intern("hash"), vec![]);
-                combine = combine_hash_expr(combine, arg_hash);
+                leaves.push(method_call(ident_expr(*arg_name), intern("hash"), vec![]));
             }
-            combine
+            hash_combine_block("__d_hc", leaves)
         },
     )
 }
@@ -707,18 +830,22 @@ pub(super) fn synth_display_impl_for_enum(
                 string_expr(&tag_name)
             } else {
                 // "Tag(" + a0.display() + ", " + a1.display() + ... + ")"
-                let mut acc = bin(string_expr(&tag_name), BinOp::Add, string_expr("("));
+                // — balanced concat (round 92): identical string and
+                // identical left-to-right `.display()` call order, but
+                // O(log n) deep instead of O(n).
+                let mut pieces: Vec<Expr> = vec![string_expr(&tag_name), string_expr("(")];
                 for (i, arg_name) in arg_names.iter().enumerate() {
                     if i > 0 {
-                        acc = bin(acc, BinOp::Add, string_expr(", "));
+                        pieces.push(string_expr(", "));
                     }
-                    acc = bin(
-                        acc,
-                        BinOp::Add,
-                        method_call(ident_expr(*arg_name), intern("display"), vec![]),
-                    );
+                    pieces.push(method_call(
+                        ident_expr(*arg_name),
+                        intern("display"),
+                        vec![],
+                    ));
                 }
-                bin(acc, BinOp::Add, string_expr(")"))
+                pieces.push(string_expr(")"));
+                concat_all(pieces)
             }
         },
     )
@@ -832,36 +959,35 @@ pub(super) fn synth_compare_impl_for_record(
     )
 }
 
+/// Lexicographic compare of record fields in declaration order.
+/// Round 92: balanced fold of the associative first-non-zero
+/// combinator (see [`compare_combine`]) — same "first non-equal field
+/// wins" semantics and short-circuit order as the old left-leaning
+/// `match`-nest, but O(log n) deep, so a wide record (70+, 500 fields)
+/// no longer overflows the typechecker's recursive walk on `check`.
 fn build_record_lex_compare(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField]) -> Expr {
-    fn rec(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField], i: usize) -> Expr {
-        let cur = method_call(
-            field_access(ident_expr(self_sym), fields[i].name),
-            intern("compare"),
-            vec![field_access(ident_expr(other_sym), fields[i].name)],
-        );
-        if i + 1 == fields.len() {
-            return cur;
-        }
-        let c_sym = intern(&format!("__d_rc{i}__"));
-        let arms = vec![
-            arm(
-                Pattern::new(PatternKind::Int(0), Span::synthetic()),
-                rec(self_sym, other_sym, fields, i + 1),
-            ),
-            arm(wildcard_pat(), ident_expr(c_sym)),
-        ];
-        block_expr(vec![
-            let_stmt(c_sym, cur),
-            Stmt::Expr(match_expr(ident_expr(c_sym), arms)),
-        ])
-    }
-    rec(self_sym, other_sym, fields, 0)
+    let leaves: Vec<Expr> = fields
+        .iter()
+        .map(|f| {
+            method_call(
+                field_access(ident_expr(self_sym), f.name),
+                intern("compare"),
+                vec![field_access(ident_expr(other_sym), f.name)],
+            )
+        })
+        .collect();
+    let mut counter = 0usize;
+    balanced_fold(leaves, &mut |l, r| {
+        compare_combine("__d_rc", &mut counter, l, r)
+    })
 }
 
 // ── Equal on record ──────────────────────────────────────────────────
 
 fn build_record_equal_chain(self_sym: Symbol, other_sym: Symbol, fields: &[RecordField]) -> Expr {
     // self.f0.equal(other.f0) && self.f1.equal(other.f1) && ...
+    // Balanced `&&`-join (round 92): same left-to-right short-circuit
+    // semantics as a left fold, O(log n) deep.
     let pair_eq = |f: &RecordField| {
         method_call(
             field_access(ident_expr(self_sym), f.name),
@@ -869,11 +995,7 @@ fn build_record_equal_chain(self_sym: Symbol, other_sym: Symbol, fields: &[Recor
             vec![field_access(ident_expr(other_sym), f.name)],
         )
     };
-    let mut chain: Expr = pair_eq(&fields[0]);
-    for f in &fields[1..] {
-        chain = bin(chain, BinOp::And, pair_eq(f));
-    }
-    chain
+    and_all(fields.iter().map(pair_eq).collect())
 }
 
 pub(super) fn synth_equal_impl_for_record(
@@ -896,7 +1018,10 @@ pub(super) fn synth_equal_impl_for_record(
 // ── Hash on record ───────────────────────────────────────────────────
 
 fn build_record_hash_combine(self_sym: Symbol, fields: &[RecordField]) -> Expr {
-    // h0.combine(h1).combine(h2)... where h0 = self.f0.hash()
+    // h0.combine(h1).combine(h2)... where h0 = self.f0.hash().
+    // Sequenced as a flat let-block (round 92): exact same left-fold
+    // combine arithmetic — identical numeric output (locked by tests)
+    // — with O(1) expression depth instead of O(n).
     let field_hash = |f: &RecordField| {
         method_call(
             field_access(ident_expr(self_sym), f.name),
@@ -904,11 +1029,7 @@ fn build_record_hash_combine(self_sym: Symbol, fields: &[RecordField]) -> Expr {
             vec![],
         )
     };
-    let mut combine: Expr = field_hash(&fields[0]);
-    for f in &fields[1..] {
-        combine = combine_hash_expr(combine, field_hash(f));
-    }
-    combine
+    hash_combine_block("__d_rhc", fields.iter().map(field_hash).collect())
 }
 
 pub(super) fn synth_hash_impl_for_record(
@@ -932,24 +1053,23 @@ pub(super) fn synth_hash_impl_for_record(
 
 fn build_record_display_concat(name_str: &str, self_sym: Symbol, fields: &[RecordField]) -> Expr {
     // "Name { f0: " + self.f0.display() + ", f1: " + self.f1.display() + " }"
-    let mut acc = string_expr(&format!("{name_str} {{ "));
+    // — balanced concat (round 92): identical string and identical
+    // left-to-right `.display()` call order, O(log n) deep.
+    let mut pieces: Vec<Expr> = vec![string_expr(&format!("{name_str} {{ "))];
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {
-            acc = bin(acc, BinOp::Add, string_expr(", "));
+            pieces.push(string_expr(", "));
         }
         let field_str = crate::intern::resolve(f.name);
-        acc = bin(acc, BinOp::Add, string_expr(&format!("{field_str}: ")));
-        acc = bin(
-            acc,
-            BinOp::Add,
-            method_call(
-                field_access(ident_expr(self_sym), f.name),
-                intern("display"),
-                vec![],
-            ),
-        );
+        pieces.push(string_expr(&format!("{field_str}: ")));
+        pieces.push(method_call(
+            field_access(ident_expr(self_sym), f.name),
+            intern("display"),
+            vec![],
+        ));
     }
-    bin(acc, BinOp::Add, string_expr(" }"))
+    pieces.push(string_expr(" }"));
+    concat_all(pieces)
 }
 
 pub(super) fn synth_display_impl_for_record(

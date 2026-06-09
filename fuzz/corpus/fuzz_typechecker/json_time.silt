@@ -1,0 +1,71 @@
+import json
+import list
+import time
+
+type Event {
+  name: String,
+  date: Date,
+}
+
+type Meeting {
+  title: String,
+  start: DateTime,
+}
+
+type Schedule {
+  event: String,
+  date: Date,
+  time: Time,
+}
+
+fn main() {
+  -- Parse JSON with Date field
+  let event = match json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event) {
+    Ok(e) -> e
+    Err(e) -> panic("parse error: {e.message()}")
+  }
+  println("event: {event.name}")
+  println("date: {event.date}")
+  let wd = event.date
+  |> time.weekday
+  println("weekday: {wd}")
+  -- Parse JSON with DateTime field
+  let meeting = match json.parse("""{"title": "standup", "start": "2024-03-15T09:00:00"}""", Meeting) {
+    Ok(m) -> m
+    Err(e) -> panic("parse error: {e.message()}")
+  }
+  println("meeting: {meeting.title} at {meeting.start}")
+  -- Parse JSON with Time field
+  let sched = match json.parse("""{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""", Schedule) {
+    Ok(s) -> s
+    Err(e) -> panic("parse error: {e.message()}")
+  }
+  println("schedule: {sched.event} on {sched.date} at {sched.time}")
+  -- Parse a list of events
+  let events = match json.parse_list("""
+    [
+        {"name": "alpha", "date": "2024-01-15"},
+        {"name": "beta", "date": "2024-06-01"},
+        {"name": "gamma", "date": "2024-12-25"}
+      ]
+    """, Event) {
+    Ok(e) -> e
+    Err(e) -> panic("parse error: {e.message()}")
+  }
+  events
+  |> list.each { e ->
+    let day = e.date
+    |> time.weekday
+    println("  {e.name}: {e.date} ({day})")
+  }
+  -- Date arithmetic on parsed dates
+  let deadline = event.date
+  |> time.add_days(90)
+  println("90 days after launch: {deadline}")
+  -- Invalid date in JSON
+  let bad = json.parse("""{"name": "oops", "date": "not-a-date"}""", Event)
+  match bad {
+    Ok(e) -> println("bad date: parsed as {e.name}")
+    Err(e) -> println("bad date: {e.message()}")
+  }
+}

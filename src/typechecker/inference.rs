@@ -2691,6 +2691,32 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
+                        // GAP (round 92): `t.0` parses as a FieldAccess
+                        // with an all-numeric "method" name (the parser
+                        // keeps a dedicated tuple-index arm), but tuple
+                        // indexing is intentionally unsupported (round 69
+                        // decision — docs-only). The generic "unknown
+                        // method '0' on Tuple" wording misled users into
+                        // thinking they typo'd a method name. Emit a
+                        // targeted diagnostic pointing at destructuring
+                        // instead. Numeric "methods" can only arise from
+                        // tuple-index syntax, so this never shadows a real
+                        // method lookup.
+                        if matches!(t, Type::Tuple(_)) {
+                            let field_str = resolve(field);
+                            if !field_str.is_empty()
+                                && field_str.bytes().all(|b| b.is_ascii_digit())
+                            {
+                                self.error(
+                                    format!(
+                                        "tuple indexing ('t.{field_str}') is not supported; \
+                                         destructure instead: 'let (a, b) = t'"
+                                    ),
+                                    span,
+                                );
+                                return Type::Error;
+                            }
+                        }
                         let display = resolve(type_name).to_string();
                         self.error(
                             format_unknown_method_message(
@@ -4952,6 +4978,12 @@ pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
     match ty {
         Type::Int | Type::Float | Type::ExtFloat | Type::Error | Type::Never => true,
         Type::Var(_) => true,
+        // Round 92: an abstract associated-type projection (`<a as T>::Item`
+        // with the receiver still a where-bound type variable) is "maybe
+        // valid" exactly like Type::Var — the concrete type is only known
+        // once a trait impl binds it, and the concrete check fires at the
+        // instantiation site (or as a VM operator error) just as for Var.
+        Type::AssocProj { .. } => true,
         Type::String if allow_string => true,
         _ => false,
     }
@@ -4974,6 +5006,9 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         | Type::Error
         | Type::Never => true,
         Type::Var(_) => true,
+        // Round 92: abstract associated-type projections are "maybe valid"
+        // like Type::Var — see is_valid_arith_operand above for rationale.
+        Type::AssocProj { .. } => true,
         Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_) if is_equality => {
             true
         }

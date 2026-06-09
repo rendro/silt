@@ -1618,6 +1618,7 @@ dependencies = [
  "getrandom 0.2.17",
  "glob",
  "hmac 0.12.1",
+ "libc",
  "lsp-server",
  "lsp-types",
  "md-5 0.10.6",

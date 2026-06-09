@@ -362,6 +362,15 @@ pub struct Compiler {
     /// Keys are package-qualified (`{pkg}::{module}`) so the same module
     /// name in two packages doesn't collide.
     compiled_modules: HashSet<String>,
+    /// Public export names of each compiled file module, keyed by the
+    /// same package-qualified cache key as `compiled_modules`. Lets a
+    /// later `import foo as f` re-register alias globals even when
+    /// `foo` was already compiled by an earlier `import foo` /
+    /// `import foo.{...}` / `import foo as other` — previously the
+    /// cached-hit path returned an empty list and the alias arm
+    /// silently registered nothing, so `f.area` died at runtime with
+    /// "undefined global" while `silt check` passed (round 92 fix).
+    module_export_names: HashMap<String, Vec<String>>,
     /// Modules currently being compiled (for circular import detection).
     /// The HashSet gives O(1) membership checks for the hot path, and the
     /// parallel Vec preserves insertion order so a detected cycle can be
@@ -397,6 +406,28 @@ pub struct Compiler {
     /// single-error flow so `SourceError::from_compile_error` renders
     /// the outer caret against the correct file.
     module_parse_errors: Vec<CompileError>,
+    /// Round 92: hard typechecker errors found in *imported* user
+    /// modules that the compiler will NOT resolve at link time (i.e.
+    /// real type errors, not the import-resolvable undefined-name /
+    /// trait cascade — see `crate::diagnostic_filters`). Previously the
+    /// per-module typecheck results in `pre_typecheck_user_module` and
+    /// `compile_file_module_inner` were bound to `_errors` /
+    /// `_type_errors` and dropped wholesale, so `silt check` exited 0
+    /// on a program whose imported module fails its own direct check.
+    ///
+    /// Each entry is already a fully-formed [`crate::errors::SourceError`]
+    /// rendered against the imported module's own source text and
+    /// (CWD-normalized) file path, so spans and snippets point into the
+    /// module file, not the import site. Drained by the CLI pipeline
+    /// via [`Compiler::take_module_type_errors`] and merged into the
+    /// entrypoint's type diagnostics.
+    module_type_errors: Vec<crate::errors::SourceError>,
+    /// Module files already harvested into `module_type_errors`. The
+    /// same module is typechecked up to twice per session (once by the
+    /// pre-typecheck pass, once by `compile_file_module_inner`); keying
+    /// by file path makes the harvest first-wins so diagnostics aren't
+    /// duplicated.
+    module_type_error_files: HashSet<PathBuf>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
     /// Aliases for builtin modules: maps the alias name (e.g. "l" from
@@ -532,11 +563,14 @@ impl Compiler {
             package_roots: HashMap::new(),
             local_package: None,
             compiled_modules: HashSet::new(),
+            module_export_names: HashMap::new(),
             compiling_modules: HashSet::new(),
             compiling_modules_stack: Vec::new(),
             compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
             module_parse_errors: Vec::new(),
+            module_type_errors: Vec::new(),
+            module_type_error_files: HashSet::new(),
             imported_builtin_modules: HashSet::new(),
             imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
@@ -571,11 +605,14 @@ impl Compiler {
             package_roots,
             local_package: Some(local_package),
             compiled_modules: HashSet::new(),
+            module_export_names: HashMap::new(),
             compiling_modules: HashSet::new(),
             compiling_modules_stack: Vec::new(),
             compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
             module_parse_errors: Vec::new(),
+            module_type_errors: Vec::new(),
+            module_type_error_files: HashSet::new(),
             imported_builtin_modules: HashSet::new(),
             imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
@@ -617,6 +654,78 @@ impl Compiler {
     /// exactly the same context as the primary error.
     pub fn module_parse_errors(&self) -> &[CompileError] {
         &self.module_parse_errors
+    }
+
+    /// Drain the hard type errors harvested from *imported* user
+    /// modules (round 92). Each entry is a fully-formed
+    /// [`crate::errors::SourceError`] whose span/snippet point into the
+    /// imported module's own file. The CLI pipeline merges these into
+    /// the entrypoint's type diagnostics so `silt check`/`silt run`
+    /// report an ill-typed imported module instead of exiting 0 and
+    /// deferring to a runtime error.
+    ///
+    /// Import-resolvable shapes (the undefined-name / trait cascade
+    /// behind an "unknown module" warning — see
+    /// `crate::diagnostic_filters`) are already filtered out at harvest
+    /// time, preserving the round-91 suppression contract for
+    /// transitive imports.
+    pub fn take_module_type_errors(&mut self) -> Vec<crate::errors::SourceError> {
+        std::mem::take(&mut self.module_type_errors)
+    }
+
+    /// Harvest the reportable subset of an imported module's typecheck
+    /// diagnostics into `module_type_errors` (round 92).
+    ///
+    /// Keeps only hard errors that the compiler will NOT resolve at
+    /// link time:
+    /// - warnings are skipped (an imported module's style warnings are
+    ///   not the entrypoint's diagnostics — `silt check <module>` shows
+    ///   them directly);
+    /// - the import-resolvable cascade (undefined-name / trait shapes
+    ///   gated behind the module's own "unknown module" warning) is
+    ///   suppressed via the SAME shared predicate the CLI pipeline and
+    ///   `silt test` use, so transitive-import noise stays hidden;
+    /// - the typechecker's "module 'X' is not imported" copy is
+    ///   dropped because the compiler re-emits the identical sentence
+    ///   as the authoritative hard compile error (mirrors
+    ///   `is_module_not_imported_typecheck_error` in the CLI pipeline).
+    ///
+    /// First-wins per module file: the pre-typecheck pass and
+    /// `compile_file_module_inner` both typecheck the same module, so
+    /// the harvest is keyed by `file_path` to avoid duplicates.
+    fn harvest_module_type_errors(
+        &mut self,
+        errors: &[typechecker::TypeError],
+        source: &str,
+        file_path: &std::path::Path,
+        file_display: &str,
+    ) {
+        if !self.module_type_error_files.insert(file_path.to_path_buf()) {
+            return;
+        }
+        let converted: Vec<crate::errors::SourceError> = errors
+            .iter()
+            .map(|e| crate::errors::SourceError::from_type_error(e, source, file_display))
+            .collect();
+        let has_user_import_warning = converted.iter().any(|e| {
+            e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
+        });
+        for err in converted {
+            if err.is_warning {
+                continue;
+            }
+            if crate::diagnostic_filters::should_suppress_import_cascade_message(
+                &err.message,
+                err.is_warning,
+                has_user_import_warning,
+            ) {
+                continue;
+            }
+            if err.message.contains("is not imported") && err.message.contains("add `import ") {
+                continue;
+            }
+            self.module_type_errors.push(err);
+        }
     }
 
     /// Mark all builtin modules as imported (used by the REPL).
@@ -1211,8 +1320,18 @@ impl Compiler {
 
         // Guard against double-compilation. Cache key is package-qualified
         // so two packages can each have a `lib` module without clashing.
+        // Return the cached export list (not an empty Vec): the
+        // `ImportTarget::Alias` arm consumes these names to emit
+        // `alias.name` globals, and an alias import may legitimately
+        // follow another import of the same module (`import geometry`
+        // then `import geometry as g`, or two distinct aliases). An
+        // empty return here silently dropped the alias registration.
         if self.compiled_modules.contains(&resolved.cache_key) {
-            return Ok(vec![]);
+            return Ok(self
+                .module_export_names
+                .get(&resolved.cache_key)
+                .cloned()
+                .unwrap_or_default());
         }
 
         // Detect circular imports. When detected, render the full chain
@@ -1284,8 +1403,10 @@ impl Compiler {
         {
             self.compiling_package_stack.remove(pos);
         }
-        if result.is_ok() {
-            self.compiled_modules.insert(resolved.cache_key);
+        if let Ok(names) = &result {
+            self.compiled_modules.insert(resolved.cache_key.clone());
+            self.module_export_names
+                .insert(resolved.cache_key, names.clone());
         }
         result
     }
@@ -1502,7 +1623,7 @@ impl Compiler {
             // dependencies are visible here, and any aliases this
             // module registers stay visible to downstream importers.
             let resolver = std::mem::take(&mut self.resolver);
-            let (_errors, exports, resolver) =
+            let (module_errors, exports, resolver) =
                 typechecker::check_with_package_and_imports_options_resolver(
                     &mut program,
                     self.current_package(),
@@ -1511,6 +1632,16 @@ impl Compiler {
                     Some(resolver),
                 );
             self.resolver = resolver;
+            // Round 92: surface this module's REAL type errors instead
+            // of dropping the whole batch. Import-resolvable shapes
+            // stay suppressed inside the harvest — see
+            // `harvest_module_type_errors`.
+            self.harvest_module_type_errors(
+                &module_errors,
+                &source,
+                &resolved.file_path,
+                &file_display,
+            );
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -1638,7 +1769,7 @@ impl Compiler {
         let module_sym = intern(module_name);
         self.pre_typecheck_user_imports(&program);
         let resolver = std::mem::take(&mut self.resolver);
-        let (_type_errors, this_exports, resolver) =
+        let (module_type_errors, this_exports, resolver) =
             typechecker::check_with_package_and_imports_options_resolver(
                 &mut program,
                 self.current_package(),
@@ -1647,6 +1778,12 @@ impl Compiler {
                 Some(resolver),
             );
         self.resolver = resolver;
+        // Round 92: harvest this module's real type errors (the
+        // import-resolvable cascade stays suppressed — see
+        // `harvest_module_type_errors`). First-wins keying by file path
+        // means this is a no-op when the pre-typecheck pass already
+        // harvested the same module.
+        self.harvest_module_type_errors(&module_type_errors, &source, file_path, &file_display);
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
@@ -2453,6 +2590,22 @@ impl Compiler {
             }
 
             ExprKind::StringInterp(parts) => {
+                // The StringConcat part count is encoded as a `u8` in
+                // bytecode. Silently wrapping via the `u8` counter used
+                // to let a 300-segment interpolation compile with
+                // count=44 (and panic the compiler outright in debug
+                // builds); the VM then popped the wrong number of stack
+                // values and produced garbled output. Reject at compile
+                // time instead, mirroring the call/tuple/record guards.
+                if parts.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "string interpolation has {} segments; silt string interpolations are limited to 255",
+                            parts.len()
+                        ),
+                        span,
+                    });
+                }
                 let mut count: u8 = 0;
                 for part in parts {
                     match part {

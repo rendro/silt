@@ -24,7 +24,7 @@ seconds="${2:-600}"
 
 if [ -z "$target" ]; then
   echo "usage: fuzz/local.sh <target|all> [seconds]" >&2
-  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip" >&2
+  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker" >&2
   exit 1
 fi
 
@@ -38,9 +38,9 @@ run_one() {
 if [ "$target" = "all" ]; then
   # Each target gets its own background process; wait for all.
   # libfuzzer defaults to one worker per invocation; it saturates one
-  # core. Running four in parallel saturates four cores, which is the
+  # core. Running five in parallel saturates five cores, which is the
   # intended "use the whole machine" behaviour.
-  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip; do
+  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker; do
     run_one "$t" "$seconds" &
   done
   wait

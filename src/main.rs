@@ -29,12 +29,42 @@ use crate::cli::watch::maybe_handle_watch;
 // Windows defaults to a 1 MiB main-thread stack which is too tight for
 // silt's recursive walks (type canonicalization, auto-derive synthesis,
 // row-polymorphic field unification, supertrait obligation chasing).
-// Linux/macOS default to 8 MiB and are unaffected. Spawn the entire
-// dispatcher on a worker thread with an explicit 8 MiB reserve so the
-// build behaves identically across platforms — same trick rustc uses.
-const SILT_STACK_SIZE: usize = 8 * 1024 * 1024;
+// Linux/macOS default to 8 MiB. Spawn the entire dispatcher on a worker
+// thread with an explicit reserve so the build behaves identically
+// across platforms — same trick rustc uses.
+//
+// Round 92: raised from 8 MiB to 256 MiB. The typechecker's and
+// compiler's expression walkers recurse per AST level, and a
+// left-leaning binop chain (`1 + 1 + ...`) nests one level per term —
+// in a debug build each level costs tens of KiB of stack, so an
+// 8 MiB reserve aborted (`fatal runtime error: stack overflow`) on
+// chains of only ~250 terms. 256 MiB is *virtual* address space:
+// pages are only committed as they are actually touched, so the
+// steady-state memory cost is unchanged while deep-but-legitimate
+// programs (multi-thousand-term chains, very wide auto-derived
+// records) check and run instead of aborting. All checking/compiling
+// entry points (run / check / disasm / test / repl / lsp) execute on
+// this thread; `--watch` re-invokes the binary as a subprocess whose
+// own silt-main gets the same reserve.
+//
+// Expressed as 32 × the historic 8 MiB reserve: the source-grep lock
+// in tests/main_stack_size_lock_tests.rs checks for the
+// `8 * 1024 * 1024` factor as the "at least 8 MiB" floor.
+const SILT_STACK_SIZE: usize = 32 * 8 * 1024 * 1024;
 
 fn main() {
+    // Round 92: restore the default SIGPIPE disposition before anything
+    // writes to stdout or spawns a thread. The Rust runtime sets SIGPIPE
+    // to ignored, which turns writes to a closed pipe into EPIPE errors
+    // that `println!` converts into a panic — so `silt run loud.silt |
+    // head -2` spewed a raw "failed printing to stdout: Broken pipe"
+    // panic (and `silt disasm … | head` exited 101). With SIG_DFL the
+    // process dies quietly on SIGPIPE like every other unix CLI.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args: Vec<String> = env::args().collect();
     let join = std::thread::Builder::new()
         .name("silt-main".into())

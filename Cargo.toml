@@ -72,6 +72,14 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 
+# Unix-only: used solely by `main()` to reset SIGPIPE to SIG_DFL so that
+# piping silt's output into a short-lived consumer (`silt run … | head`)
+# terminates the process quietly instead of panicking on EPIPE inside
+# `println!`. libc is already in the dependency graph transitively
+# (getrandom, parking_lot, …), so this adds an edge, not a crate.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Windows-only: needed by `tcp.close` to call `CancelIoEx` on the inner
 # socket handle. Winsock's `shutdown(SD_BOTH)` does not cancel an
 # in-progress blocking `recv` on a sibling SOCKET handle (created via

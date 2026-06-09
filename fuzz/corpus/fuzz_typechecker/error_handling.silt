@@ -1,0 +1,36 @@
+import int
+import list
+import string
+
+fn parse_config(text) {
+  let lines = text
+  |> string.split("\n")
+  when let Some(host_line) = lines
+  |> list.find { l -> string.contains(l, "host=") } else {
+    return Err("missing host in config")
+  }
+  when let Some(port_line) = lines
+  |> list.find { l -> string.contains(l, "port=") } else {
+    return Err("missing port in config")
+  }
+  let host = host_line
+  |> string.replace("host=", "")
+  let port_result = port_line
+  |> string.replace("port=", "")
+  |> int.parse()
+  when let Ok(port) = port_result else {
+    return Err("invalid port number")
+  }
+  Ok("connecting to {host}:{port}")
+}
+
+fn main() {
+  match parse_config("host=localhost\nport=8080") {
+    Ok(msg) -> println(msg)
+    Err(e) -> println("config error: {e}")
+  }
+  match parse_config("host=localhost") {
+    Ok(msg) -> println(msg)
+    Err(e) -> println("config error: {e}")
+  }
+}

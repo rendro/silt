@@ -147,7 +147,7 @@ pub(crate) fn run_compile_pipeline_with_options(
     // stitched back into the compiler afterward so the trait-impl
     // emission path (`Decl::TraitImpl` arm) sees the accumulated
     // alias state when canonicalising target-type symbols.
-    let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
+    let mut type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
         let resolver = compiler.take_resolver();
         let (raw_type_errors, _entry_exports, resolver) =
             typechecker::check_with_package_and_imports_options_resolver(
@@ -171,6 +171,15 @@ pub(crate) fn run_compile_pipeline_with_options(
     // during compilation, which fixes most "undefined" errors from the type
     // checker.  The test suite already relies on this behavior.
     if has_parse_errors || skip_compile {
+        // Round 92: imported user modules' REAL type errors (harvested
+        // during `pre_typecheck_imports`, already filtered so the
+        // import-resolvable cascade stays suppressed) flow into the
+        // result alongside the entrypoint's own diagnostics. Each one
+        // is rendered against the imported module's source/path, so it
+        // carries the right file and span. Previously these were
+        // dropped wholesale and `silt check` exited 0 on a program
+        // whose imported module fails its own direct check.
+        type_errors.extend(compiler.take_module_type_errors());
         return CompilePipelineResult {
             source,
             parse_errors,
@@ -182,7 +191,12 @@ pub(crate) fn run_compile_pipeline_with_options(
     }
 
     // Compile.
-    match compiler.compile_program(&program) {
+    let compile_result = compiler.compile_program(&program);
+    // Round 92: merge imported-module type errors (see the comment on
+    // the skip-compile arm above). Taken after the compile pass so
+    // modules first loaded during compilation are harvested too.
+    type_errors.extend(compiler.take_module_type_errors());
+    match compile_result {
         Ok(functions) => {
             let compile_warnings: Vec<SourceError> = compiler
                 .warnings()

@@ -125,14 +125,27 @@ match n {
 }
 ```
 
-All alternatives must bind the **same** variables:
+All alternatives must bind the **same** variables (and, as in any match,
+all alternatives must have the same type — you can't mix `Some(x)` with
+`Ok(x)` in one or-pattern):
 
 ```silt
--- OK: both sides bind x
-Some(x) | Ok(x) -> use(x)
+-- OK: both alternatives bind `x`
+fn unwrap_either(r: Result(Int, Int)) -> Int {
+  match r {
+    Ok(x) | Err(x) -> x
+  }
+}
 
--- ERROR: left binds x, right binds y
-Some(x) | Ok(y) -> ...   -- compile error
+fn main() {
+  println("{unwrap_either(Ok(7))}")   -- 7
+}
+```
+
+```silt
+-- ERROR: first alternative binds x, second binds y
+Ok(x) | Err(y) -> ...
+-- compile error: or-pattern alternatives must bind the same variables
 ```
 
 ## Guards

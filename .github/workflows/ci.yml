@@ -195,6 +195,9 @@ jobs:
       - name: Replay fuzz_roundtrip corpus
         run: ./fuzz/replay.sh fuzz_roundtrip
 
+      - name: Replay fuzz_typechecker corpus
+        run: ./fuzz/replay.sh fuzz_typechecker
+
       - name: Upload reproducers on failure
         if: failure()
         uses: actions/upload-artifact@v7

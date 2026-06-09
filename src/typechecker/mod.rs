@@ -1631,6 +1631,40 @@ impl TypeChecker {
                 }
             }
 
+            // ── AssocProj × AssocProj (abstract receivers) ────────────
+            // The canonicalise fast-path at the top of `unify` already
+            // reduced any projection whose receiver has a registered
+            // impl, so reaching this arm means both sides are still
+            // abstract — the receiver is a type variable under a
+            // `where` bound (or another unreduced projection). Per the
+            // documented contract on `Type::AssocProj`
+            // (src/types/mod.rs): two abstract projections unify iff
+            // they have the same receiver, trait_name, and assoc_name.
+            // "Same receiver" means *unifiable* receivers — two
+            // distinct type variables can still unify (binding one to
+            // the other), so recurse rather than compare structurally.
+            (
+                Type::AssocProj {
+                    receiver: r1,
+                    trait_name: tn1,
+                    assoc_name: an1,
+                },
+                Type::AssocProj {
+                    receiver: r2,
+                    trait_name: tn2,
+                    assoc_name: an2,
+                },
+            ) => {
+                if tn1 == tn2 && an1 == an2 {
+                    self.unify(r1, r2, span);
+                } else {
+                    // Different trait or different member: genuinely
+                    // distinct abstract types. Directional convention:
+                    // t1 is the "got" side, t2 the "expected" side.
+                    self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                }
+            }
+
             _ => {
                 // Suppress cascade errors where either side is already in
                 // error state — a previous diagnostic explained the root

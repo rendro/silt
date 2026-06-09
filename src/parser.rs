@@ -973,7 +973,11 @@ impl Parser {
                     span: self.span(),
                 });
             }
-            (self.parse_expr()?, false)
+            let body = self.parse_expr()?;
+            if let Some(err) = self.expr_body_foreign_keyword_hint(&body) {
+                return Err(err);
+            }
+            (body, false)
         } else if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
         } else {
@@ -1183,7 +1187,22 @@ impl Parser {
                 )));
             }
             match self.parse_expr() {
-                Ok(e) => (e, false),
+                Ok(e) => {
+                    if let Some(err) = self.expr_body_foreign_keyword_hint(&e) {
+                        return Err(Box::new((
+                            self.make_recovery_stub(
+                                name,
+                                name_span,
+                                params,
+                                return_type,
+                                span,
+                                doc.clone(),
+                            ),
+                            err,
+                        )));
+                    }
+                    (e, false)
+                }
                 Err(err) => {
                     return Err(Box::new((
                         self.make_recovery_stub(
@@ -2149,6 +2168,77 @@ impl Parser {
         Ok(stmts)
     }
 
+    /// G1 hint table: messages for C-family control-flow keywords that
+    /// silt deliberately lacks. `if`/`while`/`for` lex as ordinary
+    /// identifiers, so a user porting code gets a baffling generic parse
+    /// error unless we recognize the shape and point at the silt
+    /// equivalent. Shared by the statement-level guard in `parse_stmt`
+    /// and the expression-body guard in the `fn name(...) = ...` paths.
+    fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
+        match text {
+            "if" => {
+                Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
+            }
+            "while" | "for" => Some(
+                "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
+            ),
+            _ => None,
+        }
+    }
+
+    /// True when `tok` could plausibly start the erroneous construct
+    /// following a foreign keyword: an expression-start token (ident,
+    /// literal, unary, brace, bracket). Deliberately excludes `(`
+    /// because `if(...)` is a syntactically valid call of a variable
+    /// named `if`, and excludes Newline/EOF/closers because a bare
+    /// identifier reference there is valid silt.
+    fn g1_next_starts_expression(tok: &Token) -> bool {
+        matches!(
+            tok,
+            Token::Ident(_)
+                | Token::Int(_)
+                | Token::Float(_)
+                | Token::Bool(_)
+                | Token::StringLit(..)
+                | Token::StringStart(_)
+                | Token::Minus
+                | Token::Not
+                | Token::LBrace
+                | Token::LBracket
+        )
+    }
+
+    /// G1, expression-body variant: after parsing an `=` function body,
+    /// detect the `fn f(n: Int) -> Int = if n == 0 { ... }` mistake.
+    ///
+    /// Fires only when BOTH hold:
+    ///   * the parsed body is a bare `if`/`while`/`for` identifier
+    ///     reference (so `parse_expr` could not attach what follows), and
+    ///   * the next token is an expression-start token, which can never
+    ///     legally follow a completed `=` body (declaration level would
+    ///     reject it with "expected declaration, found ...").
+    ///
+    /// This keeps every accepted program byte-identical: programs that
+    /// genuinely use `if` as a variable (e.g. `fn f() = if` followed by
+    /// a newline, or a call `if(x)`, which parses as a non-Ident body)
+    /// never reach the hint. We only upgrade a guaranteed parse error
+    /// into an actionable one.
+    fn expr_body_foreign_keyword_hint(&self, body: &Expr) -> Option<ParseError> {
+        let ExprKind::Ident(name) = &body.kind else {
+            return None;
+        };
+        let text = intern::resolve(*name).to_string();
+        let msg = Self::foreign_keyword_hint(&text)?;
+        if Self::g1_next_starts_expression(self.peek()) {
+            Some(ParseError {
+                message: msg.into(),
+                span: body.span,
+            })
+        } else {
+            None
+        }
+    }
+
     fn parse_stmt(&mut self) -> Result<Stmt> {
         self.skip_nl();
 
@@ -2178,36 +2268,11 @@ impl Parser {
             // bound, the typechecker already produces an "undefined
             // variable" diagnostic. So we drop them from the G1 hint
             // and rely on the name-resolution error instead.
-            let hint = match text.as_str() {
-                "if" => Some(
-                    "silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'",
-                ),
-                "while" | "for" => Some(
-                    "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
-                ),
-                _ => None,
-            };
-            if let Some(msg) = hint {
+            if let Some(msg) = Self::foreign_keyword_hint(&text) {
                 // Fire only when the next token could plausibly start the
                 // erroneous construct: an expression-start token (paren,
                 // ident, literal, unary, brace).
-                let looks_like_mistake = match text.as_str() {
-                    "if" | "while" | "for" => matches!(
-                        next,
-                        Token::Ident(_)
-                            | Token::Int(_)
-                            | Token::Float(_)
-                            | Token::Bool(_)
-                            | Token::StringLit(..)
-                            | Token::StringStart(_)
-                            | Token::Minus
-                            | Token::Not
-                            | Token::LBrace
-                            | Token::LBracket
-                    ),
-                    _ => false,
-                };
-                if looks_like_mistake {
+                if Self::g1_next_starts_expression(&next) {
                     return Err(ParseError {
                         message: msg.into(),
                         span,
@@ -2988,7 +3053,7 @@ impl Parser {
         let bracket_span = self.span();
         Err(ParseError {
             message: "postfix indexing is not supported; use list.get(xs, i), \
-                      map.get(m, k), or string.char_at(s, i)"
+                      map.get(m, k), or string.slice(s, i, i + 1)"
                 .to_string(),
             span: bracket_span,
         })

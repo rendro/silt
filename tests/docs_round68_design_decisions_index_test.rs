@@ -131,9 +131,9 @@ fn silt_parser_rejects_bracket_indexing() {
     );
     // Parity with the doc's recommended replacements.
     assert!(
-        stderr.contains("list.get") && stderr.contains("string.char_at"),
+        stderr.contains("list.get") && stderr.contains("string.slice"),
         "the parser's diagnostic must still point at `list.get` and \
-         `string.char_at`, matching the design-decisions.md note. Got \
+         `string.slice`, matching the design-decisions.md note. Got \
          stderr:\n{stderr}"
     );
 }

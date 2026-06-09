@@ -252,7 +252,7 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(source: &str) -> Self {
-        Self {
+        let mut lexer = Self {
             source: source.chars().collect(),
             pos: 0,
             line: 1,
@@ -260,7 +260,19 @@ impl Lexer {
             byte_offset: 0,
             interp_stack: Vec::new(),
             brace_depth: 0,
+        };
+        // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
+        // (Notepad, PowerShell `>` redirects) prepend one by default,
+        // and rustc likewise accepts it. We *skip* rather than strip so
+        // byte offsets and line/col stay relative to the original
+        // source string; the BOM counts as the first column of line 1,
+        // just like any other skipped character. A BOM anywhere else
+        // in the file is still an error (reported by name, since the
+        // character itself is zero-width and invisible).
+        if lexer.peek() == Some('\u{FEFF}') {
+            lexer.advance_char();
         }
+        lexer
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, LexError> {
@@ -908,6 +920,16 @@ impl Lexer {
 
             ';' => Err(LexError {
                 message: "semicolons are not used in silt — use a newline to separate statements"
+                    .to_string(),
+                span: start,
+            }),
+            // A BOM after the start of the file (the leading one is
+            // skipped in `Lexer::new`) is invisible and zero-width, so
+            // quoting the raw char would render an empty-looking error.
+            // Name it instead.
+            '\u{FEFF}' => Err(LexError {
+                message: "unexpected character: byte-order mark (U+FEFF); \
+                          a BOM is only permitted at the very start of the file"
                     .to_string(),
                 span: start,
             }),

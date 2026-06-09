@@ -134,19 +134,19 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
     }
 }
 
-/// Lock the corpus directory we expect cargo-fuzz to populate for the
-/// new target. `fuzz_corpus_dirs_have_seeds` (in
-/// `tests/fuzz_corpus_presence_tests.rs`) iterates every subdir of
-/// `fuzz/corpus`, so creating the dir here without a seed would break
-/// that lock. Instead we just assert that *if* the dir has been
-/// populated, it contains seeds — and otherwise tolerate its absence
-/// since cargo-fuzz will create it on first run.
+/// Lock the corpus directory for the typechecker target. Round 92
+/// committed seeds for it (mirroring the other four targets), so its
+/// absence — or an empty dir — is a regression, not a fresh-clone
+/// artifact.
 #[test]
-fn fuzz_typechecker_corpus_dir_well_formed_if_present() {
+fn fuzz_typechecker_corpus_dir_has_seeds() {
     let dir = manifest_dir().join("fuzz/corpus/fuzz_typechecker");
-    if !dir.exists() {
-        return;
-    }
+    assert!(
+        dir.exists(),
+        "fuzz/corpus/fuzz_typechecker is missing — round 92 committed \
+         seeds for the typechecker target; re-run fuzz/seed.sh to \
+         repopulate"
+    );
     let seeds: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -155,6 +155,112 @@ fn fuzz_typechecker_corpus_dir_well_formed_if_present() {
     assert!(
         !seeds.is_empty(),
         "fuzz/corpus/fuzz_typechecker exists but has no seeds — \
-         either delete the dir or populate it via fuzz/seed.sh"
+         populate it via fuzz/seed.sh"
     );
+}
+
+// ── Round 92: harness-wiring parity lock ────────────────────────────
+//
+// Round 75 added the fuzz_typechecker target but never wired it into
+// any harness: seed.sh, local.sh, the fuzz-nightly.yml matrix, and the
+// ci.yml corpus-replay job all hardcoded the original four targets, so
+// the new target was never compiled or run anywhere — even a compile
+// error in it would have shipped silently.
+//
+// Rather than grep for `fuzz_typechecker` by name (which would rot the
+// moment a sixth target lands), derive the authoritative target list
+// from fuzz/Cargo.toml's `[[bin]]` entries and assert every registered
+// target appears in every harness surface. Same self-maintaining
+// philosophy as tests/comprehensive_module_function_parity_tests.rs:
+// adding a target without wiring it — or de-wiring an existing one —
+// fails this test with a message naming the missing surface.
+
+/// Parse the `[[bin]]` target names out of `fuzz/Cargo.toml`.
+fn registered_fuzz_targets() -> Vec<String> {
+    let toml = std::fs::read_to_string(manifest_dir().join("fuzz/Cargo.toml")).unwrap();
+    let mut targets = Vec::new();
+    let mut in_bin = false;
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_bin = line == "[[bin]]";
+            continue;
+        }
+        if in_bin {
+            if let Some(rest) = line.strip_prefix("name = \"") {
+                if let Some(name) = rest.strip_suffix('"') {
+                    targets.push(name.to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        targets.len() >= 5,
+        "expected at least the 5 known fuzz targets in fuzz/Cargo.toml \
+         [[bin]] entries, parsed only {targets:?} — did the manifest \
+         format change?"
+    );
+    targets
+}
+
+#[test]
+fn every_registered_fuzz_target_is_wired_into_every_harness() {
+    // Each surface a target must appear in for it to actually run.
+    // (path-relative-to-repo-root, human description)
+    let surfaces = [
+        (
+            "fuzz/seed.sh",
+            "corpus seeding loop — target starts every campaign cold",
+        ),
+        (
+            "fuzz/local.sh",
+            "`all` loop / usage text — local discovery skips the target",
+        ),
+        (
+            ".github/workflows/fuzz-nightly.yml",
+            "nightly matrix — no scheduled discovery fuzzing ever runs",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "fuzz-corpus replay job — target is never even compiled in CI",
+        ),
+    ];
+
+    let mut missing = Vec::new();
+    for (path, why) in &surfaces {
+        let full = manifest_dir().join(path);
+        let content = std::fs::read_to_string(&full)
+            .unwrap_or_else(|e| panic!("cannot read harness surface {path}: {e}"));
+        for target in registered_fuzz_targets() {
+            if !content.contains(&target) {
+                missing.push(format!("{target} absent from {path} ({why})"));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "fuzz target(s) registered in fuzz/Cargo.toml but not wired \
+         into all harness surfaces — they will silently never run:\n  {}",
+        missing.join("\n  ")
+    );
+}
+
+#[test]
+fn every_registered_fuzz_target_has_a_source_file_and_corpus_dir() {
+    for target in registered_fuzz_targets() {
+        let src = manifest_dir().join(format!("fuzz/fuzz_targets/{target}.rs"));
+        assert!(
+            src.exists(),
+            "fuzz/Cargo.toml registers {target} but {} does not exist",
+            src.display()
+        );
+        let corpus = manifest_dir().join(format!("fuzz/corpus/{target}"));
+        assert!(
+            corpus.exists(),
+            "no committed corpus dir for {target} at {} — the ci.yml \
+             replay gate would have nothing to replay; seed it via \
+             fuzz/seed.sh and commit the seeds like the other targets",
+            corpus.display()
+        );
+    }
 }
