@@ -45,19 +45,20 @@
 //!
 //! The synth pass at `src/typechecker/mod.rs:5397-5567` gates emission
 //! on per-field trait support (`compare_ok`/`hash_ok`): if ANY field
-//! does not support the trait, NO `<Type>.<method>` global is emitted
-//! and the call provably falls through to `dispatch_trait_method`. The
-//! two `compare_*` tests are RETARGETED onto user types carrying a
-//! non-derivable field (a `Channel` payload on the variant, a tuple
-//! field on the record), so they now genuinely lock the compare arms
-//! AND retain a meaningful ordering assertion (-1) that the
-//! equal-only cases in `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`
-//! do not cover. The variant ordinal registry (registered
-//! unconditionally in `register_type_decl`,
-//! `src/typechecker/mod.rs:3784`, independent of synth gating) still
-//! seeds declaration-order ordinals, so `Value::cmp`
-//! (`src/value.rs:1875/1904`) orders the fall-through cases by ordinal /
-//! field-wise.
+//! does not support the trait, NO `<Type>.<method>` global is emitted.
+//!
+//! ROUND-93 RETARGET: the round-89 form of the two `compare_*` tests
+//! relied on the pre-93 laundering — a user type with a non-derivable
+//! field kept its unconditional `(Compare, Type)` pre-stamp, so the
+//! `where a: Compare` call typechecked and fell through to
+//! `dispatch_trait_method`'s Value-level compare at runtime. The
+//! round-93 field-aware auto-derive gate
+//! (`compute_auto_derive_field_negatives` in `src/typechecker/mod.rs`)
+//! now UN-stamps such pairs, so those programs are REJECTED statically
+//! and the user-type path to the dispatch compare arms is dead. The
+//! two tests are retargeted again to lock the static rejection; the
+//! built-in Weekday case remains the runtime variant-dispatch
+//! reachability proof.
 //!
 //! The `hash_runs_on_user_record` case is kept as-is over the fully-
 //! derivable `Point`: retargeting it onto a non-derivable field would
@@ -103,25 +104,21 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 
 // ── Bug 1: Variant-vs-Variant `.compare()` via `Compare` bound ──────
 
-/// `Compare` on a user-declared enum must dispatch through the runtime
-/// `(Variant, Variant)` `"compare"` arm. To force fall-through (and so
-/// make this test a genuine lock on that arm rather than on the synth
-/// global), the enum carries a NON-DERIVABLE `Channel(Int)` payload on
-/// one variant: `Channel` has no `Compare` derive, so the synth gate at
-/// `src/typechecker/mod.rs:5478` leaves `compare_ok = false` and emits
-/// NO `Color.compare` global. `Op::CallMethod`'s qualified-global lookup
-/// therefore misses and execution falls through to
-/// `dispatch_trait_method`'s `(Variant, Variant) => receiver.cmp(other)`
-/// arm. `Value::cmp` (`src/value.rs:1904`) orders variants by their
-/// declaration-order ordinal — registered unconditionally in
-/// `register_type_decl` (`src/typechecker/mod.rs:3784`), independent of
-/// synth gating — so for `type Color { Red, Green, Holding(Channel) }`
-/// we have Red=0, Green=1, and `Red.compare(Green)` = Less = -1.
-/// Deleting the `(Variant, Variant)` compare arm turns this red with
-/// `error[runtime]: compare() not supported between Variant and Variant`.
+/// ROUND-93 RETARGET: this test used to assert that `Compare` on a
+/// user enum carrying a NON-DERIVABLE `Channel(Int)` payload ran at
+/// runtime through `dispatch_trait_method`'s `(Variant, Variant)`
+/// compare arm. The round-93 field-aware auto-derive gate
+/// (`compute_auto_derive_field_negatives`,
+/// `src/typechecker/mod.rs`) now UN-stamps `(Compare, Color)` because
+/// the `Holding` payload can never satisfy `Compare` — the program is
+/// rejected statically by the `where a: Compare` obligation instead
+/// of laundering into the Value-level fallback. For user types the
+/// dispatch arm is therefore statically unreachable via auto-derive;
+/// built-in variant dispatch reachability is still locked by
+/// `compare_runs_on_builtin_weekday` below.
 #[test]
-fn compare_runs_on_user_variant() {
-    let out = run_silt_ok(
+fn compare_on_user_variant_with_channel_payload_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "variant_user",
         r#"
 import channel
@@ -130,7 +127,14 @@ fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() { println(cmp_gen(Red, Green)) }
 "#,
     );
-    assert_eq!(out.trim(), "-1");
+    assert!(
+        !ok,
+        "compare on a Channel-payload enum must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'Color' does not implement trait 'Compare'"),
+        "diagnostic should name the missing Compare impl on Color, got: {stderr}"
+    );
 }
 
 /// The built-in `Weekday` variant (from `import time`) is a Variant at
@@ -154,26 +158,18 @@ fn main() { println(cmp_gen(Monday, Friday)) }
 
 // ── Bug 2: Record-vs-Record `.compare()` via `Compare` bound ────────
 
-/// `Compare` on a user-declared record must dispatch through the
-/// runtime `(Record, Record)` `"compare"` arm. To force fall-through
-/// (so this test genuinely locks that arm and not the synth global),
-/// the record carries a NON-DERIVABLE tuple field `t: (Int, Int)`:
-/// tuples have no user-side `Compare` derive, so the synth gate at
-/// `src/typechecker/mod.rs:5536` leaves `compare_ok = false` and emits
-/// NO `Point.compare` global — `Op::CallMethod` falls through to
-/// `dispatch_trait_method`'s `(Record, Record) => receiver.cmp(other)`
-/// arm. `Value::cmp` (`src/value.rs:1875`) orders records by name then
-/// field-wise; record fields are stored in a `BTreeMap` keyed by field
-/// name, so iteration is alphabetical — field `n` (the Int) is compared
-/// before field `t` (the tuple), which is identical on both sides. With
-/// `n: 1` vs `n: 2`, the Int decides: Less = -1. (Unlike the equal-only
-/// `cmp_gen(d, d) == 0` cases in the unsupportable suite, this asserts a
-/// real ordering, so a broken field-wise comparison would also flag.)
-/// Deleting the `(Record, Record)` compare arm turns this red with
-/// `error[runtime]: compare() not supported between Record and Record`.
+/// ROUND-93 RETARGET: this test used to assert that `Compare` on a
+/// user record carrying a NON-DERIVABLE tuple field `t: (Int, Int)`
+/// ran at runtime through `dispatch_trait_method`'s `(Record,
+/// Record)` compare arm. The round-93 field-aware auto-derive gate
+/// now UN-stamps `(Compare, Point)` because tuples have no `Compare`
+/// — the `where a: Compare` obligation rejects the program statically
+/// instead of laundering into the Value-level fallback. For user
+/// types the dispatch arm is therefore statically unreachable via
+/// auto-derive.
 #[test]
-fn compare_runs_on_user_record() {
-    let out = run_silt_ok(
+fn compare_on_user_record_with_tuple_field_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "record_user",
         r#"
 type Point { n: Int, t: (Int, Int), }
@@ -185,7 +181,14 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "-1");
+    assert!(
+        !ok,
+        "compare on a tuple-field record must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'Point' does not implement trait 'Compare'"),
+        "diagnostic should name the missing Compare impl on Point, got: {stderr}"
+    );
 }
 
 // ── Bug 3: Record `.hash()` via `Hash` bound ────────────────────────

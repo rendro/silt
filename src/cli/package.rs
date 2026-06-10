@@ -164,15 +164,47 @@ pub(crate) fn die_on_lockfile_error(err: LockfileError) -> ! {
     process::exit(1);
 }
 
+/// What the caller intends to do with the resolved entry point.
+///
+/// Round 93 (fix G2): lib-only packages — the REQUIRED shape for
+/// dependencies (`src/lib.silt`, no `src/main.silt`) — must be
+/// checkable with a bare `silt check`, while `silt run` (and
+/// `silt disasm`, which disassembles the runnable artifact) still
+/// need a `main.silt` to execute.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryPointKind {
+    /// Require `src/main.silt`. Used by `silt run` and `silt disasm` —
+    /// both need an executable entry point.
+    RequireMain,
+    /// Prefer `src/main.silt`, fall back to `src/lib.silt` when main is
+    /// absent. Used by `silt check`, which only needs something to
+    /// typecheck/compile.
+    AllowLib,
+}
+
 /// Resolve the package entry point (`<root>/src/main.silt`) for the current
-/// directory.
+/// directory, requiring a runnable `main.silt`. Thin wrapper over
+/// [`resolve_package_entry_point_for`] kept so run/disasm call sites read
+/// the same as before round 93.
+pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
+    resolve_package_entry_point_for(EntryPointKind::RequireMain)
+}
+
+/// Resolve the package entry point for the current directory.
 ///
 /// Returns:
-/// - `Ok(Some(path))` — we are inside a package and `src/main.silt` exists.
+/// - `Ok(Some(path))` — we are inside a package and a suitable entry
+///   point exists (`src/main.silt`, or `src/lib.silt` under
+///   [`EntryPointKind::AllowLib`]).
 /// - `Ok(None)` — there is no enclosing package (no `silt.toml` in any parent).
 /// - `Err(())` — entry point check failed and we already wrote a diagnostic.
 ///   The caller should propagate the failure as a non-zero exit.
-pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
+///
+/// When the package is lib-only and the caller requires main, the
+/// diagnostic names both ways out (`silt check` works on library-only
+/// packages; add a `main.silt` to run). Lock:
+/// tests/round93_lib_check_tests.rs.
+pub(crate) fn resolve_package_entry_point_for(kind: EntryPointKind) -> Result<Option<PathBuf>, ()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (root, _manifest) = match find_project_root(&cwd) {
         Ok(Some(pair)) => pair,
@@ -180,12 +212,28 @@ pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
         Err(e) => die_on_manifest_error(e),
     };
     let entry = root.join("src").join("main.silt");
-    if !entry.is_file() {
+    if entry.is_file() {
+        return Ok(Some(entry));
+    }
+    let lib = root.join("src").join("lib.silt");
+    if lib.is_file() {
+        if kind == EntryPointKind::AllowLib {
+            return Ok(Some(lib));
+        }
         eprintln!(
             "package has no entry point — expected `src/main.silt` at {}",
             entry.display()
         );
+        eprintln!("  = note: found `src/lib.silt` — this is a library-only package");
+        eprintln!(
+            "  = help: `silt check` works on library-only packages; add `src/main.silt` \
+             with a `main()` function to make it runnable"
+        );
         return Err(());
     }
-    Ok(Some(entry))
+    eprintln!(
+        "package has no entry point — expected `src/main.silt` at {}",
+        entry.display()
+    );
+    Err(())
 }

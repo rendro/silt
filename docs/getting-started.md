@@ -209,7 +209,7 @@ silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
-silt init                  -- create a new silt package in the current directory
+silt init                  -- create a new silt package in this directory
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           -- update the silt binary to the latest release

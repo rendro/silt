@@ -1586,7 +1586,15 @@ impl Compiler {
         let result = (|| -> Result<(), CompileError> {
             let source =
                 std::fs::read_to_string(&resolved.file_path).map_err(|e| CompileError {
-                    message: format!("cannot load module '{module_name}': {e}"),
+                    // Round 93: enriched with attempted path + sibling
+                    // did-you-mean + dependency-channel help. See
+                    // `module::format_module_load_error`.
+                    message: module::format_module_load_error(
+                        module_name,
+                        &resolved.file_path,
+                        &normalize_module_path(&resolved.file_path),
+                        &e,
+                    ),
                     span,
                 })?;
 
@@ -1675,7 +1683,15 @@ impl Compiler {
         span: Span,
     ) -> Result<Vec<String>, CompileError> {
         let source = std::fs::read_to_string(file_path).map_err(|e| CompileError {
-            message: format!("cannot load module '{module_name}': {e}"),
+            // Round 93: enriched with attempted path + sibling
+            // did-you-mean + dependency-channel help. See
+            // `module::format_module_load_error`.
+            message: module::format_module_load_error(
+                module_name,
+                file_path,
+                &normalize_module_path(file_path),
+                &e,
+            ),
             span,
         })?;
 
@@ -1889,7 +1905,17 @@ impl Compiler {
                         }
                     }
 
+                    // Compile the body in tail position for TCO, mirroring
+                    // the top-level `Decl::Fn` path in `compile_decl`.
+                    // Before round 93 this flag was never set here, so
+                    // functions in imported modules silently lacked
+                    // tail-call elimination and deep recursion blew
+                    // MAX_FRAMES. (Enabling it is only safe now that
+                    // `compile_stmt` clears the flag for statement-head
+                    // sub-expressions — see the round-93 leak fix.)
+                    self.in_tail_position = true;
                     self.compile_expr(&fn_decl.body)?;
+                    self.in_tail_position = false;
                     self.current_chunk().emit_op(Op::Return, fn_span);
 
                     let ctx = self.contexts.pop().ok_or(CompileError {
@@ -2025,6 +2051,13 @@ impl Compiler {
     fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), CompileError> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
+                // The bound value is NOT the block result, so it must never
+                // inherit the enclosing tail flag (set by `ExprKind::Block`
+                // for the last statement). A leaked flag would compile a
+                // call value as `TailCall + Return`, replacing the frame and
+                // dead-coding the binding (and the implicit Unit result).
+                // Only `Stmt::Expr` legitimately inherits tail position.
+                self.in_tail_position = false;
                 self.compile_expr(value)?;
                 let span = value.span;
 
@@ -2072,7 +2105,12 @@ impl Compiler {
                 condition,
                 else_body,
             } => {
-                // Compile condition, jump to else if false
+                // Compile condition, jump to else if false.
+                // The condition is not the block result — clear any leaked
+                // tail flag so a call condition isn't compiled as
+                // `TailCall + Return` (which would dead-code the
+                // JumpIfFalse and silently skip the else/panic arm).
+                self.in_tail_position = false;
                 self.compile_expr(condition)?;
                 let else_jump = self
                     .current_chunk()
@@ -2101,7 +2139,12 @@ impl Compiler {
                 expr,
                 else_body,
             } => {
-                // Compile expression
+                // Compile the scrutinee. It is not the block result — clear
+                // any leaked tail flag so a call scrutinee isn't compiled as
+                // `TailCall + Return` (which would dead-code the pattern
+                // test and the else arm, leaking the raw scrutinee as the
+                // function's return value).
+                self.in_tail_position = false;
                 self.compile_expr(expr)?;
                 let span = expr.span;
 
@@ -2170,6 +2213,23 @@ impl Compiler {
             ),
             span,
         })
+    }
+
+    /// Emit the call sequence for a callee + `argc` arguments already on
+    /// the stack: `TailCall argc; Return` in tail position (the frame is
+    /// replaced, so nothing after may execute), `Call argc` otherwise.
+    /// Single home for the tail/non-tail emission shape — every plain
+    /// `Op::Call`-capable site (normal calls, qualified-variant calls,
+    /// module-qualified calls, both pipe shapes) must route through here.
+    fn emit_call(&mut self, argc: u8, tail: bool, span: Span) {
+        if tail {
+            self.current_chunk().emit_op(Op::TailCall, span);
+            self.current_chunk().emit_u8(argc, span);
+            self.current_chunk().emit_op(Op::Return, span);
+        } else {
+            self.current_chunk().emit_op(Op::Call, span);
+            self.current_chunk().emit_u8(argc, span);
+        }
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
@@ -2377,14 +2437,7 @@ impl Compiler {
                             self.compile_expr(arg)?;
                         }
                         let argc = args.len() as u8;
-                        if tail {
-                            self.current_chunk().emit_op(Op::TailCall, span);
-                            self.current_chunk().emit_u8(argc, span);
-                            self.current_chunk().emit_op(Op::Return, span);
-                        } else {
-                            self.current_chunk().emit_op(Op::Call, span);
-                            self.current_chunk().emit_u8(argc, span);
-                        }
+                        self.emit_call(argc, tail, span);
                     } else if let ExprKind::Ident(name) = &receiver.kind
                         && is_module_call
                         && self.known_unit_variants.contains(&resolve(*name))
@@ -2453,14 +2506,7 @@ impl Compiler {
                                 self.compile_expr(arg)?;
                             }
                             let argc = args.len() as u8;
-                            if tail {
-                                self.current_chunk().emit_op(Op::TailCall, span);
-                                self.current_chunk().emit_u8(argc, span);
-                                self.current_chunk().emit_op(Op::Return, span);
-                            } else {
-                                self.current_chunk().emit_op(Op::Call, span);
-                                self.current_chunk().emit_u8(argc, span);
-                            }
+                            self.emit_call(argc, tail, span);
                         }
                     } else {
                         // Method call on a value: expr.method(args)
@@ -2494,14 +2540,7 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = args.len() as u8;
-                    if tail {
-                        self.current_chunk().emit_op(Op::TailCall, span);
-                        self.current_chunk().emit_u8(argc, span);
-                        self.current_chunk().emit_op(Op::Return, span);
-                    } else {
-                        self.current_chunk().emit_op(Op::Call, span);
-                        self.current_chunk().emit_u8(argc, span);
-                    }
+                    self.emit_call(argc, tail, span);
                 }
             }
 
@@ -3245,28 +3284,14 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = (args.len() + 1) as u8;
-                    if tail {
-                        self.current_chunk().emit_op(Op::TailCall, span);
-                        self.current_chunk().emit_u8(argc, span);
-                        self.current_chunk().emit_op(Op::Return, span);
-                    } else {
-                        self.current_chunk().emit_op(Op::Call, span);
-                        self.current_chunk().emit_u8(argc, span);
-                    }
+                    self.emit_call(argc, tail, span);
                 }
             }
             _ => {
                 // val |> f: callee first, then val
                 self.compile_expr(right)?;
                 self.compile_expr(left)?;
-                if tail {
-                    self.current_chunk().emit_op(Op::TailCall, span);
-                    self.current_chunk().emit_u8(1, span);
-                    self.current_chunk().emit_op(Op::Return, span);
-                } else {
-                    self.current_chunk().emit_op(Op::Call, span);
-                    self.current_chunk().emit_u8(1, span);
-                }
+                self.emit_call(1, tail, span);
             }
         }
         Ok(())

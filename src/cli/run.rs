@@ -178,7 +178,40 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
 
     // Run via VM
     let mut vm = Vm::new();
-    if let Err(e) = vm.run(script) {
+    let run_result = vm.run(script);
+    // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
+    // is a failed program — surface it. Previously the Ok value of
+    // `vm.run` (main's return value) was discarded wholesale, so
+    // `fn main() -> Result(Int, String) { Err("boom") }` (or a `?`
+    // propagating an Err out of main) exited 0 with no diagnostic and
+    // CI/shell callers saw success on failure. Render through the
+    // canonical `error[runtime]:` header (zero span — there is no
+    // single source location for "main's result was Err") and exit 1,
+    // matching the exit code every other runtime error uses.
+    // `Ok(..)` and non-Result returns (Unit, Int, ...) are unchanged.
+    // Only the `silt run` surface goes through here — `silt test` and
+    // the REPL have their own `vm.run` handling.
+    if let Ok(silt::Value::Variant(tag, fields)) = &run_result {
+        if tag.as_str() == "Err" {
+            // Result's Err carries exactly one payload; render it via
+            // the VM's Display machinery (stdlib error variants print
+            // their `.message()`, strings print bare). Fall back to
+            // the whole variant for defensive completeness.
+            let payload = match fields.as_slice() {
+                [single] => single.to_string(),
+                _ => silt::Value::Variant(tag.clone(), fields.clone()).to_string(),
+            };
+            let source_err = SourceError::runtime_at(
+                format!("main returned Err: {payload}"),
+                silt::lexer::Span::new(0, 0),
+                &source,
+                path,
+            );
+            eprintln!("{source_err}");
+            process::exit(1);
+        }
+    }
+    if let Err(e) = run_result {
         if let Some(span) = e.span {
             // F13 (audit round 17) + G1 (audit round 21): normalize
             // frame and error-header paths so they all use the same

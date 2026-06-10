@@ -82,9 +82,16 @@ import result
 
 type Wrap { Wrap(IoError) }
 
-fn main() -> Result(String, Wrap) {
-  let raw = io.read_file("config.toml") |> result.map_err({ e -> Wrap(e) })?
+fn load(path: String) -> Result(String, Wrap) {
+  let raw = io.read_file(path) |> result.map_err({ e -> Wrap(e) })?
   Ok(raw)
+}
+
+fn main() {
+  match load("config.toml") {
+    Ok(raw) -> println("loaded")
+    Err(_) -> println("no config")
+  }
 }
 ```
 
@@ -96,6 +103,17 @@ Arithmetic operators (`+`, `-`, `*`, `/`, `%`), `..` (range), and `as` bind
 tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison (`==`, `!=`,
 `<`, `>`, `<=`, `>=`), boolean (`&&`, `||`), and `else` bind looser, so
 `a == b?` is still `a == (b?)`.
+
+### `Err` escaping `main`
+
+`main` may itself return a `Result`, so `?` works at the top level too.
+When the program ends with an `Err(..)` — whether returned directly or
+propagated out of `main` by `?` — `silt run` treats it as a failed
+program: it prints an `error[runtime]: main returned Err: ...` diagnostic
+(with the payload rendered the same way `println` would print it) to
+stderr and exits with status 1, the same exit code as any other runtime
+error. `Ok(..)` returns, and `main` functions that don't return a
+`Result` at all, exit 0 as usual.
 
 ## Cross-Module Error Composition
 

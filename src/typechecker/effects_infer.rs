@@ -106,30 +106,29 @@ fn walk_expr(expr: &Expr, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
         ExprKind::Unary(_, inner)
         | ExprKind::QuestionMark(inner)
         | ExprKind::Ascription(inner, _) => walk_expr(inner, env, aliases),
-        ExprKind::Pipe(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
+        // A pipe is a call in disguise: `a |> f(b)` desugars to `f(a, b)`
+        // (see the typechecker's ExprKind::Pipe arm in inference.rs). When
+        // the RHS is already a Call, walking it lands in the Call arm
+        // below, which charges the callee's declared effects. Any OTHER
+        // RHS shape (bare ident `|> println`, dotted path
+        // `|> io.read_file`, lambda, ...) IS the callee of the desugared
+        // call, so it must be charged through the same `call_effects`
+        // path the Call arm uses — otherwise `"hi" |> println` would
+        // contribute EMPTY (Ident arm) while `println("hi")` contributes
+        // io, and `--strict-effects` would miss every effect performed
+        // via a pipe (round 93 soundness gap).
+        ExprKind::Pipe(l, r) => {
+            let lhs = walk_expr(l, env, aliases);
+            let rhs = match &r.kind {
+                ExprKind::Call(callee, args) => call_effects(callee, args, env, aliases),
+                _ => call_effects(r, &[], env, aliases),
+            };
+            lhs.union(rhs)
+        }
         ExprKind::Range(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
         ExprKind::FloatElse(l, r) => walk_expr(l, env, aliases).union(walk_expr(r, env, aliases)),
 
-        ExprKind::Call(callee, args) => {
-            // Effects of evaluating the callee + args + the call itself.
-            let mut acc = walk_expr(callee, env, aliases);
-            for a in args {
-                acc = acc.union(walk_expr(a, env, aliases));
-            }
-            // The call itself contributes the callee's declared effects.
-            // We extract a name when the callee is a simple identifier
-            // or a dotted path resolved by the existing resolver shape
-            // (`fs.read_file`); deeper resolution is Phase B.
-            if let Some(name) = callee_name(callee) {
-                acc = acc.union(scheme_effects_of(name, env, aliases));
-            } else {
-                // Higher-order calls (the callee is computed): we have
-                // no scheme to consult. Treat as TOP — the conservative
-                // default. Phase B's annotation pass narrows this.
-                acc = acc.union(EffectSet::TOP);
-            }
-            acc
-        }
+        ExprKind::Call(callee, args) => call_effects(callee, args, env, aliases),
 
         // Lambda construction is pure — building a function value does
         // not perform the function's effects. Effects only happen when
@@ -268,6 +267,32 @@ fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet
         } => walk_expr(condition, env, aliases).union(walk_expr(else_body, env, aliases)),
         Stmt::Expr(e) => walk_expr(e, env, aliases),
     }
+}
+
+/// Effects of a call: evaluating the callee + the args + the call
+/// itself. The single source of truth for charging a callee's declared
+/// effects — used by both the direct `ExprKind::Call` arm AND the
+/// `ExprKind::Pipe` arm (a pipe desugars to a call), so the two
+/// syntactic forms of the same call can never diverge.
+///
+/// The call itself contributes the callee's declared effects. We
+/// extract a name when the callee is a simple identifier or a dotted
+/// path resolved by the existing resolver shape (`fs.read_file`);
+/// deeper resolution is Phase B.
+fn call_effects(callee: &Expr, args: &[Expr], env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
+    let mut acc = walk_expr(callee, env, aliases);
+    for a in args {
+        acc = acc.union(walk_expr(a, env, aliases));
+    }
+    if let Some(name) = callee_name(callee) {
+        acc = acc.union(scheme_effects_of(name, env, aliases));
+    } else {
+        // Higher-order calls (the callee is computed): we have no
+        // scheme to consult. Treat as TOP — the conservative default.
+        // Phase B's annotation pass narrows this.
+        acc = acc.union(EffectSet::TOP);
+    }
+    acc
 }
 
 /// Extract a callable name from a Call expression's `callee` slot, if

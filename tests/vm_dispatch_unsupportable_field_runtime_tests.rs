@@ -1,30 +1,26 @@
-//! Round-62 regression lock for `Hash` / `Compare` dispatch on user
-//! records and variants whose fields are NOT auto-derive supportable
+//! Round-93 regression lock for `Hash` / `Compare` on user records
+//! and variants whose fields are NOT auto-derive supportable
 //! (Channel, Map, Tuple, Function, Bytes, Handle).
 //!
-//! Background: `register_type_decl` (`src/typechecker/mod.rs:3612`)
-//! unconditionally pre-stamps the `trait_impl_set` with `Compare` /
-//! `Hash` / `Equal` for every user-declared record / enum, but the
-//! synthesis pass at `src/typechecker/mod.rs:4856-4877` is gated on
-//! per-field trait support (`compare_ok`, `hash_ok`). When a field
-//! is unsupportable (e.g. `Channel(Int)` has no `Hash` impl), the
-//! synth pass emits NOTHING — so no `<Type>.<method>` global is
-//! created. At runtime, `Op::CallMethod` does the qualified-global
-//! lookup, misses, then falls through to
-//! `Vm::dispatch_trait_method`. That's the arm under test here.
+//! HISTORY: round 62 restored the (Variant, Variant) / (Record,
+//! Record) arms in `Vm::dispatch_trait_method` and this suite locked
+//! them — `register_type_decl` unconditionally pre-stamped Equal /
+//! Compare / Hash for every user type, the synth pass skipped
+//! emission for unsupportable fields, and the call fell through to
+//! the Value-level dispatch arms at runtime.
 //!
-//! Round-62 (commit `cb64e67`) deleted the (Variant, Variant) and
-//! (Record, Record) arms from `compare`, and dropped Variant /
-//! Record from the `hash` allowlist, on the false claim that "every
-//! (trait, type) pair stamped in `trait_impl_set` receives a
-//! synthesized global." That claim ignores the gating in the synth
-//! pass. The arms are restored and these tests are the lock.
-//!
-//! Each test below compiles and runs a silt program where the
-//! receiver type carries a non-supportable field, so the only path
-//! to a non-error result is through the runtime dispatch arms in
-//! `src/vm/dispatch.rs`. We assert the call succeeds and prints a
-//! deterministic value.
+//! ROUND-93 RETARGET: that pre-stamp laundering was the subject of an
+//! audit finding (Value-level fallbacks are unsound for the gated
+//! traits: closure ordering is Arc-pointer-address nondeterministic,
+//! Channel has no trait-surface Hash, etc.). The field-aware gate
+//! (`compute_auto_derive_field_negatives` in
+//! `src/typechecker/mod.rs`) now UN-stamps `(trait, type)` pairs
+//! whose fields cannot satisfy the trait, so these programs are
+//! REJECTED at typecheck time. The tests below are retargeted to
+//! lock the static rejection. The lone still-running case
+//! (`hash_runs_on_user_record_with_tuple_field`) keeps its runtime
+//! assertion: tuples DO support Hash (Equal/Hash/Display policy), so
+//! `(Hash, Pair)` legitimately survives the gate.
 
 use std::process::Command;
 
@@ -55,16 +51,15 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 
 // ── Hash on Record with non-hashable field ──────────────────────────
 
-/// Record with a `Channel(Int)` field. Channels have no `Hash`
-/// derive, so the synth pass at typechecker/mod.rs:4856-4877
-/// emits NO `Holder.hash` global. At runtime, `Op::CallMethod`
-/// falls through to `dispatch_trait_method`, which must hash
-/// the record structurally via `impl Hash for Value`
-/// (`src/value.rs:2020`). The exact value isn't important — what
-/// matters is that the call succeeds and prints an Int.
+/// ROUND-93 RETARGET: record with a `Channel(Int)` field. Channels
+/// have no `Hash` impl (their only trait-surface capability is
+/// identity-based Equal, round 82), so the round-93 field-aware gate
+/// UN-stamps `(Hash, Holder)` and the `where a: Hash` obligation
+/// rejects the program statically — the call can no longer launder
+/// into the Value-level structural hash at runtime.
 #[test]
-fn hash_runs_on_user_record_with_channel_field() {
-    let out = run_silt_ok(
+fn hash_on_user_record_with_channel_field_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "record_channel",
         r#"
 import channel
@@ -77,23 +72,22 @@ fn main() {
 }
 "#,
     );
-    let line = out.lines().next().unwrap_or("");
-    let parsed: Result<i64, _> = line.parse();
     assert!(
-        parsed.is_ok(),
-        "hash() on Holder must produce a parseable Int; got {line:?}"
+        !ok,
+        "hash() on a Channel-field record must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'Holder' does not implement trait 'Hash'"),
+        "diagnostic should name the missing Hash impl on Holder, got: {stderr}"
     );
 }
 
-/// Variant whose payload includes a `Channel(Int)`. Same gating
-/// argument as above: the variant decl pre-stamps `Hash` in
-/// `trait_impl_set`, the synth pass skips emission because Channel
-/// is non-hashable, and the runtime path must serve the call via
-/// the (Variant, ..) arm in `dispatch_trait_method`'s `hash`
-/// allowlist.
+/// ROUND-93 RETARGET: variant whose payload includes a
+/// `Channel(Int)`. Same gating argument as above — the round-93 gate
+/// UN-stamps `(Hash, V)` and the program is rejected statically.
 #[test]
-fn hash_runs_on_user_variant_with_channel_field() {
-    let out = run_silt_ok(
+fn hash_on_user_variant_with_channel_field_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "variant_channel",
         r#"
 import channel
@@ -105,25 +99,25 @@ fn main() {
 }
 "#,
     );
-    let line = out.lines().next().unwrap_or("");
-    let parsed: Result<i64, _> = line.parse();
     assert!(
-        parsed.is_ok(),
-        "hash() on V must produce a parseable Int; got {line:?}"
+        !ok,
+        "hash() on a Channel-payload variant must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'V' does not implement trait 'Hash'"),
+        "diagnostic should name the missing Hash impl on V, got: {stderr}"
     );
 }
 
 // ── Compare on Record with non-comparable field ─────────────────────
 
-/// Record with a `Map(String, Int)` field. Maps have no `Compare`
-/// derive, so the synth pass skips `Doc.compare`. The runtime
-/// `(Record, Record)` arm in `dispatch_trait_method`'s `compare`
-/// match must defer to `Value::cmp` (`src/value.rs:1728`), which
-/// orders records by name then field-wise. `cmp(d, d) == 0`
-/// because the record is identical to itself.
+/// ROUND-93 RETARGET: record with a `Map(String, Int)` field. Maps
+/// have no `Compare`, so the round-93 gate UN-stamps `(Compare, Doc)`
+/// and the `where a: Compare` obligation rejects the program
+/// statically instead of laundering into `Value::cmp` at runtime.
 #[test]
-fn compare_runs_on_user_record_with_map_field() {
-    let out = run_silt_ok(
+fn compare_on_user_record_with_map_field_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "record_map_compare",
         r#"
 type Doc { meta: Map(String, Int) }
@@ -134,16 +128,22 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "0");
+    assert!(
+        !ok,
+        "compare on a Map-field record must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'Doc' does not implement trait 'Compare'"),
+        "diagnostic should name the missing Compare impl on Doc, got: {stderr}"
+    );
 }
 
-/// Record with a tuple field `(Int, Int)`. Tuples have no auto-
-/// derived `Compare` impl on the user side — the synth pass skips
-/// emission, and the runtime arm must serve the call. Same `d` on
-/// both sides, so `cmp_gen(d, d) == 0`.
+/// ROUND-93 RETARGET: record with a tuple field `(Int, Int)`. Tuples
+/// have no `Compare`, so the round-93 gate UN-stamps `(Compare,
+/// Pair)` and the program is rejected statically.
 #[test]
-fn compare_runs_on_user_record_with_tuple_field() {
-    let out = run_silt_ok(
+fn compare_on_user_record_with_tuple_field_rejected_statically() {
+    let (stdout, stderr, ok) = run_silt_raw(
         "record_tuple_compare",
         r#"
 type Pair { t: (Int, Int) }
@@ -154,7 +154,14 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "0");
+    assert!(
+        !ok,
+        "compare on a tuple-field record must be rejected statically; stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("type 'Pair' does not implement trait 'Compare'"),
+        "diagnostic should name the missing Compare impl on Pair, got: {stderr}"
+    );
 }
 
 // ── Hash on Record with non-hashable tuple field ────────────────────

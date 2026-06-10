@@ -53,7 +53,7 @@ pub(super) fn levenshtein(a: &str, b: &str) -> usize {
 ///
 /// Among accepted candidates the smallest edit distance wins; ties break
 /// lexicographically to keep the hint deterministic.
-pub(super) fn suggest_similar<I, S>(typo: &str, candidates: I) -> Option<String>
+pub(crate) fn suggest_similar<I, S>(typo: &str, candidates: I) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,

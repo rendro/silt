@@ -541,24 +541,32 @@ fn all_doc_fn_main_blocks_type_check() {
     );
 }
 
-/// Stronger sibling of `all_doc_fn_main_blocks_type_check` that also drives
+/// In-process sibling of `all_doc_fn_main_blocks_type_check` that drives
 /// the compile phase (lex → parse → typecheck → compile) on every
-/// `fn main` block in README + docs/**/*.md.
+/// `fn main` block in README + docs/**/*.md via the silt library API.
 ///
-/// Why: `silt check` only runs the type checker, which globally
-/// preregisters every stdlib function, so doc examples pass the type check
-/// even when they forget the matching `import <module>` line at the top.
-/// Real users run `silt run`, which fails with
-/// `module 'X' is not imported`. The compile phase (which `silt run`
-/// always runs) catches that missing-import error deterministically
-/// without having to execute the VM, which is important because some
-/// doc examples are interactive (io.stdin.read_line), networked
-/// (http.get/serve), or long-running (time.sleep, channel.recv).
+/// History: this walker originally existed because `silt check` ran ONLY
+/// the type checker, which globally preregisters every stdlib function,
+/// so doc examples passed `silt check` even when they forgot the matching
+/// `import <module>` line — while `silt run` failed with
+/// `module 'X' is not imported`. Since the round-92 pipeline change,
+/// `silt check` also drives the compile/import phase, so the
+/// subprocess-based sibling above now catches missing imports too.
 ///
-/// This test drives the compile phase directly via the silt library API
-/// so it never runs user code. Removing an `import` line from any doc
-/// block that uses that module must make this test fail — that's the
-/// lock we need so README/docs never silently drift away from runnable.
+/// Kept as belt-and-braces:
+///   - it exercises the library API directly (Lexer / Parser /
+///     typechecker::check / Compiler::with_package_roots), so it would
+///     catch a regression where the `silt check` CLI pipeline stops
+///     running the compile phase while the library path still works
+///     (or vice versa);
+///   - it stops after compile (no VM run), which keeps interactive
+///     (io.stdin.read_line), networked (http.get/serve), and
+///     long-running (time.sleep, channel.recv) doc examples safe to
+///     walk deterministically.
+///
+/// Removing an `import` line from any doc block that uses that module
+/// must make this test fail — that's the lock that keeps README/docs
+/// from silently drifting away from runnable.
 #[test]
 fn all_doc_fn_main_blocks_compile() {
     use silt::compiler::Compiler;
@@ -853,6 +861,123 @@ fn disasm_wording_consistent_across_main_readme_getting_started() {
         "docs/getting-started.md disasm description drifted from \
          src/main.rs (expected lowercase 'show bytecode disassembly' \
          to match the surrounding '-- <verb phrase>' format)"
+    );
+}
+
+/// Round 93 LATENT lock: the doc-wording tests above validate README /
+/// getting-started phrasing against the hand-maintained "Authoritative
+/// phrase list" comment block in `src/main.rs` — but nothing pinned
+/// that comment to the REAL help text rendered by
+/// `crate::cli::help::usage_text()`. A rewording in `src/cli/help.rs`
+/// escaped every lock (proof: help.rs said "in this directory" while
+/// README/getting-started said "in the current directory" and all
+/// tests were green).
+///
+/// This test closes the gap end-to-end:
+///
+///   1. Extract every quoted phrase from the `src/main.rs` comment
+///      block (`//!   - "<phrase>"` lines after the "Authoritative
+///      phrase list" marker).
+///   2. Assert each phrase appears verbatim in the live `silt --help`
+///      output (which renders `usage_text()`), so a help.rs rewording
+///      that bypasses the comment fails here immediately.
+///   3. Assert each phrase appears verbatim in README.md (sentence
+///      case) and in docs/getting-started.md with the first letter
+///      lowercased (its `-- <verb phrase>` format), so the docs can't
+///      drift from the help text either.
+///
+/// To reword a help description, update `usage_text()` in
+/// src/cli/help.rs, the comment block in src/main.rs, README.md, and
+/// docs/getting-started.md together — this test enforces all four.
+#[test]
+fn help_phrase_list_matches_usage_text_and_docs() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let main_rs = std::fs::read_to_string(manifest_dir.join("src").join("main.rs"))
+        .expect("read src/main.rs");
+    let readme = std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");
+    let getting_started =
+        std::fs::read_to_string(manifest_dir.join("docs").join("getting-started.md"))
+            .expect("read docs/getting-started.md");
+
+    // 1. Extract the authoritative phrase list from src/main.rs.
+    let marker = "Authoritative phrase list";
+    let marker_pos = main_rs
+        .find(marker)
+        .expect("src/main.rs lost the 'Authoritative phrase list' comment block");
+    let mut phrases: Vec<String> = Vec::new();
+    for line in main_rs[marker_pos..].lines().skip(1) {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("//!") {
+            break; // end of the doc-comment block
+        }
+        // Phrase lines look like: `//!   - "Run a program"`.
+        let Some(dash_pos) = trimmed.find("- \"") else {
+            continue; // the `usage_text` continuation line
+        };
+        let after_quote = &trimmed[dash_pos + 3..];
+        let Some(end_quote) = after_quote.find('"') else {
+            continue;
+        };
+        phrases.push(after_quote[..end_quote].to_string());
+    }
+    assert!(
+        phrases.len() >= 8,
+        "expected at least 8 phrases in the src/main.rs authoritative \
+         phrase list, found {}: {:?} — has the comment block been \
+         reformatted? Update the extraction here to match.",
+        phrases.len(),
+        phrases
+    );
+
+    // 2. Every phrase must appear verbatim in the live `silt --help`
+    //    output (rendered from `crate::cli::help::usage_text()`).
+    let help_output = silt_cmd()
+        .arg("--help")
+        .output()
+        .expect("failed to spawn silt --help");
+    assert!(
+        help_output.status.success(),
+        "silt --help exited non-zero: {:?}",
+        help_output.status.code()
+    );
+    let help_text = String::from_utf8_lossy(&help_output.stdout).to_string()
+        + &String::from_utf8_lossy(&help_output.stderr);
+
+    let mut failures: Vec<String> = Vec::new();
+    for phrase in &phrases {
+        if !help_text.contains(phrase.as_str()) {
+            failures.push(format!(
+                "`silt --help` output (cli/help.rs usage_text) is missing \
+                 \"{phrase}\" — the src/main.rs comment block drifted from \
+                 the real help text"
+            ));
+        }
+        if !readme.contains(phrase.as_str()) {
+            failures.push(format!(
+                "README.md is missing the help description \"{phrase}\""
+            ));
+        }
+        // 3. getting-started.md uses `-- <verb phrase>` entries: same
+        //    phrase with only the first letter lowercased (acronyms
+        //    like REPL keep their case, so no full to_lowercase()).
+        let mut chars = phrase.chars();
+        let gs_phrase: String = match chars.next() {
+            Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        };
+        if !getting_started.contains(gs_phrase.as_str()) {
+            failures.push(format!(
+                "docs/getting-started.md is missing the lowercase help \
+                 description \"{gs_phrase}\""
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "help-description parity failures ({}):\n  {}\n\nphrases checked: {:?}",
+        failures.len(),
+        failures.join("\n  "),
+        phrases
     );
 }
 

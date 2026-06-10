@@ -1,6 +1,6 @@
 # Fuzzing silt
 
-silt ships five libfuzzer targets:
+silt ships six libfuzzer targets:
 
 | Target             | Exercises                                          |
 |--------------------|----------------------------------------------------|
@@ -9,6 +9,7 @@ silt ships five libfuzzer targets:
 | `fuzz_formatter`   | `formatter::format` + round-trip invariants        |
 | `fuzz_roundtrip`   | parse → format → parse (must preserve structure)   |
 | `fuzz_typechecker` | `typechecker::check` + diagnostic well-formedness  |
+| `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised
 from both the fuzz targets and regression tests in `tests/`.
@@ -49,7 +50,7 @@ While actively working on parser or formatter code, run
 ```sh
 fuzz/local.sh fuzz_formatter       # single target, 10 min
 fuzz/local.sh fuzz_formatter 60    # quick 1-minute sanity check
-fuzz/local.sh all 3600             # all five targets in parallel, 1 hr
+fuzz/local.sh all 3600             # all six targets in parallel, 1 hr
 ```
 
 This is the fastest way to find new bugs — seconds of local

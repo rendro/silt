@@ -778,10 +778,16 @@ impl TypeChecker {
         // Set the expected return type for return and ? validation
         let prev_return_type = self.current_return_type.take();
         self.current_return_type = Some(ret_type.clone());
+        // Round 93: fresh `?`-site tracking per fn body, so a failed
+        // body/return unify can point back at the `?` that demanded a
+        // Result/Option return.
+        let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
         // Infer the body and unify with declared return type
         let body_type = self.infer_expr(&mut f.body, &mut local_env);
+        let ret_unify_err_count = self.errors.len();
         self.unify(&body_type, &ret_type, f.body.span);
+        self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &ret_type);
 
         // Record the body-constrained function type for scheme narrowing
         let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
@@ -907,11 +913,51 @@ impl TypeChecker {
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
+        self.current_qmark_spans = prev_qmark_spans;
         self.active_constraints = prev_constraints;
         self.current_fn_param_tyvars = prev_fn_param_tyvars;
         self.current_fn_name = prev_fn_name;
 
         Some(constrained_fn)
+    }
+
+    /// GAP (round 93): when the body/return-type unify fails AND the
+    /// return type was driven to Result/Option by a `?` in the body,
+    /// append a note naming the `?` site. Without this, `?` inside an
+    /// unannotated (effectively unit-returning) fn surfaces as a bare
+    /// "type mismatch: expected Result(_, String), got ()" with the
+    /// caret on the fn header — no pointer to the `?` that created the
+    /// requirement. Companion to `chain_hint` (mod.rs), which covers
+    /// the inverse direction (got Result/Option, expected plain): both
+    /// append a continuation line to the raw unify mismatch rather
+    /// than emitting a separate diagnostic.
+    fn note_qmark_requirement_on_ret_mismatch(&mut self, err_count_before: usize, ret_ty: &Type) {
+        if self.errors.len() == err_count_before {
+            return;
+        }
+        let Some(qspan) = self.current_qmark_spans.first().copied() else {
+            return;
+        };
+        // Only when the return type is actually Result/Option-shaped —
+        // i.e. the shape `?` itself unifies into the return type. If the
+        // user annotated something else, the `?` site already got its own
+        // error and this note would mislead.
+        let ret_resolved = self.apply(ret_ty);
+        let is_qmark_shape = matches!(
+            &ret_resolved,
+            Type::Generic(n, _) if resolve(*n) == "Result" || resolve(*n) == "Option"
+        );
+        if !is_qmark_shape {
+            return;
+        }
+        // No explicit "note:" prefix — the renderer (errors.rs) already
+        // emits continuation lines as `= note: ...`.
+        if let Some(err) = self.errors.last_mut() {
+            err.message.push_str(&format!(
+                "\nthe ? on line {} requires this function to return {ret_resolved}",
+                qspan.line
+            ));
+        }
     }
 
     // ── Deferred check finalization ─────────────────────────────────
@@ -1039,6 +1085,14 @@ impl TypeChecker {
                         }
                         continue;
                     }
+                    // Round 93: the field-aware auto-derive gate removed
+                    // this type's provisional `.equal()`/`.compare()`/
+                    // `.hash()` entry — name the offending field instead
+                    // of a generic "unknown method".
+                    if let Some(msg) = self.method_auto_derive_violation(type_name, field) {
+                        self.error(msg, span);
+                        continue;
+                    }
                     // GAP (round 35 F7): thread did-you-mean suggestion
                     // through the Generic/named-record deferred path.
                     let base = format!("unknown field or method '{field}' on type {type_name}");
@@ -1072,8 +1126,13 @@ impl TypeChecker {
             // case the fn was never monomorphized so we can't validate, or
             // (b) a body inference var from a polymorphic fn template whose
             // call sites were processed using fresh instantiated vars (so the
-            // template var never got constrained). Both cases are harmless;
-            // the concrete error would fire on the call site's operand.
+            // template var never got constrained). We skip both rather than
+            // reject legitimate polymorphic definitions. Note the constraint
+            // is NOT re-checked at the call site (each call instantiates
+            // fresh vars that never flow back into this template var), so a
+            // call passing a non-conforming operand is not caught statically
+            // — the VM catches it at runtime with a clean operator-domain
+            // diagnostic.
             if matches!(resolved, Type::Var(_)) {
                 continue;
             }
@@ -1107,6 +1166,86 @@ impl TypeChecker {
                     format!("operator {op_desc} requires {domain}, got '{resolved}'"),
                     span,
                 );
+            } else if matches!(op_desc, "'=='/'!='" | "ordering comparison")
+                && let Some(msg) =
+                    self.operand_builtin_trait_violation(&resolved, op_desc == "'=='/'!='")
+            {
+                // Round 93: deferred mirror of the concrete comparison
+                // arm — a late-resolved nominal operand may wrap fields
+                // that cannot support the Value-level operation.
+                self.error(msg, span);
+            }
+        }
+
+        // Round 93: deferred `?` checks recorded when the ?-ed expression's
+        // type was still an unresolved Var at inference time (e.g. the
+        // unannotated param of an inline lambda, resolved later by the
+        // call-site unification). Validate now with the final substitution:
+        // mirror the concrete inline arms of ExprKind::QuestionMark —
+        // unwrap into the surrounding expression AND constrain the
+        // enclosing fn/lambda return type. Still-Var inners stay lenient
+        // (polymorphic templates whose body vars never unify with call
+        // sites — same rationale as `pending_numeric_checks` above).
+        let pending_qmarks = std::mem::take(&mut self.pending_question_marks);
+        for (inner_ty, result_ty, expected_ret, span) in pending_qmarks {
+            let resolved = self.apply(&inner_ty);
+            let (head, args) = match &resolved {
+                Type::Error | Type::Never | Type::Var(_) => continue,
+                Type::Generic(name, args) if *name == intern("Result") && args.len() == 2 => {
+                    ("Result", args.clone())
+                }
+                Type::Generic(name, args) if *name == intern("Option") && args.len() == 1 => {
+                    ("Option", args.clone())
+                }
+                other => {
+                    self.error(
+                        format!("'?' operator requires Result or Option type, got '{other}'"),
+                        span,
+                    );
+                    continue;
+                }
+            };
+            // The unwrapped Ok/Some payload is what flowed into the
+            // surrounding expression (t1 = got, t2 = expected).
+            self.unify(&args[0], &result_ty, span);
+            let Some(ret) = expected_ret else {
+                self.error(
+                    "? operator can only be used inside a function that returns Result or Option"
+                        .to_string(),
+                    span,
+                );
+                continue;
+            };
+            let ret_resolved = self.apply(&ret);
+            let expected_wrapper = if head == "Result" {
+                let fresh_ok = self.fresh_var();
+                Type::Generic(intern("Result"), vec![fresh_ok, args[1].clone()])
+            } else {
+                let fresh_inner = self.fresh_var();
+                Type::Generic(intern("Option"), vec![fresh_inner])
+            };
+            match &ret_resolved {
+                Type::Error | Type::Never => {}
+                // Return type still open (or already the right wrapper):
+                // constrain it, exactly like the inline concrete path.
+                Type::Var(_) => {
+                    self.unify(&ret_resolved, &expected_wrapper, span);
+                }
+                Type::Generic(n, _) if resolve(*n) == head => {
+                    self.unify(&ret_resolved, &expected_wrapper, span);
+                }
+                // Concrete non-matching return type: this is the unsound
+                // lambda repro (`{ x -> x? + 1 }` whose return type
+                // resolved to Int). Curated message, same class as the
+                // inline no-context error.
+                other => {
+                    self.error(
+                        format!(
+                            "? operator can only be used inside a function that returns Result or Option\nthe ?-ed expression is {resolved}, but the enclosing function returns {other}"
+                        ),
+                        span,
+                    );
+                }
             }
         }
 
@@ -2261,13 +2400,45 @@ impl TypeChecker {
                     let first_entry = iter.next().unwrap();
                     let first_k = self.infer_expr(&mut first_entry.0, env);
                     let first_v = self.infer_expr(&mut first_entry.1, env);
-                    for (k, v) in iter {
+                    // GAP (round 93): the unify calls here used to pass the
+                    // established type as t1 and the deviant entry as t2,
+                    // reversing the documented t1=got/t2=expected convention
+                    // (`#{ "a": 1, 2: 3 }` reported "expected Int, got
+                    // String"). Fixed direction, and — mirroring the list-
+                    // literal arm above — replace the raw unify mismatch
+                    // with a curated map-level message.
+                    for (idx, (k, v)) in iter.enumerate() {
+                        let entry_num = idx + 2; // 1-based; entry 1 set the type
                         let k_span = k.span;
                         let v_span = v.span;
                         let kt = self.infer_expr(k, env);
                         let vt = self.infer_expr(v, env);
-                        self.unify(&first_k, &kt, k_span);
-                        self.unify(&first_v, &vt, v_span);
+                        let err_count = self.errors.len();
+                        self.unify(&kt, &first_k, k_span);
+                        if self.errors.len() > err_count {
+                            self.errors.truncate(err_count);
+                            let first_resolved = self.apply(&first_k);
+                            let kt_resolved = self.apply(&kt);
+                            self.error(
+                                format!(
+                                    "map keys must have the same type: first key is {first_resolved}, but key {entry_num} is {kt_resolved}"
+                                ),
+                                k_span,
+                            );
+                        }
+                        let err_count = self.errors.len();
+                        self.unify(&vt, &first_v, v_span);
+                        if self.errors.len() > err_count {
+                            self.errors.truncate(err_count);
+                            let first_resolved = self.apply(&first_v);
+                            let vt_resolved = self.apply(&vt);
+                            self.error(
+                                format!(
+                                    "map values must have the same type: first value is {first_resolved}, but value {entry_num} is {vt_resolved}"
+                                ),
+                                v_span,
+                            );
+                        }
                     }
                     Type::Map(Box::new(first_k), Box::new(first_v))
                 }
@@ -2278,10 +2449,30 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::Set(Box::new(tv))
                 } else {
+                    // GAP (round 93): same direction fix + curated message
+                    // as the map arm above — `#[1, 2, "x"]` used to report
+                    // "expected String, got Int". Mirror the list-literal
+                    // wording for set elements.
                     let elem_type = self.fresh_var();
-                    for e in elems.iter_mut() {
+                    for (idx, e) in elems.iter_mut().enumerate() {
+                        let espan = e.span;
                         let t = self.infer_expr(e, env);
-                        self.unify(&elem_type, &t, e.span);
+                        let err_count = self.errors.len();
+                        self.unify(&t, &elem_type, espan);
+                        if self.errors.len() > err_count {
+                            self.errors.truncate(err_count);
+                            let first_resolved = self.apply(&elem_type);
+                            let t_resolved = self.apply(&t);
+                            self.error(
+                                format!(
+                                    "set elements must have the same type: first element is {}, but element {} is {}",
+                                    first_resolved,
+                                    idx + 1,
+                                    t_resolved
+                                ),
+                                espan,
+                            );
+                        }
                     }
                     Type::Set(Box::new(elem_type))
                 }
@@ -2522,6 +2713,16 @@ impl TypeChecker {
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
+                        } else if let Some(msg) =
+                            self.method_auto_derive_violation(*rec_name, field)
+                        {
+                            // Round 93: the field-aware auto-derive gate
+                            // removed this type's provisional `.equal()` /
+                            // `.compare()` / `.hash()` entry — name the
+                            // offending field instead of a generic
+                            // "no field or method".
+                            self.error(msg, span);
+                            Type::Error
                         } else {
                             // GAP (round 26 L5): append a did-you-mean
                             // hint when a near edit-distance field
@@ -2587,6 +2788,16 @@ impl TypeChecker {
                             let resolved = self.apply(&result);
                             expr.ty = Some(resolved.clone());
                             return resolved;
+                        }
+                        // Round 93: the field-aware auto-derive gate
+                        // removed this type's provisional `.equal()` /
+                        // `.compare()` / `.hash()` entry — name the
+                        // offending field instead of a generic
+                        // "unknown method".
+                        if let Some(msg) = self.method_auto_derive_violation(*type_name, field) {
+                            self.error(msg, span);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
                         }
                         // GAP (round 35 F7): thread did-you-mean suggestion
                         // through the Generic/named-record field-access
@@ -3103,7 +3314,22 @@ impl TypeChecker {
                                         span,
                                     );
                                 }
-                                _ => {}
+                                _ => {
+                                    // Round 93: nominal record / enum operands
+                                    // pass the shape check above, but the
+                                    // field-aware auto-derive gate may have
+                                    // proven the type cannot support the
+                                    // Value-level operation (e.g. a record
+                                    // wrapping a `Fn(..)` field — closure
+                                    // ordering is Arc-pointer-address
+                                    // nondeterministic). Reject statically
+                                    // with the precise reason.
+                                    if let Some(msg) =
+                                        self.operand_builtin_trait_violation(&resolved, is_equality)
+                                    {
+                                        self.error(msg, span);
+                                    }
+                                }
                             }
                         }
                         Type::Bool
@@ -3340,6 +3566,11 @@ impl TypeChecker {
                 let inner_ty = self.infer_expr(inner, env);
                 let inner_ty = self.apply(&inner_ty);
 
+                // Round 93: remember the `?` site so a later body/return
+                // unify failure can point back here (see
+                // `note_qmark_requirement_on_ret_mismatch`).
+                self.current_qmark_spans.push(span);
+
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
                 match &inner_ty {
@@ -3373,8 +3604,27 @@ impl TypeChecker {
                         args[0].clone()
                     }
                     Type::Var(_) => {
-                        // Unresolved type variable — stay lenient
-                        self.fresh_var()
+                        // BROKEN (round 93): this arm used to stay lenient
+                        // and DROP the obligation entirely, which made
+                        // `{ x -> x? + 1 }` piped through list.map
+                        // typecheck while the VM propagated the Err value
+                        // into a List(Int) — a statically-clean program
+                        // crashing at runtime. Defer the check instead:
+                        // once all bodies are inferred, the inner type has
+                        // either resolved (validate exactly like the
+                        // concrete arms above, constraining the enclosing
+                        // fn/lambda return type) or is genuinely
+                        // polymorphic (stay lenient — same rationale as
+                        // `pending_numeric_checks`). See
+                        // `finalize_deferred_checks`.
+                        let result_ty = self.fresh_var();
+                        self.pending_question_marks.push((
+                            inner_ty.clone(),
+                            result_ty.clone(),
+                            self.current_return_type.clone(),
+                            span,
+                        ));
+                        result_ty
                     }
                     _ => {
                         self.error(
@@ -3674,7 +3924,26 @@ impl TypeChecker {
                     })
                     .collect();
 
+                // BROKEN (round 93): a lambda is its own `?`/`return`
+                // boundary — the VM's Op::QuestionMark pops exactly ONE
+                // frame (the lambda's), so `?` inside a lambda must
+                // validate against the LAMBDA's return type, not the
+                // enclosing named fn's. Establish a fresh return-type
+                // context for the body, mirroring check_fn_body_with_name.
+                // Without this, `{ x -> x? + 1 }` was checked against the
+                // outer fn's return type and a Variant escaped into a
+                // List(Int) at runtime.
+                let lambda_ret = self.fresh_var();
+                let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
+                let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
+
                 let body_type = self.infer_expr(body, &mut local_env);
+                let ret_unify_err_count = self.errors.len();
+                self.unify(&body_type, &lambda_ret, body.span);
+                self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &lambda_ret);
+
+                self.current_return_type = prev_return_type;
+                self.current_qmark_spans = prev_qmark_spans;
 
                 // Round-65: enforce `fn(...) !{...} { ... }` annotations
                 // the same way `register_fn_decl` enforces FnDecl-level
@@ -3718,7 +3987,11 @@ impl TypeChecker {
                     }
                 }
 
-                Type::Fun(param_types, Box::new(body_type))
+                // `lambda_ret` rather than `body_type`: identical when the
+                // unify above succeeded, and on failure it carries any
+                // `?`-imposed Result/Option constraint, which is the type
+                // the VM actually returns.
+                Type::Fun(param_types, Box::new(lambda_ret))
             }
 
             ExprKind::RecordCreate { name, fields } => {
@@ -4173,6 +4446,22 @@ impl TypeChecker {
                         let scrutinee_ty = self.infer_expr(scrutinee, env);
                         let result_ty = self.fresh_var();
 
+                        // GAP (round 93): every arm checks its pattern
+                        // against the SAME scrutinee, so a wrong-scrutinee
+                        // match (`match 42 { Ok(v) -> ..., Err(e) -> ... }`)
+                        // used to print the identical "expected Result(_, _),
+                        // got Int" once per arm, plus a non-exhaustive
+                        // cascade. Dedup identical (message, span, severity)
+                        // diagnostics across the arm loop — genuinely
+                        // distinct per-arm errors still each report.
+                        let mut seen_arm_diags: std::collections::HashSet<(
+                            std::string::String,
+                            usize,
+                            usize,
+                            usize,
+                            bool,
+                        )> = std::collections::HashSet::new();
+                        let mut any_pattern_mismatch = false;
                         for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
                             // Soundness: `match e { (x, x) -> x }` used to
@@ -4181,12 +4470,37 @@ impl TypeChecker {
                             // in the arm pattern before check_pattern walks
                             // it and defines them in `arm_env`.
                             self.check_pattern_duplicate_bindings(&arm.pattern);
+                            let pat_err_count = self.errors.len();
                             self.check_pattern(
                                 &arm.pattern,
                                 &scrutinee_ty,
                                 &mut arm_env,
                                 scrutinee_span,
                             );
+                            if self.errors.len() > pat_err_count {
+                                let new_diags: Vec<TypeError> =
+                                    self.errors.drain(pat_err_count..).collect();
+                                for d in new_diags {
+                                    if matches!(d.severity, Severity::Error) {
+                                        any_pattern_mismatch = true;
+                                    }
+                                    let key = (
+                                        d.message.clone(),
+                                        d.span.line,
+                                        d.span.col,
+                                        d.span.offset,
+                                        matches!(d.severity, Severity::Error),
+                                    );
+                                    if seen_arm_diags.insert(key) {
+                                        // Re-inserting a pre-built TypeError drained
+                                        // above for dedup — not a new emission site,
+                                        // so `self.error(...)` does not apply. This
+                                        // is the sanctioned exception counted by the
+                                        // round-83 STYLE lock (threshold 1).
+                                        self.errors.push(d);
+                                    }
+                                }
+                            }
 
                             if let Some(ref mut guard) = arm.guard {
                                 let guard_span = guard.span;
@@ -4201,8 +4515,13 @@ impl TypeChecker {
 
                         // Check exhaustiveness after pattern checking, so the
                         // scrutinee type is fully resolved through unification.
-                        let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
-                        self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
+                        // Skipped when the scrutinee type already failed to
+                        // match the arms — exhaustiveness over a broken match
+                        // is a cascade, not new information (round 93).
+                        if !any_pattern_mismatch {
+                            let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
+                            self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
+                        }
 
                         result_ty
                     }
@@ -4993,6 +5312,16 @@ pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
 /// `is_equality` widens the domain to include types supported by Value's
 /// PartialEq implementation but not `Value::cmp` (Tuple, Map, Set, Bool, Unit).
 /// Type variables and `Type::Error` are treated as "maybe valid".
+///
+/// Round 93: this is a SHAPE check only. `Record(..)` / `Generic(..)`
+/// heads pass here, but nominal operands are additionally vetted by
+/// `TypeChecker::operand_builtin_trait_violation` at both call sites
+/// (the concrete comparison arm and the deferred pending-check pass):
+/// a record / enum wrapping a field that cannot satisfy Equal/Compare
+/// (e.g. `Fn(..)` — closure ordering is Arc-pointer-address
+/// nondeterministic) is rejected there with a field-precise message.
+/// This free function stays stateless because every other arm is
+/// purely structural.
 pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     match ty {
         Type::Int

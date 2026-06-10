@@ -6,7 +6,7 @@ use std::process;
 use silt::errors::SourceError;
 
 use crate::cli::help::check_usage_banner;
-use crate::cli::package::resolve_package_entry_point;
+use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
 use crate::cli::pipeline::{
     reportable_type_errors, resolve_strict_effects, run_compile_pipeline_with_options,
 };
@@ -106,7 +106,10 @@ pub(crate) fn dispatch(args: &[String]) {
     }
     let path = match file {
         Some(p) => p,
-        None => match resolve_package_entry_point() {
+        // Round 93: `silt check` accepts a lib-only package
+        // (`src/lib.silt` with no `src/main.silt`) — the required shape
+        // for dependencies. `silt run`/`silt disasm` keep requiring main.
+        None => match resolve_package_entry_point_for(EntryPointKind::AllowLib) {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {
                 eprintln!("Usage: {}", check_usage_banner());

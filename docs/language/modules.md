@@ -71,6 +71,11 @@ External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url>`. After adding, imports from
 the dependency package work exactly like local modules.
 
+A package consumed as a dependency exposes `src/lib.silt` instead of
+`src/main.silt`. Such a library-only package has nothing to execute — `silt
+run` refuses it — but a bare `silt check` works, falling back to
+`src/lib.silt` when no `src/main.silt` exists.
+
 ## Built-in modules
 
 Standard-library modules are registered in the global environment — there is

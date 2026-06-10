@@ -1101,6 +1101,43 @@ fn main_thread_wait_for_send(
             sched.unpark_main();
         }
     };
+    // ROUND93-RECHECK(send): the single in-loop race-point re-check.
+    // Every race window in the wait loop below (top-of-loop,
+    // post-waker-registration, post-starvation-BFS, post-confirm)
+    // funnels through this one closure so the copies cannot drift apart
+    // (they were four byte-identical blocks hardened across audit
+    // rounds 90-92; a future edit to one copy that missed the siblings
+    // would silently reopen lost-wakeup / deadlock-false-positive
+    // bugs). Locked by
+    // `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    //
+    // Semantics (load-bearing, must not change):
+    //   Sent   -> drop the waker-registration guard FIRST (deregisters
+    //             the stale waker), THEN unpark MAIN, then Ok(Unit).
+    //   Closed -> same drop/unpark ordering, canonical closed-send err.
+    //   Full   -> None: fall through to the caller's wait protocol.
+    // The post-`confirm_main_starved` call site consults this BEFORE
+    // testing `confirmed`, so a send slot that races open during the
+    // confirm window always wins over a deadlock verdict.
+    //
+    // NOTE: the no-scheduler fast path at the top of this function
+    // looks similar but is INTENTIONALLY different (no waker or park
+    // exists yet; `Full` is an immediate deadlock there) — do not unify
+    // it with this closure.
+    let recheck = |reg: &mut Option<crate::value::WakerRegistration>| match ch.try_send(val.clone())
+    {
+        TrySendResult::Sent => {
+            drop(reg.take());
+            unpark_main(vm);
+            Some(Ok(Value::Unit))
+        }
+        TrySendResult::Closed => {
+            drop(reg.take());
+            unpark_main(vm);
+            Some(Err(closed_channel_send_err(ch.id)))
+        }
+        TrySendResult::Full => None,
+    };
     // Track the most recently registered send-waker as a
     // `WakerRegistration` guard. Dropping / replacing the guard
     // deregisters the prior iteration's waker. Without this, the
@@ -1111,18 +1148,8 @@ fn main_thread_wait_for_send(
     let mut reg: Option<crate::value::WakerRegistration> = None;
     loop {
         // Try first so we don't miss a send slot that just opened.
-        match ch.try_send(val.clone()) {
-            TrySendResult::Sent => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Unit);
-            }
-            TrySendResult::Closed => {
-                drop(reg);
-                unpark_main(vm);
-                return Err(closed_channel_send_err(ch.id));
-            }
-            TrySendResult::Full => {}
+        if let Some(out) = recheck(&mut reg) {
+            return out;
         }
         // Explicitly take-and-drop the previous iteration's guard
         // before minting a new one so the old waker is deregistered
@@ -1138,53 +1165,26 @@ fn main_thread_wait_for_send(
         })));
         // Re-check after registering to avoid a lost wakeup race
         // between try_send above and register_send_waker.
-        match ch.try_send(val.clone()) {
-            TrySendResult::Sent => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Unit);
-            }
-            TrySendResult::Closed => {
-                drop(reg);
-                unpark_main(vm);
-                return Err(closed_channel_send_err(ch.id));
-            }
-            TrySendResult::Full => {}
+        if let Some(out) = recheck(&mut reg) {
+            return out;
         }
         // Pre-wait starvation check: see `main_thread_wait_for_receive`.
         if main_thread_is_starved(vm, &target) {
             // Candidate deadlock. First catch a send slot that raced
             // open between the re-check above and this BFS.
-            match ch.try_send(val.clone()) {
-                TrySendResult::Sent => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Unit);
-                }
-                TrySendResult::Closed => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Err(closed_channel_send_err(ch.id));
-                }
-                TrySendResult::Full => {}
+            if let Some(out) = recheck(&mut reg) {
+                return out;
             }
             // Confirm the starvation is STABLE before firing: a single
             // snapshot can be transiently starved during a task state
             // transition under load. Wait up to CONFIRM_MS for any
             // `signal_progress`; only fire if still starved afterward.
+            // NOTE: the re-check below runs BEFORE `confirmed` is
+            // tested — a slot that raced open during the confirm window
+            // must win over the deadlock verdict.
             let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            match ch.try_send(val.clone()) {
-                TrySendResult::Sent => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Unit);
-                }
-                TrySendResult::Closed => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Err(closed_channel_send_err(ch.id));
-                }
-                TrySendResult::Full => {}
+            if let Some(out) = recheck(&mut reg) {
+                return out;
             }
             if confirmed {
                 drop(reg);
@@ -1280,19 +1280,40 @@ fn main_thread_wait_for_receive(
             sched.unpark_main();
         }
     };
+    // ROUND93-RECHECK(recv): the single in-loop race-point re-check —
+    // same rationale as ROUND93-RECHECK(send) in
+    // `main_thread_wait_for_send` (four formerly byte-identical copies;
+    // see that comment for the full story). Locked by
+    // `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    //
+    // Semantics (load-bearing, must not change):
+    //   Value(v) -> drop the waker-registration guard FIRST, THEN
+    //               unpark MAIN, then Ok(Message(v)).
+    //   Closed   -> same drop/unpark ordering, Ok(Closed).
+    //   Empty    -> None: fall through to the caller's wait protocol.
+    // The post-`confirm_main_starved` call site consults this BEFORE
+    // testing `confirmed`, so a value that races into flight during the
+    // confirm window always wins over a deadlock verdict.
+    //
+    // NOTE: the no-scheduler fast path at the top of this function is
+    // INTENTIONALLY different (no waker or park exists yet; `Empty` is
+    // an immediate deadlock there) — do not unify it with this closure.
+    let recheck = |reg: &mut Option<crate::value::WakerRegistration>| match ch.try_receive() {
+        TryReceiveResult::Value(val) => {
+            drop(reg.take());
+            unpark_main(vm);
+            Some(Ok(Value::Variant("Message".into(), vec![val])))
+        }
+        TryReceiveResult::Closed => {
+            drop(reg.take());
+            unpark_main(vm);
+            Some(Ok(Value::Variant("Closed".into(), vec![])))
+        }
+        TryReceiveResult::Empty => None,
+    };
     loop {
-        match ch.try_receive() {
-            TryReceiveResult::Value(val) => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Variant("Message".into(), vec![val]));
-            }
-            TryReceiveResult::Closed => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Variant("Closed".into(), vec![]));
-            }
-            TryReceiveResult::Empty => {}
+        if let Some(out) = recheck(&mut reg) {
+            return out;
         }
         // Explicitly take-and-drop the previous iteration's guard
         // before minting a new one — see `main_thread_wait_for_send`
@@ -1305,18 +1326,8 @@ fn main_thread_wait_for_receive(
             cvar.notify_one();
         })));
         // Re-check after registration to avoid a lost wakeup.
-        match ch.try_receive() {
-            TryReceiveResult::Value(val) => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Variant("Message".into(), vec![val]));
-            }
-            TryReceiveResult::Closed => {
-                drop(reg);
-                unpark_main(vm);
-                return Ok(Value::Variant("Closed".into(), vec![]));
-            }
-            TryReceiveResult::Empty => {}
+        if let Some(out) = recheck(&mut reg) {
+            return out;
         }
         // Pre-wait starvation check: if the wake graph already proves
         // we cannot be unblocked, fire deadlock without waiting. This
@@ -1336,36 +1347,19 @@ fn main_thread_wait_for_receive(
             // Candidate deadlock. First catch a value that raced into
             // flight (a sender's `try_send` may have landed AND completed
             // between the re-check above and this BFS).
-            match ch.try_receive() {
-                TryReceiveResult::Value(val) => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Variant("Message".into(), vec![val]));
-                }
-                TryReceiveResult::Closed => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Variant("Closed".into(), vec![]));
-                }
-                TryReceiveResult::Empty => {}
+            if let Some(out) = recheck(&mut reg) {
+                return out;
             }
             // Confirm the starvation is STABLE before firing: a single
             // snapshot can be transiently starved during a task state
             // transition under load. Wait up to CONFIRM_MS for any
             // `signal_progress`; only fire if still starved afterward.
+            // NOTE: the re-check below runs BEFORE `confirmed` is
+            // tested — a value that raced in during the confirm window
+            // must win over the deadlock verdict.
             let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            match ch.try_receive() {
-                TryReceiveResult::Value(val) => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Variant("Message".into(), vec![val]));
-                }
-                TryReceiveResult::Closed => {
-                    drop(reg);
-                    unpark_main(vm);
-                    return Ok(Value::Variant("Closed".into(), vec![]));
-                }
-                TryReceiveResult::Empty => {}
+            if let Some(out) = recheck(&mut reg) {
+                return out;
             }
             if confirmed {
                 drop(reg);
@@ -1432,6 +1426,29 @@ fn main_thread_wait_for_join(
             sched.unpark_main();
         }
     };
+    // ROUND93-RECHECK(join): the single in-loop race-point re-check —
+    // same rationale as ROUND93-RECHECK(send) in
+    // `main_thread_wait_for_send` (three formerly identical copies).
+    // Locked by `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    //
+    // Semantics (load-bearing, must not change): if the joinee's result
+    // is available, unpark MAIN and return it; otherwise None and the
+    // caller continues its wait protocol. There is no waker-registration
+    // guard here — `register_join_waker` is one-shot, so the join family
+    // has no `reg` to drop. The post-`confirm_main_starved` call site
+    // consults this BEFORE testing `confirmed`, so a result that races
+    // in during the confirm window always wins over a deadlock verdict.
+    //
+    // NOTE: the no-scheduler fast path at the top of this function is
+    // INTENTIONALLY different (nothing is parked; a missing result is an
+    // immediate deadlock) — do not unify it with this closure.
+    let recheck = || match handle.try_get() {
+        Some(result) => {
+            unpark_main(vm);
+            Some(result)
+        }
+        None => None,
+    };
     // Register a one-shot waker that flips the local condvar when the
     // task completes. `register_join_waker` fires the closure inline if
     // the task has already completed, which short-circuits the loop.
@@ -1442,9 +1459,8 @@ fn main_thread_wait_for_join(
         cvar.notify_one();
     }));
     loop {
-        if let Some(result) = handle.try_get() {
-            unpark_main(vm);
-            return result;
+        if let Some(out) = recheck() {
+            return out;
         }
         // Pre-wait starvation check: see `main_thread_wait_for_receive`.
         // If the graph says starved, do one final `try_get` — the
@@ -1454,18 +1470,19 @@ fn main_thread_wait_for_join(
             // Candidate deadlock. First catch a result that raced into
             // flight (the join-waker may have fired between the try
             // above and the BFS, racing the `on_complete`).
-            if let Some(result) = handle.try_get() {
-                unpark_main(vm);
-                return result;
+            if let Some(out) = recheck() {
+                return out;
             }
             // Confirm the starvation is STABLE before firing: a single
             // snapshot can be transiently starved during a task state
             // transition under load. Wait up to CONFIRM_MS for any
             // `signal_progress`; only fire if still starved afterward.
+            // NOTE: the re-check below runs BEFORE `confirmed` is
+            // tested — a result that raced in during the confirm window
+            // must win over the deadlock verdict.
             let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            if let Some(result) = handle.try_get() {
-                unpark_main(vm);
-                return result;
+            if let Some(out) = recheck() {
+                return out;
             }
             if confirmed {
                 unpark_main(vm);

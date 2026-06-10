@@ -41,3 +41,8 @@ doc = false
 name = "fuzz_typechecker"
 path = "fuzz_targets/fuzz_typechecker.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_compiler"
+path = "fuzz_targets/fuzz_compiler.rs"
+doc = false

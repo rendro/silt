@@ -98,9 +98,11 @@ fn inference_has_no_residual_errors_push_lines() {
     let src = read_src("src/typechecker/inference.rs");
     let n = src.matches("self.errors.push(").count();
     assert_eq!(
-        n, 0,
-        "expected zero `self.errors.push(` call sites in \
-         src/typechecker/inference.rs after round 83; found {n}. \
+        n, 1,
+        "expected exactly one `self.errors.push(` call site in \
+         src/typechecker/inference.rs; found {n}. The single \
+         sanctioned site (round 93) re-inserts pre-built TypeErrors \
+         drained for match-arm dedup — see the documented call site. \
          New error sites should use the `self.error(...)` helper."
     );
 }

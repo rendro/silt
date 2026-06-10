@@ -11,11 +11,22 @@ use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{Vm, VmError};
 
 /// Maximum number of call frames the VM will allocate before reporting a
-/// stack-overflow error. Exceeding this cap aborts the offending call with
-/// a user-facing message that points at tail-call position as a remedy.
-/// Consulted by both `call_value` (normal Silt calls) and
+/// stack-overflow error (see `stack_overflow_error` for the user-facing
+/// message). Consulted by both `call_value` (normal Silt calls) and
 /// `invoke_callable` (higher-order builtins re-entering user code).
 const MAX_FRAMES: usize = 100_000;
+
+/// Build the user-facing stack-overflow error reported when a call would
+/// exceed `MAX_FRAMES`. The tip is scoped honestly: tail-call elimination
+/// only exists for *plain* function calls (`Op::TailCall`) — method
+/// dispatch (`Op::CallMethod`) and builtin callbacks (`Op::CallBuiltin`)
+/// have no tail form and always consume a frame, so "put the call in tail
+/// position" is not actionable advice for recursive trait methods.
+fn stack_overflow_error() -> VmError {
+    VmError::new(format!(
+        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames (tip: tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame)"
+    ))
+}
 
 /// Language-level equality for the `==` / `!=` operators.
 ///
@@ -658,10 +669,7 @@ impl Vm {
                     )));
                 }
                 if self.frames.len() >= MAX_FRAMES {
-                    return Err(VmError::new(format!(
-                        "stack overflow: recursion depth exceeded {} frames (tip: put the recursive call in tail position to avoid this limit)",
-                        MAX_FRAMES
-                    )));
+                    return Err(stack_overflow_error());
                 }
                 // Push a new call frame. The arguments are already on the stack
                 // at positions [func_slot+1 .. func_slot+1+argc].
@@ -790,10 +798,7 @@ impl Vm {
                     )));
                 }
                 if self.frames.len() >= MAX_FRAMES {
-                    return Err(VmError::new(format!(
-                        "stack overflow: recursion depth exceeded {} frames (tip: put the recursive call in tail position to avoid this limit)",
-                        MAX_FRAMES
-                    )));
+                    return Err(stack_overflow_error());
                 }
                 // Save state
                 let saved_frame_count = self.frames.len();

@@ -687,34 +687,18 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     // Register cancel cleanup: if the task is cancelled while
                     // blocked, take it from the slot (making the waker a no-op)
                     // and tear down the wake-graph node so the BFS doesn't
-                    // see a phantom parked task.
-                    let cancel_slot = task_slot.clone();
-                    let cancel_inner = inner.clone();
-                    let cancel_task_id = id;
-                    handle_for_registry.set_cancel_cleanup(Box::new(move || {
-                        // Take the task so the waker closure becomes a no-op.
-                        // If the slot is empty, the waker already fired and
-                        // the task is either running or already accounted
-                        // for — do not double-decrement the counters here.
-                        if cancel_slot.lock().take().is_none() {
-                            return;
-                        }
-                        // This blocked task is being dropped: decrement
-                        // live_tasks (the Completed/Failed path is
-                        // unreachable once we drop the task, so live_tasks
-                        // would otherwise leak).
-                        if was_io {
-                            cancel_inner.watchdog.remove(cancel_task_id);
-                        }
-                        cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                        // Wake graph: cancelled-while-blocked is the
-                        // moral equivalent of `on_complete` — the task
-                        // is gone forever; drop the edge and the live
-                        // entry so subsequent BFS does not see a phantom
-                        // fuel node, and pulse main waiters to re-check.
-                        cancel_inner.wake_graph.on_complete(cancel_task_id);
-                        signal_progress(&cancel_inner);
-                    }));
+                    // see a phantom parked task. No waker-registration guard
+                    // exists yet at this point (the per-arm code below
+                    // re-installs the cleanup with the real guard), so the
+                    // guard parameter is `()`. See `make_cancel_cleanup` for
+                    // the full ordered teardown sequence.
+                    handle_for_registry.set_cancel_cleanup(make_cancel_cleanup(
+                        task_slot.clone(),
+                        inner.clone(),
+                        id,
+                        was_io,
+                        (),
+                    ));
                 }
 
                 // Wake graph: commit the parked edge for THIS task
@@ -837,25 +821,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // a different lock, so no deadlock.
                             let slot_guard = task_slot.lock();
                             if slot_guard.is_some() {
-                                let cancel_slot = task_slot.clone();
-                                let cancel_inner = inner.clone();
-                                let cancel_task_id = id;
-                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                    // Move the guard into the body so its Drop
-                                    // runs at the end of this scope (cancel
-                                    // path) or when the closure itself is
-                                    // dropped (normal wake path).
-                                    let _reg = reg;
-                                    if cancel_slot.lock().take().is_none() {
-                                        return;
-                                    }
-                                    if was_io {
-                                        cancel_inner.watchdog.remove(cancel_task_id);
-                                    }
-                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                    signal_progress(&cancel_inner);
-                                }));
+                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
+                                    task_slot.clone(),
+                                    inner.clone(),
+                                    id,
+                                    was_io,
+                                    reg,
+                                ));
                                 drop(slot_guard);
                             } else {
                                 drop(slot_guard);
@@ -924,21 +896,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // Receive arm above.
                             let slot_guard = task_slot.lock();
                             if slot_guard.is_some() {
-                                let cancel_slot = task_slot.clone();
-                                let cancel_inner = inner.clone();
-                                let cancel_task_id = id;
-                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                    let _reg = reg;
-                                    if cancel_slot.lock().take().is_none() {
-                                        return;
-                                    }
-                                    if was_io {
-                                        cancel_inner.watchdog.remove(cancel_task_id);
-                                    }
-                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                    signal_progress(&cancel_inner);
-                                }));
+                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
+                                    task_slot.clone(),
+                                    inner.clone(),
+                                    id,
+                                    was_io,
+                                    reg,
+                                ));
                                 drop(slot_guard);
                             } else {
                                 drop(slot_guard);
@@ -982,6 +946,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // teardown plus sibling-waker removal via the
                         // guard vec. Select is never I/O, so the
                         // watchdog-registry call is omitted.
+                        //
+                        // NOTE: this arm intentionally does NOT route
+                        // through `make_cancel_cleanup` — it owns a
+                        // shared `entries` guard VEC plus a `cancelled`
+                        // flag (drained/raised here AND by the winning
+                        // waker), not a single moved-in guard, and the
+                        // statically-false `was_io` branch is dropped.
+                        // The differences are by design; do not "unify"
+                        // this with the other four sites.
                         let select_slot = task_slot.clone();
                         let select_inner = inner.clone();
                         let select_task_id = id;
@@ -1116,26 +1089,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // rationale as the Receive arm above.
                             let slot_guard = task_slot.lock();
                             if slot_guard.is_some() {
-                                let cancel_slot = task_slot.clone();
-                                let cancel_inner = inner.clone();
-                                let cancel_task_id = id;
-                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                    // Move the guard into the body so
-                                    // its Drop runs at the end of this
-                                    // scope (cancel path) or when the
-                                    // closure itself is dropped (normal
-                                    // wake path).
-                                    let _reg = reg;
-                                    if cancel_slot.lock().take().is_none() {
-                                        return;
-                                    }
-                                    if was_io {
-                                        cancel_inner.watchdog.remove(cancel_task_id);
-                                    }
-                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                    signal_progress(&cancel_inner);
-                                }));
+                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
+                                    task_slot.clone(),
+                                    inner.clone(),
+                                    id,
+                                    was_io,
+                                    reg,
+                                ));
                                 drop(slot_guard);
                             } else {
                                 drop(slot_guard);
@@ -1222,21 +1182,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // I/O finally produces a value.
                             let slot_guard = task_slot.lock();
                             if slot_guard.is_some() {
-                                let cancel_slot = task_slot.clone();
-                                let cancel_inner = inner.clone();
-                                let cancel_task_id = id;
-                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                    let _reg = reg;
-                                    if cancel_slot.lock().take().is_none() {
-                                        return;
-                                    }
-                                    if was_io {
-                                        cancel_inner.watchdog.remove(cancel_task_id);
-                                    }
-                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                    signal_progress(&cancel_inner);
-                                }));
+                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
+                                    task_slot.clone(),
+                                    inner.clone(),
+                                    id,
+                                    was_io,
+                                    reg,
+                                ));
                                 drop(slot_guard);
                             } else {
                                 drop(slot_guard);
@@ -1327,6 +1279,78 @@ fn signal_progress(inner: &Arc<SchedulerInner>) {
     for cb in snapshot {
         cb();
     }
+}
+
+/// Build the cancel-cleanup closure installed on a blocked task's
+/// handle. Single source of truth for the cancel-while-blocked
+/// teardown sequence, shared by the registration-time install (no
+/// waker-registration guard exists yet — callers pass `()`) and the
+/// four park arms (Receive / Send / Join / Io, each passing its
+/// arm-specific guard: `WakerRegistration`, `JoinWakerRegistration`,
+/// or `IoWakerRegistration`).
+///
+/// The Select arm intentionally does NOT route through this helper:
+/// it tears down a shared guard *vec* (`entries`) plus a `cancelled`
+/// flag instead of a single owned guard, and omits the watchdog call
+/// because `was_io` is statically false for Select.
+///
+/// ORDER-SENSITIVE — do not reorder the body. The sequence is:
+///
+///   1. Move `reg` into the closure body so its Drop (the waker
+///      deregister) runs at the end of this scope on the cancel path,
+///      or when the closure itself is dropped on the normal-wake path
+///      (`requeue` calls `clear_cancel_cleanup`). Without the guard
+///      ownership, round-27 B1-B4 leak the waker into the channel
+///      queues (phantom rendezvous peer / starved real peer).
+///   2. Take the task from `slot` or return — the idempotency gate.
+///      An empty slot means the waker already fired and the task is
+///      either running or already accounted for; never
+///      double-decrement the counters.
+///   3. `was_io` → remove the `WatchdogRegistry` entry (round-75
+///      balance fix: the Completed/requeue paths that normally clear
+///      it are unreachable once the task is dropped).
+///   4. Decrement `live_tasks` — the Completed/Failed decrement is
+///      likewise unreachable, so the counter would otherwise leak.
+///   5. `wake_graph.on_complete` — cancelled-while-blocked is the
+///      moral equivalent of completion: drop the edge and the live
+///      entry so a subsequent BFS does not see a phantom fuel node.
+///   6. `signal_progress` — pulse parked main waiters to re-check.
+///      Dropping this step on any one arm would resurrect the
+///      round-90 starvation false positive on that arm's path only.
+///
+/// Round-31 lock discipline: this helper only builds the boxed
+/// closure and takes no locks itself. Park-arm callers must keep the
+/// `task_slot` is_some-check and the `set_cancel_cleanup` call under
+/// one `task_slot` lock hold so an inline-fire-then-new-arm sequence
+/// cannot clobber a concurrent worker's newer arm cleanup.
+fn make_cancel_cleanup<G: Send + 'static>(
+    slot: Arc<Mutex<Option<Task>>>,
+    inner: Arc<SchedulerInner>,
+    task_id: usize,
+    was_io: bool,
+    reg: G,
+) -> Box<dyn FnOnce() + Send> {
+    Box::new(move || {
+        // Step 1: own the guard; Drop runs at end of scope (cancel
+        // path, including the early return below) or when the closure
+        // is dropped unfired (normal wake path).
+        let _reg = reg;
+        // Step 2: idempotency gate.
+        if slot.lock().take().is_none() {
+            return;
+        }
+        // Step 3: balance the I/O watchdog entry.
+        if was_io {
+            inner.watchdog.remove(task_id);
+        }
+        // Step 4: the blocked task is being dropped; the normal
+        // decrement sites are unreachable.
+        inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+        // Step 5: tear down the wake-graph node + edge.
+        inner.wake_graph.on_complete(task_id);
+        // Step 6: pulse main waiters to re-check.
+        signal_progress(&inner);
+    })
 }
 
 /// RAII guard for a callback installed via
@@ -1498,6 +1522,144 @@ mod tests {
         assert_eq!(
             live, 0,
             "live_tasks should be 0 after failed task, got {live}"
+        );
+    }
+
+    // ── Round 93: cancel-cleanup extraction — live_tasks drain ────
+    //
+    // One lock per park family routed through `make_cancel_cleanup`
+    // (Receive / Send / Join / Io): park a task on the family's edge,
+    // cancel it the same way the `task.cancel` builtin does
+    // (`handle.complete(Err("cancelled"))`, which fires the installed
+    // cancel cleanup synchronously), and assert `live_tasks` drains
+    // to zero — i.e. the extracted helper ran its take-slot gate +
+    // decrement + `on_complete` exactly once for that arm. A drift in
+    // any single arm (e.g. an arm that stopped routing through the
+    // helper and dropped the decrement) fails exactly that family's
+    // test. The Select arm keeps its intentionally-different inline
+    // cleanup and is covered end-to-end by
+    // `tests/scheduler_cancel_setup_race_tests.rs` and
+    // `tests/cancel_path_waker_leak_tests.rs`.
+
+    /// Submit `src`, wait until the task has parked (unsettled_tasks
+    /// drains to 0 — decremented only after the per-arm cleanup +
+    /// waker registration completes), cancel it, and assert
+    /// `live_tasks` returns to 0.
+    fn cancel_parked_task_and_assert_live_drained(family: &str, src: &str) {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, src);
+        scheduler.submit(task).unwrap();
+        // Wait for the park: `unsettled_tasks` is decremented at the
+        // end of the Blocked arm, strictly AFTER the per-arm
+        // `set_cancel_cleanup`. Once it reads 0 with the task neither
+        // completed nor failed, the arm-specific cleanup is installed.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while scheduler.inner.unsettled_tasks.load(Ordering::SeqCst) != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "{family}: task never parked (unsettled_tasks stuck at {})",
+                scheduler.inner.unsettled_tasks.load(Ordering::SeqCst)
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            handle.try_get().is_none(),
+            "{family}: task completed instead of parking — fixture program \
+             must block forever until cancelled"
+        );
+        assert_eq!(
+            scheduler.inner.live_tasks.load(Ordering::SeqCst),
+            1,
+            "{family}: parked task should hold live_tasks at 1"
+        );
+        // Cancel — the exact call the `task.cancel` builtin makes. It
+        // fires the installed cancel cleanup synchronously on this
+        // thread, so the counter is settled when `complete` returns.
+        handle.complete(Err(VmError::new("cancelled".to_string())));
+        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
+        assert_eq!(
+            live, 0,
+            "{family}: live_tasks must drain to 0 after cancelling the \
+             parked task, got {live} — the {family} arm's cancel cleanup \
+             did not run (or ran without its decrement)"
+        );
+        // Idempotency gate: a second complete must not double-run the
+        // cleanup (the slot is already drained).
+        handle.complete(Err(VmError::new("cancelled".to_string())));
+        assert_eq!(
+            scheduler.inner.live_tasks.load(Ordering::SeqCst),
+            0,
+            "{family}: double-cancel must not double-decrement live_tasks"
+        );
+    }
+
+    #[test]
+    fn test_cancel_parked_receive_drains_live_tasks() {
+        cancel_parked_task_and_assert_live_drained(
+            "receive",
+            r#"
+import channel
+fn main() {
+  let ch = channel.new(0)
+  channel.receive(ch)
+  0
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_cancel_parked_send_drains_live_tasks() {
+        cancel_parked_task_and_assert_live_drained(
+            "send",
+            r#"
+import channel
+fn main() {
+  let ch = channel.new(0)
+  channel.send(ch, 1)
+  0
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_cancel_parked_join_drains_live_tasks() {
+        // The joinee is spawned from inside the task and parks on a
+        // private channel forever, so the outer task reliably parks
+        // on `BlockReason::Join`. The joinee lands on the Vm
+        // runtime's own lazily-created scheduler — not the one under
+        // test — so this scheduler's counters see exactly one task:
+        // the joiner.
+        cancel_parked_task_and_assert_live_drained(
+            "join",
+            r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() { channel.receive(ch) })
+  task.join(h)
+  0
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_cancel_parked_io_drains_live_tasks() {
+        // `time.sleep` in a scheduled task parks on
+        // `BlockReason::Io(_)` (timer-backed completion). 600s never
+        // fires within the test; the cancel must drain the counter.
+        cancel_parked_task_and_assert_live_drained(
+            "io",
+            r#"
+import time
+fn main() {
+  time.sleep(time.ms(600000))
+  0
+}
+"#,
         );
     }
 

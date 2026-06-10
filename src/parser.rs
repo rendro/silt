@@ -565,6 +565,44 @@ impl Parser {
         matches!(self.tokens.get(self.pos), Some((Token::Newline, _)))
     }
 
+    /// Round-93 hint guard: true when the current token is a `/` that
+    /// is part of an adjacent `//` pair (no gap, same line) — the shape
+    /// of a C-style `//` line comment. silt comments are `--`, so `//`
+    /// always lexes as two division tokens and dies with a bare
+    /// "expected expression/declaration, found /". Two error positions
+    /// reach this guard:
+    ///   * line-start comment (`// hello`): the error is at the FIRST
+    ///     slash, with the second immediately following;
+    ///   * trailing comment (`let a = 1 // hello`): the first slash is
+    ///     consumed as division and the error is at the SECOND slash,
+    ///     with the first immediately preceding.
+    /// The adjacency check (byte offsets exactly 1 apart) keeps
+    /// spaced-out division like `a / / b` — already an error, but not
+    /// a comment attempt — on the generic message, mirroring how the
+    /// G1 foreign-keyword hints only fire on the precise mistake shape.
+    fn at_double_slash(&self) -> bool {
+        let Some((Token::Slash, cur)) = self.tokens.get(self.pos) else {
+            return false;
+        };
+        let adjacent = |a: &Span, b: &Span| a.line == b.line && b.offset == a.offset + 1;
+        if matches!(
+            self.tokens.get(self.pos + 1),
+            Some((Token::Slash, next)) if adjacent(cur, next)
+        ) {
+            return true;
+        }
+        self.pos > 0
+            && matches!(
+                self.tokens.get(self.pos - 1),
+                Some((Token::Slash, prev)) if adjacent(prev, cur)
+            )
+    }
+
+    /// The user-facing message for `at_double_slash` sites. One string,
+    /// two emission points (declaration level and expression level).
+    const DOUBLE_SLASH_HINT: &'static str =
+        "silt line comments use '--', not '//' (block comments are '{- ... -}')";
+
     fn expect(&mut self, expected: &Token) -> Result<SpannedToken> {
         self.skip_nl();
         if self.at(expected) {
@@ -927,10 +965,18 @@ impl Parser {
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
             Token::Let => self.parse_let_decl(),
-            _ => Err(ParseError {
-                message: format!("expected declaration, found {}", self.peek()),
-                span: self.span(),
-            }),
+            _ => {
+                if self.at_double_slash() {
+                    return Err(ParseError {
+                        message: Self::DOUBLE_SLASH_HINT.into(),
+                        span: self.span(),
+                    });
+                }
+                Err(ParseError {
+                    message: format!("expected declaration, found {}", self.peek()),
+                    span: self.span(),
+                })
+            }
         }
     }
 
@@ -2398,6 +2444,46 @@ impl Parser {
         self.parse_expr_bp(0)
     }
 
+    /// Shared tail for the infix-operator arms of the Pratt loop
+    /// (round-93 dedup: this exact sequence was copied verbatim across
+    /// the pipe / range / binary / float-else arms).
+    ///
+    ///   * `l_bp < min_bp` → restore `saved` (undoing the speculative
+    ///     newline skip) and return `Ok(None)`; the caller breaks out
+    ///     of the loop with `left` unchanged.
+    ///   * otherwise consume the operator token, skip newlines, parse
+    ///     the right-hand side at `r_bp`, and return it; the caller
+    ///     wraps `left` and the RHS in its own node kind.
+    ///
+    /// `clear_scrutinee` temporarily re-enables trailing closures while
+    /// parsing the RHS — used only by `|>`, whose RHS can never contain
+    /// the match-body `{` (it appears after the whole pipe expression).
+    fn parse_infix_rhs(
+        &mut self,
+        saved: usize,
+        min_bp: u8,
+        l_bp: u8,
+        r_bp: u8,
+        clear_scrutinee: bool,
+    ) -> Result<Option<Expr>> {
+        if l_bp < min_bp {
+            self.restore(saved);
+            return Ok(None);
+        }
+        self.advance();
+        self.skip_nl();
+        let right = if clear_scrutinee {
+            let prev_match = self.in_match_scrutinee;
+            self.in_match_scrutinee = false;
+            let right = self.parse_expr_bp(r_bp)?;
+            self.in_match_scrutinee = prev_match;
+            right
+        } else {
+            self.parse_expr_bp(r_bp)?
+        };
+        Ok(Some(right))
+    }
+
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
@@ -2511,7 +2597,57 @@ impl Parser {
                         let span = left.span;
                         left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
                     } else {
-                        let (field, _) = self.expect_ident()?;
+                        let (field, field_span) = self.expect_ident()?;
+                        // Round-93 guard: qualified record construction
+                        // `util.Pt { x: 1, y: 2 }` is not (yet) syntax — the
+                        // postfix loop used to end the expression at
+                        // `util.Pt` (a field access yielding a type
+                        // descriptor at runtime) and the `{ ... }` became a
+                        // separate, silently-discarded anonymous-record
+                        // statement: `check` passed, the literal's fields
+                        // vanished, and `==` compared descriptors. Until a
+                        // design decision adds the qualified form, reject
+                        // the shape with an actionable error.
+                        //
+                        // Fires only when ALL hold (conservative — must not
+                        // catch trailing closures, blocks, match bodies, or
+                        // a `{` on the next line):
+                        //   * the accessed field is Capitalized (type-like),
+                        //   * a `{` follows on the SAME line, and
+                        //   * the brace contents start like record fields
+                        //     (`ident :` — the same bounded lookahead that
+                        //     lets bare `Pt { x: 1 }` through in match
+                        //     scrutinees; a trailing closure `{ x -> ... }`
+                        //     or match body `{ pat -> ... }` never matches).
+                        if is_constructor(field)
+                            && !self.has_newline_before()
+                            && self.scrutinee_lbrace_is_record_literal()
+                            && !self.is_trailing_closure()
+                        {
+                            let ty = intern::resolve(field);
+                            let message = match Self::dotted_path_text(&left) {
+                                // Plain module name: show a copy-pasteable
+                                // selective import (imports take a single
+                                // module ident, so skip the example for
+                                // deeper dotted paths).
+                                Some(module) if !module.contains('.') => format!(
+                                    "qualified record construction '{module}.{ty} {{ ... }}' is not supported — \
+                                     import the type and use '{ty} {{ ... }}' (e.g. 'import {module}.{{ {ty} }}')"
+                                ),
+                                Some(path) => format!(
+                                    "qualified record construction '{path}.{ty} {{ ... }}' is not supported — \
+                                     import the type and use '{ty} {{ ... }}'"
+                                ),
+                                None => format!(
+                                    "qualified record construction '{ty} {{ ... }}' after a field access is not supported — \
+                                     import the type and use '{ty} {{ ... }}'"
+                                ),
+                            };
+                            return Err(ParseError {
+                                message,
+                                span: field_span,
+                            });
+                        }
                         let span = left.span;
                         left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
                     }
@@ -2522,24 +2658,17 @@ impl Parser {
                 // so `x |> f() == y` parses as `(x |> f()) == y`,
                 // but looser than range so `1..10 |> f()` parses as `(1..10) |> f()`
                 Token::Pipe => {
-                    let (l_bp, r_bp) = (55, 56);
-                    if l_bp < min_bp {
-                        self.restore(saved);
-                        break;
-                    }
-                    self.advance();
-                    self.skip_nl();
                     // Allow trailing closures in the pipe RHS even inside a
-                    // match scrutinee.  The match-body `{` appears *after*
-                    // the entire pipe expression, not inside the RHS, so it
-                    // is safe to re-enable trailing closures here.  Example:
+                    // match scrutinee (`clear_scrutinee: true`).  The
+                    // match-body `{` appears *after* the entire pipe
+                    // expression, not inside the RHS, so it is safe to
+                    // re-enable trailing closures here.  Example:
                     //   match items |> list.any { x -> x > 5 } { true -> … }
                     //                           ^^^^^^^^^^^^^^^  <- trailing closure
                     //                                           ^^^^^^^^^^^^^^^^ <- match body
-                    let prev_match = self.in_match_scrutinee;
-                    self.in_match_scrutinee = false;
-                    let right = self.parse_expr_bp(r_bp)?;
-                    self.in_match_scrutinee = prev_match;
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, 56, true)? else {
+                        break;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Pipe(Box::new(left), Box::new(right)), span);
                     continue;
@@ -2547,14 +2676,9 @@ impl Parser {
 
                 // Range — binds tighter than pipe so `1..10 |> f()` works
                 Token::DotDot => {
-                    let (l_bp, r_bp) = (60, 61);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 60, 61, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Range(Box::new(left), Box::new(right)), span);
                     continue;
@@ -2562,14 +2686,9 @@ impl Parser {
 
                 // Binary operators
                 Token::OrOr => {
-                    let (l_bp, r_bp) = (20, 21);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 20, 21, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(
                         ExprKind::Binary(Box::new(left), BinOp::Or, Box::new(right)),
@@ -2578,14 +2697,9 @@ impl Parser {
                     continue;
                 }
                 Token::AndAnd => {
-                    let (l_bp, r_bp) = (30, 31);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 30, 31, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(
                         ExprKind::Binary(Box::new(left), BinOp::And, Box::new(right)),
@@ -2599,14 +2713,9 @@ impl Parser {
                     } else {
                         BinOp::Neq
                     };
-                    let (l_bp, r_bp) = (40, 41);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 40, 41, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
@@ -2621,14 +2730,9 @@ impl Parser {
                             "guarded by Token::Lt | Token::Gt | Token::LtEq | Token::GtEq arm"
                         ),
                     };
-                    let (l_bp, r_bp) = (50, 51);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 50, 51, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
@@ -2642,14 +2746,9 @@ impl Parser {
                     } else {
                         BinOp::Sub
                     };
-                    let (l_bp, r_bp) = (70, 71);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 70, 71, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
@@ -2663,14 +2762,9 @@ impl Parser {
                             "guarded by Token::Star | Token::Slash | Token::Percent arm"
                         ),
                     };
-                    let (l_bp, r_bp) = (80, 81);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 80, 81, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let right = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
@@ -2693,14 +2787,9 @@ impl Parser {
 
                 // Float narrowing: expr else fallback
                 Token::Else => {
-                    let (l_bp, r_bp) = (10, 11);
-                    if l_bp < min_bp {
-                        self.restore(saved);
+                    let Some(fallback) = self.parse_infix_rhs(saved, min_bp, 10, 11, false)? else {
                         break;
-                    }
-                    self.advance();
-                    self.skip_nl();
-                    let fallback = self.parse_expr_bp(r_bp)?;
+                    };
                     let span = left.span;
                     left = Expr::new(
                         ExprKind::FloatElse(Box::new(left), Box::new(fallback)),
@@ -2960,10 +3049,18 @@ impl Parser {
                 }
             }
             // select is no longer a keyword; use channel.select([...])
-            _ => Err(ParseError {
-                message: format!("expected expression, found {}", self.peek()),
-                span: self.span(),
-            }),
+            _ => {
+                if self.at_double_slash() {
+                    return Err(ParseError {
+                        message: Self::DOUBLE_SLASH_HINT.into(),
+                        span: self.span(),
+                    });
+                }
+                Err(ParseError {
+                    message: format!("expected expression, found {}", self.peek()),
+                    span: self.span(),
+                })
+            }
         }
     }
 
@@ -3126,6 +3223,23 @@ impl Parser {
             i += 1;
         }
         matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Colon))
+    }
+
+    /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
+    /// `a.b.util`) back to source text for diagnostics. Returns `None`
+    /// for anything that isn't a simple dotted path. Used by the
+    /// round-93 qualified-record-construction error to echo the
+    /// module path the user wrote.
+    fn dotted_path_text(expr: &Expr) -> Option<String> {
+        match &expr.kind {
+            ExprKind::Ident(name) => Some(intern::resolve(*name)),
+            ExprKind::FieldAccess(base, field) => Some(format!(
+                "{}.{}",
+                Self::dotted_path_text(base)?,
+                intern::resolve(*field)
+            )),
+            _ => None,
+        }
     }
 
     fn parse_trailing_closure(&mut self) -> Result<Expr> {

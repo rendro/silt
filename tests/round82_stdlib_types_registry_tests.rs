@@ -435,9 +435,10 @@ mod lsp_e2e {
     /// End-to-end rename rejection: a silt program that uses `FileStat`
     /// as a stdlib type reference (e.g. via `fs.stat`) — rename of
     /// `FileStat` → `Foo` must NOT produce a non-empty WorkspaceEdit.
-    /// Acceptable rejection shapes (mirroring
+    /// Acceptable rejection shapes (mirroring the tightened
     /// `lsp_rename_gated_constructor_rejection_tests`): an `error`
-    /// response, a null `result`, or `changes` absent/empty.
+    /// response, or a *present* `result` that is null / has empty
+    /// `changes`. A reply with neither `error` nor `result` fails.
     #[test]
     fn rename_stdlib_record_type_file_stat_is_rejected() {
         let mut client = LspClient::spawn();
@@ -457,20 +458,29 @@ mod lsp_e2e {
             }),
         );
 
+        // Tightened (round 93): the server MUST explicitly respond.
+        // Either an `error` is set, or the server responded with a
+        // *present* `result` that is null / has empty changes. A bare
+        // `{}` (no `result` and no `error` — e.g. stub server stopped
+        // responding) must NOT pass this assertion; the old
+        // `unwrap_or(true)` shape treated absence as success.
         let has_error = resp.get("error").is_some();
         let result = resp.get("result");
-        let result_is_null = result.map(|v| v.is_null()).unwrap_or(true);
+        let result_present = result.is_some();
+        let result_is_null = result.map(|v| v.is_null()).unwrap_or(false);
         let changes_empty = result
             .and_then(|r| r.get("changes"))
             .and_then(|c| c.as_object())
             .map(|o| o.is_empty())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         assert!(
-            has_error || result_is_null || changes_empty,
-            "rename on stdlib record type `FileStat` must be rejected \
-             (error) or produce no edits (null result / empty changes); \
-             got {resp}"
+            has_error || (result_present && (result_is_null || changes_empty)),
+            "rename on stdlib record type `FileStat` must be explicitly \
+             rejected (error response) or explicitly empty (present null \
+             result / present empty changes); a missing-both shape (no \
+             `error`, no `result`) means the server did not respond — got \
+             {resp}"
         );
         client.shutdown();
     }
@@ -494,18 +504,25 @@ mod lsp_e2e {
             }),
         );
 
+        // Tightened (round 93): same explicit-rejection shape as the
+        // `FileStat` sibling above — absence of both `result` and
+        // `error` must fail, not pass.
         let has_error = resp.get("error").is_some();
         let result = resp.get("result");
-        let result_is_null = result.map(|v| v.is_null()).unwrap_or(true);
+        let result_present = result.is_some();
+        let result_is_null = result.map(|v| v.is_null()).unwrap_or(false);
         let changes_empty = result
             .and_then(|r| r.get("changes"))
             .and_then(|c| c.as_object())
             .map(|o| o.is_empty())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         assert!(
-            has_error || result_is_null || changes_empty,
-            "rename on stdlib record type `Response` must be rejected; got {resp}"
+            has_error || (result_present && (result_is_null || changes_empty)),
+            "rename on stdlib record type `Response` must be explicitly \
+             rejected (error response) or explicitly empty (present null \
+             result / present empty changes); a missing-both shape means \
+             the server did not respond — got {resp}"
         );
         client.shutdown();
     }

@@ -6,15 +6,19 @@
 //! we do to reconcile the type-checker's "unknown module" warning
 //! with the compiler's later resolution of those same imports.
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
+use silt::ast::{Decl, ImportTarget, Program};
 use silt::bytecode::Function;
 use silt::compiler::Compiler;
 use silt::errors::SourceError;
+use silt::intern::{Symbol, resolve};
 use silt::lexer::Lexer;
 use silt::manifest::Manifest;
+use silt::module;
 use silt::parser::Parser;
 use silt::typechecker;
 
@@ -125,6 +129,9 @@ pub(crate) fn run_compile_pipeline_with_options(
     // need a dep map; they just resolve in-memory rather than writing
     // a refreshed lockfile to disk.
     let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
+    // Keep a copy of the dep map for the round-93 dep-export
+    // registration below; the original moves into the compiler.
+    let dep_roots = package_roots.clone();
 
     // Round 64 item 6A: build the compiler up-front so it can
     // pre-typecheck the entrypoint's user-module imports before the
@@ -136,7 +143,20 @@ pub(crate) fn run_compile_pipeline_with_options(
     if !has_parse_errors {
         compiler.pre_typecheck_imports(&program);
     }
-    let module_exports = compiler.module_exports_snapshot();
+    let mut module_exports = compiler.module_exports_snapshot();
+    if !has_parse_errors {
+        // Round 93: register declared package dependencies' exports
+        // under the names the entrypoint imports them by, so the
+        // typechecker sees into deps the same way it sees into
+        // same-package sibling modules. See the helper's doc comment.
+        register_dep_import_exports(
+            &mut compiler,
+            &program,
+            local_pkg,
+            &dep_roots,
+            &mut module_exports,
+        );
+    }
 
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
@@ -246,6 +266,108 @@ pub(crate) fn run_compile_pipeline_with_options(
     }
 }
 
+/// Round 93: make declared package dependencies statically visible to
+/// the entrypoint's typecheck.
+///
+/// `Compiler::pre_typecheck_imports` already resolves `import <dep>`
+/// (a `silt.toml` path/git dependency) to the dep's `src/lib.silt` and
+/// typechecks it — that is how dep-INTERNAL type errors reach
+/// `silt check` (round 92). But it caches the resulting exports under
+/// the dep's resolved *module* name (`"lib"`), not under the name the
+/// importer wrote (e.g. `"mathutil"`). The entrypoint typecheck looks
+/// imports up by the written name, misses, and emits the "unknown
+/// module" warning — which used to trip the file-wide import-cascade
+/// suppression and silently disable ALL static name/type checking in
+/// the importing file (round-93 finding: an undefined variable in a
+/// file that also imported a dep passed `silt check` AND `silt run`).
+///
+/// This helper closes the hole at the pipeline layer: for every direct
+/// import that names a declared dependency (a key in the
+/// lockfile-derived `package_roots` map other than the local package),
+/// typecheck the dep's `lib.silt` with the dep's own package context
+/// and register its exports under the *import name* in the snapshot
+/// handed to the entrypoint typecheck. The unknown-module warning then
+/// never fires for declared deps, the cascade filter stays dormant,
+/// and `dep.nonexistent(...)` / wrong-argument-type calls against dep
+/// exports are caught statically — matching how same-package sibling
+/// modules have behaved since round 64/92.
+///
+/// Diagnostics from this extra typecheck are deliberately discarded:
+/// the compiler's pre-pass has already harvested the dep's real type
+/// errors against the dep's own file and spans (round 92,
+/// `take_module_type_errors`), so surfacing them here would duplicate
+/// every dep-internal diagnostic. Lex failures and unreadable files
+/// are likewise skipped — the compile pass renders those with full
+/// source context.
+///
+/// The session-shared resolver is threaded through each dep typecheck
+/// (and restored on the compiler) so type aliases registered by deps
+/// stay visible to the entrypoint typecheck and the later compile
+/// pass, mirroring how the pipeline threads it around the entrypoint
+/// check.
+///
+/// `pub(crate)` rather than private: `src/cli/test.rs` has the same
+/// pre-typecheck + snapshot pattern (round 64) and still carries the
+/// dep-visibility gap this helper closes for run/check — wiring it in
+/// there is the intended follow-up (round-93 residual).
+pub(crate) fn register_dep_import_exports(
+    compiler: &mut Compiler,
+    program: &Program,
+    local_pkg: Symbol,
+    package_roots: &HashMap<Symbol, PathBuf>,
+    module_exports: &mut HashMap<Symbol, typechecker::ModuleExports>,
+) {
+    for decl in &program.decls {
+        let module_sym = match decl {
+            Decl::Import(ImportTarget::Module(m), _)
+            | Decl::Import(ImportTarget::Items(m, _), _)
+            | Decl::Import(ImportTarget::Alias(m, _), _) => *m,
+            _ => continue,
+        };
+        // Already visible under the import name (sibling module, or a
+        // dep registered by an earlier iteration)? Nothing to do.
+        if module_exports.contains_key(&module_sym) {
+            continue;
+        }
+        // `import <local_pkg_name>` from inside the package is a local
+        // self-import, not a dep import — same disambiguation the
+        // compiler's `resolve_import` applies.
+        if module_sym == local_pkg {
+            continue;
+        }
+        if module::is_builtin_module(&resolve(module_sym)) {
+            continue;
+        }
+        // Only declared dependencies resolve here; a genuinely unknown
+        // module keeps its "unknown module" warning + compile error.
+        let Some(dep_root) = package_roots.get(&module_sym) else {
+            continue;
+        };
+        let lib_path = dep_root.join("lib.silt");
+        let Ok(dep_source) = fs::read_to_string(&lib_path) else {
+            continue;
+        };
+        let Ok(tokens) = Lexer::new(&dep_source).tokenize() else {
+            continue;
+        };
+        // Recovery parse, like the compiler's pre-pass: a dep with
+        // parse errors still yields a partial export surface; the
+        // compile pass owns reporting the parse errors themselves.
+        let (mut dep_program, _dep_parse_errors) = Parser::new(tokens).parse_program_recovering();
+        let resolver = compiler.take_resolver();
+        let (_dep_errors, dep_exports, resolver) =
+            typechecker::check_with_package_and_imports_options_resolver(
+                &mut dep_program,
+                Some(module_sym),
+                module_exports.clone(),
+                false,
+                Some(resolver),
+            );
+        compiler.put_resolver(resolver);
+        module_exports.insert(module_sym, dep_exports);
+    }
+}
+
 /// Return the type-checker diagnostics that should still be reported for `result`
 /// after dropping noise that the compiler will resolve.
 ///
@@ -269,10 +391,13 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
         .iter()
         // When the program imports a user module the type checker can't
         // see, both the "unknown module" warning AND every name it
-        // exports surfacing as "undefined" must be suppressed. The
-        // compiler resolves those at link time, so we demote them here
-        // and let the compile-or-runtime stage be the source of truth
-        // for name resolution. `silt test` routes through the SAME
+        // exports surfacing as "undefined" must be suppressed, so the
+        // user gets one clear module-level error from the compile stage
+        // instead of a wall of undefined-name noise. Resolvable imports
+        // (sibling modules, declared deps) are pre-typechecked so the
+        // warning never fires for them and this filter stays dormant —
+        // see `is_user_import_resolvable_error` for why that matters.
+        // `silt test` routes through the SAME
         // `should_suppress_import_cascade` predicate so the two paths
         // cannot drift (round 91 GAP: test.rs previously only filtered
         // the warning, leaking the undefined-name cascade).
@@ -341,12 +466,25 @@ pub(crate) fn is_module_not_imported_typecheck_error(err: &SourceError) -> bool 
 /// compiler is likely to resolve at link time (because the name comes
 /// from a user-module import that the type checker can't see into).
 ///
-/// The type checker only registers selective imports for builtin
-/// modules; for user modules it emits an "unknown module" warning and
-/// every imported name then surfaces as "undefined variable" /
-/// "undefined constructor" / "undefined type" / "unknown field". We
-/// demote those to warnings so the run proceeds; if the name truly is
-/// undefined the compiler will emit a hard runtime/link error.
+/// When the type checker cannot resolve an imported module it emits an
+/// "unknown module" warning, and every name that module would have
+/// supplied then surfaces as "undefined variable" / "undefined
+/// constructor" / "undefined type" / "unknown field". We suppress that
+/// cascade so the user sees one clear module-level diagnostic instead
+/// of dozens of follow-ons.
+///
+/// Since rounds 64/92/93 the warning should only fire for genuinely
+/// unresolvable modules (typos, missing deps): same-package sibling
+/// modules and declared `silt.toml` dependencies are pre-typechecked
+/// and their exports registered before the entrypoint check runs
+/// (`Compiler::pre_typecheck_imports` + `register_dep_import_exports`),
+/// so real undefined names in importing files surface statically.
+/// NOTE: the suppression is NOT backstopped by the compiler — an
+/// undefined global passes compilation silently and only traps in the
+/// VM when (if ever) the code path executes. That is exactly why the
+/// cascade filter must never trigger for resolvable imports: while it
+/// is active, every suppressed name in the file is unchecked until
+/// runtime.
 ///
 /// Trait-impl cascades: when the unknown module is the one that would
 /// have supplied a type's trait impl (or defined a supertrait), the

@@ -13,7 +13,9 @@ mod effects_infer;
 mod exhaustiveness;
 mod inference;
 mod resolve;
-mod suggest;
+// `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
+// the shared did-you-mean threshold policy for import-path hints.
+pub(crate) mod suggest;
 
 pub(super) use std::collections::{BTreeSet, HashMap};
 
@@ -40,6 +42,18 @@ enum TypeBodyKind {
 /// different signatures) and produce nonsensical cascade errors when
 /// the preregistered impls get revalidated against the user's body.
 pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+
+/// Round 93: human adjective for the gated built-in traits, used by
+/// the field-aware auto-derive gate's diagnostics ("... which is not
+/// comparable").
+fn builtin_trait_adjective(trait_sym: Symbol) -> &'static str {
+    match resolve(trait_sym).as_str() {
+        "Compare" => "comparable",
+        "Equal" => "equatable",
+        "Hash" => "hashable",
+        _ => "supported",
+    }
+}
 
 /// Subset of [`BUILTIN_TRAIT_NAMES`] that is auto-derived for every
 /// primitive and builtin container. `Error` is intentionally excluded:
@@ -496,6 +510,25 @@ pub struct TypeChecker {
     pub(super) method_table: HashMap<(Symbol, Symbol), MethodEntry>,
     /// Tracks which (trait_name, type_name) pairs have been implemented.
     pub(super) trait_impl_set: std::collections::HashSet<(Symbol, Symbol)>,
+    /// Round 93: `(trait_name, canonical type name)` pairs for which a
+    /// user-declared record / enum CANNOT soundly support the built-in
+    /// trait because some field / variant payload does not satisfy it
+    /// (computed structurally and recursively, IGNORING hand-written
+    /// impls — `==` / `<` lower to Value-level opcodes that never
+    /// dispatch to a user impl, so a manual `trait Compare for H`
+    /// cannot make `h1 < h2` deterministic). Value = full diagnostic
+    /// message naming the offending field and its type. Consulted by
+    /// the operator-operand checks in `inference.rs`.
+    pub(super) auto_derive_operator_negatives: HashMap<(Symbol, Symbol), String>,
+    /// Round 93: like `auto_derive_operator_negatives`, but computed
+    /// WITH hand-written impls counted as satisfying the trait (method
+    /// calls like `.compare()` dispatch through the impl table, so a
+    /// manual impl genuinely rescues the type). Every pair in this map
+    /// had its pre-stamped `trait_impl_set` entry and auto-derived
+    /// `method_table` entry removed by `synthesize_auto_derive_impls`;
+    /// the stored message enriches the resulting "unknown method"
+    /// diagnostics at method-call sites.
+    pub(super) auto_derive_dispatch_negatives: HashMap<(Symbol, Symbol), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -571,6 +604,22 @@ pub struct TypeChecker {
     /// all function bodies are inferred: if the operand is still a Var, we
     /// emit an error.
     pub(super) pending_numeric_checks: Vec<(Type, &'static str, Span)>,
+    /// Deferred checks for `?` applied to a then-unresolved type variable
+    /// (round 93). Each entry is `(inner_type, result_type,
+    /// enclosing_return_type, span)`. Re-examined after all function bodies
+    /// are inferred: if the inner type resolved to Result/Option, the
+    /// enclosing fn/lambda return type is constrained exactly like the
+    /// concrete inline path; if it resolved to anything else concrete, the
+    /// usual "'?' requires Result or Option" diagnostic fires. Still-Var
+    /// inners stay lenient (polymorphic templates — same rationale as
+    /// `pending_numeric_checks`).
+    pub(super) pending_question_marks: Vec<(Type, Type, Option<Type>, Span)>,
+    /// Spans of `?` uses in the current fn/lambda body (round 93). When the
+    /// body/return-type unify fails on a Result/Option return that `?`
+    /// itself demanded, the diagnostic points back at the `?` site instead
+    /// of leaving a bare header-located mismatch. Saved/restored around
+    /// each fn body and lambda body, like `current_return_type`.
+    pub(super) current_qmark_spans: Vec<Span>,
     /// Names that have been registered as user-defined top-level declarations
     /// (functions, let bindings, type/record/enum names). Used by G1 to
     /// detect duplicate top-level definitions without also flagging
@@ -766,6 +815,8 @@ impl TypeChecker {
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
+            auto_derive_operator_negatives: HashMap::new(),
+            auto_derive_dispatch_negatives: HashMap::new(),
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
             impl_trait_args: HashMap::new(),
@@ -779,6 +830,8 @@ impl TypeChecker {
             fn_body_effects: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
+            pending_question_marks: Vec::new(),
+            current_qmark_spans: Vec::new(),
             top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
             recovery_stub_names: std::collections::HashSet::new(),
@@ -3115,6 +3168,7 @@ impl TypeChecker {
         let pre_pass3_error_count = self.errors.len();
         let pre_pass3_field_count = self.pending_field_accesses.len();
         let pre_pass3_numeric_count = self.pending_numeric_checks.len();
+        let pre_pass3_qmark_count = self.pending_question_marks.len();
         for i in 0..program.decls.len() {
             if let Decl::Fn(ref mut f) = program.decls[i]
                 && !f.is_recovery_stub
@@ -3177,7 +3231,8 @@ impl TypeChecker {
         //
         // Invariant (audit-round-36 LATENT doc): when `finalize_deferred_checks`
         // runs below, `pending_field_accesses` / `pending_numeric_checks` /
-        // `pending_where_constraints` must contain EXACTLY the pushes from the
+        // `pending_question_marks` / `pending_where_constraints` must contain
+        // EXACTLY the pushes from the
         // most recent body-check pass — not a mix of pass-2 + pass-3 entries.
         // Two paths preserve that:
         //   (1) `any_narrowed == false`: no re-check happens, so pass 3's
@@ -3310,6 +3365,7 @@ impl TypeChecker {
                 self.pending_field_accesses.truncate(pre_pass3_field_count);
                 self.pending_numeric_checks
                     .truncate(pre_pass3_numeric_count);
+                self.pending_question_marks.truncate(pre_pass3_qmark_count);
                 // B4: discard the pending where-clause obligations so
                 // the re-check with narrowed schemes re-collects them
                 // from scratch. Otherwise stale entries pollute the
@@ -4059,9 +4115,22 @@ impl TypeChecker {
         //   2. Types whose fields don't all satisfy the trait (e.g. a
         //      record with a `Map` field has no Compare on Map, so
         //      Compare-synthesis would emit a body that fails
-        //      typecheck). The stamp here keeps the trait visible in
-        //      the constraint solver but `dispatch_trait_method` will
-        //      reject the actual call.
+        //      typecheck).
+        //
+        // Round 93: the stamp below is PROVISIONAL for Equal / Compare
+        // / Hash. `synthesize_auto_derive_impls` later runs a
+        // recursive field-aware eligibility pass
+        // (`compute_auto_derive_field_negatives`) and REMOVES the
+        // stamp (plus the auto-derived `method_table` entry) for any
+        // `(trait, type)` pair whose fields / variant payloads cannot
+        // satisfy the trait and that no hand-written impl rescues.
+        // Before round 93 the stamp stood unconditionally and `==` /
+        // `<` / `.compare()` / `.hash()` on e.g. a record wrapping a
+        // `Fn(..)` field laundered into nondeterministic Value-level
+        // fallbacks (closure ordering = Arc pointer address). Display
+        // remains unconditionally stamped: the runtime `display`
+        // fallback (`display_value`) is total and deterministic for
+        // every Value shape.
         //
         // For the synthesized cases, the second `trait_impl_set.insert`
         // inside `register_trait_impl` is a no-op (the key is already
@@ -5298,6 +5367,27 @@ impl TypeChecker {
                 }
             }
         }
+        // ── Round 93: field-aware eligibility gate ──────────────────
+        // `register_type_decl` pre-stamps Equal/Compare/Hash/Display
+        // for EVERY user type. Pre-round-93 the stamp stood even when
+        // a field could never satisfy the trait — synthesis was merely
+        // SKIPPED, so `==` / `<` / `.compare()` / `.hash()` on e.g. a
+        // record wrapping a `Fn(..)` field typechecked and laundered
+        // into nondeterministic Value-level fallbacks (closure
+        // ordering = Arc pointer address under ASLR). Here we compute
+        // honest, recursive, field-aware eligibility and UN-stamp the
+        // ineligible pairs (recording a precise reason for
+        // diagnostics). Two flavours are computed:
+        //   - dispatch negatives (hand-written impls rescue a type):
+        //     drive stamp/method removal, so `.compare()` etc. on a
+        //     manually-implemented type still dispatches;
+        //   - operator negatives (impls do NOT rescue): drive the
+        //     `==` / `<` operand checks in inference.rs, because those
+        //     opcodes never dispatch to a user impl.
+        // Display is exempt: the runtime display fallback is total and
+        // deterministic for every Value shape.
+        self.enforce_auto_derive_field_gate(&user_decl_type_names, &user_impls);
+
         // Built-in enums and records are registered directly into
         // `self.enums` / `self.records` from `register_builtins` and
         // the per-module init paths under `src/typechecker/builtins/`
@@ -5616,6 +5706,392 @@ impl TypeChecker {
         };
         let canonical = canonicalize_type_name(&self.resolver, type_name);
         self.trait_impl_set.contains(&(trait_name, canonical))
+    }
+
+    /// Round 93: compute honest field-aware eligibility for the three
+    /// gated built-in traits (Equal / Compare / Hash) over every
+    /// user-declared type, then un-stamp `trait_impl_set` /
+    /// `method_table` for the ineligible pairs and store the reasons
+    /// in `auto_derive_operator_negatives` /
+    /// `auto_derive_dispatch_negatives`. See the call site in
+    /// `synthesize_auto_derive_impls` for the full rationale.
+    fn enforce_auto_derive_field_gate(
+        &mut self,
+        user_type_names: &std::collections::HashSet<Symbol>,
+        user_impls: &std::collections::HashSet<(Symbol, Symbol)>,
+    ) {
+        let no_rescue = std::collections::HashSet::new();
+        let operator_negatives =
+            self.compute_auto_derive_field_negatives(user_type_names, &no_rescue);
+        let dispatch_negatives =
+            self.compute_auto_derive_field_negatives(user_type_names, user_impls);
+
+        // Un-stamp the dispatch negatives: drop the provisional
+        // `trait_impl_set` entry (so `where a: Trait` obligations and
+        // supertrait checks reject honestly) and the provisional
+        // auto-derived `method_table` entry (so `.compare()` /
+        // `.equal()` / `.hash()` calls are rejected instead of
+        // falling through to `dispatch_trait_method`'s Value-level
+        // behaviour at runtime). Hand-written impls were counted as
+        // rescuing in this flavour, and register_trait_impl runs
+        // AFTER this pass, so a manual impl re-registers its own
+        // entries untouched.
+        for (trait_sym, canon) in dispatch_negatives.keys() {
+            self.trait_impl_set.remove(&(*trait_sym, *canon));
+            let method_sym = match resolve(*trait_sym).as_str() {
+                "Equal" => intern("equal"),
+                "Compare" => intern("compare"),
+                "Hash" => intern("hash"),
+                _ => continue,
+            };
+            // `method_table` is keyed on the declared (un-canonical)
+            // type name; for enum/record decls the canonical name is
+            // the declared name, but remove under both to be safe.
+            self.method_table.remove(&(*canon, method_sym));
+            for name in user_type_names {
+                if canonicalize_type_name(&self.resolver, *name) == *canon {
+                    self.method_table.remove(&(*name, method_sym));
+                }
+            }
+        }
+
+        // Clear any stale negatives for the types processed in this
+        // run before storing the fresh results (a REPL session or
+        // re-check may redefine a type with now-eligible fields; a
+        // leftover negative would spuriously reject it).
+        let processed: std::collections::HashSet<Symbol> = user_type_names
+            .iter()
+            .map(|n| canonicalize_type_name(&self.resolver, *n))
+            .collect();
+        self.auto_derive_operator_negatives
+            .retain(|(_, canon), _| !processed.contains(canon));
+        self.auto_derive_dispatch_negatives
+            .retain(|(_, canon), _| !processed.contains(canon));
+
+        self.auto_derive_operator_negatives
+            .extend(operator_negatives);
+        self.auto_derive_dispatch_negatives
+            .extend(dispatch_negatives);
+    }
+
+    /// Round 93: fixpoint over the user-declared types computing which
+    /// `(trait, type)` pairs canNOT satisfy a gated built-in trait
+    /// because of an offending field / variant payload. Returns
+    /// `(trait, canonical type name) → full diagnostic message`.
+    ///
+    /// `rescued` pairs are treated as unconditionally satisfying the
+    /// trait (used to thread hand-written impls into the dispatch
+    /// flavour; pass an empty set for the operator flavour).
+    ///
+    /// Termination / recursion notes: each pass may only ADD
+    /// negatives and the pair space is finite, so the loop is bounded
+    /// by `3 × |types|` passes. Recursive and mutually-recursive
+    /// types that are otherwise clean are never added — the walk
+    /// reads the CURRENT stamp for nominal heads (coinductive: a
+    /// reference cycle with no offending field is sound because
+    /// runtime values are finite trees), so `type Tree { leaf: Int,
+    /// kids: List(Tree) }` keeps all four traits.
+    fn compute_auto_derive_field_negatives(
+        &self,
+        user_type_names: &std::collections::HashSet<Symbol>,
+        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
+    ) -> HashMap<(Symbol, Symbol), String> {
+        let gated_traits = [intern("Equal"), intern("Compare"), intern("Hash")];
+
+        // Owned snapshot of each user type's resolved body so the
+        // fixpoint can walk without re-borrowing `self.enums` /
+        // `self.records`. Sorted by name for deterministic results.
+        // (Generic-param fields resolve to `Type::Var`s, which the
+        // walker treats as supporting — the synthesized impl's
+        // `where p: Trait` clause covers them at instantiation.)
+        let mut entries: Vec<(Symbol, Symbol, TypeBodyKind)> = Vec::new();
+        for name in user_type_names {
+            let canon = canonicalize_type_name(&self.resolver, *name);
+            if let Some(info) = self.enums.get(name) {
+                entries.push((*name, canon, TypeBodyKind::Enum(info.variants.clone())));
+            } else if let Some(info) = self.records.get(name) {
+                entries.push((*name, canon, TypeBodyKind::Record(info.fields.clone())));
+            }
+        }
+        entries.sort_by_key(|(name, ..)| resolve(*name));
+
+        let mut negatives: HashMap<(Symbol, Symbol), String> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (name, canon, body) in &entries {
+                for trait_sym in gated_traits {
+                    let key = (trait_sym, *canon);
+                    if negatives.contains_key(&key)
+                        || rescued.contains(&key)
+                        || !self.trait_impl_set.contains(&key)
+                    {
+                        continue;
+                    }
+                    let supports = |fty: &Type| {
+                        self.gate_field_supports_trait(trait_sym, fty, rescued, &negatives, 0)
+                    };
+                    let offending: Option<String> = match body {
+                        TypeBodyKind::Record(fields) => fields.iter().find_map(|(fname, fty)| {
+                            (!supports(fty)).then(|| {
+                                format!(
+                                    "field '{}' has type '{}'",
+                                    resolve(*fname),
+                                    self.apply(fty)
+                                )
+                            })
+                        }),
+                        TypeBodyKind::Enum(variants) => variants.iter().find_map(|v| {
+                            v.field_types.iter().enumerate().find_map(|(i, fty)| {
+                                (!supports(fty)).then(|| {
+                                    format!(
+                                        "variant '{}' payload #{} has type '{}'",
+                                        resolve(v.name),
+                                        i + 1,
+                                        self.apply(fty)
+                                    )
+                                })
+                            })
+                        }),
+                    };
+                    if let Some(field_desc) = offending {
+                        negatives.insert(
+                            key,
+                            format!(
+                                "type '{}' cannot derive '{}': {}, which is not {}",
+                                resolve(*name),
+                                resolve(trait_sym),
+                                field_desc,
+                                builtin_trait_adjective(trait_sym),
+                            ),
+                        );
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        negatives
+    }
+
+    /// Round 93: recursive, honest "does this FIELD type satisfy the
+    /// gated built-in trait?" check used by the field-aware gate and
+    /// by the operator-operand instantiation walk.
+    ///
+    /// Deliberately permissive arms (over-rejection is the failure
+    /// mode to avoid):
+    ///   - `Var`: a generic param of the enclosing type (the
+    ///     synthesized impl's `where p: Trait` clause covers it at
+    ///     the instantiation site) or a not-yet-resolved inference
+    ///     var — never provably bad here.
+    ///   - `AssocProj`: "maybe valid" exactly like `Var` (round-92
+    ///     operand parity).
+    ///   - depth cap: give up permissively on absurdly deep types
+    ///     rather than risk a stack overflow.
+    fn gate_field_supports_trait(
+        &self,
+        trait_sym: Symbol,
+        ty: &Type,
+        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
+        negatives: &HashMap<(Symbol, Symbol), String>,
+        depth: usize,
+    ) -> bool {
+        if depth > 64 {
+            return true;
+        }
+        let ty = self.apply(ty);
+        let recurse =
+            |t: &Type| self.gate_field_supports_trait(trait_sym, t, rescued, negatives, depth + 1);
+        // Stamp lookup for a nominal/container head, honest w.r.t. the
+        // in-progress negatives.
+        let head_ok = |head: Symbol| {
+            let canon = canonicalize_type_name(&self.resolver, head);
+            let key = (trait_sym, canon);
+            if rescued.contains(&key) {
+                return true;
+            }
+            if negatives.contains_key(&key) {
+                return false;
+            }
+            self.trait_impl_set.contains(&key)
+        };
+        match &ty {
+            Type::Error | Type::Never | Type::Var(_) | Type::AssocProj { .. } => true,
+            // Functions support none of Equal/Compare/Hash: the
+            // Value-level fallbacks are Arc-pointer identity (equal),
+            // Arc-pointer ADDRESS ordering (compare — ASLR-
+            // nondeterministic) and a constant tag (hash).
+            Type::Fun(..) => false,
+            // Channels carry identity-based equality (round 82:
+            // `Value::Channel(a) == Value::Channel(b)` iff ids match)
+            // but no ordering or hashing through the trait surface.
+            Type::Channel(_) => trait_sym == intern("Equal"),
+            Type::List(t) | Type::Range(t) | Type::Set(t) => {
+                let head = self
+                    .type_name_for_impl(&ty)
+                    .expect("container head has canonical name");
+                head_ok(head) && recurse(t)
+            }
+            Type::Map(k, v) => head_ok(intern("Map")) && recurse(k) && recurse(v),
+            Type::Tuple(ts) => head_ok(intern("Tuple")) && ts.iter().all(recurse),
+            // Structural records: Value's PartialEq / Ord / Hash all
+            // compare them element-wise (round-85 contracts), so the
+            // honest answer is the conjunction over the known fields.
+            // Open rows are rejected: the hidden tail could carry
+            // anything.
+            Type::AnonRecord { fields, tail } => {
+                matches!(tail, RowTail::Closed) && fields.values().all(recurse)
+            }
+            // Nominal heads: the stamp (kept honest by the fixpoint
+            // for user types, by registration policy for builtins)
+            // decides the head; instantiation args / embedded field
+            // types are walked so `Box(Fn(Int) -> Int)` is caught even
+            // though `Box(a)` itself is conditionally eligible.
+            Type::Record(name, fields) => head_ok(*name) && fields.iter().all(|(_, t)| recurse(t)),
+            Type::Generic(name, args) => head_ok(*name) && args.iter().all(recurse),
+            // Scalars and anything else: defer to the registered
+            // stamp, exactly like the one-level synthesis gate.
+            _ => self.field_type_supports_trait(trait_sym, &ty),
+        }
+    }
+
+    /// Round 93: operator-operand violation check for `==`/`!=`
+    /// (`is_equality`) and `<`/`>`/`<=`/`>=` on nominal record / enum
+    /// operands. Returns the diagnostic to emit when the operand's
+    /// type cannot soundly support the Value-level operation.
+    ///
+    /// Hand-written impls deliberately do NOT lift the rejection:
+    /// comparison operators compile to plain `Op::Eq` / `Op::Lt`
+    /// opcodes that use `Value`'s structural PartialEq/Ord — they
+    /// never dispatch through the impl table — so a manual
+    /// `trait Compare for H` cannot change what `h1 < h2` does at
+    /// runtime. Use `.compare()` / `.equal()` for impl dispatch.
+    pub(super) fn operand_builtin_trait_violation(
+        &self,
+        ty: &Type,
+        is_equality: bool,
+    ) -> Option<String> {
+        let trait_sym = if is_equality {
+            intern("Equal")
+        } else {
+            intern("Compare")
+        };
+        let resolved = crate::types::canonical::canonicalize(&self.resolver, &self.apply(ty));
+        let (name, args) = match &resolved {
+            Type::Generic(name, args) => (*name, args.clone()),
+            // Nominal records normally flow as `Type::Generic`, but a
+            // `Type::Record` form carries its (instantiated) field
+            // types inline — walk them directly.
+            Type::Record(name, fields) => {
+                let canon = canonicalize_type_name(&self.resolver, *name);
+                if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+                    return Some(msg.clone());
+                }
+                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
+                    std::collections::HashSet::new();
+                let no_negatives = HashMap::new();
+                return fields.iter().find_map(|(fname, fty)| {
+                    (!self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0))
+                        .then(|| {
+                        format!(
+                            "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
+                            resolve(*name),
+                            resolve(trait_sym),
+                            resolve(*fname),
+                            self.apply(fty),
+                            builtin_trait_adjective(trait_sym),
+                        )
+                    })
+                });
+            }
+            _ => return None,
+        };
+        let canon = canonicalize_type_name(&self.resolver, name);
+        if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+            return Some(msg.clone());
+        }
+        // Instantiation walk: substitute the concrete type args into
+        // the declared field / payload types and re-check. This is
+        // the use-site flavour of the declaration-level gate — it
+        // catches `Box(Fn(Int) -> Int)` where `type Box(a) { v: a }`
+        // is conditionally eligible, while leaving phantom params
+        // (`type Tag(a) { name: String }`) unpunished because only
+        // the types that actually appear in fields are walked.
+        let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
+            std::collections::HashSet::new();
+        let no_negatives = HashMap::new();
+        let check = |fty: &Type| {
+            self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0)
+        };
+        if let Some(info) = self.records.get(&name) {
+            let mapping: HashMap<TyVar, Type> = self
+                .record_param_var_ids
+                .get(&name)
+                .filter(|ids| ids.len() == args.len())
+                .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
+                .unwrap_or_default();
+            return info.fields.iter().find_map(|(fname, fty)| {
+                let concrete = substitute_vars(fty, &mapping);
+                (!check(&concrete)).then(|| {
+                    format!(
+                        "type '{resolved}' cannot derive '{}': field '{}' has type '{}', which is not {}",
+                        resolve(trait_sym),
+                        resolve(*fname),
+                        self.apply(&concrete),
+                        builtin_trait_adjective(trait_sym),
+                    )
+                })
+            });
+        }
+        if let Some(info) = self.enums.get(&name) {
+            let mapping: HashMap<TyVar, Type> = if info.param_var_ids.len() == args.len() {
+                info.param_var_ids
+                    .iter()
+                    .copied()
+                    .zip(args.iter().cloned())
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+            return info.variants.iter().find_map(|v| {
+                v.field_types.iter().enumerate().find_map(|(i, fty)| {
+                    let concrete = substitute_vars(fty, &mapping);
+                    (!check(&concrete)).then(|| {
+                        format!(
+                            "type '{resolved}' cannot derive '{}': variant '{}' payload #{} has type '{}', which is not {}",
+                            resolve(trait_sym),
+                            resolve(v.name),
+                            i + 1,
+                            self.apply(&concrete),
+                            builtin_trait_adjective(trait_sym),
+                        )
+                    })
+                })
+            });
+        }
+        None
+    }
+
+    /// Round 93: when a `.equal()` / `.compare()` / `.hash()` call
+    /// misses the method table because the field-aware gate removed
+    /// the provisional auto-derive entry, surface the precise reason
+    /// instead of a generic "unknown field or method".
+    pub(super) fn method_auto_derive_violation(
+        &self,
+        type_name: Symbol,
+        method: Symbol,
+    ) -> Option<String> {
+        let trait_sym = match resolve(method).as_str() {
+            "equal" => intern("Equal"),
+            "compare" => intern("Compare"),
+            "hash" => intern("Hash"),
+            _ => return None,
+        };
+        let canon = canonicalize_type_name(&self.resolver, type_name);
+        self.auto_derive_dispatch_negatives
+            .get(&(trait_sym, canon))
+            .cloned()
     }
 
     fn synthesize_default_methods(&self, decls: &mut [Decl]) {

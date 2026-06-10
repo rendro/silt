@@ -906,6 +906,76 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
     }
 }
 
+/// Round 93 (fix G1): build the enriched "cannot load module" diagnostic
+/// used by the compiler when an `import` resolves to a file path that
+/// cannot be read. Previously the raw OS error surfaced alone
+/// (`cannot load module 'x': No such file or directory (os error 2)`),
+/// with no mention of WHICH path was attempted, no did-you-mean against
+/// sibling `.silt` files, and no pointer at the manifest dependency
+/// channel — the other way an import can resolve.
+///
+/// The first line keeps the historical
+/// `cannot load module '<name>': <io error>` shape (asserted by
+/// tests/modules.rs and tests/round92_test_import_filter_e2e_tests.rs);
+/// the lines after it render as `= note:` / `= help:` continuations via
+/// `SourceError::Display` (see src/errors.rs — a body line beginning
+/// with `help: ` becomes `= help:`):
+///   - the path that was actually attempted (`attempted_display`, the
+///     CWD-relative form the caller already computes for snippets),
+///   - a did-you-mean hint when a near-miss sibling `.silt` file exists
+///     (threshold policy shared with the typechecker via
+///     `crate::typechecker::suggest::suggest_similar`),
+///   - a pointer at `silt.toml [dependencies]` / `silt add`.
+///
+/// The two help lines are only added for NotFound — a permission or
+/// encoding error on an existing file should not invite a rename hunt.
+///
+/// Lock: tests/round93_module_load_hint_tests.rs.
+pub fn format_module_load_error(
+    module_name: &str,
+    attempted_path: &std::path::Path,
+    attempted_display: &str,
+    err: &std::io::Error,
+) -> String {
+    let mut out = format!("cannot load module '{module_name}': {err}");
+    out.push_str(&format!("\nlooked for `{attempted_display}`"));
+    if err.kind() == std::io::ErrorKind::NotFound {
+        if let Some(hint) = sibling_module_suggestion(module_name, attempted_path) {
+            out.push_str(&format!(
+                "\nhelp: did you mean `{hint}`? (`{hint}.silt` exists in the same directory)"
+            ));
+        }
+        out.push_str(&format!(
+            "\nhelp: if '{module_name}' is a separate package, declare it under \
+             `[dependencies]` in silt.toml (e.g. `silt add {module_name}`)"
+        ));
+    }
+    out
+}
+
+/// Scan the directory the failed import resolved against for sibling
+/// `.silt` files and return a close-enough module-name candidate, if
+/// any. Candidates are file stems (`util.silt` → `util`); the attempted
+/// module's own stem can't appear (its file doesn't exist — that's why
+/// we're here). Distance policy delegates to the typechecker's shared
+/// suggest helper so import hints and identifier hints can't drift.
+fn sibling_module_suggestion(
+    module_name: &str,
+    attempted_path: &std::path::Path,
+) -> Option<String> {
+    let dir = attempted_path.parent()?;
+    let mut candidates: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("silt")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            candidates.push(stem.to_string());
+        }
+    }
+    crate::typechecker::suggest::suggest_similar(module_name, candidates.iter())
+}
+
 /// Returns the list of builtin constants (non-function values) for a module.
 /// E.g., for "math" returns ["pi", "e"].
 ///

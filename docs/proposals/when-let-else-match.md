@@ -15,7 +15,8 @@ machinery. No flow-sensitive narrowing.
 ## Problem
 
 Today a user who wants to early-exit with specific handling per
-failure variant writes:
+failure variant has no way to write it. The natural attempt puts a
+`match` inside the `when let` else branch:
 
 ```silt
 let res = load_data(path)
@@ -25,20 +26,55 @@ when let Ok(data) = res else {
     Ok(_)  -> panic("unreachable")
   }
 }
+-- (rejected — see below)
+```
+
+This is **rejected by the typechecker today**. The `when let` else
+body must infer type `Never` (i.e. diverge), and a `match`
+expression does not infer `Never` even when every one of its arms
+panics or returns. The compiler reports:
+
+```
+error[type]: 'when let' else body must diverge — use 'return' or 'panic'
+```
+
+So the user falls back to one of two workarounds, both of which
+typecheck today and neither of which says what they mean:
+
+1. **Give up the variant information** and diverge directly in the
+   else. This is the only thing the else body accepts — but `e` is
+   not in scope, so the failure detail is lost:
+
+```silt
+let res = load_data(path)
+when let Ok(data) = res else {
+  panic("load failed")  -- can't mention the Err payload
+}
 -- data is in scope here
 ```
 
-Two problems:
+2. **Match BEFORE the `when let`**, paying ceremony twice over:
+   once for the `Ok(_) -> {}` arm that match exhaustiveness forces
+   even though the `Ok` case needs no handling there, and again for
+   the `when let` that re-tests a scrutinee already known to be
+   `Ok` (with an else body the user knows is unreachable):
 
-1. The `Ok(_) -> panic("unreachable")` arm is pure ceremony. The
-   `when let Ok(data) = res else` branch is only entered when `res`
-   is NOT `Ok(_)`, yet match exhaustiveness forces the arm anyway.
-2. If the user ignores the ceremony and writes `Err(e) -> ...` alone,
-   the compiler rejects the match as non-exhaustive even though at
-   that program point `Ok(_)` is provably unreachable.
+```silt
+let res = load_data(path)
+match res {
+  Err(e) -> panic("load failed: {e.message()}")
+  Ok(_)  -> {}
+}
+when let Ok(data) = res else {
+  panic("unreachable")
+}
+-- data is in scope here
+```
 
 The surface-level want: "inside the else, let me match on the
 remaining variants without re-stating the one already handled."
+Today that cannot be expressed at all — which is the strongest
+argument for this proposal.
 
 ## Non-goals
 
@@ -138,11 +174,15 @@ it to the long form and processes it identically.
 
 ## Alternatives considered
 
-### Option A — keep `else { ... }`, require explicit `match`
+### Option A — keep `else { ... }`, status quo
 
-Status quo. Every user that needs variant-aware handling in the
-else re-states an unreachable primary arm. Rejected: the ceremony
-is silly and the `unreachable` arm is a known bad code smell.
+Status quo. The else body must diverge directly (`panic` /
+`return`); a `match` inside the else is rejected because `match`
+does not infer `Never`. Users who need variant-aware handling
+match BEFORE the `when let`, re-stating an `Ok(_) -> {}` ceremony
+arm and re-testing a scrutinee already known to be `Ok`. Rejected:
+the duplicated test is silly and the unreachable else body it
+forces is a known bad code smell.
 
 ### Option B — automatic type narrowing of the scrutinee inside else
 
@@ -238,8 +278,10 @@ control than `?` provides.
 ### `return` / `panic`
 
 Arms in the else-match block must diverge. Same rule as today's
-`else { ... }` body. Enforced by the typechecker the same way:
-the branch's type must be `Never`.
+`else { ... }` body, but enforced **per arm**: each arm body must
+infer `Never`. (Checking the `match` expression as a whole would
+not work — today's checker does not propagate `Never` through
+`match`, and this proposal does not change that.)
 
 ### Guards in arms
 
@@ -292,6 +334,11 @@ For `when let Ok(data) = res else match res { ... }`:
    arms, seeded with `{Ok}` as already-covered.
 3. At the end, required-coverage set must be empty.
 
+Divergence is checked per arm: each arm body must infer `Never`,
+reusing the diagnostic the `else { ... }` body check emits today
+("'when let' else body must diverge"). The `match` expression's
+own type is never consulted (it would not be `Never`).
+
 Dead-arm detection: if any arm of the else-match overlaps with
 the primary pattern, warn. (Writing `Err(e) -> ...` AND `Ok(_) -> ...`
 in the else is reachable only through the second arm; the first
@@ -339,9 +386,12 @@ Estimated test count: 15-20. File: `tests/when_let_else_match_tests.rs`.
 
 ## When to implement
 
-Not blocking. The status-quo `else { match res { ... } }` with an
-`Ok(_) -> panic("unreachable")` arm works, just ugly. Schedule
-when:
+Not blocking. The status-quo workarounds (a direct `panic` /
+`return` in the else, or a `match` before the `when let` with its
+ceremony arm) cover the need, just without variant-aware handling
+in the else itself — `else { match res { ... } }` cannot be
+written today at all (the else body must infer `Never`, and
+`match` never does). Schedule when:
 
 1. A real silt program hits the pattern 3+ times and the user asks.
 2. Slack appears after the current round of stdlib / formatter

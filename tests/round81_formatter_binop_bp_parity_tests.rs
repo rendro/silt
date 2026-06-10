@@ -87,23 +87,28 @@ fn parser_arms_carry_expected_l_bp_r_bp_literal_pairs() {
             )
         });
         // Search a 600-byte window after the arm label for the (l_bp, r_bp)
-        // pair literal. The `parse_expr_bp` arm bodies are short — the
-        // assignment `let (l_bp, r_bp) = (N, N+1);` lives within ~10 lines
-        // of the arm head.
+        // literal pair. Round 93 deduped the copy-pasted arm tails into
+        // `parse_infix_rhs(saved, min_bp, l_bp, r_bp, clear_scrutinee)`,
+        // so the pair now appears as the `, N, N+1,` argument slice of
+        // that call instead of the old `let (l_bp, r_bp) = (N, N+1);`
+        // assignment. Same parity guarantee, new anchor.
         let window_end = (arm_idx + 600).min(PARSER_SRC.len());
         let window = &PARSER_SRC[arm_idx..window_end];
-        let expected_pair = format!("({}, {})", expected_l_bp, expected_l_bp + 1);
+        let expected_pair = format!(", {}, {},", expected_l_bp, expected_l_bp + 1);
         assert!(
             window.contains(&expected_pair),
-            "parser arm `{token_label}` no longer contains literal `(l_bp, r_bp) = {expected_pair}`. \
+            "parser arm `{token_label}` no longer contains the bp literal pair \
+             `{expected_pair}` (as `parse_infix_rhs(saved, min_bp{expected_pair} ...)`). \
              The parser bp ladder has shifted — update `bp::binop_l_bp` in src/formatter.rs \
              and `parser_binop_arms` in this test in lockstep."
         );
-        // Also assert the `if l_bp < min_bp` guard is present so we know
-        // we're looking at a real prec-climbing arm, not e.g. a comment.
+        // Also assert the arm routes through the shared prec-climbing
+        // helper (which owns the `l_bp < min_bp` guard and `saved`
+        // restoration) so we know we're looking at a real
+        // prec-climbing arm, not e.g. a comment.
         assert!(
-            window.contains("if l_bp < min_bp"),
-            "parser arm `{token_label}` does not contain `if l_bp < min_bp` guard \
+            window.contains("parse_infix_rhs(saved, min_bp"),
+            "parser arm `{token_label}` does not call `parse_infix_rhs(saved, min_bp, ...)` \
              within 600 bytes — the arm structure has been refactored. Re-anchor \
              this test."
         );
