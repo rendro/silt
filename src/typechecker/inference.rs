@@ -1758,6 +1758,38 @@ impl TypeChecker {
         }
     }
 
+    /// Round 94 (module-shadowing fix): does a VALUE binding named
+    /// `name` shadow a same-named imported module in `env`?
+    ///
+    /// silt's lexical-scoping rule is that a value binding (fn param,
+    /// lambda param, `let`, pattern binder, top-level fn/let) shadows
+    /// an imported module name within its scope — `other.year` with a
+    /// local `other` in scope is field access on the local, never a
+    /// member lookup on module `other`. Type-name bindings do NOT
+    /// count as shadowing: type/enum names live in `env` as
+    /// `TypeOf(..)` descriptor schemes (see the `Decl::Type`
+    /// registration sites in `mod.rs`), and `Shape.Circle` /
+    /// `Int.parse` must keep resolving through the enum-qualifier and
+    /// type-descriptor paths.
+    ///
+    /// Consulted by every dotted-name resolution surface in the
+    /// typechecker (FieldAccess module lookup, the Call arm's
+    /// module-call detection, qualified record literals and variant
+    /// patterns) so they all agree; the compiler applies the same rule
+    /// via its `resolve_local`/upvalue/`top_level_value_globals`
+    /// checks, and the effects walker via
+    /// `effects_infer`'s rebound/value-binding gate.
+    pub(super) fn value_binding_shadows_module(&self, env: &TypeEnv, name: Symbol) -> bool {
+        let Some(scheme) = env.lookup(name) else {
+            return false;
+        };
+        let applied = self.apply(&scheme.ty);
+        !matches!(
+            &applied,
+            Type::Generic(g, args) if resolve(*g) == "TypeOf" && args.len() == 1
+        )
+    }
+
     /// Resolve `module.name` to the producer module's record info +
     /// param var ids. On failure, EMITS the diagnostic and returns
     /// `None`. `in_pattern` only adjusts wording.
@@ -1780,8 +1812,34 @@ impl TypeChecker {
         name: Symbol,
         span: Span,
         in_pattern: bool,
+        env: &TypeEnv,
     ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
         let key = intern(&format!("{}.{}", resolve(module), resolve(name)));
+        // Round 94 (module-shadowing): when a value binding named like
+        // the qualifier is in scope, the module is shadowed. Record-
+        // literal/-pattern qualifiers are type positions (a local can
+        // never carry `.CapName { .. }` syntax), so silently picking
+        // the module would make `util.Pt { .. }` mean different things
+        // for `util` depending on a binding the user may not have
+        // noticed. Be conservative: error clearly instead.
+        let shadowed = self.value_binding_shadows_module(env, module);
+        if shadowed
+            && (self.qualified_records.contains_key(&key)
+                || self.imported_modules.contains(&module))
+        {
+            let module_str = resolve(module);
+            let name_str = resolve(name);
+            let where_ = if in_pattern { " in pattern" } else { "" };
+            self.error(
+                format!(
+                    "cannot use '{module_str}' as a module qualifier for \
+                     '{module_str}.{name_str}'{where_}: a local binding named '{module_str}' \
+                     shadows module '{module_str}' here; rename the binding or the import"
+                ),
+                span,
+            );
+            return None;
+        }
         if let Some(info) = self.qualified_records.get(&key).cloned() {
             let param_ids = self.qualified_record_param_var_ids.get(&key).cloned();
             return Some((info, param_ids));
@@ -1831,6 +1889,7 @@ impl TypeChecker {
         qualifier: Symbol,
         name: Symbol,
         span: Span,
+        env: &TypeEnv,
     ) -> CtorQualifierResolution {
         // Enum-name qualifier takes priority: an enum and a module can
         // share a name only when the user shadowed a module name with a
@@ -1864,6 +1923,30 @@ impl TypeChecker {
             };
         }
         let key = intern(&format!("{}.{}", resolve(qualifier), resolve(name)));
+        // Round 94 (module-shadowing): mirror `lookup_qualified_record` —
+        // a value binding named like the qualifier shadows the module, so
+        // resolving the module silently would be misleading. Error
+        // clearly (conservative choice; see the record-literal helper's
+        // rationale). Only fires when the qualifier otherwise WOULD have
+        // resolved as a module; an unrelated local falls through to the
+        // existing "neither an imported module nor an enum type" error.
+        if self.value_binding_shadows_module(env, qualifier)
+            && (self.qualified_variant_to_enum.contains_key(&key)
+                || self.qualified_records.contains_key(&key)
+                || self.imported_modules.contains(&qualifier))
+        {
+            let qual_str = resolve(qualifier);
+            let name_str = resolve(name);
+            self.error(
+                format!(
+                    "cannot use '{qual_str}' as a module qualifier for \
+                     '{qual_str}.{name_str}' in pattern: a local binding named '{qual_str}' \
+                     shadows module '{qual_str}' here; rename the binding or the import"
+                ),
+                span,
+            );
+            return CtorQualifierResolution::Invalid;
+        }
         if let Some(enum_bare) = self.qualified_variant_to_enum.get(&key).copied() {
             let enum_key = intern(&format!("{}.{}", resolve(qualifier), resolve(enum_bare)));
             // The qualified enum mirror is populated by the same merge
@@ -2035,21 +2118,25 @@ impl TypeChecker {
                 // (disambiguating bare-name conflicts); an enum-name
                 // qualifier (or none) resolves by bare name as before.
                 let resolved: Option<(Symbol, EnumInfo)> = match module {
-                    Some(q) => match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span) {
-                        CtorQualifierResolution::Module(enum_name, info) => Some((enum_name, info)),
-                        CtorQualifierResolution::EnumOwned => self
-                            .variant_to_enum
-                            .get(name)
-                            .copied()
-                            .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
-                        CtorQualifierResolution::Invalid => {
-                            for sp in sub_pats {
-                                let tv = self.fresh_var();
-                                self.bind_pattern(sp, &tv, env, span);
+                    Some(q) => {
+                        match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span, env) {
+                            CtorQualifierResolution::Module(enum_name, info) => {
+                                Some((enum_name, info))
                             }
-                            return;
+                            CtorQualifierResolution::EnumOwned => self
+                                .variant_to_enum
+                                .get(name)
+                                .copied()
+                                .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
+                            CtorQualifierResolution::Invalid => {
+                                for sp in sub_pats {
+                                    let tv = self.fresh_var();
+                                    self.bind_pattern(sp, &tv, env, span);
+                                }
+                                return;
+                            }
                         }
-                    },
+                    }
                     None => self
                         .variant_to_enum
                         .get(name)
@@ -2168,7 +2255,7 @@ impl TypeChecker {
                 let resolved = self.apply(ty);
                 let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match (name, module) {
                     (Some(rec_name), Some(q)) => {
-                        self.lookup_qualified_record(*q, *rec_name, pattern.span, true)
+                        self.lookup_qualified_record(*q, *rec_name, pattern.span, true, env)
                     }
                     (Some(rec_name), None) => match self.records.get(rec_name).cloned() {
                         Some(info) => {
@@ -2522,13 +2609,20 @@ impl TypeChecker {
     /// listed in `imported_modules`. Otherwise we fall through to the
     /// regular `infer_expr` so the FieldAccess arm can emit the
     /// "module 'X' is not imported" diagnostic at this call site.
-    fn callee_module_is_in_scope(&self, callee: &Expr) -> bool {
+    /// Round 94: also requires that no value binding shadows the module
+    /// name (`env`) — a shadowed head identifier means the callee is a
+    /// field access on the binding, not a module-qualified call, so the
+    /// qualified `module.fn` scheme must not be consulted.
+    fn callee_module_is_in_scope(&self, callee: &Expr, env: &TypeEnv) -> bool {
         let ExprKind::FieldAccess(obj, _) = &callee.kind else {
             return false;
         };
         let ExprKind::Ident(mod_name) = &obj.kind else {
             return false;
         };
+        if self.value_binding_shadows_module(env, *mod_name) {
+            return false;
+        }
         let mod_str = resolve(*mod_name);
         if !crate::module::is_builtin_module(&mod_str) {
             return true;
@@ -2774,7 +2868,25 @@ impl TypeChecker {
                 // Check for module-style access first (e.g., string.split)
                 // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
                 // for stdlib module names like list, string, map, io, etc.
-                if let Some(module_name) = module_name {
+                //
+                // Round 94 (BROKEN): module names used to take precedence
+                // over local bindings here, so `fn f(other: P) { other.year }`
+                // with `import other` in scope resolved `other` to the
+                // MODULE and errored with "unknown function 'year' on
+                // module 'other'". This also broke every synthesized
+                // auto-derive body (their comparison parameter is
+                // literally named `other`), so importing any module named
+                // `other` broke `==` / `<` on ALL records and on builtin
+                // Date. Lexical shadowing: when a value binding with the
+                // same name is in scope, skip the entire module/enum
+                // resolution block and fall through to ordinary
+                // field/method access on the binding. (The compiler has
+                // always resolved locals first in its qualified-call
+                // emission, so this also removes a typechecker/runtime
+                // divergence.)
+                if let Some(module_name) = module_name
+                    && !self.value_binding_shadows_module(env, module_name)
+                {
                     // Round 56 item 4: stdlib should be opaque until imported.
                     // Before this gate, `list.sum(...)` without `import list`
                     // would typecheck silently (qualified names are
@@ -3926,8 +4038,14 @@ impl TypeChecker {
                 let is_module_call = match &callee.kind {
                     ExprKind::FieldAccess(obj, field) => {
                         if let ExprKind::Ident(mod_name) = &obj.kind {
+                            // Round 94: a value binding shadowing the
+                            // module name makes this a field call on the
+                            // binding, not a module call — the optional-
+                            // trailing-param arity tolerance must not
+                            // apply.
                             let qualified = intern(&format!("{}.{field}", resolve(*mod_name)));
-                            env.lookup(qualified).is_some()
+                            !self.value_binding_shadows_module(env, *mod_name)
+                                && env.lookup(qualified).is_some()
                         } else {
                             false
                         }
@@ -3990,7 +4108,7 @@ impl TypeChecker {
                     }
                 } else if let Some(name) = qualified_call_name
                     && let Some(scheme) = env.lookup(name).cloned()
-                    && self.callee_module_is_in_scope(callee)
+                    && self.callee_module_is_in_scope(callee, env)
                 {
                     let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                     // Mirror the FieldAccess side-effect: pre-set the
@@ -4295,7 +4413,7 @@ impl TypeChecker {
                 // variant), so the qualified and bare spellings build
                 // interchangeable values.
                 let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
-                    Some(q) => self.lookup_qualified_record(q, name, span, false),
+                    Some(q) => self.lookup_qualified_record(q, name, span, false, env),
                     None => self.records.get(&name).cloned().map(|info| {
                         let ids = self.record_param_var_ids.get(&name).cloned();
                         (info, ids)
@@ -5077,22 +5195,24 @@ impl TypeChecker {
                 // covers the enum-name qualifier spelling
                 // (`Shape.Circle(r)`), whose schemes are bare-only.
                 let scheme = match module {
-                    Some(q) => match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span) {
-                        CtorQualifierResolution::Invalid => {
-                            for sp in sub_pats {
-                                let tv = self.fresh_var();
-                                self.check_pattern(sp, &tv, env, span);
+                    Some(q) => {
+                        match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span, env) {
+                            CtorQualifierResolution::Invalid => {
+                                for sp in sub_pats {
+                                    let tv = self.fresh_var();
+                                    self.check_pattern(sp, &tv, env, span);
+                                }
+                                return;
                             }
-                            return;
+                            CtorQualifierResolution::Module(..) => {
+                                let key = intern(&format!("{}.{}", resolve(*q), resolve(*name)));
+                                env.lookup(key)
+                                    .cloned()
+                                    .or_else(|| env.lookup(*name).cloned())
+                            }
+                            CtorQualifierResolution::EnumOwned => env.lookup(*name).cloned(),
                         }
-                        CtorQualifierResolution::Module(..) => {
-                            let key = intern(&format!("{}.{}", resolve(*q), resolve(*name)));
-                            env.lookup(key)
-                                .cloned()
-                                .or_else(|| env.lookup(*name).cloned())
-                        }
-                        CtorQualifierResolution::EnumOwned => env.lookup(*name).cloned(),
-                    },
+                    }
                     None => env.lookup(*name).cloned(),
                 };
                 // Look up the constructor type
@@ -5212,7 +5332,9 @@ impl TypeChecker {
                     // Round 94: module qualifier resolves through the
                     // qualified mirrors (see bind_pattern's Record arm).
                     let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
-                        Some(q) => self.lookup_qualified_record(*q, *rec_name, pattern.span, true),
+                        Some(q) => {
+                            self.lookup_qualified_record(*q, *rec_name, pattern.span, true, env)
+                        }
                         None => self.records.get(rec_name).cloned().map(|info| {
                             let ids = self.record_param_var_ids.get(rec_name).cloned();
                             (info, ids)
@@ -5740,8 +5862,25 @@ pub(super) fn propagate_alias_effects(kind: &ExprKind, env: &TypeEnv, scheme: &m
         // joins the two halves with `.` to look up the builtin scheme;
         // mirror that here so `let alias = io.println` (or any other
         // builtin) preserves its `!{io, ...}` annotation.
+        //
+        // Round 94 (module-shadowing): when a VALUE binding shadows the
+        // base name, the dotted path is field access on the binding,
+        // not a module member — copying the same-named MODULE fn's
+        // effects onto the alias would mis-attribute effects in both
+        // directions. Leave the scheme's conservative default instead.
+        // (Type-name `TypeOf(..)` descriptor bindings don't count,
+        // mirroring `TypeChecker::value_binding_shadows_module`.)
         ExprKind::FieldAccess(obj, field) => {
             if let ExprKind::Ident(base) = &obj.kind {
+                let base_shadowed = env.lookup(*base).is_some_and(|s| {
+                    !matches!(
+                        &s.ty,
+                        Type::Generic(g, args) if resolve(*g) == "TypeOf" && args.len() == 1
+                    )
+                });
+                if base_shadowed {
+                    return;
+                }
                 let joined = format!("{}.{}", resolve(*base), resolve(*field));
                 let key = intern(&joined);
                 if let Some(src) = env.lookup(key) {

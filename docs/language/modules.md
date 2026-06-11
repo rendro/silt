@@ -67,6 +67,37 @@ accept the `module.Name` spelling. The qualified and bare forms build and
 match exactly the same values; qualification is how you disambiguate when
 two imported modules export the same type name.
 
+## Module names and shadowing
+
+Module names follow the ordinary lexical-scoping rules: a value binding
+(function parameter, lambda parameter, `let`, pattern binder) with the same
+name **shadows** an imported module within its scope.
+
+```silt
+import other            -- other.silt: pub fn double(x) { x * 2 }
+
+type P { year: Int }
+
+fn f(other: P) -> Int {
+  other.year            -- field access on the parameter, not a module lookup
+}
+
+fn caller() -> Int {
+  other.double(21)      -- no `other` binding in scope here: module call
+}
+```
+
+(The compiler emits a warning when a binding shadows a *builtin* module,
+since the module's functions become unreachable inside that scope.)
+
+Type names are not value bindings, so `Shape.Circle` keeps resolving through
+the enum even though `Shape` is in scope. Qualified **type** paths
+(`geometry.Point { .. }` literals, `geometry.Circle(r)` patterns) are an
+exception in the other direction: because a local can never carry that
+syntax, using a module qualifier whose name is shadowed by a value binding
+is a compile error rather than a silent module pick — rename the binding or
+the import.
+
 ## Multi-file projects
 
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree.

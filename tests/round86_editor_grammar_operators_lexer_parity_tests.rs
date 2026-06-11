@@ -263,17 +263,17 @@ fn extract_plain_write_payload(line: &str) -> Option<String> {
     // escape inside string-literal arms (`"\"{s}\""`); for those
     // arms the unescaped content still contains `{`, so we'll filter
     // them out below by rejecting any payload with `{` or `}`.
-    let mut bytes = after.bytes();
+    // (round 94 housekeeping: rewritten with `enumerate()` — newer
+    // clippy's `explicit_counter_loop` rejects the manual `idx`
+    // counter under `-D warnings`.)
     let mut end = None;
     let mut prev: u8 = 0;
-    let mut idx = 0;
-    for b in bytes.by_ref() {
+    for (idx, b) in after.bytes().enumerate() {
         if b == b'"' && prev != b'\\' {
             end = Some(idx);
             break;
         }
         prev = b;
-        idx += 1;
     }
     let end = end?;
     let payload = &after[..end];

@@ -488,6 +488,20 @@ pub struct Compiler {
     /// builtin unit variants (`None`, `IoInterrupted`, etc.) are also
     /// recognised.
     known_unit_variants: HashSet<String>,
+    /// Round 94 (module-shadowing): binder names of the entry program's
+    /// top-level `let` declarations. These are VALUE globals, so dotted
+    /// access on them (`other.year` after `let other = P { .. }`) is
+    /// field access, never a module-member lookup — the typechecker
+    /// resolves it that way (a value binding shadows a same-named
+    /// imported module), and the codegen paths below must agree or the
+    /// VM would chase a `GetGlobal("other.year")` that doesn't exist.
+    /// Populated by a pre-pass in `compile_program_with_entry` /
+    /// `compile_declarations` (NOT in `compile_decl`, so a file
+    /// module's own top-level lets don't leak into the consumer's
+    /// view). Consulted alongside `resolve_local`/upvalue checks in
+    /// `extract_builtin_name`, the Call arm's module-call detection,
+    /// and `FieldAccess` codegen.
+    top_level_value_globals: HashSet<String>,
     /// Round 64 item 6A: producer-side typecheck snapshots for every
     /// user module the compiler has loaded. Keyed by the module name
     /// as it appears in `import` statements. Populated incrementally
@@ -580,6 +594,7 @@ impl Compiler {
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
+            top_level_value_globals: HashSet::new(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
@@ -622,6 +637,7 @@ impl Compiler {
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
+            top_level_value_globals: HashSet::new(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
@@ -768,6 +784,12 @@ impl Compiler {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
+        // Round 94: record top-level let binders up front so dotted
+        // access on them is compiled as field access even when the use
+        // site is inside a fn that is compiled before the let decl is
+        // reached. See `top_level_value_globals`.
+        self.collect_top_level_value_globals(program);
+
         for decl in &program.decls {
             self.compile_decl(decl)?;
         }
@@ -808,6 +830,9 @@ impl Compiler {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
+        // Round 94: same pre-pass as `compile_program_with_entry`.
+        self.collect_top_level_value_globals(program);
+
         for decl in &program.decls {
             self.compile_decl(decl)?;
         }
@@ -831,6 +856,20 @@ impl Compiler {
     }
 
     // ── Declarations ──────────────────────────────────────────────
+
+    /// Round 94: pre-pass over the entry program's decls collecting
+    /// top-level `let` binder names into `top_level_value_globals`.
+    /// Top-level lets only accept Ident patterns (see the `Decl::Let`
+    /// arm of `compile_decl`), so a single-name walk suffices.
+    fn collect_top_level_value_globals(&mut self, program: &Program) {
+        for decl in &program.decls {
+            if let Decl::Let { pattern, .. } = decl
+                && let PatternKind::Ident(name) = &pattern.kind
+            {
+                self.top_level_value_globals.insert(resolve(*name));
+            }
+        }
+    }
 
     fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
         match decl {
@@ -2406,10 +2445,15 @@ impl Compiler {
                         .emit_op_u16(Op::CallBuiltin, name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
                 } else if let ExprKind::FieldAccess(receiver, method) = &callee.kind {
-                    // Check if this is a module-qualified call on a non-local ident
+                    // Check if this is a module-qualified call on a non-local ident.
+                    // Round 94: top-level let globals are value bindings too —
+                    // they shadow same-named modules exactly like locals do
+                    // (the typechecker resolves `other.double(2)` with a
+                    // top-level `let other` as a field call on the value).
                     let is_module_call = if let ExprKind::Ident(name) = &receiver.kind {
                         self.resolve_local(*name).is_none()
                             && self.resolve_upvalue_peek(*name).is_none()
+                            && !self.top_level_value_globals.contains(&resolve(*name))
                     } else {
                         false
                     };
@@ -2548,8 +2592,12 @@ impl Compiler {
                 // Check if this is a module-qualified name like list.map
                 // But only if the identifier is NOT a known local or upvalue.
                 if let ExprKind::Ident(name) = &expr.kind {
+                    // Round 94: a top-level let global is a value binding —
+                    // route through the receiver-expression path (GetGlobal +
+                    // GetField) like a local, never `GetGlobal("name.field")`.
                     let is_local = self.resolve_local(*name).is_some()
-                        || self.resolve_upvalue(*name, span)?.is_some();
+                        || self.resolve_upvalue(*name, span)?.is_some()
+                        || self.top_level_value_globals.contains(&resolve(*name));
                     if !is_local {
                         let name_str = resolve(*name);
                         // Qualified variant access: `EnumName.Variant`
@@ -3380,9 +3428,13 @@ impl Compiler {
         if let ExprKind::FieldAccess(expr, field) = &callee.kind
             && let ExprKind::Ident(module) = &expr.kind
         {
-            // Check if it's a local or upvalue first
+            // Check if it's a local or upvalue first (round 94: top-level
+            // let globals are value bindings and shadow modules the same
+            // way — `list.map(x)` with `let list = ...` is a field call).
             let mod_str = resolve(*module);
-            if self.resolve_local(*module).is_none() && self.resolve_upvalue_peek(*module).is_none()
+            if self.resolve_local(*module).is_none()
+                && self.resolve_upvalue_peek(*module).is_none()
+                && !self.top_level_value_globals.contains(&mod_str)
             {
                 if module::is_builtin_module(&mod_str) {
                     if !self.imported_builtin_modules.contains(&mod_str) {

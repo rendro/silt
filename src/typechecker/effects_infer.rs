@@ -37,7 +37,52 @@ use super::{Symbol, TypeEnv};
 /// the alias's `Scheme::effects` field; this map mirrors that into the
 /// effects-walker world, where the let-binding env is dropped before
 /// `infer_expr_effects` runs over `f.body`.
-type AliasMap = HashMap<Symbol, EffectSet>;
+///
+/// Round 94 (module-shadowing): also carries the set of names REBOUND
+/// by `let` statements, match-arm patterns and `loop` bindings inside
+/// the walked body. The walker's `env` only holds the enclosing fn's
+/// parameters plus top-level names, so without this set a body-local
+/// rebinding of a name that collides with an imported module
+/// (`let other = ...; other.double(2)`) would let `call_effects`
+/// resolve the dotted callee through the MODULE's qualified scheme —
+/// charging the wrong fn's effects in whichever direction it differs.
+#[derive(Clone, Default)]
+struct AliasMap {
+    aliases: HashMap<Symbol, EffectSet>,
+    rebound: std::collections::HashSet<Symbol>,
+}
+
+impl AliasMap {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn get(&self, name: &Symbol) -> Option<&EffectSet> {
+        self.aliases.get(name)
+    }
+
+    fn insert(&mut self, name: Symbol, eff: EffectSet) {
+        self.aliases.insert(name, eff);
+    }
+
+    fn remove(&mut self, name: &Symbol) {
+        self.aliases.remove(name);
+    }
+
+    /// Record that `pattern`'s binders rebind (shadow) their names for
+    /// the remainder of the walk.
+    fn mark_pattern_rebound(&mut self, pattern: &crate::ast::Pattern) {
+        for name in super::collect_pattern_vars(pattern) {
+            self.rebound.insert(name);
+        }
+    }
+
+    /// Is `name` rebound by a body-local binding (and therefore not a
+    /// module qualifier)?
+    fn is_rebound(&self, name: Symbol) -> bool {
+        self.rebound.contains(&name)
+    }
+}
 
 /// Compute the effect set performed by `expr`. Walks the AST bottom-up
 /// and unions the effects of every sub-expression. Function calls
@@ -202,7 +247,13 @@ fn walk_expr(expr: &Expr, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
             for (_, e) in bindings {
                 acc = acc.union(walk_expr(e, env, aliases));
             }
-            acc.union(walk_expr(body, env, aliases))
+            // Round 94: loop binders rebind their names inside the body
+            // (same rationale as `arm_effects`).
+            let mut local = aliases.clone();
+            for (name, _) in bindings {
+                local.rebound.insert(*name);
+            }
+            acc.union(walk_expr(body, env, &local))
         }
         ExprKind::Recur(args) => {
             let mut acc = EffectSet::EMPTY;
@@ -215,11 +266,16 @@ fn walk_expr(expr: &Expr, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
 }
 
 fn arm_effects(arm: &MatchArm, env: &TypeEnv, aliases: &AliasMap) -> EffectSet {
+    // Round 94: arm-pattern binders rebind their names for the guard
+    // and body — `match x { other -> other.double(2) }` must not
+    // resolve `other.double` through a same-named imported module.
+    let mut local = aliases.clone();
+    local.mark_pattern_rebound(&arm.pattern);
     let mut acc = EffectSet::EMPTY;
     if let Some(g) = &arm.guard {
-        acc = acc.union(walk_expr(g, env, aliases));
+        acc = acc.union(walk_expr(g, env, &local));
     }
-    acc.union(walk_expr(&arm.body, env, aliases))
+    acc.union(walk_expr(&arm.body, env, &local))
 }
 
 fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet {
@@ -232,8 +288,19 @@ fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet
             // for the effects walker, which doesn't share the
             // typechecker's TypeEnv mutations across passes.
             let val_effects = walk_expr(value, env, aliases);
+            // Round 94: resolve the potential alias source BEFORE
+            // marking this let's binders as rebound — the value sits
+            // outside the new binding's scope and must see the outer
+            // meaning of any name it mentions. (Shadowing-aware: a
+            // dotted source whose base is itself shadowed is not a
+            // module path — see `resolvable_callee_name`.)
+            let src = resolvable_callee_name(value, env, aliases);
+            // Every binder introduced by this let rebinds its name for
+            // the rest of the block — a later `name.fn(...)` must not
+            // resolve through a same-named imported module.
+            aliases.mark_pattern_rebound(pattern);
             if let PatternKind::Ident(name) = &pattern.kind {
-                if let Some(src) = callee_name(value) {
+                if let Some(src) = src {
                     // The value is a simple aliasing reference. Look up
                     // the source's effects through the same path the
                     // Call site uses (env + previous aliases).
@@ -284,7 +351,7 @@ fn call_effects(callee: &Expr, args: &[Expr], env: &TypeEnv, aliases: &AliasMap)
     for a in args {
         acc = acc.union(walk_expr(a, env, aliases));
     }
-    if let Some(name) = callee_name(callee) {
+    if let Some(name) = resolvable_callee_name(callee, env, aliases) {
         acc = acc.union(scheme_effects_of(name, env, aliases));
     } else {
         // Higher-order calls (the callee is computed): we have no
@@ -293,6 +360,42 @@ fn call_effects(callee: &Expr, args: &[Expr], env: &TypeEnv, aliases: &AliasMap)
         acc = acc.union(EffectSet::TOP);
     }
     acc
+}
+
+/// Round 94 (module-shadowing): is `name` bound in `env` as a VALUE
+/// (fn parameter, top-level fn/let)? Such a binding shadows a
+/// same-named imported module, so a dotted callee `name.fn` is a call
+/// through the binding's field — its effects must NOT be read off the
+/// module's qualified scheme. Type-name bindings (`TypeOf(..)`
+/// descriptor schemes) don't count, mirroring
+/// `TypeChecker::value_binding_shadows_module`.
+fn env_value_binding_shadows(env: &TypeEnv, name: Symbol) -> bool {
+    match env.lookup(name) {
+        Some(s) => !matches!(
+            &s.ty,
+            crate::types::Type::Generic(g, args)
+                if crate::intern::resolve(*g) == "TypeOf" && args.len() == 1
+        ),
+        None => false,
+    }
+}
+
+/// Shadowing-aware wrapper around `callee_name`: a dotted path whose
+/// base is rebound in the walked body (`aliases.rebound`) or shadowed
+/// by a value binding in `env` is NOT a module path — return None so
+/// the caller falls back to the conservative higher-order TOP default,
+/// exactly like any other field call on a value. (Charging the
+/// same-named MODULE fn's declared effects would be wrong in both
+/// directions: it can under-approximate — a soundness hole under
+/// `--strict-effects` — or over-charge effects the local never has.)
+fn resolvable_callee_name(callee: &Expr, env: &TypeEnv, aliases: &AliasMap) -> Option<Symbol> {
+    if let ExprKind::FieldAccess(obj, _) = &callee.kind
+        && let ExprKind::Ident(base) = &obj.kind
+        && (aliases.is_rebound(*base) || env_value_binding_shadows(env, *base))
+    {
+        return None;
+    }
+    callee_name(callee)
 }
 
 /// Extract a callable name from a Call expression's `callee` slot, if
