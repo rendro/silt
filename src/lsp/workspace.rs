@@ -342,7 +342,7 @@ fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<
                 collect_references_in_pattern(p, name, out);
             }
         }
-        PatternKind::Constructor(_, fields) => {
+        PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
                 collect_references_in_pattern(p, name, out);
             }

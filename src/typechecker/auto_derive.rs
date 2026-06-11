@@ -85,7 +85,14 @@ fn wildcard_pat() -> Pattern {
 }
 
 fn ctor_pat(name: Symbol, args: Vec<Pattern>) -> Pattern {
-    Pattern::new(PatternKind::Constructor(name, args), Span::synthetic())
+    Pattern::new(
+        PatternKind::Constructor {
+            module: None,
+            name,
+            args,
+        },
+        Span::synthetic(),
+    )
 }
 
 fn tuple_pat(elems: Vec<Pattern>) -> Pattern {

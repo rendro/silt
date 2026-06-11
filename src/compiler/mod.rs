@@ -2927,7 +2927,20 @@ impl Compiler {
                 self.compile_expr(inner)?;
             }
 
-            ExprKind::RecordCreate { name, fields } => {
+            // Round 94: the optional module qualifier (`util.Pt { .. }`)
+            // is a typecheck-time concept only — it selects which
+            // module's declaration the literal is checked against. At
+            // runtime every record carries its BARE type name (modules
+            // share the VM's global namespace; see how variants register
+            // bare + `module.Variant` aliases), so codegen ignores the
+            // qualifier and the qualified literal builds a value
+            // identical to the bare spelling — same `MakeRecord` tag,
+            // same trait dispatch, same `==`.
+            ExprKind::RecordCreate {
+                module: _,
+                name,
+                fields,
+            } => {
                 if fields.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: "record cannot have more than 255 fields".into(),

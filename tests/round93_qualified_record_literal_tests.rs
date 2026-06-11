@@ -1,21 +1,20 @@
-//! Round 93 — qualified record construction must be a parse error, not
-//! a silent misparse.
+//! Round 93 (retargeted in round 94) — qualified record construction.
 //!
-//! Finding (BROKEN — silent wrong values): `util.Pt { x: 1, y: 2 }`
-//! used to parse as the field access `util.Pt` (a type descriptor at
-//! runtime) followed by a SEPARATE, silently-discarded anonymous-record
-//! statement. `silt check` exited 0, the literal's fields vanished, and
-//! `a == b` compared descriptors (printing `true` for records with
-//! different fields). First-user trap: qualified ENUM constructors
-//! (`shapes.Circle(2.0)`) work, so users naturally try the record form.
+//! History: `util.Pt { x: 1, y: 2 }` originally misparsed silently as
+//! the field access `util.Pt` plus a SEPARATE, discarded
+//! anonymous-record statement (`a == b` compared type descriptors).
+//! Round 93 made the shape a conservative parse error as a stopgap.
+//! Round 94 implements the approved design: qualified type paths work
+//! in ALL positions, so `util.Pt { x: 1, y: 2 }` now constructs the
+//! same value as the bare `Pt { ... }` form.
 //!
-//! Adding qualified record construction is a deferred design decision
-//! ("no new syntax without a design decision"), so the fix emits a
-//! clean parse error with an actionable hint instead. The guard is
-//! conservative: it fires only on a Capitalized field access followed
-//! on the SAME line by `{` whose contents start like record fields
-//! (`ident :`) — trailing closures, blocks, match bodies, and
-//! next-line braces are untouched.
+//! This file keeps round 93's CONSERVATISM CONTROLS intact (trailing
+//! closures, next-line braces, match bodies, record update, lowercase
+//! fields must all keep their old meaning) and retargets the
+//! parse-error assertions into construction-works assertions. The
+//! broader round-94 behavior (typecheck quality, disambiguation,
+//! qualified patterns, exhaustiveness) lives in
+//! tests/round94_qualified_paths_tests.rs.
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -58,53 +57,45 @@ fn run_silt(args: &[&str]) -> std::process::Output {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// The fix: qualified record construction is now a parse error
+// Round 94: qualified record construction parses and runs
 // ────────────────────────────────────────────────────────────────────
 
-/// The original repro, at parser level: must produce the hint, naming
-/// both the qualified form the user wrote and the import-based fix.
+/// The original repro now parses cleanly through both entry points.
 #[test]
-fn qualified_record_literal_is_a_parse_error_with_hint() {
+fn qualified_record_literal_parses() {
     let errs = parse_errors("fn main() {\n  let a = util.Pt { x: 1, y: 2 }\n  ()\n}\n");
-    let joined = errs.join("\n");
     assert!(
-        errs.iter()
-            .any(|e| e.contains("qualified record construction")
-                && e.contains("util.Pt { ... }")
-                && e.contains("import util.{ Pt }")),
-        "qualified record construction must die with the import hint, got:\n{joined}"
+        errs.is_empty(),
+        "qualified record construction must parse, got:\n{}",
+        errs.join("\n")
     );
+    parse_ok("fn main() {\n  let a = util.Pt { x: 1, y: 2 }\n  ()\n}\n")
+        .expect("qualified record construction must parse (strict entry point)");
 }
 
-/// Same through the strict (non-recovering) entry point.
-#[test]
-fn qualified_record_literal_strict_parse_errors() {
-    let err = parse_ok("fn main() {\n  let a = util.Pt { x: 1, y: 2 }\n  ()\n}\n")
-        .expect_err("qualified record construction must not parse");
-    assert!(
-        err.contains("qualified record construction") && err.contains("import util.{ Pt }"),
-        "strict parse must render the hint, got:\n{err}"
-    );
-}
-
-/// Deeper dotted path: the message echoes the full path the user wrote.
+/// Deeper dotted path: still an error (imports take a single module
+/// ident, so only one qualifier segment can ever resolve) — and the
+/// message echoes the full path the user wrote. This must stay an
+/// error rather than regressing to the pre-round-93 silent misparse.
 #[test]
 fn qualified_record_literal_deep_path_echoes_path() {
     let errs = parse_errors("fn main() {\n  let a = a.b.Pt { x: 1 }\n  ()\n}\n");
     let joined = errs.join("\n");
     assert!(
         errs.iter()
-            .any(|e| e.contains("qualified record construction") && e.contains("a.b.Pt { ... }")),
+            .any(|e| e.contains("qualified record construction")
+                && e.contains("a.b.Pt { ... }")
+                && e.contains("single module qualifier")),
         "deep dotted qualified construction must echo the path, got:\n{joined}"
     );
 }
 
-/// End-to-end fail-before/pass-after: this exact project used to pass
-/// `silt check` with exit 0 and print `true` for `a == b` on records
-/// with different fields. It must now be a parse error (nonzero exit)
-/// whose stderr carries the hint.
+/// End-to-end through the binary: the exact project that round 93's
+/// guard rejected (and that pre-93 silently mis-evaluated, printing
+/// `true` for records with different fields) now checks AND runs with
+/// real field-by-field semantics.
 #[test]
-fn qualified_record_literal_rejected_via_binary() {
+fn qualified_record_literal_runs_via_binary() {
     let dir = temp_project(
         "binary",
         &[
@@ -115,16 +106,24 @@ fn qualified_record_literal_rejected_via_binary() {
             ),
         ],
     );
-    let output = run_silt(&["check", dir.join("main.silt").to_str().unwrap()]);
+    let check = run_silt(&["check", dir.join("main.silt").to_str().unwrap()]);
+    assert!(
+        check.status.success(),
+        "qualified record construction must pass `silt check`; stderr:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let output = run_silt(&["run", dir.join("main.silt").to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success(),
-        "qualified record construction must fail `silt check` (used to exit 0 \
-         and silently discard the literal); stderr:\n{stderr}"
+        output.status.success(),
+        "qualified record construction must run; stdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert!(
-        stderr.contains("qualified record construction") && stderr.contains("import util.{ Pt }"),
-        "rendered diagnostic must carry the import hint; got:\n{stderr}"
+    assert_eq!(
+        stdout.replace(char::is_whitespace, ""),
+        "false",
+        "`a == b` must compare REAL field values (pre-round-93 this printed `true` \
+         because both sides misparsed into type descriptors)"
     );
 }
 

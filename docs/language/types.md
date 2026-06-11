@@ -124,6 +124,20 @@ let alice = User { name: "Alice", age: 30, active: true }
 alice.name   -- "Alice"
 ```
 
+Records declared in another module can be constructed with a
+**module-qualified path** — no selective import needed. The qualifier is
+explicit naming, not a second construction form: `users.User { ... }`
+builds exactly the same value as `User { ... }` does after
+`import users.{ User }`, and it picks the right declaration when two
+imported modules export the same type name.
+
+```silt
+-- noexec (multi-file: users.silt declares `pub type User { ... }`)
+import users
+
+let alice = users.User { name: "Alice", age: 30, active: true }
+```
+
 **Record update syntax** creates a new record with fields changed:
 
 ```silt

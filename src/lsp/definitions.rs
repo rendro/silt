@@ -189,7 +189,11 @@ fn collect_let_pattern_defs(
                 collect_let_pattern_defs(p, decl_span, None, value_ty, None, false, defs);
             }
         }
-        PatternKind::Constructor(ctor, fields) => {
+        PatternKind::Constructor {
+            name: ctor,
+            args: fields,
+            ..
+        } => {
             let inner_ty: Option<Type> = match (resolve(*ctor).as_str(), value_ty) {
                 ("Ok", Some(Type::Generic(_, args))) => args.first().cloned(),
                 ("Err", Some(Type::Generic(_, args))) => args.get(1).cloned(),

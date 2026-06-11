@@ -61,6 +61,32 @@ fn handle(result) {
 }
 ```
 
+## Qualified Patterns
+
+Constructors and record types from another module can be named with a
+single qualifier — the module (or alias), or the owning enum:
+
+```silt
+-- noexec (multi-file: shapes.silt declares `pub type Shape { Circle(Float), Rect(Float, Float) }`)
+import shapes
+
+fn describe(s) {
+  match s {
+    shapes.Circle(r) -> "circle {r}"
+    Shape.Rect(w, h) -> "rect {w}x{h}"
+  }
+}
+```
+
+The qualifier is naming, not identity: `shapes.Circle(r)` and
+`Circle(r)` are the **same** pattern, so spellings can be mixed freely
+across the arms of one match without affecting exhaustiveness checking.
+Qualified patterns work in every pattern position — match arms,
+`when let`, `let`, or-patterns, and nested sub-patterns — and the
+qualifier picks the right type when two imported modules export the
+same name (`a.Pt { x, .. }` vs `b.Pt { label, .. }`). Naming the wrong
+module or enum is a type error.
+
 ## Tuple Patterns
 
 ```silt

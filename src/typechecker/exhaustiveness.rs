@@ -195,7 +195,11 @@ impl TypeChecker {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
                             .map(|_| synth(PatternKind::Wildcard))
                             .collect();
-                        let ctor = synth(PatternKind::Constructor(variant.name, sub_pats.clone()));
+                        let ctor = synth(PatternKind::Constructor {
+                            module: None,
+                            name: variant.name,
+                            args: sub_pats.clone(),
+                        });
                         if self.is_useful(matrix, &ctor, ty, depth + 1) {
                             return true;
                         }
@@ -332,7 +336,11 @@ impl TypeChecker {
                     .collect();
                 specialized.is_empty()
             }
-            PatternKind::Constructor(name, sub_pats) => {
+            PatternKind::Constructor {
+                name,
+                args: sub_pats,
+                ..
+            } => {
                 let specialized = self.specialize_constructor(matrix, *name, sub_pats.len());
                 if sub_pats.is_empty() {
                     specialized.is_empty()
@@ -824,7 +832,9 @@ impl TypeChecker {
             // longer masked. Bool ctors (`Bool(b)`) and nullary enum
             // ctors have `k == 0`, leaving the prior behaviour intact.
             let (ctor_name, ctor_field_count) = match &ctor.kind {
-                PatternKind::Constructor(name, sub) => (Some(*name), sub.len()),
+                PatternKind::Constructor {
+                    name, args: sub, ..
+                } => (Some(*name), sub.len()),
                 _ => (None, 0usize),
             };
 
@@ -846,7 +856,7 @@ impl TypeChecker {
                     PatternKind::Tuple(ps)
                         if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
                     {
-                        matches!(&ps[0].kind, PatternKind::Constructor(..))
+                        matches!(&ps[0].kind, PatternKind::Constructor { .. })
                             && !Self::is_fully_covering_pattern(&ps[0])
                     }
                     _ => false,
@@ -925,7 +935,9 @@ impl TypeChecker {
                         // column is itself a wildcard/ident (or otherwise
                         // doesn't expose `ctor_field_count` sub-patterns).
                         let lead: Vec<Pattern> = match &ps[0].kind {
-                            PatternKind::Constructor(_, sub) if sub.len() == ctor_field_count => {
+                            PatternKind::Constructor { args: sub, .. }
+                                if sub.len() == ctor_field_count =>
+                            {
                                 sub.clone()
                             }
                             _ => (0..ctor_field_count)
@@ -1139,7 +1151,11 @@ impl TypeChecker {
                                     let sub_pats: Vec<Pattern> = (0..v.field_types.len())
                                         .map(|_| synth(PatternKind::Wildcard))
                                         .collect();
-                                    synth(PatternKind::Constructor(v.name, sub_pats))
+                                    synth(PatternKind::Constructor {
+                                        module: None,
+                                        name: v.name,
+                                        args: sub_pats,
+                                    })
                                 })
                                 .collect()
                         } else {
@@ -1162,7 +1178,14 @@ impl TypeChecker {
             // A wildcard constructor means "anything" — all patterns match.
             (_, PatternKind::Wildcard | PatternKind::Ident(_)) => true,
             (PatternKind::Bool(a), PatternKind::Bool(b)) => a == b,
-            (PatternKind::Constructor(a, _), PatternKind::Constructor(b, _)) => a == b,
+            // Round 94: ctor identity is the bare name only — the optional
+            // module qualifier is naming, not identity, so a qualified and
+            // an unqualified spelling of the same variant unify here (and
+            // therefore in exhaustiveness + duplicate-arm analysis).
+            (
+                PatternKind::Constructor { name: a, .. },
+                PatternKind::Constructor { name: b, .. },
+            ) => a == b,
             (PatternKind::Int(a), PatternKind::Int(b)) => a == b,
             (PatternKind::StringLit(a, _), PatternKind::StringLit(b, _)) => a == b,
             _ => false,
@@ -1179,7 +1202,11 @@ impl TypeChecker {
         let mut result = Vec::new();
         for pat in matrix {
             match &pat.kind {
-                PatternKind::Constructor(name, sub_pats) if *name == ctor_name => {
+                PatternKind::Constructor {
+                    name,
+                    args: sub_pats,
+                    ..
+                } if *name == ctor_name => {
                     if arity <= 1 {
                         result.push(
                             sub_pats
@@ -1280,7 +1307,11 @@ impl TypeChecker {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
                             .map(|_| synth(PatternKind::Wildcard))
                             .collect();
-                        let ctor = synth(PatternKind::Constructor(variant.name, sub_pats));
+                        let ctor = synth(PatternKind::Constructor {
+                            module: None,
+                            name: variant.name,
+                            args: sub_pats,
+                        });
                         if self.is_useful(patterns, &ctor, ty, 0) {
                             missing.push(format!("{}", variant.name));
                         }
@@ -1705,13 +1736,24 @@ fn main() { area(Circle(1.0)) }
         let wild = || Pattern::new(PatternKind::Wildcard, span);
         let arms = vec![
             MatchArm {
-                pattern: Pattern::new(PatternKind::Constructor(leaf_name, vec![wild()]), span),
+                pattern: Pattern::new(
+                    PatternKind::Constructor {
+                        module: None,
+                        name: leaf_name,
+                        args: vec![wild()],
+                    },
+                    span,
+                ),
                 guard: None,
                 body: body.clone(),
             },
             MatchArm {
                 pattern: Pattern::new(
-                    PatternKind::Constructor(pair_name, vec![wild(), wild()]),
+                    PatternKind::Constructor {
+                        module: None,
+                        name: pair_name,
+                        args: vec![wild(), wild()],
+                    },
                     span,
                 ),
                 guard: None,

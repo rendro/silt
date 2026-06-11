@@ -4627,8 +4627,19 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
 
 /// RecordCreate multi-line emitter.
 fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
-    let ExprKind::RecordCreate { name, fields } = &expr.kind else {
+    let ExprKind::RecordCreate {
+        module,
+        name,
+        fields,
+    } = &expr.kind
+    else {
         return None;
+    };
+    // Qualified head (`util.Pt { ... }`) renders the module prefix the
+    // user wrote; the literal is otherwise identical to the bare form.
+    let head = match module {
+        Some(m) => format!("{m}.{name}"),
+        None => format!("{name}"),
     };
     if fields.is_empty() {
         return None;
@@ -4673,7 +4684,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
     Some(format!(
-        "{name} {{\n{}\n{}}}",
+        "{head} {{\n{}\n{}}}",
         lines.join("\n"),
         indent(depth)
     ))
@@ -5535,7 +5546,11 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             format!("{}.{field}", format_expr(expr, depth))
         }
 
-        ExprKind::RecordCreate { name, fields } => {
+        ExprKind::RecordCreate {
+            module,
+            name,
+            fields,
+        } => {
             let field_strs: Vec<String> = fields
                 .iter()
                 .map(|(fname, fexpr)| format!("{fname}: {}", format_expr(fexpr, depth)))
@@ -5545,7 +5560,12 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             } else {
                 ""
             };
-            format!("{name} {{ {}{trailing} }}", field_strs.join(", "))
+            // Round 94: preserve the module qualifier the user wrote.
+            let head = match module {
+                Some(m) => format!("{m}.{name}"),
+                None => format!("{name}"),
+            };
+            format!("{head} {{ {}{trailing} }}", field_strs.join(", "))
         }
 
         ExprKind::RecordUpdate { expr, fields } => {
@@ -5742,15 +5762,25 @@ fn format_pattern(pattern: &Pattern) -> String {
                 format!("({})", items.join(", "))
             }
         }
-        PatternKind::Constructor(name, pats) => {
-            if pats.is_empty() {
-                resolve(*name)
+        PatternKind::Constructor { module, name, args } => {
+            // Round 94: preserve the qualifier spelling (`Shape.Circle(r)`
+            // / `shapes.Circle(r)`); it round-trips through the parser and
+            // is validated by the typechecker, so dropping it here would
+            // reformat working code into a different (though equivalent)
+            // spelling.
+            let head = match module {
+                Some(m) => format!("{m}.{name}"),
+                None => resolve(*name),
+            };
+            if args.is_empty() {
+                head
             } else {
-                let items: Vec<String> = pats.iter().map(format_pattern).collect();
-                format!("{name}({})", items.join(", "))
+                let items: Vec<String> = args.iter().map(format_pattern).collect();
+                format!("{head}({})", items.join(", "))
             }
         }
         PatternKind::Record {
+            module,
             name,
             fields,
             has_rest,
@@ -5766,9 +5796,10 @@ fn format_pattern(pattern: &Pattern) -> String {
                 })
                 .collect();
             let rest = if *has_rest { ", .." } else { "" };
-            match name {
-                Some(n) => format!("{n} {{ {}{rest} }}", field_strs.join(", ")),
-                None => format!("{{ {}{rest} }}", field_strs.join(", ")),
+            match (module, name) {
+                (Some(m), Some(n)) => format!("{m}.{n} {{ {}{rest} }}", field_strs.join(", ")),
+                (_, Some(n)) => format!("{n} {{ {}{rest} }}", field_strs.join(", ")),
+                (_, None) => format!("{{ {}{rest} }}", field_strs.join(", ")),
             }
         }
         PatternKind::List(pats, rest) => {

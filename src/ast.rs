@@ -91,6 +91,16 @@ pub enum ExprKind {
 
     // Records
     RecordCreate {
+        /// Optional single module qualifier: `util.Pt { x: 1 }` carries
+        /// `Some(util)`. Round 94: qualified type paths work in every
+        /// position, so the record literal accepts the same `mod.Type`
+        /// spelling that enum-constructor calls (`shapes.Circle(2.0)`)
+        /// already support. The qualifier selects WHICH module's record
+        /// declaration the literal is checked against (two imported
+        /// modules may export same-named types); the constructed value
+        /// is identical to the bare `Pt { ... }` form — codegen keys on
+        /// `name` only, mirroring how variants resolve by bare name.
+        module: Option<Symbol>,
         name: Symbol,
         fields: Vec<(Symbol, Expr)>,
     },
@@ -224,8 +234,27 @@ pub enum PatternKind {
     /// The bool is `true` when written with triple-quote (`"""`) syntax.
     StringLit(String, bool),
     Tuple(Vec<Pattern>),
-    Constructor(Symbol, Vec<Pattern>),
+    /// Enum-constructor pattern: `Some(x)`, `Rect(w, h)`, or a bare
+    /// unit variant `Red`.
+    Constructor {
+        /// Optional single qualifier segment, two accepted spellings:
+        /// the owning enum (`Shape.Circle(r)`) or an imported module /
+        /// alias (`shapes.Circle(r)`). Round 94: the qualifier is
+        /// validated and (for module qualifiers) used to pick the right
+        /// enum when two modules export same-named types — but match
+        /// IDENTITY stays the bare `name`: variants resolve globally by
+        /// bare name, so exhaustiveness, duplicate-arm analysis, and
+        /// codegen all treat `shapes.Circle(r)` and `Circle(r)` as the
+        /// SAME constructor and ignore this field.
+        module: Option<Symbol>,
+        name: Symbol,
+        args: Vec<Pattern>,
+    },
     Record {
+        /// Optional single module qualifier (`util.Pt { x }`); same
+        /// contract as [`PatternKind::Constructor::module`] — checked by
+        /// the typechecker, invisible to exhaustiveness and codegen.
+        module: Option<Symbol>,
         name: Option<Symbol>,
         fields: Vec<(Symbol, Option<Pattern>)>,
         has_rest: bool,

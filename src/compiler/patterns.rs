@@ -59,7 +59,9 @@ impl Compiler {
                 Ok(vec![jump])
             }
 
-            PatternKind::Constructor(name, fields) => {
+            PatternKind::Constructor {
+                name, args: fields, ..
+            } => {
                 // Gate constructors that require module imports
                 let name_str = resolve(*name);
                 if let Some(required) = module::gated_constructor_module(&name_str)
@@ -508,7 +510,9 @@ impl Compiler {
 
             // ── Compound patterns ──────────────────────────────
             // These push intermediate Destruct values on the stack.
-            PatternKind::Constructor(name, fields) => {
+            PatternKind::Constructor {
+                name, args: fields, ..
+            } => {
                 let name_str = resolve(*name);
                 if let Some(required) = module::gated_constructor_module(&name_str)
                     && !self.imported_builtin_modules.contains(required)
@@ -808,7 +812,7 @@ impl Compiler {
                 self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
             }
 
-            PatternKind::Constructor(_, fields) => {
+            PatternKind::Constructor { args: fields, .. } => {
                 self.compile_compound_bind(
                     fields
                         .iter()
@@ -1101,7 +1105,7 @@ impl Compiler {
             | PatternKind::Range(..)
             | PatternKind::FloatRange(..)
             | PatternKind::Pin(_) => false,
-            PatternKind::Constructor(_, fields) => {
+            PatternKind::Constructor { args: fields, .. } => {
                 fields.iter().any(|p| self.pattern_has_bindings(p))
             }
             PatternKind::Tuple(pats) => pats.iter().any(|p| self.pattern_has_bindings(p)),
@@ -1139,7 +1143,7 @@ impl Compiler {
             PatternKind::Ident(name) => {
                 names.insert(*name);
             }
-            PatternKind::Constructor(_, fields) => {
+            PatternKind::Constructor { args: fields, .. } => {
                 for p in fields {
                     Self::collect_binding_names(p, names);
                 }

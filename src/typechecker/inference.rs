@@ -28,6 +28,19 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
     format!("{{{}}}", names.join(", "))
 }
 
+/// Round 94: outcome of validating a constructor pattern's qualifier
+/// (`Shape.Circle(r)` / `shapes.Circle(r)`). See
+/// `TypeChecker::resolve_pattern_ctor_qualifier`.
+enum CtorQualifierResolution {
+    /// Qualifier is the variant's own enum — resolve by bare name.
+    EnumOwned,
+    /// Qualifier is an imported module/alias; carries the bare enum
+    /// name (the type identity) and the producer module's enum info.
+    Module(Symbol, EnumInfo),
+    /// Diagnostic already emitted; bind sub-patterns to fresh vars.
+    Invalid,
+}
+
 /// Render a copy-paste-ready fn header carrying the supplied effect
 /// annotation. Used by the Phase D strict-effects diagnostic to emit
 /// the literal text the user can paste straight back into their fn
@@ -1368,9 +1381,29 @@ impl TypeChecker {
     // at the pattern itself.
     pub(super) fn reject_refutable_constructor_in_let(&mut self, pattern: &Pattern, span: Span) {
         match &pattern.kind {
-            PatternKind::Constructor(name, sub_pats) => {
-                if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
-                    && let Some(enum_info) = self.enums.get(&enum_name).cloned()
+            PatternKind::Constructor {
+                module,
+                name,
+                args: sub_pats,
+            } => {
+                // Round 94: when the bare variant entry was claimed by a
+                // different module's same-named variant (or doesn't exist
+                // at all), the qualified mirror still identifies the
+                // owning enum — `let shapes.Circle(r) = ...` must get the
+                // same refutability error as the bare spelling.
+                let owner = self.variant_to_enum.get(name).cloned().or_else(|| {
+                    module.and_then(|q| {
+                        let key = intern(&format!("{}.{}", resolve(q), resolve(*name)));
+                        self.qualified_variant_to_enum.get(&key).copied()
+                    })
+                });
+                if let Some(enum_name) = owner
+                    && let Some(enum_info) = self.enums.get(&enum_name).cloned().or_else(|| {
+                        module.and_then(|q| {
+                            let key = intern(&format!("{}.{}", resolve(q), resolve(enum_name)));
+                            self.qualified_enums.get(&key).cloned()
+                        })
+                    })
                     && enum_info.variants.len() > 1
                 {
                     self.error(
@@ -1607,7 +1640,7 @@ impl TypeChecker {
                     seen.insert(*name, pattern.span);
                 }
             }
-            PatternKind::Tuple(pats) | PatternKind::Constructor(_, pats) => {
+            PatternKind::Tuple(pats) | PatternKind::Constructor { args: pats, .. } => {
                 for p in pats {
                     Self::collect_pattern_binders_into(p, seen, on_dup);
                 }
@@ -1690,6 +1723,199 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    // ── Qualified type references (round 94) ────────────────────────
+    //
+    // `mod.Type` works in every position: record literals
+    // (`util.Pt { x: 1 }`), record patterns (`util.Pt { x }`), and
+    // variant patterns (`shapes.Circle(r)`). The helpers below resolve
+    // the qualifier against the qualified mirrors populated by
+    // `merge_imported_module_exports` and own the diagnostics, so the
+    // literal and pattern call sites stay small and agree on wording.
+
+    /// Instantiate a record's declared field types, substituting fresh
+    /// type variables for the record's type parameters (if any) so
+    /// distinct uses don't share template variables. Shared by the
+    /// record-literal and record-pattern paths.
+    pub(super) fn instantiate_record_fields(
+        &mut self,
+        rec_info: &RecordInfo,
+        param_var_ids: Option<&[TyVar]>,
+    ) -> Vec<(Symbol, Type)> {
+        if let Some(param_var_ids) = param_var_ids {
+            let mapping: HashMap<TyVar, Type> = param_var_ids
+                .iter()
+                .map(|&v| (v, self.fresh_var()))
+                .collect();
+            rec_info
+                .fields
+                .iter()
+                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                .collect()
+        } else {
+            rec_info.fields.clone()
+        }
+    }
+
+    /// Resolve `module.name` to the producer module's record info +
+    /// param var ids. On failure, EMITS the diagnostic and returns
+    /// `None`. `in_pattern` only adjusts wording.
+    ///
+    /// Error shapes:
+    ///   * qualifier is a known import (module/alias, user or builtin)
+    ///     but exports no such record → a precise "module has no record
+    ///     type" error with a did-you-mean over that module's records;
+    ///   * qualifier is not in scope at all → an "undefined type"
+    ///     diagnostic. That prefix is deliberate: it is in the
+    ///     import-cascade suppression set
+    ///     (`diagnostic_filters::is_user_import_resolvable_error_message`),
+    ///     so when the module exists but its exports were unresolvable
+    ///     (the "unknown module" warning case) the user sees one
+    ///     module-level diagnostic instead of follow-on noise — exactly
+    ///     how bare undefined names behave.
+    pub(super) fn lookup_qualified_record(
+        &mut self,
+        module: Symbol,
+        name: Symbol,
+        span: Span,
+        in_pattern: bool,
+    ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
+        let key = intern(&format!("{}.{}", resolve(module), resolve(name)));
+        if let Some(info) = self.qualified_records.get(&key).cloned() {
+            let param_ids = self.qualified_record_param_var_ids.get(&key).cloned();
+            return Some((info, param_ids));
+        }
+        let module_str = resolve(module);
+        let name_str = resolve(name);
+        if self.imported_modules.contains(&module) {
+            // The import resolved (its exports were merged), so the
+            // record genuinely isn't there — suggest a near-miss among
+            // the records this module DOES export.
+            let prefix = format!("{module_str}.");
+            let candidates: Vec<String> = self
+                .qualified_records
+                .keys()
+                .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
+                .collect();
+            let mut msg = format!("module '{module_str}' has no record type '{name_str}'");
+            if let Some(cand) = suggest_similar(&name_str, candidates.iter()) {
+                msg.push_str(&format!("; did you mean `{cand}`?"));
+            }
+            self.error(msg, span);
+        } else {
+            let where_ = if in_pattern { " in pattern" } else { "" };
+            self.error(
+                format!(
+                    "undefined type '{module_str}.{name_str}'{where_} — no module '{module_str}' \
+                     in scope; import it with `import {module_str}`"
+                ),
+                span,
+            );
+        }
+        None
+    }
+
+    /// Validate + resolve a constructor pattern's qualifier. Two
+    /// accepted spellings (mirroring expression-side `EnumName.Variant`
+    /// / `module.Variant` resolution in the `FieldAccess` arm):
+    ///   * the owning ENUM's bare name (`Shape.Circle(r)`) — validated
+    ///     against `variant_to_enum`, then resolution proceeds by bare
+    ///     name;
+    ///   * an imported MODULE or alias (`shapes.Circle(r)`) — resolved
+    ///     through the qualified mirrors so the producer module's enum
+    ///     is used even under bare-name conflicts.
+    /// On failure, EMITS the diagnostic and returns `Invalid`.
+    fn resolve_pattern_ctor_qualifier(
+        &mut self,
+        qualifier: Symbol,
+        name: Symbol,
+        span: Span,
+    ) -> CtorQualifierResolution {
+        // Enum-name qualifier takes priority: an enum and a module can
+        // share a name only when the user shadowed a module name with a
+        // local type, and the local type is the more specific reading.
+        if self.enums.contains_key(&qualifier) {
+            return match self.variant_to_enum.get(&name).copied() {
+                Some(owner) if owner == qualifier => CtorQualifierResolution::EnumOwned,
+                Some(owner) => {
+                    self.error(
+                        format!(
+                            "'{}' is not a variant of enum '{}' (it belongs to '{}')",
+                            resolve(name),
+                            resolve(qualifier),
+                            resolve(owner),
+                        ),
+                        span,
+                    );
+                    CtorQualifierResolution::Invalid
+                }
+                None => {
+                    self.error(
+                        format!(
+                            "enum '{}' has no variant '{}'",
+                            resolve(qualifier),
+                            resolve(name),
+                        ),
+                        span,
+                    );
+                    CtorQualifierResolution::Invalid
+                }
+            };
+        }
+        let key = intern(&format!("{}.{}", resolve(qualifier), resolve(name)));
+        if let Some(enum_bare) = self.qualified_variant_to_enum.get(&key).copied() {
+            let enum_key = intern(&format!("{}.{}", resolve(qualifier), resolve(enum_bare)));
+            // The qualified enum mirror is populated by the same merge
+            // that filled `qualified_variant_to_enum`; the bare-map
+            // fallback only covers a (theoretical) producer snapshot
+            // that exported the variant mapping without its enum.
+            if let Some(info) = self
+                .qualified_enums
+                .get(&enum_key)
+                .or_else(|| self.enums.get(&enum_bare))
+                .cloned()
+            {
+                return CtorQualifierResolution::Module(enum_bare, info);
+            }
+        }
+        let qual_str = resolve(qualifier);
+        let name_str = resolve(name);
+        if self.qualified_records.contains_key(&key) {
+            // `util.Pt(x)` where `Pt` is a record — same shape hint the
+            // bare path gives for `Pt(x)`.
+            self.error(
+                format!(
+                    "'{name_str}' is a record type; use record-pattern syntax \
+                     `{qual_str}.{name_str} {{ ... }}` instead of constructor-pattern syntax"
+                ),
+                span,
+            );
+        } else if self.imported_modules.contains(&qualifier) {
+            let prefix = format!("{qual_str}.");
+            let candidates: Vec<String> = self
+                .qualified_variant_to_enum
+                .keys()
+                .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
+                .collect();
+            let mut msg = format!("module '{qual_str}' has no variant '{name_str}'");
+            if let Some(cand) = suggest_similar(&name_str, candidates.iter()) {
+                msg.push_str(&format!("; did you mean `{cand}`?"));
+            }
+            self.error(msg, span);
+        } else {
+            // "undefined constructor" prefix keeps this inside the
+            // import-cascade suppression set — see
+            // `lookup_qualified_record` for the rationale.
+            self.error(
+                format!(
+                    "undefined constructor '{qual_str}.{name_str}' in pattern — '{qual_str}' \
+                     is neither an imported module nor an enum type"
+                ),
+                span,
+            );
+        }
+        CtorQualifierResolution::Invalid
     }
 
     /// Bind names in a pattern to their types in the environment.
@@ -1799,10 +2025,39 @@ impl TypeChecker {
                     }
                 }
             }
-            PatternKind::Constructor(name, sub_pats) => {
+            PatternKind::Constructor {
+                module,
+                name,
+                args: sub_pats,
+            } => {
+                // Round 94: validate/resolve the qualifier first. A
+                // module qualifier picks the producer module's enum
+                // (disambiguating bare-name conflicts); an enum-name
+                // qualifier (or none) resolves by bare name as before.
+                let resolved: Option<(Symbol, EnumInfo)> = match module {
+                    Some(q) => match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span) {
+                        CtorQualifierResolution::Module(enum_name, info) => Some((enum_name, info)),
+                        CtorQualifierResolution::EnumOwned => self
+                            .variant_to_enum
+                            .get(name)
+                            .copied()
+                            .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
+                        CtorQualifierResolution::Invalid => {
+                            for sp in sub_pats {
+                                let tv = self.fresh_var();
+                                self.bind_pattern(sp, &tv, env, span);
+                            }
+                            return;
+                        }
+                    },
+                    None => self
+                        .variant_to_enum
+                        .get(name)
+                        .copied()
+                        .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
+                };
                 // Look up the constructor to find inner types
-                if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
-                    && let Some(enum_info) = self.enums.get(&enum_name).cloned()
+                if let Some((enum_name, enum_info)) = resolved
                     && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
                 {
                     if sub_pats.len() != var_info.field_types.len() {
@@ -1889,7 +2144,12 @@ impl TypeChecker {
                     self.bind_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            PatternKind::Record { name, fields, .. } => {
+            PatternKind::Record {
+                module,
+                name,
+                fields,
+                ..
+            } => {
                 // BROKEN (round 52): duplicate field names in record
                 // patterns slipped through — both the explicit-sub form
                 // (`Point { x: a, x: b }` — distinct binders, so the
@@ -1900,36 +2160,39 @@ impl TypeChecker {
                 // to a fresh TyVar when the base wasn't a record, or when
                 // the field didn't exist. Both were deferred to VM runtime
                 // errors. Reject them at the type-check stage.
+                //
+                // Round 94: a module qualifier (`util.Pt { x }`) resolves
+                // through the qualified mirrors (its own error path lives
+                // in `lookup_qualified_record`); the type identity stays
+                // the bare name.
                 let resolved = self.apply(ty);
-                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> = if let Some(rec_name) =
-                    name
-                    && let Some(rec_info) = self.records.get(rec_name).cloned()
-                {
-                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.record_param_var_ids.get(rec_name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> = param_var_ids
-                            .iter()
-                            .map(|&v| (v, self.fresh_var()))
-                            .collect();
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
-                    Some((*rec_name, instantiated_fields))
-                } else if let Some(rec_name) = name {
-                    self.error(
-                        format!("undefined record type '{rec_name}' in pattern"),
-                        span,
-                    );
-                    None
-                } else {
-                    None
+                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match (name, module) {
+                    (Some(rec_name), Some(q)) => {
+                        self.lookup_qualified_record(*q, *rec_name, pattern.span, true)
+                    }
+                    (Some(rec_name), None) => match self.records.get(rec_name).cloned() {
+                        Some(info) => {
+                            let ids = self.record_param_var_ids.get(rec_name).cloned();
+                            Some((info, ids))
+                        }
+                        None => {
+                            self.error(
+                                format!("undefined record type '{rec_name}' in pattern"),
+                                span,
+                            );
+                            None
+                        }
+                    },
+                    (None, _) => None,
                 };
+                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> =
+                    if let (Some(rec_name), Some((rec_info, param_ids))) = (name, looked) {
+                        let instantiated_fields =
+                            self.instantiate_record_fields(&rec_info, param_ids.as_deref());
+                        Some((*rec_name, instantiated_fields))
+                    } else {
+                        None
+                    };
                 if let Some((pname, pfields)) = &pattern_record {
                     let rec_ty = Type::Record(*pname, pfields.clone());
                     self.unify(ty, &rec_ty, span);
@@ -3994,7 +4257,12 @@ impl TypeChecker {
                 Type::Fun(param_types, Box::new(lambda_ret))
             }
 
-            ExprKind::RecordCreate { name, fields } => {
+            ExprKind::RecordCreate {
+                module,
+                name,
+                fields,
+            } => {
+                let module = *module;
                 let name = *name;
                 // GAP (round 35 F4): duplicate fields in a record literal
                 // (e.g. `User { name: "a", name: "b" }`) used to slip past
@@ -4017,26 +4285,29 @@ impl TypeChecker {
                         }
                     }
                 }
-                if let Some(rec_info) = self.records.get(&name).cloned() {
+                // Round 94: a module qualifier (`util.Pt { x: 1 }`)
+                // resolves through the qualified mirrors so the literal
+                // is checked against the PRODUCER module's declaration
+                // even when a bare-name conflict made `self.records`
+                // keep a different module's `Pt`. The constructed type
+                // identity is the bare name either way (mirroring how
+                // qualified enum-constructor CALLS resolve to the bare
+                // variant), so the qualified and bare spellings build
+                // interchangeable values.
+                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
+                    Some(q) => self.lookup_qualified_record(q, name, span, false),
+                    None => self.records.get(&name).cloned().map(|info| {
+                        let ids = self.record_param_var_ids.get(&name).cloned();
+                        (info, ids)
+                    }),
+                };
+                if let Some((rec_info, param_ids)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
                     // This prevents different instantiations from sharing the same
                     // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
-                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.record_param_var_ids.get(&name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> = param_var_ids
-                            .iter()
-                            .map(|&v| (v, self.fresh_var()))
-                            .collect();
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
+                    let instantiated_fields =
+                        self.instantiate_record_fields(&rec_info, param_ids.as_deref());
 
                     let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
@@ -4100,11 +4371,15 @@ impl TypeChecker {
                     // an anonymous record. Emit an error so the user notices a
                     // typo or missing type declaration. We still walk the field
                     // expressions so nested errors are reported, but return
-                    // Type::Error to prevent downstream cascades.
+                    // Type::Error to prevent downstream cascades. (Qualified
+                    // lookups already emitted their own, more specific
+                    // diagnostic inside `lookup_qualified_record`.)
                     for (_, e) in fields.iter_mut() {
                         let _ = self.infer_expr(e, env);
                     }
-                    self.error(format!("undefined type '{name}'"), span);
+                    if module.is_none() {
+                        self.error(format!("undefined type '{name}'"), span);
+                    }
                     Type::Error
                 }
             }
@@ -4789,9 +5064,39 @@ impl TypeChecker {
                     }
                 }
             }
-            PatternKind::Constructor(name, sub_pats) => {
+            PatternKind::Constructor {
+                module,
+                name,
+                args: sub_pats,
+            } => {
+                // Round 94: validate the qualifier, then prefer the
+                // QUALIFIED scheme (`env` carries every export under
+                // `prefix.Name` — see `merge_imported_module_exports`)
+                // so a module qualifier picks the producer module's
+                // constructor under bare-name conflicts. Bare fallback
+                // covers the enum-name qualifier spelling
+                // (`Shape.Circle(r)`), whose schemes are bare-only.
+                let scheme = match module {
+                    Some(q) => match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span) {
+                        CtorQualifierResolution::Invalid => {
+                            for sp in sub_pats {
+                                let tv = self.fresh_var();
+                                self.check_pattern(sp, &tv, env, span);
+                            }
+                            return;
+                        }
+                        CtorQualifierResolution::Module(..) => {
+                            let key = intern(&format!("{}.{}", resolve(*q), resolve(*name)));
+                            env.lookup(key)
+                                .cloned()
+                                .or_else(|| env.lookup(*name).cloned())
+                        }
+                        CtorQualifierResolution::EnumOwned => env.lookup(*name).cloned(),
+                    },
+                    None => env.lookup(*name).cloned(),
+                };
                 // Look up the constructor type
-                if let Some(scheme) = env.lookup(*name).cloned() {
+                if let Some(scheme) = scheme {
                     let ctor_ty = self.instantiate(&scheme);
                     let ctor_ty = self.apply(&ctor_ty);
 
@@ -4892,29 +5197,30 @@ impl TypeChecker {
                     self.check_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            PatternKind::Record { name, fields, .. } => {
+            PatternKind::Record {
+                module,
+                name,
+                fields,
+                ..
+            } => {
                 // BROKEN (round 52): same duplicate-field guard as in
                 // `bind_pattern`'s Record arm — match-arm record patterns
                 // flow through `check_pattern`, so the check has to fire
                 // on both paths.
                 self.check_record_pattern_duplicate_fields(fields, pattern.span);
                 if let Some(rec_name) = name {
-                    if let Some(rec_info) = self.records.get(rec_name).cloned() {
-                        let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                            self.record_param_var_ids.get(rec_name).cloned()
-                        {
-                            let mapping: HashMap<TyVar, Type> = param_var_ids
-                                .iter()
-                                .map(|&v| (v, self.fresh_var()))
-                                .collect();
-                            rec_info
-                                .fields
-                                .iter()
-                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                                .collect()
-                        } else {
-                            rec_info.fields.clone()
-                        };
+                    // Round 94: module qualifier resolves through the
+                    // qualified mirrors (see bind_pattern's Record arm).
+                    let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
+                        Some(q) => self.lookup_qualified_record(*q, *rec_name, pattern.span, true),
+                        None => self.records.get(rec_name).cloned().map(|info| {
+                            let ids = self.record_param_var_ids.get(rec_name).cloned();
+                            (info, ids)
+                        }),
+                    };
+                    if let Some((rec_info, param_ids)) = looked {
+                        let instantiated_fields =
+                            self.instantiate_record_fields(&rec_info, param_ids.as_deref());
 
                         let rec_ty = Type::Record(*rec_name, instantiated_fields.clone());
                         self.unify(expected, &rec_ty, span);
@@ -4951,10 +5257,15 @@ impl TypeChecker {
                             }
                         }
                     } else {
-                        self.error(
-                            format!("undefined record type '{rec_name}' in pattern"),
-                            span,
-                        );
+                        // Qualified lookups already emitted their own,
+                        // more specific diagnostic inside
+                        // `lookup_qualified_record`.
+                        if module.is_none() {
+                            self.error(
+                                format!("undefined record type '{rec_name}' in pattern"),
+                                span,
+                            );
+                        }
                         for (_, sub_pat) in fields {
                             if let Some(sp) = sub_pat {
                                 let tv = self.fresh_var();

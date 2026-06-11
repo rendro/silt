@@ -504,6 +504,32 @@ pub struct TypeChecker {
     pub(super) variant_to_enum: HashMap<Symbol, Symbol>,
     /// Declared record types (type name -> record info).
     pub(super) records: HashMap<Symbol, RecordInfo>,
+    /// Round 94: module-qualified type mirrors. Keys are interned
+    /// `"prefix.Name"` where `prefix` is the spelling the importer uses
+    /// (module name or `import ... as` alias); values are the PRODUCER
+    /// module's infos. They back qualified record literals
+    /// (`util.Pt { .. }`) and qualified patterns (`shapes.Circle(r)`,
+    /// `util.Pt { x }`), and in particular keep working when a bare-name
+    /// conflict made the `or_insert` merge into `records` / `enums`
+    /// keep a DIFFERENT module's same-named type — the qualifier is
+    /// exactly how the user disambiguates. Kept in separate maps (not
+    /// dotted keys inside `records` / `enums`) so bare-name iteration
+    /// sites (exhaustiveness witness synthesis, suggestions,
+    /// auto-derive) never see qualified entries. Cleared per
+    /// `check_program` run alongside `imported_modules`.
+    pub(super) qualified_records: HashMap<Symbol, RecordInfo>,
+    /// Round 94: qualified mirror of `record_param_var_ids`, keyed like
+    /// `qualified_records`.
+    pub(super) qualified_record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
+    /// Round 94: qualified mirror of `enums` (`"prefix.EnumName"` keys).
+    pub(super) qualified_enums: HashMap<Symbol, EnumInfo>,
+    /// Round 94: maps `"prefix.Variant"` → the owning enum's BARE name.
+    /// The bare name is the enum's type identity (`Type::Generic(bare,
+    /// ..)` — two modules' same-named enums are conflated at the type
+    /// level, see `merge_imported_module_exports`); the matching
+    /// `EnumInfo` for field types lives in `qualified_enums` under
+    /// `"prefix.<bare>"`.
+    pub(super) qualified_variant_to_enum: HashMap<Symbol, Symbol>,
     /// Declared traits.
     pub(super) traits: HashMap<Symbol, TraitInfo>,
     /// Method table: (type_name, method_name) → method entry.
@@ -812,6 +838,10 @@ impl TypeChecker {
             enums: HashMap::new(),
             variant_to_enum: HashMap::new(),
             records: HashMap::new(),
+            qualified_records: HashMap::new(),
+            qualified_record_param_var_ids: HashMap::new(),
+            qualified_enums: HashMap::new(),
+            qualified_variant_to_enum: HashMap::new(),
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
@@ -2478,11 +2508,27 @@ impl TypeChecker {
                 variants: new_variants,
                 defined_in: info.defined_in,
             };
+            // Round 94: qualified mirror first (the bare merge below
+            // moves `new_info`). `insert`, not `or_insert`: the prefix
+            // is unique per import spelling, and re-importing the same
+            // module under the same prefix re-registers identical data.
+            self.qualified_enums.insert(
+                intern(&format!("{prefix_str}.{}", resolve(*name))),
+                new_info.clone(),
+            );
             self.enums.entry(*name).or_insert(new_info);
         }
 
         // Merge variant_to_enum.
         for (variant, enum_name) in &exports.variant_to_enum {
+            // Round 94: `prefix.Variant` → bare owning-enum name, so
+            // qualified variant PATTERNS (`shapes.Circle(r)`) resolve
+            // against this module's enum even when the bare entry below
+            // was claimed by an earlier import's same-named variant.
+            self.qualified_variant_to_enum.insert(
+                intern(&format!("{prefix_str}.{}", resolve(*variant))),
+                *enum_name,
+            );
             self.variant_to_enum.entry(*variant).or_insert(*enum_name);
         }
 
@@ -2520,12 +2566,23 @@ impl TypeChecker {
                 fields: new_fields,
                 defined_in: info.defined_in,
             };
+            // Round 94: qualified mirror so `prefix.Pt { .. }` (literal
+            // and pattern forms) resolves against THIS module's fields
+            // even when the bare entry was claimed by an earlier import.
+            self.qualified_records.insert(
+                intern(&format!("{prefix_str}.{}", resolve(*name))),
+                new_info.clone(),
+            );
             self.records.entry(*name).or_insert(new_info);
         }
 
         // Merge record_param_var_ids.
         for (name, ids) in &exports.record_param_var_ids {
             let remapped: Vec<TyVar> = ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
+            self.qualified_record_param_var_ids.insert(
+                intern(&format!("{prefix_str}.{}", resolve(*name))),
+                remapped.clone(),
+            );
             self.record_param_var_ids.entry(*name).or_insert(remapped);
         }
 
@@ -2832,6 +2889,12 @@ impl TypeChecker {
         // Round 56 item 4: reset the import set so a fresh check_program
         // call doesn't inherit modules imported by a previous run.
         self.imported_modules.clear();
+        // Round 94: the qualified type mirrors share the import set's
+        // lifecycle — they are rebuilt from the imports processed below.
+        self.qualified_records.clear();
+        self.qualified_record_param_var_ids.clear();
+        self.qualified_enums.clear();
+        self.qualified_variant_to_enum.clear();
 
         // Process imports: register selective/aliased import names in the type environment
         for decl in &program.decls {
@@ -7363,7 +7426,9 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
             }
             vars
         }
-        PatternKind::Constructor(_, pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        PatternKind::Constructor { args: pats, .. } => {
+            pats.iter().flat_map(collect_pattern_vars).collect()
+        }
         PatternKind::Record { fields, .. } => {
             let mut vars: Vec<Symbol> = Vec::new();
             for (field_name, sub_pat) in fields {

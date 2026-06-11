@@ -344,7 +344,7 @@ fn find_ident_in_pattern(
                 find_ident_in_pattern(p, cursor, source, best);
             }
         }
-        PatternKind::Constructor(_, fields) => {
+        PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
                 find_ident_in_pattern(p, cursor, source, best);
             }

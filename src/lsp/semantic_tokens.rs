@@ -335,10 +335,20 @@ fn emit_expr_tokens(
                 push_token_at_offset(source, expr.span.offset, &name_str, tt, out);
             }
         }
-        ExprKind::RecordCreate { name, fields } => {
-            // Record constructor: the name is a TYPE.
-            let name_str = resolve(*name);
-            push_token_at_offset(source, expr.span.offset, &name_str, TT_TYPE, out);
+        ExprKind::RecordCreate {
+            module,
+            name,
+            fields,
+        } => {
+            // Record constructor: the name is a TYPE. For the qualified
+            // form (`util.Pt { ... }`) the expr span points at the module
+            // ident, not the type name, so emitting the type token at
+            // `span.offset` would mislabel the module segment — skip the
+            // head token there (the fields still get their tokens).
+            if module.is_none() {
+                let name_str = resolve(*name);
+                push_token_at_offset(source, expr.span.offset, &name_str, TT_TYPE, out);
+            }
             for (_, v) in fields {
                 emit_expr_tokens(v, source, doc, server, out);
             }
@@ -401,7 +411,7 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
                 emit_pattern_binding_tokens(p, source, out);
             }
         }
-        PatternKind::Constructor(_, fields) => {
+        PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
                 emit_pattern_binding_tokens(p, source, out);
             }

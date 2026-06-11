@@ -336,7 +336,11 @@ fn collect_pattern_bindings(
                 );
             }
         }
-        PatternKind::Constructor(ctor, fields) => {
+        PatternKind::Constructor {
+            name: ctor,
+            args: fields,
+            ..
+        } => {
             // For Ok/Err/Some, try to propagate the inner type.
             let inner_ty: Option<Type> = match (resolve(*ctor).as_str(), expr_ty) {
                 ("Ok", Some(Type::Generic(_, args))) => args.first().cloned(),

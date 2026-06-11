@@ -608,7 +608,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                 collect_pattern_names(p, names);
             }
         }
-        PatternKind::Constructor(_, pats) => {
+        PatternKind::Constructor { args: pats, .. } => {
             for p in pats {
                 collect_pattern_names(p, names);
             }

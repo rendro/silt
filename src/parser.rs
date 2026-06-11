@@ -2598,55 +2598,77 @@ impl Parser {
                         left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
                     } else {
                         let (field, field_span) = self.expect_ident()?;
-                        // Round-93 guard: qualified record construction
-                        // `util.Pt { x: 1, y: 2 }` is not (yet) syntax — the
-                        // postfix loop used to end the expression at
-                        // `util.Pt` (a field access yielding a type
-                        // descriptor at runtime) and the `{ ... }` became a
-                        // separate, silently-discarded anonymous-record
-                        // statement: `check` passed, the literal's fields
-                        // vanished, and `==` compared descriptors. Until a
-                        // design decision adds the qualified form, reject
-                        // the shape with an actionable error.
+                        // Round 94: qualified record construction —
+                        // `util.Pt { x: 1, y: 2 }` builds the same value as
+                        // bare `Pt { x: 1, y: 2 }`, with the qualifier
+                        // selecting which module's record type the literal
+                        // is checked against. (History: pre-round-93 this
+                        // shape silently misparsed as a field access plus a
+                        // discarded anonymous-record statement; round 93
+                        // made it a parse error as a stopgap; round 94 adds
+                        // the real form.)
                         //
-                        // Fires only when ALL hold (conservative — must not
-                        // catch trailing closures, blocks, match bodies, or
-                        // a `{` on the next line):
-                        //   * the accessed field is Capitalized (type-like),
-                        //   * a `{` follows on the SAME line, and
-                        //   * the brace contents start like record fields
-                        //     (`ident :` — the same bounded lookahead that
-                        //     lets bare `Pt { x: 1 }` through in match
-                        //     scrutinees; a trailing closure `{ x -> ... }`
-                        //     or match body `{ pat -> ... }` never matches).
+                        // Gating mirrors the bare `Pt { ... }` atom exactly
+                        // (same-line `{`, match-body suppression via the
+                        // record-literal lookahead, trailing-closure
+                        // exclusion) so the two spellings accept the same
+                        // brace shapes:
+                        //   * `util.f { x -> x }` stays a trailing closure;
+                        //   * `match util.Pt { _ -> 1 }` keeps its match
+                        //     body;
+                        //   * a `{` on the next line stays a separate
+                        //     statement.
                         if is_constructor(field)
                             && !self.has_newline_before()
-                            && self.scrutinee_lbrace_is_record_literal()
+                            && self.at(&Token::LBrace)
                             && !self.is_trailing_closure()
                         {
-                            let ty = intern::resolve(field);
-                            let message = match Self::dotted_path_text(&left) {
-                                // Plain module name: show a copy-pasteable
-                                // selective import (imports take a single
-                                // module ident, so skip the example for
-                                // deeper dotted paths).
-                                Some(module) if !module.contains('.') => format!(
-                                    "qualified record construction '{module}.{ty} {{ ... }}' is not supported — \
-                                     import the type and use '{ty} {{ ... }}' (e.g. 'import {module}.{{ {ty} }}')"
-                                ),
-                                Some(path) => format!(
-                                    "qualified record construction '{path}.{ty} {{ ... }}' is not supported — \
-                                     import the type and use '{ty} {{ ... }}'"
-                                ),
-                                None => format!(
-                                    "qualified record construction '{ty} {{ ... }}' after a field access is not supported — \
-                                     import the type and use '{ty} {{ ... }}'"
-                                ),
-                            };
-                            return Err(ParseError {
-                                message,
-                                span: field_span,
-                            });
+                            if let ExprKind::Ident(module) = &left.kind
+                                && (!self.in_match_scrutinee
+                                    || self.scrutinee_lbrace_is_record_literal())
+                            {
+                                let module = *module;
+                                self.advance(); // {
+                                let fields = self.parse_record_fields()?;
+                                self.expect(&Token::RBrace)?;
+                                let span = left.span;
+                                left = Expr::new(
+                                    ExprKind::RecordCreate {
+                                        module: Some(module),
+                                        name: field,
+                                        fields,
+                                    },
+                                    span,
+                                );
+                                continue;
+                            }
+                            // Imports take a single module ident, so only a
+                            // one-segment qualifier can ever resolve. A
+                            // deeper dotted path (`a.b.Pt { ... }`) or an
+                            // arbitrary expression qualifier keeps the
+                            // round-93 conservative error instead of the old
+                            // silent misparse — but only when the brace
+                            // contents actually look like record fields
+                            // (`ident :`), so blocks and match bodies after
+                            // a capitalized field access stay untouched.
+                            if self.scrutinee_lbrace_is_record_literal() {
+                                let ty = intern::resolve(field);
+                                let message = match Self::dotted_path_text(&left) {
+                                    Some(path) => format!(
+                                        "qualified record construction '{path}.{ty} {{ ... }}' is not supported — \
+                                         a record literal takes a single module qualifier ('mod.{ty} {{ ... }}'); \
+                                         import the type and use '{ty} {{ ... }}'"
+                                    ),
+                                    None => format!(
+                                        "qualified record construction '{ty} {{ ... }}' after a field access is not supported — \
+                                         import the type and use '{ty} {{ ... }}'"
+                                    ),
+                                };
+                                return Err(ParseError {
+                                    message,
+                                    span: field_span,
+                                });
+                            }
                         }
                         let span = left.span;
                         left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
@@ -2877,7 +2899,14 @@ impl Parser {
                     self.advance(); // {
                     let fields = self.parse_record_fields()?;
                     self.expect(&Token::RBrace)?;
-                    Ok(Expr::new(ExprKind::RecordCreate { name, fields }, span))
+                    Ok(Expr::new(
+                        ExprKind::RecordCreate {
+                            module: None,
+                            name,
+                            fields,
+                        },
+                        span,
+                    ))
                 } else {
                     Ok(Expr::new(ExprKind::Ident(name), span))
                 }
@@ -3228,8 +3257,9 @@ impl Parser {
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
     /// `a.b.util`) back to source text for diagnostics. Returns `None`
     /// for anything that isn't a simple dotted path. Used by the
-    /// round-93 qualified-record-construction error to echo the
-    /// module path the user wrote.
+    /// deep-path qualified-record-construction error (round 93; kept
+    /// in round 94 — only a SINGLE module qualifier is real syntax) to
+    /// echo the path the user wrote.
     fn dotted_path_text(expr: &Expr) -> Option<String> {
         match &expr.kind {
             ExprKind::Ident(name) => Some(intern::resolve(*name)),
@@ -3738,6 +3768,101 @@ impl Parser {
         }
     }
 
+    /// Reject a second `.` after an already-qualified pattern head:
+    /// imports take a single module ident, so `a.b.Circle(r)` can never
+    /// resolve. Erroring here (instead of letting the pattern parser
+    /// die on the dot with a generic "expected ->") names the supported
+    /// shape. `module`/`name` are the segments consumed so far.
+    fn reject_nested_pattern_qualifier(
+        &mut self,
+        module: Option<Symbol>,
+        name: Symbol,
+    ) -> Result<()> {
+        if self.at(&Token::Dot) {
+            let head = match module {
+                Some(m) => format!("{}.{}", intern::resolve(m), intern::resolve(name)),
+                None => intern::resolve(name),
+            };
+            return Err(ParseError {
+                message: format!(
+                    "nested qualifiers are not supported in patterns ('{head}.' has more than one segment); \
+                     use a single 'module.Name' qualifier"
+                ),
+                span: self.span(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Shared tail for (possibly qualified) constructor-shaped patterns,
+    /// entered after the head segments are consumed. Three shapes:
+    /// `Name(args)` → constructor, `Name { fields }` → record pattern,
+    /// bare `Name` → unit-variant constructor. Used by both the
+    /// capitalized head (`Circle(..)`, `Shape.Circle(..)`) and the
+    /// round-94 module-qualified head (`shapes.Circle(..)`).
+    fn parse_constructor_pattern_tail(
+        &mut self,
+        module: Option<Symbol>,
+        name: Symbol,
+        start: Span,
+    ) -> Result<Pattern> {
+        let mk = |kind: PatternKind| Pattern::new(kind, start);
+        // Constructor pattern: Some(x), Ok(value), Rect(w, h)
+        if self.at(&Token::LParen) {
+            self.advance();
+            let mut pats = Vec::new();
+            self.skip_nl();
+            while !self.at(&Token::RParen) {
+                pats.push(self.parse_pattern()?);
+                self.expect_list_sep("constructor pattern", ')', &Token::RParen)?;
+            }
+            self.expect(&Token::RParen)?;
+            Ok(mk(PatternKind::Constructor {
+                module,
+                name,
+                args: pats,
+            }))
+        } else if self.at(&Token::LBrace) {
+            // Record pattern: User { name, age, .. }
+            self.advance();
+            self.skip_nl();
+            let mut fields = Vec::new();
+            let mut has_rest = false;
+            while !self.at(&Token::RBrace) {
+                self.skip_nl();
+                if self.at(&Token::DotDot) {
+                    self.advance();
+                    has_rest = true;
+                    self.skip_nl();
+                    break;
+                }
+                let (field_name, _) = self.expect_ident()?;
+                // Optional sub-pattern: `name: pat`
+                let sub = if self.peek_skip_nl() == &Token::Colon {
+                    self.advance();
+                    Some(self.parse_pattern()?)
+                } else {
+                    None
+                };
+                fields.push((field_name, sub));
+                self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
+            }
+            self.expect(&Token::RBrace)?;
+            Ok(mk(PatternKind::Record {
+                module,
+                name: Some(name),
+                fields,
+                has_rest,
+            }))
+        } else {
+            Ok(mk(PatternKind::Constructor {
+                module,
+                name,
+                args: Vec::new(),
+            }))
+        }
+    }
+
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
         self.skip_nl();
         let start = self.span();
@@ -3749,16 +3874,16 @@ impl Parser {
             }
             Token::Ident(ref name) if is_constructor(*name) => {
                 let mut name = *name;
+                let mut module: Option<Symbol> = None;
                 self.advance();
                 // Qualified variant pattern: `EnumName.Variant(args)` or
                 // `EnumName.Variant { fields }` or bare `EnumName.Variant`.
                 // Silt's variants resolve by bare name globally (see
                 // `variant_to_enum`), so the qualifier is disambiguation
-                // only. We consume it and parse the variant as the
-                // effective constructor name. Same-name variant
-                // collisions across enums are already reported; if the
-                // user names the wrong enum here we surface a targeted
-                // error in the typechecker's pattern resolution path.
+                // only — it is carried on the pattern node and validated
+                // by the typechecker (round 94; previously it was
+                // silently discarded here, so a wrong-enum qualifier
+                // never errored).
                 if self.at(&Token::Dot) {
                     self.advance();
                     let (variant, _) = self.expect_ident()?;
@@ -3772,56 +3897,37 @@ impl Parser {
                             span: self.span(),
                         });
                     }
+                    module = Some(name);
                     name = variant;
+                    self.reject_nested_pattern_qualifier(module, name)?;
                 }
-                // Constructor pattern: Some(x), Ok(value), Rect(w, h)
-                if self.at(&Token::LParen) {
-                    self.advance();
-                    let mut pats = Vec::new();
-                    self.skip_nl();
-                    while !self.at(&Token::RParen) {
-                        pats.push(self.parse_pattern()?);
-                        self.expect_list_sep("constructor pattern", ')', &Token::RParen)?;
-                    }
-                    self.expect(&Token::RParen)?;
-                    Ok(mk(PatternKind::Constructor(name, pats)))
-                } else if self.at(&Token::LBrace) {
-                    // Record pattern: User { name, age, .. }
-                    self.advance();
-                    self.skip_nl();
-                    let mut fields = Vec::new();
-                    let mut has_rest = false;
-                    while !self.at(&Token::RBrace) {
-                        self.skip_nl();
-                        if self.at(&Token::DotDot) {
-                            self.advance();
-                            has_rest = true;
-                            self.skip_nl();
-                            break;
-                        }
-                        let (field_name, _) = self.expect_ident()?;
-                        // Optional sub-pattern: `name: pat`
-                        let sub = if self.peek_skip_nl() == &Token::Colon {
-                            self.advance();
-                            Some(self.parse_pattern()?)
-                        } else {
-                            None
-                        };
-                        fields.push((field_name, sub));
-                        self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
-                    }
-                    self.expect(&Token::RBrace)?;
-                    Ok(mk(PatternKind::Record {
-                        name: Some(name),
-                        fields,
-                        has_rest,
-                    }))
-                } else {
-                    Ok(mk(PatternKind::Constructor(name, Vec::new())))
-                }
+                self.parse_constructor_pattern_tail(module, name, start)
             }
             Token::Ident(name) => {
                 self.advance();
+                // Round 94: module-qualified pattern — `shapes.Circle(r)`,
+                // `util.Pt { x }`, or a bare qualified unit variant
+                // `color.Red`. A lowercase ident followed by `.` was
+                // previously ALWAYS a parse error in pattern position
+                // ("expected ->, found ."), so consuming the dot here
+                // cannot change the meaning of any accepted program.
+                if self.at(&Token::Dot) {
+                    self.advance();
+                    let (type_name, _) = self.expect_ident()?;
+                    if !is_constructor(type_name) {
+                        return Err(ParseError {
+                            message: format!(
+                                "expected a type or variant name after '{}.' in pattern, found '{}'",
+                                intern::resolve(name),
+                                intern::resolve(type_name)
+                            ),
+                            span: self.span(),
+                        });
+                    }
+                    let module = Some(name);
+                    self.reject_nested_pattern_qualifier(module, type_name)?;
+                    return self.parse_constructor_pattern_tail(module, type_name, start);
+                }
                 Ok(mk(PatternKind::Ident(name)))
             }
             Token::Int(n) => {
@@ -4628,7 +4734,12 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         let arm = first_match_arm_of_main(&prog);
-        if let PatternKind::Constructor(ref name, ref inner) = arm.pattern.kind {
+        if let PatternKind::Constructor {
+            ref name,
+            args: ref inner,
+            ..
+        } = arm.pattern.kind
+        {
             assert_eq!(*name, intern::intern("Some"));
             assert_eq!(inner.len(), 1);
             assert!(matches!(&inner[0].kind, PatternKind::Tuple(pats) if pats.len() == 2));
@@ -4683,6 +4794,7 @@ fn main() {
             ref name,
             ref fields,
             has_rest,
+            ..
         } = arm.pattern.kind
         {
             assert_eq!(*name, Some(intern::intern("User")));
@@ -5363,6 +5475,7 @@ fn main() {
             ref name,
             ref fields,
             has_rest,
+            ..
         } = arm.pattern.kind
         {
             assert_eq!(*name, Some(intern::intern("User")));

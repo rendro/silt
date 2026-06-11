@@ -46,7 +46,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 ty: None,
             });
         }
-        PatternKind::Constructor(_, fields) => {
+        PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
                 collect_pattern_names(p, locals);
             }
@@ -176,8 +176,14 @@ fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mu
 
 /// For `when let Ok(x) = expr` where expr has type Result(T, E), set x's type to T.
 fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals: &mut [LocalVar]) {
-    if let (PatternKind::Constructor(ctor, fields), Some(Type::Generic(_, args))) =
-        (&pattern.kind, expr_ty)
+    if let (
+        PatternKind::Constructor {
+            name: ctor,
+            args: fields,
+            ..
+        },
+        Some(Type::Generic(_, args)),
+    ) = (&pattern.kind, expr_ty)
     {
         // Result(T, E): Ok(x) → x has type T, Err(x) → x has type E
         // Option(T): Some(x) → x has type T

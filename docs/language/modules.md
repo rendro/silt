@@ -60,6 +60,13 @@ import geometry as g              -- aliased:    g.add(1, 2)
 `import geometry.{ add }` brings only `add` into scope. To also use other
 items as `geometry.sub`, add a separate `import geometry`.
 
+Qualified paths cover **types** as well as functions: enum constructors
+(`geometry.Circle(2.0)`), record literals (`geometry.Point { x: 1, y: 2 }`),
+and patterns (`geometry.Circle(r) ->`, `geometry.Point { x, .. } ->`) all
+accept the `module.Name` spelling. The qualified and bare forms build and
+match exactly the same values; qualification is how you disambiguate when
+two imported modules export the same type name.
+
 ## Multi-file projects
 
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree.
