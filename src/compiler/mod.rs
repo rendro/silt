@@ -2516,7 +2516,28 @@ impl Compiler {
                         self.current_chunk()
                             .emit_op_u16(Op::CallMethod, method_idx, span);
                         self.current_chunk().emit_u8(argc, span);
-                    } else if is_module_call {
+                    } else if is_module_call
+                        && (!self.repl_mode
+                            || matches!(&receiver.kind, ExprKind::Ident(n)
+                                if module::is_builtin_module(&resolve(*n))))
+                    {
+                        // B8 (round 94): mirror the FieldAccess arm's REPL
+                        // guard. In the REPL a previously-bound value like
+                        // `p` is a VM global (from `eval_declaration`), not
+                        // a module, and is not in `top_level_value_globals`
+                        // because each REPL line compiles separately — so
+                        // `is_module_call` is spuriously true. When the
+                        // receiver is NOT a known builtin module, fall
+                        // through to the value method-call path below, which
+                        // emits `GetGlobal(p)` + `CallMethod("d", ..)`. The
+                        // VM's CallMethod resolves `d` against the record's
+                        // fields when no method/trait method matches, so a
+                        // field holding a callable is invoked correctly —
+                        // exactly as in file mode, where `p` is a local and
+                        // already takes this path. The enum-variant and
+                        // unit-variant calls above are checked first, so
+                        // `EnumName.Variant(..)` / `Red.display(..)` still
+                        // resolve in the REPL.
                         if let ExprKind::Ident(module) = &receiver.kind {
                             // Gate: require import for builtin modules
                             let mod_str = resolve(*module);

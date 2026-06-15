@@ -1433,6 +1433,47 @@ mod tests {
         );
     }
 
+    // Round 94 B8 follow-up: the *call* form `p.d(args)` on a bound REPL
+    // value whose field `d` holds a callable. The compiler's Call arm used
+    // to lack the repl_mode guard the FieldAccess arm has, so it treated
+    // `p` as a module and emitted `GetGlobal("p.d")` — which fails at
+    // runtime with `undefined global: p.d` (the bug this locks). With the
+    // guard, a non-builtin-module receiver in REPL mode falls through to the
+    // value method-call path: `GetGlobal(p)` + `CallMethod("d", ..)`, and the
+    // VM's CallMethod resolves `d` against the record's fields when no
+    // method/trait method matches, invoking the stored closure. This mirrors
+    // file mode, where `p` is a local and already takes that path.
+    #[test]
+    fn eval_repl_mode_method_call_on_bound_record_field() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "type P { d: Fn(Int) -> Int }")
+            .expect("type declaration should succeed");
+        eval_declaration_value(&mut vm, &mut ctx, "let p = P { d: { x -> x + 1 } }")
+            .expect("value binding should succeed");
+        let value = eval_expression_value(&mut vm, &mut ctx, "p.d(5)")
+            .expect("repl_mode method-style call must invoke the field's closure");
+        assert_eq!(
+            format!("{value}"),
+            "6",
+            "p.d(5) must invoke the closure stored in field `d` via the \
+             repl_mode GetGlobal(p)+CallMethod(d) path, not GetGlobal(\"p.d\")"
+        );
+    }
+
+    // Companion control: a builtin module call inside the REPL must STILL
+    // compile via the module path (`GetGlobal(\"list.sum\")`), proving the
+    // round-94 guard narrows only to non-builtin-module receivers.
+    #[test]
+    fn eval_repl_mode_builtin_module_call_still_resolves() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "import list").expect("import should succeed");
+        let value = eval_expression_value(&mut vm, &mut ctx, "list.sum([1, 2, 3])")
+            .expect("builtin module call must still resolve in REPL mode");
+        assert_eq!(format!("{value}"), "6");
+    }
+
     // ── Error recovery ────────────────────────────────────────────
     //
     // A syntax error on one line should not corrupt the persistent REPL
