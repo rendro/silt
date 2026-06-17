@@ -117,7 +117,7 @@ let regex = """[\w]+@[\w]+\.\w{2,}"""
 **Design rationale.** String `+` is supported, but interpolation
 `"{a}{b}"` is the preferred inline form for building strings — it reads
 more naturally and keeps multi-fragment messages punctuation-light. For
-pipeline contexts, use `string.concat` or `string.join`.
+pipeline contexts, use `string.join`.
 
 
 ## Infinite Loops

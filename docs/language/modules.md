@@ -170,7 +170,7 @@ silt **rejects circular imports** at compile time. If `a.silt` imports `b`
 which imports `a`, the compiler emits the full chain:
 
 ```
-error: circular import: a -> b -> a
+error[compile]: circular import detected: a -> b -> a (...)
 ```
 
 Cycles inside a single package render with bare module names; cycles that

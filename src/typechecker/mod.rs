@@ -5471,11 +5471,41 @@ impl TypeChecker {
         //
         // Iteration order: enums then records, sorted by name within
         // each map, so the synthesized AST is deterministic.
+        //
+        // Round 94: only synthesize for types this package OWNS — the
+        // built-ins (`defined_in == __builtin__`) and the current
+        // package's own decls (which already arrive via
+        // `user_decl_type_names`). IMPORTED enums/records also live in
+        // `self.enums` / `self.records` (merged by `merge_module`) but
+        // their auto-derive impls were already synthesized + body-checked
+        // in their producing package and re-imported here via
+        // `trait_impl_entries` (into `trait_impl_set` / `method_table`),
+        // so `==` / `<` / `.hash()` on them already resolve. Re-
+        // synthesizing them here is both redundant AND actively wrong:
+        // the synthesized constructor patterns use bare variant names,
+        // and when two imported enums share a variant name the bare
+        // `variant_to_enum` map resolves the loser's `Red` to the
+        // winner's enum, producing spurious `type mismatch` diagnostics
+        // (with synthetic zero spans) before the user writes any code.
+        // Filtering imported types out closes that collision.
+        let builtin_pkg = Self::builtin_pkg();
+        let current_pkg = self.current_package;
+        // A type is owned-for-synthesis iff it is a built-in stamp or
+        // belongs to the current package. The REPL / scratch path
+        // (current_package == None) stamps user decls as `__builtin__`
+        // and routes them through `user_decl_type_names` already, so the
+        // `pkg == builtin_pkg` arm covers them; an imported type there
+        // still carries its real producer package and is excluded.
+        let owned_for_synth = |pkg: Symbol| -> bool {
+            pkg == builtin_pkg || current_pkg == Some(pkg)
+        };
         let mut builtin_enum_names: Vec<Symbol> = self
             .enums
-            .keys()
-            .copied()
-            .filter(|n| !user_decl_type_names.contains(n))
+            .iter()
+            .filter(|(n, info)| {
+                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
+            })
+            .map(|(n, _)| *n)
             .collect();
         builtin_enum_names.sort_by_key(|s| resolve(*s));
         for type_name in builtin_enum_names {
@@ -5489,9 +5519,11 @@ impl TypeChecker {
         }
         let mut builtin_record_names: Vec<Symbol> = self
             .records
-            .keys()
-            .copied()
-            .filter(|n| !user_decl_type_names.contains(n))
+            .iter()
+            .filter(|(n, info)| {
+                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
+            })
+            .map(|(n, _)| *n)
             .collect();
         builtin_record_names.sort_by_key(|s| resolve(*s));
         for type_name in builtin_record_names {

@@ -11,7 +11,7 @@ order: 10
 String `+` is supported (`p.first + " " + p.last`), but interpolation
 `"{a}{b}"` is the preferred inline form: it reads more naturally for the
 common case and keeps multi-fragment messages punctuation-light. For
-pipelines, use `string.concat` or `string.join`.
+pipelines, use `string.join`.
 
 ## Homogeneous Maps
 

@@ -215,11 +215,11 @@ trait IntoAppError {
   fn into_app_error(self) -> AppError
 }
 
-impl IntoAppError for IoError {
+trait IntoAppError for IoError {
   fn into_app_error(self) -> AppError { IoProblem(self) }
 }
 
-impl IntoAppError for JsonError {
+trait IntoAppError for JsonError {
   fn into_app_error(self) -> AppError { JsonProblem(self) }
 }
 
