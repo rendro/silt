@@ -8321,6 +8321,60 @@ impl ReplTypeContext {
             }
         }
 
+        // Round 94 (REPL cross-turn persistence): re-generalize each
+        // top-level fn's scheme from its body-inferred type and re-define
+        // it in the persistent env. `register_fn_decl` generalizes the
+        // signature *before* the body runs, so an unannotated `fn f() { 9 }`
+        // persists as `forall a. () -> a` (the return var was fresh and got
+        // quantified). A later REPL turn's `let g = f()` then instantiates a
+        // fresh, unconstrained var and fails with "cannot infer the type of
+        // g". `check_program` fixes this in-pass via its pass-3 narrowing
+        // loop; the REPL needs the equivalent so the resolved type survives
+        // to the next turn. We mirror that loop's effects/constraints
+        // preservation and skip annotated-recursive fns (whose authoritative
+        // polymorphic signature `check_program` deliberately leaves intact).
+        for i in 0..program.decls.len() {
+            let Decl::Fn(ref f) = program.decls[i] else {
+                continue;
+            };
+            if f.is_recovery_stub {
+                continue;
+            }
+            if self.checker.fully_annotated_fn_names.contains(&f.name)
+                && self.checker.recursive_fn_names.contains(&f.name)
+            {
+                continue;
+            }
+            let Some(constrained) = self.checker.fn_body_types.get(&f.name).cloned() else {
+                continue;
+            };
+            let new_scheme = self.checker.generalize(&self.env, &constrained);
+            let Some(original) = self.env.lookup(f.name).cloned() else {
+                continue;
+            };
+            if original.vars.len() == new_scheme.vars.len()
+                && !scheme_narrowed(&original.ty, &new_scheme.ty)
+            {
+                continue;
+            }
+            // `generalize` hardcodes `effects: TOP`; carry the registered
+            // scheme's declared effects across (see the round-62 B4 note in
+            // `check_program`). Remap the original where-clause constraints
+            // through an old→new tyvar alignment (round-17 F1).
+            let mut final_scheme = new_scheme;
+            final_scheme.effects = original.effects;
+            let remap = align_tyvars(&original.ty, &final_scheme.ty);
+            for (old_tv, trait_name) in &original.constraints {
+                if let Some(&new_tv) = remap.get(old_tv)
+                    && final_scheme.vars.contains(&new_tv)
+                    && !final_scheme.constraints.contains(&(new_tv, *trait_name))
+                {
+                    final_scheme.constraints.push((new_tv, *trait_name));
+                }
+            }
+            self.env.define(f.name, final_scheme);
+        }
+
         // Resolve deferred checks before reporting unresolved types.
         self.checker.finalize_deferred_checks();
 

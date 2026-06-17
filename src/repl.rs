@@ -1474,6 +1474,55 @@ mod tests {
         assert_eq!(format!("{value}"), "6");
     }
 
+    // Round 94: a function with an INFERRED return type must carry that
+    // type to later REPL turns. `register_fn_decl` generalizes the
+    // signature before the body runs, so `fn f() { 9 }` would persist as
+    // `forall a. () -> a`; a later `let g = f()` then instantiated a fresh
+    // unconstrained var and failed with "cannot infer the type of g". The
+    // ReplTypeContext::check end-of-turn narrowing re-generalizes f's scheme
+    // from its body-inferred type so the next turn sees `() -> Int`. This
+    // FAILS before that narrowing and PASSES after.
+    #[test]
+    fn inferred_return_type_persists_to_later_repl_turn() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "fn f() { 9 }")
+            .expect("fn declaration should succeed");
+        eval_declaration_value(&mut vm, &mut ctx, "let g = f()")
+            .expect("let binding from an inferred-return fn must infer across turns");
+        let value = eval_expression_value(&mut vm, &mut ctx, "g").expect("g should be bound");
+        assert_eq!(format!("{value}"), "9");
+    }
+
+    // Companion: chained inferred-return fns across turns.
+    #[test]
+    fn chained_inferred_return_fns_persist_across_turns() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "fn f() { 9 }").unwrap();
+        eval_declaration_value(&mut vm, &mut ctx, "fn g() { f() + 1 }").unwrap();
+        eval_declaration_value(&mut vm, &mut ctx, "let h = g()")
+            .expect("let from a chained inferred-return fn must infer across turns");
+        let value = eval_expression_value(&mut vm, &mut ctx, "h").unwrap();
+        assert_eq!(format!("{value}"), "10");
+    }
+
+    // The end-of-turn narrowing must NOT monomorphize a polymorphic fn: an
+    // inferred-generic `fn id(x) { x }` must stay usable at multiple types
+    // across turns. If narrowing wrongly pinned `id` to its first use, the
+    // second call at a different type would fail.
+    #[test]
+    fn inferred_polymorphic_fn_stays_polymorphic_across_turns() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "fn id(x) { x }").unwrap();
+        let n = eval_expression_value(&mut vm, &mut ctx, "id(5)").expect("id at Int");
+        assert_eq!(format!("{n}"), "5");
+        let s = eval_expression_value(&mut vm, &mut ctx, "id(\"hi\")")
+            .expect("id at String must still typecheck — polymorphism preserved");
+        assert_eq!(format!("{s}"), "hi");
+    }
+
     // ── Error recovery ────────────────────────────────────────────
     //
     // A syntax error on one line should not corrupt the persistent REPL
