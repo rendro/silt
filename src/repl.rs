@@ -514,6 +514,10 @@ fn eval_declaration(
     // Compile declarations only (no main call)
     let mut compiler = Compiler::new();
     compiler.import_all_builtins();
+    // Seed enum-variant tables from prior turns so a qualified variant
+    // constructor like `S.C(1)` for an enum declared earlier resolves.
+    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
+    compiler.seed_known_variants(&enum_variants, &unit_variants);
     let functions = match compiler.compile_declarations(&program) {
         Ok(f) => f,
         Err(e) => {
@@ -759,6 +763,8 @@ fn eval_expression_value(
     // `GetGlobal(name)` + `GetField(field)` path.
     compiler.set_repl_mode(true);
     compiler.import_all_builtins();
+    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
+    compiler.seed_known_variants(&enum_variants, &unit_variants);
     let functions = compiler
         .compile_program_with_entry(&program, &wrapper_name)
         .map_err(|e| format!("compile error: {}", e.message))?;
@@ -793,6 +799,8 @@ fn eval_declaration_value(
     }
     let mut compiler = Compiler::new();
     compiler.import_all_builtins();
+    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
+    compiler.seed_known_variants(&enum_variants, &unit_variants);
     let functions = compiler
         .compile_declarations(&program)
         .map_err(|e| format!("compile error: {}", e.message))?;
@@ -880,6 +888,10 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     let mut compiler = Compiler::new();
     compiler.set_repl_mode(true);
     compiler.import_all_builtins();
+    // Seed enum-variant tables from prior turns so a qualified variant
+    // constructor like `S.C(1)` for an enum declared earlier resolves.
+    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
+    compiler.seed_known_variants(&enum_variants, &unit_variants);
     let functions = match compiler.compile_program_with_entry(&program, &wrapper_name) {
         Ok(f) => f,
         Err(e) => {
@@ -1521,6 +1533,46 @@ mod tests {
         let s = eval_expression_value(&mut vm, &mut ctx, "id(\"hi\")")
             .expect("id at String must still typecheck — polymorphism preserved");
         assert_eq!(format!("{s}"), "hi");
+    }
+
+    // Round 94: a qualified variant constructor for an enum declared in an
+    // EARLIER turn must resolve. The per-turn compiler only knew builtins
+    // plus the current input's own `type` decls, so `type S { C(Int) }`
+    // (turn 1) then `let c = S.C(1)` (turn 2) compiled `S.C` to
+    // `GetGlobal("S.C")` and died with `undefined global: S.C`. Seeding the
+    // compiler's enum-variant tables from the persistent type context fixes
+    // it. Exercises qualified construction AND a qualified pattern across
+    // turns. Fails before the seeding, passes after.
+    #[test]
+    fn qualified_variant_ctor_and_pattern_persist_across_turns() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "type S { C(Int) }")
+            .expect("enum declaration should succeed");
+        eval_declaration_value(&mut vm, &mut ctx, "let c = S.C(1)")
+            .expect("qualified variant constructor must resolve across turns");
+        let value = eval_expression_value(&mut vm, &mut ctx, "match c { S.C(n) -> n }")
+            .expect("qualified variant pattern must resolve across turns");
+        assert_eq!(format!("{value}"), "1");
+    }
+
+    // Companion: nullary qualified variant across turns, both construction
+    // and pattern.
+    #[test]
+    fn qualified_nullary_variant_persists_across_turns() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        eval_declaration_value(&mut vm, &mut ctx, "type Color { Red, Green }")
+            .expect("enum declaration should succeed");
+        eval_declaration_value(&mut vm, &mut ctx, "let col = Color.Red")
+            .expect("qualified nullary variant must resolve across turns");
+        let value = eval_expression_value(
+            &mut vm,
+            &mut ctx,
+            "match col { Color.Red -> 1, Green -> 2 }",
+        )
+        .expect("qualified nullary pattern must resolve across turns");
+        assert_eq!(format!("{value}"), "1");
     }
 
     // ── Error recovery ────────────────────────────────────────────

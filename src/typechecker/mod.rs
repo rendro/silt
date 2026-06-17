@@ -8384,6 +8384,42 @@ impl ReplTypeContext {
 
         self.checker.errors.clone()
     }
+
+    /// Derive the compiler's enum-variant lookup tables from the persistent
+    /// type context. A fresh per-turn `Compiler` only knows the builtin
+    /// enums plus the current input's own `type` decls, so a qualified
+    /// variant constructor for an enum declared in an EARLIER turn —
+    /// `type S { C(Int) }` (turn 1) then `let c = S.C(1)` (turn 2) —
+    /// failed to resolve and compiled `S.C` to `GetGlobal("S.C")`, dying at
+    /// runtime with `undefined global: S.C`. Seeding the compiler with these
+    /// tables (derived from the accumulated `enums`, which persist across
+    /// turns) lets the qualified-variant codegen path resolve `S.C` to the
+    /// bare global constructor `C`. The first map is enum name -> variant
+    /// names; the second is the set of nullary (unit) variant names, used
+    /// for the `Red.display()` value-method-dispatch rewrite.
+    pub fn enum_variant_tables(
+        &self,
+    ) -> (
+        std::collections::HashMap<String, std::collections::HashSet<String>>,
+        std::collections::HashSet<String>,
+    ) {
+        let mut enum_variants: std::collections::HashMap<
+            String,
+            std::collections::HashSet<String>,
+        > = std::collections::HashMap::new();
+        let mut unit_variants: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (name, info) in &self.checker.enums {
+            let set = enum_variants.entry(resolve(*name)).or_default();
+            for v in &info.variants {
+                let vname = resolve(v.name);
+                if v.field_types.is_empty() {
+                    unit_variants.insert(vname.clone());
+                }
+                set.insert(vname);
+            }
+        }
+        (enum_variants, unit_variants)
+    }
 }
 
 /// Return a map of builtin qualified names to their type signature strings.

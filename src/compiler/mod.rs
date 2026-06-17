@@ -648,6 +648,35 @@ impl Compiler {
         self.repl_mode = enabled;
     }
 
+    /// Merge externally-supplied enum-variant lookup tables into this
+    /// compiler's builtin-seeded ones. The REPL calls this with tables
+    /// derived from its persistent type context (see
+    /// `ReplTypeContext::enum_variant_tables`) so a fresh per-turn compiler
+    /// can resolve qualified variant constructors (`EnumName.Variant`) and
+    /// unit-variant method dispatch for enums declared in earlier turns —
+    /// the compiler otherwise only knows builtins plus the current input's
+    /// own `type` decls. Merging (rather than replacing) keeps the
+    /// builtin entries and is idempotent with the current input's own
+    /// type-decl registration.
+    pub fn seed_known_variants(
+        &mut self,
+        enum_variants: &HashMap<String, HashSet<String>>,
+        unit_variants: &HashSet<String>,
+    ) {
+        for (enum_name, variants) in enum_variants {
+            let set = self
+                .known_enum_variants
+                .entry(enum_name.clone())
+                .or_default();
+            for v in variants {
+                set.insert(v.clone());
+            }
+        }
+        for v in unit_variants {
+            self.known_unit_variants.insert(v.clone());
+        }
+    }
+
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[CompileWarning] {
         &self.warnings
