@@ -35,7 +35,8 @@ fn encode_type_expr(resolver: &crate::types::canonical::Resolver, te: &TypeExpr)
         TypeExprKind::Named(n) => {
             let s = resolve(*n);
             match s.as_str() {
-                "Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime" => s,
+                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time"
+                | "DateTime" => s,
                 _ if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
                     format!("Record:{s}")
                 }
@@ -570,12 +571,16 @@ impl Default for Compiler {
 }
 
 impl Compiler {
-    pub fn new() -> Self {
+    /// Shared constructor body for [`Compiler::new`] and
+    /// [`Compiler::with_package_roots`]. The two public constructors differ
+    /// only in `package_roots`/`local_package`; everything else is seeded
+    /// identically here so the two paths can never drift apart.
+    fn build(package_roots: HashMap<Symbol, PathBuf>, local_package: Option<Symbol>) -> Self {
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
-            package_roots: HashMap::new(),
-            local_package: None,
+            package_roots,
+            local_package,
             compiled_modules: HashSet::new(),
             module_export_names: HashMap::new(),
             compiling_modules: HashSet::new(),
@@ -600,6 +605,10 @@ impl Compiler {
         }
     }
 
+    pub fn new() -> Self {
+        Self::build(HashMap::new(), None)
+    }
+
     /// Create a compiler with a registered set of package source roots
     /// and a designated local package.
     ///
@@ -614,33 +623,7 @@ impl Compiler {
             package_roots.contains_key(&local_package),
             "with_package_roots: local_package symbol must appear in package_roots"
         );
-        Self {
-            contexts: Vec::new(),
-            functions: Vec::new(),
-            package_roots,
-            local_package: Some(local_package),
-            compiled_modules: HashSet::new(),
-            module_export_names: HashMap::new(),
-            compiling_modules: HashSet::new(),
-            compiling_modules_stack: Vec::new(),
-            compiling_package_stack: Vec::new(),
-            warnings: Vec::new(),
-            module_parse_errors: Vec::new(),
-            module_type_errors: Vec::new(),
-            module_type_error_files: HashSet::new(),
-            imported_builtin_modules: HashSet::new(),
-            imported_builtin_module_aliases: HashMap::new(),
-            in_tail_position: false,
-            module_scope: None,
-            module_public_fns: HashMap::new(),
-            module_private_fns: HashMap::new(),
-            repl_mode: false,
-            known_enum_variants: initial_known_enum_variants(),
-            known_unit_variants: initial_known_unit_variants(),
-            top_level_value_globals: HashSet::new(),
-            module_exports: HashMap::new(),
-            resolver: crate::types::canonical::Resolver::new(),
-        }
+        Self::build(package_roots, Some(local_package))
     }
 
     /// Enable REPL mode. See the `repl_mode` field for semantics.
@@ -3627,9 +3610,6 @@ impl Compiler {
             let ctx = &self.contexts[i];
             if ctx.locals.iter().any(|l| l.name == name) {
                 return Some(());
-            }
-            if ctx.upvalues.iter().any(|_| false) {
-                // Can't easily check names of upvalues, but the local check is enough
             }
         }
         // Also check if it's already captured as an upvalue in the current context

@@ -964,19 +964,145 @@ impl Compiler {
 
             PatternKind::Or(alternatives) => {
                 // All alternatives must bind the same variables.
-                if let Some(first) = alternatives.first() {
-                    let expected = Self::pattern_binding_names(first);
-                    for alt in &alternatives[1..] {
-                        let actual = Self::pattern_binding_names(alt);
-                        if actual != expected {
-                            return Err(CompileError {
-                                message: "or-pattern alternatives must bind the same variables"
-                                    .into(),
-                                span,
-                            });
+                let Some(first) = alternatives.first() else {
+                    return Ok(());
+                };
+                let expected = Self::pattern_binding_names(first);
+                for alt in &alternatives[1..] {
+                    let actual = Self::pattern_binding_names(alt);
+                    if actual != expected {
+                        return Err(CompileError {
+                            message: "or-pattern alternatives must bind the same variables".into(),
+                            span,
+                        });
+                    }
+                }
+
+                if expected.is_empty() {
+                    // No bindings in any alternative — nothing to extract.
+                    return Ok(());
+                }
+
+                if alternatives.len() == 1 {
+                    self.compile_pattern_bind(first, span)?;
+                    return Ok(());
+                }
+
+                // Multiple alternatives that bind variables. The shared
+                // variables may sit at *different* structural positions in
+                // each alternative (e.g. `A(x) | B(_, x)`), so we cannot
+                // bind from a single alternative. Instead, re-test each
+                // alternative against the scrutinee and run *that*
+                // alternative's own bind sequence, funnelling every
+                // alternative's results into one shared set of result slots.
+                //
+                // The overall pattern test already succeeded before this
+                // runs, so at least one alternative is guaranteed to match;
+                // the last alternative therefore needs no re-test (it is the
+                // fallthrough).
+                //
+                // TOS = scrutinee on entry. Save it to a hidden local so each
+                // alternative can fetch a fresh copy for its test+bind.
+                self.current_chunk().emit_op(Op::Dup, span);
+                let scrut_slot = self.add_local(intern("__or_bind_scrut__"));
+                self.current_chunk()
+                    .emit_op_u16(Op::SetLocal, scrut_slot, span);
+
+                // Reserve one result slot per bound name (deterministic
+                // order from the BTreeSet). Each alternative writes the value
+                // for each name into its fixed result slot, so the body
+                // resolves every name to the same slot regardless of which
+                // alternative matched.
+                let names: Vec<Symbol> = expected.iter().copied().collect();
+                let mut result_slots = Vec::with_capacity(names.len());
+                for name in &names {
+                    self.current_chunk().emit_op(Op::Unit, span);
+                    self.warn_if_shadows_module(*name, pattern.span);
+                    let slot = self.add_local(*name);
+                    result_slots.push(slot);
+                }
+
+                // Baseline: everything pushed past this point by an
+                // alternative's test/bind is a temporary to be cleaned up.
+                let baseline_locals = self.ctx().locals.len();
+
+                let mut end_jumps = Vec::new();
+                let last = alternatives.len() - 1;
+                for (i, alt) in alternatives.iter().enumerate() {
+                    // Fetch a fresh scrutinee copy for this alternative.
+                    self.current_chunk()
+                        .emit_op_u16(Op::GetLocal, scrut_slot, span);
+                    let _src = self.add_local(intern("__or_alt_src__"));
+
+                    // Non-last alternatives re-test; the last is the
+                    // guaranteed-matching fallthrough.
+                    let fails = if i < last {
+                        self.compile_pattern_test_tracked(alt, span, 0)?
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Matched: bind this alternative into temporary locals,
+                    // then copy each bound value into its shared result slot.
+                    self.compile_pattern_bind(alt, span)?;
+                    for (ni, name) in names.iter().enumerate() {
+                        let temp = self.resolve_local(*name).expect(
+                            "or-pattern alternative must bind every shared name (validated above)",
+                        );
+                        self.current_chunk().emit_op_u16(Op::GetLocal, temp, span);
+                        self.current_chunk()
+                            .emit_op_u16(Op::SetLocal, result_slots[ni], span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+
+                    // Pop every temporary this alternative pushed (the
+                    // scrutinee copy plus all bind intermediates), restoring
+                    // the stack to the baseline. `add_local` is emitted once
+                    // per pushed value, so the temp count equals the local
+                    // growth.
+                    let temps = self.ctx().locals.len() - baseline_locals;
+                    for _ in 0..temps {
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+                    // Unregister the temporaries so the next alternative
+                    // reuses the same slots and the final local state holds
+                    // only the result slots.
+                    self.ctx_mut().locals.truncate(baseline_locals);
+
+                    if i < last {
+                        // Success path: skip the remaining alternatives.
+                        let done = self.current_chunk().emit_jump(Op::Jump, span);
+                        end_jumps.push(done);
+
+                        // Failure path: clean up any destructure
+                        // intermediates (per-depth trampolines), then the
+                        // leftover scrutinee copy, before falling through to
+                        // the next alternative.
+                        let max_depth = fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
+                        let mut tramp: Vec<(usize, usize)> = Vec::new();
+                        for d in (1..=max_depth).rev() {
+                            let start = self.current_chunk().emit_op(Op::Pop, span);
+                            tramp.push((d, start));
+                        }
+                        // Depth-0 landing: pop the leftover scrutinee copy
+                        // that the test peeked but did not consume. The next
+                        // alternative's GetLocal follows immediately.
+                        let depth0_pop = self.current_chunk().emit_op(Op::Pop, span);
+                        for (fj, depth) in fails {
+                            let target = if depth == 0 {
+                                depth0_pop
+                            } else {
+                                tramp.iter().find(|&&(d, _)| d == depth).unwrap().1
+                            };
+                            self.current_chunk()
+                                .patch_jump_to(fj, target)
+                                .map_err(|msg| CompileError { message: msg, span })?;
                         }
                     }
-                    self.compile_pattern_bind(first, span)?;
+                }
+
+                for j in end_jumps {
+                    self.patch_jump(j, span)?;
                 }
             }
 

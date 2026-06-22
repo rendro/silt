@@ -57,7 +57,7 @@ Three design commitments shape everything:
 
 - Syntax leans toward C-family (`fn`, braces) rather than ML-style
   (`let … in`). Familiar to most programmers on day one.
-- Nominal records (`type User { name, age }`) are first-class; anonymous
+- Nominal records (`type User { name: String, age: Int }`) are first-class; anonymous
   structural records and row polymorphism are also available — see
   [Types](language/types.md). Record update is a first-class operator:
   `user.{ age: 31 }`.

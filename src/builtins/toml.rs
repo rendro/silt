@@ -252,14 +252,25 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
             }
             let mut table = ::toml::map::Map::new();
             for (k, v) in fields.iter() {
+                // TOML has no null. An `Option::None` field is omitted from the
+                // table entirely; on parse-back, a missing Option field decodes
+                // back to None (see `toml_to_record`). Emitting a placeholder
+                // (e.g. an empty string) would corrupt the round-trip:
+                // `Option(String)` None would parse back as `Some("")`, and
+                // `Option(Int)` None would fail with a type mismatch.
+                if matches!(v, Value::Variant(n, vf) if n == "None" && vf.is_empty()) {
+                    continue;
+                }
                 table.insert(k.clone(), value_to_toml(v)?);
             }
             ::toml::Value::Table(table)
         }
         Value::Variant(name, fields) if name == "None" && fields.is_empty() => {
-            // TOML has no null. Caller should omit Option::None fields; here
-            // we emit an empty string as a deterministic placeholder so a
-            // freestanding None at top level still serializes.
+            // TOML has no null and no representation for a freestanding None.
+            // Record fields holding None are omitted in the Record arm above;
+            // a None reaching here is a bare top-level None, which has no valid
+            // TOML rendering. Emit an empty string as a deterministic
+            // placeholder so serialization does not fail outright.
             ::toml::Value::String(String::new())
         }
         Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {

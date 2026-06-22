@@ -1,24 +1,30 @@
-//! Behavioural barrage for the deleted `dispatch_trait_method` arms.
+//! Behavioural barrage proving the `dispatch_trait_method`
+//! Variant/Record arms are DEAD for all valid input.
 //!
-//! Earlier rounds carried atomic counter instrumentation in
-//! `src/vm/dispatch.rs` that tracked every hit on the
-//! `(Variant, Variant)` / `(Record, Record)` arms in compare /
-//! equal / hash. The counters proved the arms were dead for user
-//! types after the round-62 auto-derive synthesis pass and
-//! near-dead for built-in types after the follow-up that extended
-//! synth to built-in enums and records. The arms — and the
-//! counters — were deleted in the round that landed this test
-//! file's current form.
+//! The `(Variant, Variant)` / `(Record, Record)` fallback arms in
+//! compare / equal / hash STILL EXIST in `src/vm/dispatch.rs`
+//! (the compare pair lives at dispatch.rs:384-385; re-added round 62,
+//! commit 5b3f240, and never removed). This file does NOT prove the
+//! arms are gone — it proves the OTHER path is always taken first, so
+//! the arms are dead for any program a user can write.
 //!
-//! After deletion, the proof IS the barrage itself: if any shape
-//! regresses to "no qualified-global emitted" the call resolves
-//! through the catch-all error path in `dispatch_trait_method`,
-//! which surfaces as a runtime
+//! How: for every Variant/Record type that passes the round-93
+//! field-aware auto-derive gate, the synth pass emits a
+//! `<Type>.compare` / `.equal` / `.hash` global, and `Op::CallMethod`
+//! (src/vm/execute.rs ~:2250) resolves that global FIRST — before
+//! `dispatch_trait_method` is ever consulted. The arms are kept only
+//! as a sound defensive fallback for a theoretically-malformed
+//! `Value::Variant` with no `__type_of__` registration (src/vm/mod.rs
+//! ~:940), which is not constructible from a valid program.
+//!
+//! The proof IS the barrage itself: if any shape regresses to "no
+//! qualified-global emitted" the call resolves through the catch-all
+//! error path in `dispatch_trait_method`, which surfaces as a runtime
 //! `error[runtime]: compare() not supported between …` (or `no
 //! method 'hash' for type '…'`) — never the expected output. So
 //! every line below that asserts on stdout simultaneously locks
-//! "qualified-global was emitted by the synth pass and reached
-//! the runtime intact".
+//! "qualified-global was emitted by the synth pass and reached the
+//! runtime intact, ahead of the dead arms".
 //!
 //! The barrages cover:
 //!   - non-generic enum (1/2/3+ variants, with/without args)
@@ -503,4 +509,68 @@ fn main() {
     );
     let lines: Vec<&str> = out.trim().split('\n').collect();
     assert_eq!(lines, vec!["-1", "-1", "Tuesday"]);
+}
+
+// ── 4. Source grep-lock: the corrected prose must not regress ─────
+
+/// Prose grep-lock (no runtime behaviour). Locks in the round-94+
+/// correction of the stale comments around the dead Variant/Record
+/// dispatch arms. The old comments falsely claimed those arms were
+/// REACHED for "types with non-supportable fields ... laundered"
+/// through `register_type_decl` pre-stamping — a path the round-93
+/// field-aware auto-derive gate statically rejects, so it no longer
+/// exists. They also falsely claimed (in this file's own header)
+/// that the arms were "deleted". This test fails the moment either
+/// false phrasing returns to the source.
+#[test]
+fn dead_arm_prose_does_not_regress() {
+    // 1. The false claim that non-supportable-field types reach
+    //    these arms must stay gone. The old comments asserted the
+    //    path POSITIVELY: that `register_type_decl` "pre-stamps" the
+    //    trait_impl_set so that "no global exists and execution falls
+    //    through to this arm". Both phrasings are false post round-93
+    //    (the field-aware gate statically rejects such programs) and
+    //    must never return. (Note: the *corrected* prose may mention
+    //    "non-supportable fields" while describing their REJECTION,
+    //    so we lock the specific false assertions, not that phrase.)
+    let dispatch_src = include_str!("../src/vm/dispatch.rs");
+    assert!(
+        !dispatch_src.contains("falls through to this"),
+        "stale false comment regressed in src/vm/dispatch.rs: the \
+         claim that non-supportable-field types 'fall through to this \
+         arm' is false post round-93 (such programs are statically \
+         rejected) — the arms are a defensive fallback, not a live \
+         path for such types"
+    );
+    assert!(
+        !dispatch_src.contains("pre-stamps the trait_impl_set"),
+        "stale false comment regressed in src/vm/dispatch.rs: the \
+         'register_type_decl pre-stamps the trait_impl_set' laundering \
+         story no longer describes reality post round-93"
+    );
+
+    // 2. This proof-test's own header must not re-assert the false
+    //    claim that the arms were deleted. They still exist at
+    //    dispatch.rs:384-385.
+    let this_src = include_str!("auto_derive_dead_arm_proof_tests.rs");
+    let header_end = this_src
+        .find("\nuse ")
+        .expect("test file should have a `use` section after the header");
+    let header = &this_src[..header_end];
+    assert!(
+        !header.contains("deleted"),
+        "stale false comment regressed in this file's header: it must \
+         NOT claim the dispatch arms were 'deleted' — they still exist \
+         at src/vm/dispatch.rs:384-385 as a defensive fallback; this \
+         file proves the synth-global path is reached FIRST"
+    );
+
+    // 3. Sanity: the corrected prose is actually present (so this
+    //    lock can't be satisfied by an empty/renamed source).
+    assert!(
+        dispatch_src.contains("Defensive fallback")
+            || dispatch_src.contains("defensive fallback"),
+        "expected the corrected 'defensive fallback' prose in \
+         src/vm/dispatch.rs"
+    );
 }

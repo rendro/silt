@@ -1921,6 +1921,25 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                 line: i + 1, // 1-based
                 text: comment_text,
             });
+        } else if let Some(comment_text) =
+            extract_collection_interior_trailing_comment_from_line(line)
+        {
+            // A trailing `-- cmt` after an element on the open-bracket line
+            // of a `(` / `[` collection / call / param list (e.g.
+            // `let xs = [1, 2, 3 -- belongs to 3\n]`). The plain trailing
+            // extractor refuses it (bracket_depth > 0), the bracket-interior
+            // extractor refuses it (prev char is element code, not an
+            // opener), and the block-body extractor refuses it (innermost
+            // bracket is `(`/`[`, not `{`). Record it as a trailing comment
+            // for this line so the collection's multi-line emitter forces a
+            // multi-line layout and attaches it to the last element on the
+            // line. Without this the comment is silently dropped on round-
+            // trip (audit: element-line drop, distinct from round-84 opener-
+            // line shape).
+            trailing.push(TrailingComment {
+                line: i + 1, // 1-based
+                text: comment_text,
+            });
         }
 
         i += 1;
@@ -2320,6 +2339,64 @@ fn extract_block_body_trailing_comment_from_line(line: &str) -> Option<String> {
     // Immediate-prev-char must NOT be a bracket opener; that case is owned
     // by `extract_bracket_interior_line_comment_from_line` (which records
     // into `comments` for the empty-body / interior drains). The shared
+    // `prev_nonws_is_bracket_opener` helper returns `None` for the
+    // all-whitespace-before-`--` edge — that case is also rejected here.
+    if prev_nonws_is_bracket_opener(&chars, start)? {
+        return None;
+    }
+    let comment: String = chars[start..].iter().collect();
+    Some(comment.trim_end().to_string())
+}
+
+/// Extract a `--` line comment that sits INSIDE an unclosed `(` / `[`
+/// collection-or-call body on THIS line, AFTER a (balanced) element —
+/// i.e. the line OPENS a `(`/`[` (list, tuple, set `#[`, map `#{`, call
+/// args, or fn params) on the SAME line and ends with `<element-code> --
+/// ...` without closing the bracket. Example:
+/// `let xs = [1, 2, 3 -- belongs to 3\n]` where the `[` and the `--`
+/// share line 1.
+///
+/// This is the fourth sibling to `extract_trailing_comment_from_line`
+/// (refuses at `bracket_depth > 0`),
+/// `extract_bracket_interior_line_comment_from_line` (only claims when
+/// the `--` immediately follows a bracket opener), and
+/// `extract_block_body_trailing_comment_from_line` (only claims when the
+/// innermost unclosed bracket is a `{` block body). Without this fourth
+/// case the comment is silently DROPPED on round-trip: the trailing
+/// extractor won't claim it (bracket_depth > 0), the bracket-interior
+/// helper won't claim it (prev char is element code, not an opener), the
+/// block-body helper won't claim it (innermost bracket is `(`/`[`, not
+/// `{`), and no multi-line emitter ever sees the `--` because it is lexed
+/// as whitespace. (Audit: element-line / multiple-elements-per-line shape
+/// — distinct from the round-84 opener-line `[ -- x\n ...` shape.)
+///
+/// We return the comment text when ALL of:
+///   * the first `--` line-comment starts at `bracket_depth > 0`, AND
+///   * the innermost unclosed bracket at the `--` is `(` or `[`
+///     (a collection / call / param list — NOT a `{` block body), AND
+///   * the character immediately before `--` (skipping whitespace) is NOT
+///     a bracket opener (that case is owned by the bracket-interior helper).
+///
+/// The caller records the result in `trailing_map[line]`. The collection's
+/// multi-line emitter (`format_delimited_collection` and the call/param
+/// emitters) then picks it up via `take_trailing_for_line`, which both
+/// forces a multi-line layout (so it can't be dropped on collapse) and
+/// attaches it to the LAST element that shares that source line.
+fn extract_collection_interior_trailing_comment_from_line(line: &str) -> Option<String> {
+    let (chars, scan) = scan_line_for_comments(line);
+    let start = scan.line_comment_start?;
+    // Must be inside an unclosed bracket pair; `bracket_depth == 0` is the
+    // plain trailing extractor's job.
+    let top = scan.line_comment_bracket_top?;
+    // Innermost unclosed bracket must be `(` or `[` — a collection /
+    // call / param list. `{` block bodies are owned by
+    // `extract_block_body_trailing_comment_from_line`.
+    if top != '(' && top != '[' {
+        return None;
+    }
+    // Immediate-prev-char must NOT be a bracket opener; the opener case
+    // (`[ -- note`) is owned by
+    // `extract_bracket_interior_line_comment_from_line`. The shared
     // `prev_nonws_is_bracket_opener` helper returns `None` for the
     // all-whitespace-before-`--` edge — that case is also rejected here.
     if prev_nonws_is_bracket_opener(&chars, start)? {
@@ -3521,8 +3598,17 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     // a newline that lives between `(` and `)`. When close is on the
     // same line, any trailing comment belongs to the body / post-body
     // and is handled by the top-level trailing-comment fallback.
-    let inner_trailing_on_open =
-        params_close_line > fn_start_line && has_trailing_for_line(fn_start_line);
+    // A trailing comment on `fn_start_line` is an OPENER-interior comment
+    // (the round-84 `fn man(-- inside\n) {}` shape) only when NO param
+    // actually sits on `fn_start_line`. When a param shares that line
+    // (e.g. `fn foo(a, b, c -- belongs to c\n)`), the `--` trails the last
+    // param on the line and belongs to it — the per-param loop below
+    // claims it via the last-on-line rule, so don't hoist it as an
+    // opener-interior standalone comment here.
+    let any_param_on_open_line = concrete_param_lines.iter().any(|&l| l == fn_start_line);
+    let inner_trailing_on_open = params_close_line > fn_start_line
+        && has_trailing_for_line(fn_start_line)
+        && !any_param_on_open_line;
     let multiline_params = if f.params.is_empty() {
         has_comments_between(fn_start_line, params_close_line) || inner_trailing_on_open
     } else {
@@ -3552,9 +3638,21 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
                 lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
             }
             let p_str = format_param(p);
-            let trailing = take_trailing_for_line(p_line)
-                .map(|c| format!(" {c}"))
-                .unwrap_or_default();
+            // Only the LAST param sharing this source line may claim its
+            // trailing `--` comment (it sits after the last param on the
+            // line). Without this, `fn foo(a, b -- note\n)` mis-attaches
+            // the comment to the first param. Mirrors the call / collection
+            // emitters.
+            let is_last_on_line = !param_lines[i + 1..]
+                .iter()
+                .any(|l| *l == Some(p_line));
+            let trailing = if is_last_on_line {
+                take_trailing_for_line(p_line)
+                    .map(|c| format!(" {c}"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
             let comma = if needs_comma { "," } else { "" };
             lines.push(format!("{}{p_str}{comma}{trailing}", indent(depth + 1)));
@@ -4445,7 +4543,14 @@ fn format_delimited_collection<'a>(
     }
     let open_line = expr_span.line;
     let close_line = compute_bracket_end_line(open_line, open_char, close_char);
-    let elem_lines: Vec<usize> = items.iter().map(|it| it.anchor_line).collect();
+    // Include BOTH the anchor line (e.g. a map key) and the end line
+    // (e.g. a map value, or the last element on a shared source line)
+    // so a trailing `--` on EITHER forces a multi-line layout and is not
+    // dropped when the collection would otherwise collapse to one line.
+    let elem_lines: Vec<usize> = items
+        .iter()
+        .flat_map(|it| [it.anchor_line, it.end_line])
+        .collect();
     if !should_layout_multiline(open_line, close_line, &elem_lines) {
         return None;
     }
@@ -4457,6 +4562,19 @@ fn format_delimited_collection<'a>(
     let source_has_trailing_comma =
         source_has_trailing_comma_at_offset(expr_span, open_char, close_char);
     let last_idx = items.len().saturating_sub(1);
+    // A `--` trailing comment is keyed in `trailing_map` by source LINE,
+    // but several elements can share one source line (e.g.
+    // `"alpha", "beta" -- two modes`). The comment sits AFTER the last
+    // element on that line, so only the LAST element sharing a given
+    // `end_line` may claim it — otherwise it mis-attaches to the FIRST
+    // element. Precompute, per item, whether it is the last item on its
+    // own source line.
+    let end_lines: Vec<usize> = items.iter().map(|it| it.end_line).collect();
+    let is_last_on_line: Vec<bool> = end_lines
+        .iter()
+        .enumerate()
+        .map(|(i, &line)| !end_lines[i + 1..].iter().any(|&l| l == line))
+        .collect();
     let mut lines: Vec<String> = Vec::new();
     // `prev_line` starts at `open_line - 1` (saturated, exclusive) so the
     // first iteration's `take_comments_between(prev_line, anchor)` drain
@@ -4476,9 +4594,15 @@ fn format_delimited_collection<'a>(
         // Render the element NOW — after the pre-comment drain — so
         // nested comment-state consumption happens in source order.
         let elem_text = (item.render)();
-        let trailing = take_trailing_for_line(item.end_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
+        // Only the last element sharing this source line may claim the
+        // line's trailing `--` comment (see `is_last_on_line` above).
+        let trailing = if is_last_on_line[i] {
+            take_trailing_for_line(item.end_line)
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         // Non-last elements are always separated by a comma. The LAST
         // element only takes one iff the source wrote one, the element
         // carries an attached trailing `-- comment` (which needs a `,`
@@ -4592,6 +4716,15 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     // scan BACKWARD to the preceding `(` — that's the call's opener.
     let source_has_trailing_comma = call_args_source_has_trailing_comma(args);
     let last_idx = args.len().saturating_sub(1);
+    // Only the LAST arg sharing a source line may claim that line's
+    // trailing `--` comment — it sits after the last arg on the line.
+    // Without this an input like `foo(1, 2 -- note\n)` mis-attaches the
+    // comment to the first arg. Mirrors `format_delimited_collection`.
+    let is_last_on_line: Vec<bool> = arg_lines
+        .iter()
+        .enumerate()
+        .map(|(i, &line)| !arg_lines[i + 1..].iter().any(|&l| l == line))
+        .collect();
     let mut lines: Vec<String> = Vec::new();
     // `prev_line` starts at `open_line - 1` (saturated, exclusive) so a
     // bracket-interior `-- note` on the open-paren line (e.g.
@@ -4606,9 +4739,13 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
             lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
         }
         let arg_str = format_expr(arg, depth + 1);
-        let trailing = take_trailing_for_line(arg_line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
+        let trailing = if is_last_on_line[i] {
+            take_trailing_for_line(arg_line)
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let needs_comma = i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
         let comma = if needs_comma { "," } else { "" };
         lines.push(format!("{}{arg_str}{comma}{trailing}", indent(depth + 1)));

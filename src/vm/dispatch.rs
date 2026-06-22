@@ -316,17 +316,22 @@ impl Vm {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
-                // Variant and Record receivers MAY be routed through a
-                // synth-emitted `<Type>.equal` global when the synth pass
-                // succeeds for that (trait, type) pair, but
-                // `register_type_decl` (src/typechecker/mod.rs:3612)
-                // unconditionally pre-stamps the trait_impl_set while the
-                // synth pass at typechecker/mod.rs:4856-4877 is gated on
-                // per-field trait support — for types with non-supportable
-                // fields (e.g. Channel/Map/Tuple/Function/Bytes/Handle),
-                // no global exists and execution falls through to this
-                // arm. `PartialEq for Value` (src/value.rs:1586/1610)
-                // already compares records and variants structurally.
+                // Defensive fallback. For every valid user/builtin type
+                // that passes the round-93 field-aware auto-derive gate
+                // (`compute_auto_derive_field_negatives`), a synth-emitted
+                // `<Type>.equal` global is produced and `Op::CallMethod`
+                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // Variant/Record receiver never reaches this arm. Types
+                // with non-supportable fields (e.g. Channel/Map/Tuple/
+                // Function/Bytes/Handle) are now statically REJECTED by
+                // that gate (`type 'X' does not implement trait`), so the
+                // old "such fields are laundered through here" path no
+                // longer exists. The only theoretical fall-through is a
+                // `Value::Variant` with no `__type_of__` registration
+                // (src/vm/mod.rs ~:940), which is not constructible from a
+                // valid program. `PartialEq for Value` (src/value.rs
+                // 1586/1610) compares records and variants structurally,
+                // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
             "compare" => {
@@ -369,18 +374,22 @@ impl Vm {
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
                     | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
-                    // Variant and Record receivers MAY be routed through a
-                    // synth-emitted `<Type>.compare` global when the synth
-                    // pass succeeds for that (trait, type) pair, but
-                    // `register_type_decl` (src/typechecker/mod.rs:3612)
-                    // unconditionally pre-stamps the trait_impl_set while
-                    // the synth pass at typechecker/mod.rs:4856-4877 is
-                    // gated on per-field trait support — for types with
-                    // non-supportable fields (e.g. Channel/Map/Tuple/
-                    // Function/Bytes/Handle), no global exists and
-                    // execution falls through to this arm. `Value::cmp`
-                    // (src/value.rs:1728/1742) already handles records and
-                    // variants structurally.
+                    // Defensive fallback. For every valid user/builtin type
+                    // that passes the round-93 field-aware auto-derive gate
+                    // (`compute_auto_derive_field_negatives`), a synth-emitted
+                    // `<Type>.compare` global is produced and `Op::CallMethod`
+                    // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                    // Variant/Record receiver never reaches this arm. Types
+                    // with non-supportable fields (e.g. Channel/Map/Tuple/
+                    // Function/Bytes/Handle) are now statically REJECTED by
+                    // that gate (`type 'X' does not implement trait`), so the
+                    // old "such fields are laundered through here" path no
+                    // longer exists. The only theoretical fall-through is a
+                    // `Value::Variant` with no `__type_of__` registration
+                    // (src/vm/mod.rs ~:940), which is not constructible from a
+                    // valid program. `Value::cmp` (src/value.rs 1728/1742)
+                    // orders records and variants structurally, so this arm
+                    // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
@@ -419,17 +428,23 @@ impl Vm {
                 // Only honour hash() for types the typechecker actually
                 // auto-derives Hash for — emitting a dispatch error for
                 // anything else keeps the user-impl path authoritative.
-                // Variant and Record receivers MAY be routed through a
-                // synth-emitted `<Type>.hash` global when the synth pass
-                // succeeds for that (trait, type) pair, but
-                // `register_type_decl` (src/typechecker/mod.rs:3612)
-                // unconditionally pre-stamps the trait_impl_set while the
-                // synth pass at typechecker/mod.rs:4856-4877 is gated on
-                // per-field trait support — for types with non-supportable
-                // fields (e.g. Channel/Map/Tuple/Function/Bytes/Handle),
-                // no global exists and execution falls through to this
-                // arm. `impl Hash for Value` (src/value.rs:2020/2027)
-                // already hashes records and variants structurally.
+                // The Variant/Record entries below are a defensive
+                // fallback. For every valid user/builtin type that passes
+                // the round-93 field-aware auto-derive gate
+                // (`compute_auto_derive_field_negatives`), a synth-emitted
+                // `<Type>.hash` global is produced and `Op::CallMethod`
+                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // Variant/Record receiver never reaches this arm. Types
+                // with non-supportable fields (e.g. Channel/Map/Tuple/
+                // Function/Bytes/Handle) are now statically REJECTED by
+                // that gate (`type 'X' does not implement trait`), so the
+                // old "such fields are laundered through here" path no
+                // longer exists. The only theoretical fall-through is a
+                // `Value::Variant` with no `__type_of__` registration
+                // (src/vm/mod.rs ~:940), which is not constructible from a
+                // valid program. `impl Hash for Value` (src/value.rs
+                // 2020/2027) hashes records and variants structurally, so
+                // this arm stays sound even on that malformed input.
                 match receiver {
                     Value::Int(_)
                     | Value::Float(_)

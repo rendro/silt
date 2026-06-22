@@ -625,7 +625,18 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             match main_thread_wait_for_join(&handle, vm) {
                 Ok(val) => Ok(val),
                 Err(mut inner) => {
-                    inner.message = format!("joined task failed: {}", inner.message);
+                    // Distinguish "the joinee task failed" from "the main
+                    // thread is starved/deadlocked while waiting to join".
+                    // Only the former should be prefixed with
+                    // "joined task failed:"; a main-thread deadlock is a
+                    // condition of the *joiner*, not the joinee, and must
+                    // surface on its own. VmError has no structured kind
+                    // field (see src/vm/error.rs), so we discriminate on the
+                    // stable "deadlock on main thread" marker that every
+                    // such diagnostic in `main_thread_wait_for_join` carries.
+                    if !inner.message.starts_with("deadlock on main thread") {
+                        inner.message = format!("joined task failed: {}", inner.message);
+                    }
                     Err(inner)
                 }
             }

@@ -1808,6 +1808,16 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.days_in_month: month {m} out of range for u32"
                 ))
             })?;
+            // Reject months outside 1..=12: `days_in_month` itself used to
+            // fabricate 30 for any out-of-range month, so e.g.
+            // `days_in_month(2024, 13)` and `(2024, 0)` silently returned 30.
+            // Mirror the range-rejection style of `time.date`/`time.time`,
+            // which validate each component before constructing a value.
+            if !(1..=12).contains(&m32) {
+                return Err(VmError::new(format!(
+                    "time.days_in_month: month {m} out of range (must be 1..=12)"
+                )));
+            }
             Ok(Value::Int(days_in_month(y32, m32) as i64))
         }
 
@@ -2181,6 +2191,25 @@ fn http_response_decode_err(msg: String) -> Value {
     )
 }
 
+/// Convert a completed ureq request `Result` into the silt `Value` returned
+/// to the program. Shared by `do_http_get` and `do_http_request`, which had
+/// byte-identical match blocks here. Behavior: on transport success, decode
+/// the response (success → `Ok(resp)`, body-read failure →
+/// `Err(HttpInvalidResponse(..))`); on transport error → `Err(HttpError(..))`.
+#[cfg(feature = "http")]
+fn finish_http_response(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    url: &str,
+) -> Value {
+    match result {
+        Ok(response) => match ureq_response_to_value(response) {
+            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
+            Err(e) => http_response_decode_err(e.message),
+        },
+        Err(e) => http_err(&format!("{e}"), url),
+    }
+}
+
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
@@ -2194,13 +2223,7 @@ fn do_http_get(url: &str) -> Value {
         .timeout_global(Some(Duration::from_secs(60)))
         .build()
         .into();
-    match agent.get(url).call() {
-        Ok(response) => match ureq_response_to_value(response) {
-            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
-            Err(e) => http_response_decode_err(e.message),
-        },
-        Err(e) => http_err(&format!("{e}"), url),
-    }
+    finish_http_response(agent.get(url).call(), url)
 }
 
 /// Perform a synchronous HTTP request and return a `Value`.
@@ -2265,13 +2288,7 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
         }
     };
 
-    match result {
-        Ok(response) => match ureq_response_to_value(response) {
-            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
-            Err(e) => http_response_decode_err(e.message),
-        },
-        Err(e) => http_err(&format!("{e}"), url),
-    }
+    finish_http_response(result, url)
 }
 
 /// Shared implementation of `http.serve` and `http.serve_all`.
