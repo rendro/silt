@@ -55,6 +55,16 @@ pub(super) fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>,
     }
 }
 
+pub(super) fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
+    match arg {
+        Value::Bool(b) => Ok(*b),
+        other => Err(VmError::new(format!(
+            "{fn_label} requires Bool, got {}",
+            value_kind(other)
+        ))),
+    }
+}
+
 /// Surface a `Value`'s kind as a TitleCase `&'static str`. Used by the
 /// canonical `"<fn> requires <Kind>, got <kind>"` diagnostic shape that
 /// round 73f / 74 / 75 standardised across `numeric.rs`, `string.rs`,

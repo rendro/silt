@@ -1368,11 +1368,41 @@ impl Vm {
             }
             Op::DisplayValue => {
                 let val = self.pop()?;
-                if matches!(&val, Value::String(_)) {
-                    self.push(val);
-                } else {
-                    let s = self.display_value(&val);
-                    self.push(Value::String(s));
+                match &val {
+                    Value::String(_) => self.push(val),
+                    // Mirror the typechecker's string-interpolation Display
+                    // gate (inference.rs ~2654): function-shaped values and
+                    // channels have no Display impl. For a *concrete* operand
+                    // the typechecker rejects these at compile time; but for a
+                    // polymorphic type variable the operand type is still
+                    // `Var` at the interpolation site (type_name_for_impl ->
+                    // None), so the gate is skipped and the value reaches
+                    // here. Erroring at the execution site closes the
+                    // silent-wrong-behavior hole and matches how a polymorphic
+                    // `x > y` on incomparable values (e.g. two Channels) errors
+                    // at runtime rather than silently producing a result.
+                    // These are the only first-class values whose surface type
+                    // (`Fn` / `Channel`) the Display gate rejects yet can flow
+                    // through an unbounded type variable. Parity is locked by
+                    // tests/round95_interp_display_runtime_tests.rs.
+                    Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => {
+                        return Err(VmError::new(
+                            "type 'Fn' does not implement Display \
+                             (required for string interpolation)"
+                                .to_string(),
+                        ));
+                    }
+                    Value::Channel(_) => {
+                        return Err(VmError::new(
+                            "type 'Channel' does not implement Display \
+                             (required for string interpolation)"
+                                .to_string(),
+                        ));
+                    }
+                    _ => {
+                        let s = self.display_value(&val);
+                        self.push(Value::String(s));
+                    }
                 }
             }
             Op::StringConcat => {

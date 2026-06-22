@@ -38,6 +38,7 @@
 use std::sync::Arc;
 
 const TCP_RS: &str = include_str!("../src/builtins/tcp.rs");
+const COMMON_RS: &str = include_str!("../src/builtins/common.rs");
 
 // ── Test 1: source-grep canonical-shape lock ────────────────────────
 
@@ -95,11 +96,14 @@ fn tcp_canonical_got_strings_present_for_each_kind() {
     // We do not pin the exact `<fn>` prefix because there are many
     // (`tcp.read`, `tcp.write`, `tcp.set_nodelay`, etc.). We pin the
     // type-token + `, got ` tail.
-    for needle in [
-        "requires Bool, got ",
-        "requires TcpListener, got ",
-        "requires TcpStream, got ",
-    ] {
+    //
+    // The TcpListener/TcpStream kinds are tcp-specific, so their canonical
+    // shape lives in `tcp.rs`. Round 95 finished the round-79 intent by
+    // routing `require_bool` through `super::common::require_bool` (it had
+    // remained hand-rolled in tcp.rs); the Bool wording now lives in
+    // `common.rs` alongside `require_int`/`require_string`/`require_bytes`,
+    // so we pin it there.
+    for needle in ["requires TcpListener, got ", "requires TcpStream, got "] {
         assert!(
             TCP_RS.contains(needle),
             "tcp.rs missing canonical-shape substring `{needle}`. \
@@ -108,6 +112,12 @@ fn tcp_canonical_got_strings_present_for_each_kind() {
              that drops one of these messages must reintroduce it."
         );
     }
+    assert!(
+        COMMON_RS.contains("requires Bool, got "),
+        "common.rs missing canonical-shape substring `requires Bool, got `. \
+         Round 95 moved the Bool helper to `super::common::require_bool`; \
+         a refactor that drops this message must reintroduce it."
+    );
 }
 
 // ── Test 2: behavioural — runtime path emits canonical shape ────────

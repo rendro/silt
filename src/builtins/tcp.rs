@@ -478,13 +478,7 @@ fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
 }
 
 fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
-    match arg {
-        Value::Bool(b) => Ok(*b),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Bool, got {}",
-            super::common::value_kind(other)
-        ))),
-    }
+    super::common::require_bool(arg, fn_label)
 }
 
 fn require_listener<'a>(
