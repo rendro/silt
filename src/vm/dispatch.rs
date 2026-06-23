@@ -329,8 +329,8 @@ impl Vm {
                 // longer exists. The only theoretical fall-through is a
                 // `Value::Variant` with no `__type_of__` registration
                 // (src/vm/mod.rs ~:940), which is not constructible from a
-                // valid program. `PartialEq for Value` (src/value.rs
-                // 1586/1610) compares records and variants structurally,
+                // valid program. `impl PartialEq for Value` (src/value.rs
+                // 1662) compares records and variants structurally,
                 // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
@@ -387,7 +387,7 @@ impl Vm {
                     // longer exists. The only theoretical fall-through is a
                     // `Value::Variant` with no `__type_of__` registration
                     // (src/vm/mod.rs ~:940), which is not constructible from a
-                    // valid program. `Value::cmp` (src/value.rs 1728/1742)
+                    // valid program. `fn cmp` (src/value.rs 1782)
                     // orders records and variants structurally, so this arm
                     // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
@@ -419,7 +419,7 @@ impl Vm {
                 // auto-derived primitives fall through to here.
                 //
                 // `Value` already implements `std::hash::Hash` with a
-                // canonical bit-hash for floats (see src/value.rs:1759).
+                // canonical bit-hash for floats (see src/value.rs:2161).
                 // We reuse that impl via `DefaultHasher` so the result
                 // matches `HashMap<Value, Value>` keying.
                 if !extra_args.is_empty() {
@@ -443,7 +443,7 @@ impl Vm {
                 // `Value::Variant` with no `__type_of__` registration
                 // (src/vm/mod.rs ~:940), which is not constructible from a
                 // valid program. `impl Hash for Value` (src/value.rs
-                // 2020/2027) hashes records and variants structurally, so
+                // 2134) hashes records and variants structurally, so
                 // this arm stays sound even on that malformed input.
                 match receiver {
                     Value::Int(_)
@@ -453,7 +453,7 @@ impl Vm {
                     | Value::String(_)
                     | Value::List(_)
                     // Range hashes via the same `impl Hash for Value`
-                    // (src/value.rs:1791); typechecker registers Hash for
+                    // (src/value.rs:2134); typechecker registers Hash for
                     // every `List(T)` that flows through a `Hash` bound,
                     // and `1..5` reaches dispatch as `Value::Range`.
                     | Value::Range(..)
