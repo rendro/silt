@@ -847,6 +847,48 @@ impl Vm {
         }
     }
 
+    /// Whether a runtime value's type has a Display impl — the single
+    /// runtime-side oracle for the string-interpolation Display gate
+    /// (`Op::DisplayValue`, src/vm/execute.rs).
+    ///
+    /// This mirrors the typechecker's compile-time gate: the typechecker
+    /// reduces a *concrete* operand to its canonical name
+    /// (`type_name_for_impl` -> `crate::types::canonical::canonicalize`)
+    /// and rejects interpolation when that name is absent from the Display
+    /// `trait_impl_set`. The auto-derive lists (src/typechecker/mod.rs
+    /// ~7787-7876) stamp Display onto every printable built-in plus user
+    /// records / variants; the values that are deliberately left out are
+    /// the first-class no-Display types enumerated below:
+    ///
+    ///   - function-shaped values (`Fn` — closures, builtins, variant
+    ///     constructors): no Display impl;
+    ///   - `Channel` / `Handle`: opaque concurrency primitives;
+    ///   - `TcpListener` / `TcpStream`: opaque network resources, left
+    ///     explicitly unprintable (src/typechecker/mod.rs ~7878);
+    ///   - `TypeDescriptor` / `PrimitiveDescriptor`: reflective handles
+    ///     with no surface Display.
+    ///
+    /// For a *polymorphic* operand the operand type is still a type
+    /// variable at the interpolation site, so the compile-time gate is
+    /// skipped (`type_name_for_impl` returns `None`); `Op::DisplayValue`
+    /// consults this predicate at the execution site to reject the same
+    /// set rather than silently rendering a debug string. Locked by
+    /// tests/round95_interp_display_runtime_tests.rs.
+    pub fn value_implements_display(val: &Value) -> bool {
+        !matches!(
+            val,
+            Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::VariantConstructor(..)
+                | Value::Channel(_)
+                | Value::Handle(_)
+                | Value::TcpListener(_)
+                | Value::TcpStream(_)
+                | Value::TypeDescriptor(_)
+                | Value::PrimitiveDescriptor(_)
+        )
+    }
+
     /// Human-readable type name for error messages. Renders descriptor
     /// and function-shaped values in surface-syntax terms rather than
     /// leaking internal `Value` variant names.

@@ -235,14 +235,20 @@ pub fn is_user_renameable(name: &str) -> bool {
     true
 }
 
-/// Basic identifier shape check. Matches silt's lexer: starts with a
-/// letter or `_`, followed by any mix of alphanumerics and `_`.
+/// Basic identifier shape check. Matches silt's lexer: starts with an
+/// ASCII letter or `_`, followed by any mix of alphanumerics and `_`.
+///
+/// The lexer's identifier-start set is ASCII-only (`'a'..='z' | 'A'..='Z'
+/// | '_'` at `lexer.rs`), so the first-char check must use
+/// `is_ascii_alphabetic` — `char::is_alphabetic` would accept Unicode
+/// letters (`é`, `名`, …) that the lexer rejects, letting rename rewrite
+/// source into something that no longer lexes on the next `silt run`.
 fn is_valid_silt_ident(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !first.is_alphabetic() && first != '_' {
+    if !first.is_ascii_alphabetic() && first != '_' {
         return false;
     }
     for c in chars {

@@ -1371,33 +1371,51 @@ impl Vm {
                 match &val {
                     Value::String(_) => self.push(val),
                     // Mirror the typechecker's string-interpolation Display
-                    // gate (inference.rs ~2654): function-shaped values and
-                    // channels have no Display impl. For a *concrete* operand
-                    // the typechecker rejects these at compile time; but for a
+                    // gate (inference.rs ~2654): the typechecker's
+                    // `type_name_for_impl` reduces a *concrete* operand to a
+                    // canonical name and rejects interpolation when that name
+                    // is absent from the Display `trait_impl_set` — which
+                    // excludes every first-class value that has no Display
+                    // impl: function-shaped values (`Fn`), `Channel`,
+                    // `Handle` (task handles), `TcpListener` / `TcpStream`
+                    // (opaque resources left explicitly unprintable, see
+                    // mod.rs ~7878), and the descriptor values
+                    // (`TypeDescriptor` / `PrimitiveDescriptor`). For a
                     // polymorphic type variable the operand type is still
                     // `Var` at the interpolation site (type_name_for_impl ->
-                    // None), so the gate is skipped and the value reaches
-                    // here. Erroring at the execution site closes the
+                    // None), so the compile-time gate is skipped and the value
+                    // reaches here. Erroring at the execution site closes the
                     // silent-wrong-behavior hole and matches how a polymorphic
                     // `x > y` on incomparable values (e.g. two Channels) errors
                     // at runtime rather than silently producing a result.
-                    // These are the only first-class values whose surface type
-                    // (`Fn` / `Channel`) the Display gate rejects yet can flow
-                    // through an unbounded type variable. Parity is locked by
+                    //
+                    // The rejected set is sourced from the single predicate
+                    // `value_implements_display` (below) so the runtime gate
+                    // and the surface-name reporting cannot drift from the
+                    // `type_name` oracle. Parity is locked by
                     // tests/round95_interp_display_runtime_tests.rs.
-                    Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => {
-                        return Err(VmError::new(
-                            "type 'Fn' does not implement Display \
+                    _ if !Self::value_implements_display(&val) => {
+                        // Report the canonical surface name so the runtime
+                        // message matches the typechecker's compile-time one
+                        // (which names `Type::Fun` -> "Fn", not the per-shape
+                        // `BuiltinFn` / `VariantConstructor` tags). Function-
+                        // shaped values, Channel, Handle and the Tcp resources
+                        // collapse to their canonical name via
+                        // `dispatch_name_for_value`; the descriptor values
+                        // (whose canonical name is the *carried* type name)
+                        // fall back to their `type_name` so the diagnostic
+                        // names the descriptor kind, not the reflected type.
+                        let name = match &val {
+                            Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
+                                self.type_name(&val).to_string()
+                            }
+                            _ => crate::types::canonical::dispatch_name_for_value(&val)
+                                .unwrap_or_else(|| self.type_name(&val).to_string()),
+                        };
+                        return Err(VmError::new(format!(
+                            "type '{name}' does not implement Display \
                              (required for string interpolation)"
-                                .to_string(),
-                        ));
-                    }
-                    Value::Channel(_) => {
-                        return Err(VmError::new(
-                            "type 'Channel' does not implement Display \
-                             (required for string interpolation)"
-                                .to_string(),
-                        ));
+                        )));
                     }
                     _ => {
                         let s = self.display_value(&val);

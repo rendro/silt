@@ -187,56 +187,18 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 })
                 .collect();
 
-            // No operation succeeded — park via scheduler or spin.
+            // No operation succeeded — park via scheduler or run the
+            // main-thread event-driven wait (with deadlock detection).
             if vm.is_scheduled_task {
                 return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
             }
 
-            // Main thread: block on a shared condvar. Wrap every
-            // registration in a `WakerRegistration` guard so the
-            // losing siblings are deregistered on return — otherwise
-            // their `waiting_receivers` / `waiting_senders` counter
-            // stays inflated and a later rendezvous `try_send` sees a
-            // phantom peer (same bug class as the scheduled-task path
-            // fix in src/scheduler.rs select arm).
-            let pair = Arc::new((Mutex::new(false), Condvar::new()));
-            let mut registrations: Vec<crate::value::WakerRegistration> =
-                Vec::with_capacity(ops.len());
-            for op in &ops {
-                let pair2 = pair.clone();
-                let waker = Box::new(move || {
-                    let (lock, cvar) = &*pair2;
-                    *lock.lock() = true;
-                    cvar.notify_one();
-                });
-                match op {
-                    SelectOp::Receive(ch) if !ch.is_closed() => {
-                        registrations.push(ch.register_recv_waker_guard(waker));
-                    }
-                    SelectOp::Send(ch, _) if !ch.is_closed() => {
-                        registrations.push(ch.register_send_waker_guard(waker));
-                    }
-                    // Closed channels: no registration needed — a
-                    // subsequent `try_select_sweep` iteration observes
-                    // the closed state directly.
-                    SelectOp::Receive(_) | SelectOp::Send(_, _) => {}
-                }
-            }
-            loop {
-                if let Some(result) = try_select_sweep(&ops)? {
-                    // Dropping `registrations` (at scope exit) runs
-                    // each guard's Drop → `remove_*_waker`. Idempotent
-                    // for entries whose waker already fired.
-                    drop(registrations);
-                    return Ok(result);
-                }
-                let (lock, cvar) = &*pair;
-                let mut notified = lock.lock();
-                if !*notified {
-                    cvar.wait_for(&mut notified, std::time::Duration::from_secs(1));
-                }
-                *notified = false;
-            }
+            // Main thread: same wake-graph-driven protocol as
+            // `channel.receive` / `channel.send`. Returns a
+            // "deadlock on main thread" error if the wake graph proves
+            // no counterparty can ever make any arm ready (previously
+            // this path spun on a 1s condvar poll forever).
+            main_thread_wait_for_select(&ops, vm)
         }
         "recv_timeout" => {
             // channel.recv_timeout(ch, dur) -> Result(a, String)
@@ -988,9 +950,19 @@ fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> boo
         // Join with no scheduler: the joinee never ran, so there's
         // no result coming.
         crate::scheduler::MainTarget::Join(_) => true,
-        // Select with no scheduler: no channel timers tracked through
-        // SelectEdge ids; deadlock.
-        crate::scheduler::MainTarget::Select(_) => true,
+        // Select with no scheduler: same reasoning as Recv/Send, per
+        // arm. If ANY arm's channel has a pending timer close, the
+        // timer thread's `ch.close()` will fire that arm's waker and
+        // unblock the select — not starved. This is the
+        // `channel.select([Recv(ch), Recv(channel.timeout(..))])` case
+        // with no spawned tasks (so no scheduler is ever created): the
+        // timeout arm must still wake. Only when NO arm has an external
+        // timer waiting is the select a genuine deadlock.
+        crate::scheduler::MainTarget::Select(edges) => !edges.iter().any(|e| match e {
+            crate::scheduler::SelectEdge::Recv(ch) | crate::scheduler::SelectEdge::Send(ch) => {
+                ch.has_pending_timer_close()
+            }
+        }),
     }
 }
 
@@ -1395,6 +1367,150 @@ fn main_thread_wait_for_receive(
         }
         // Re-check the channel; the loop will also re-check
         // `is_main_starved` on the next iteration before waiting.
+    }
+}
+
+/// Block the main thread on a `channel.select` over `ops` until one
+/// arm becomes ready, or the wake graph proves no scheduled task can
+/// drive ANY arm forward (deadlock).
+///
+/// Phase 4: same wake-graph-driven protocol as
+/// `main_thread_wait_for_receive` / `_send`, generalized to a set of
+/// select arms via `MainTarget::Select`. Each arm registers a
+/// recv/send waker (held as a `WakerRegistration` guard so a losing
+/// sibling is deregistered on return and its `waiting_*` counter does
+/// not leak a phantom peer); a single shared condvar is poked by any
+/// waker firing or by the wake-graph signal callback. On each wake we
+/// re-run `try_select_sweep` (lost-wakeup guard) and consult
+/// `main_thread_is_starved`; a confirmed-stable starvation fires a
+/// "deadlock on main thread" error rather than spinning forever.
+///
+/// Before this path existed, this branch spun on `cvar.wait_for(1s)`
+/// indefinitely — a `channel.select` over a set with no possible
+/// counterparty never returned. `channel.receive` / `channel.send` on
+/// the same dead set DO report a deadlock; this brings select in line
+/// (and matches docs/concurrency.md, which claims select "detects a
+/// deadlock and reports an error").
+///
+/// NOTE: `channel.recv_timeout` deliberately keeps its own inline
+/// condvar loop and does NOT call this — its private timer channel is
+/// `pending_timer_close`, so the timer thread's `close()` guarantees
+/// termination even with no scheduler attached, where this function's
+/// no-scheduler `MainTarget::Select` starvation check would (correctly,
+/// for a plain select) report deadlock.
+fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmError> {
+    // Build the wake-graph target: one edge per arm. Closed channels
+    // are still included — `is_main_starved`'s Select arm treats a
+    // closed channel as fuel (not starved), and `try_select_sweep`
+    // observes the closed state directly on the next pass.
+    let edges: Vec<crate::scheduler::SelectEdge> = ops
+        .iter()
+        .map(|op| match op {
+            SelectOp::Receive(ch) => crate::scheduler::SelectEdge::Recv(ch.clone()),
+            SelectOp::Send(ch, _) => crate::scheduler::SelectEdge::Send(ch.clone()),
+        })
+        .collect();
+    let target = crate::scheduler::MainTarget::Select(edges);
+
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    // Install the wake-graph signal callback + park MAIN on the select
+    // edge set so parked counterparties' BFS finds MAIN as a wake
+    // destination. Unpark on exit (the `unpark_main` closure below).
+    let _signal_guard = install_main_signal(vm, &pair);
+    if let Some(sched) = vm.current_scheduler() {
+        sched.park_main(&target);
+    }
+    let unpark_main = |vm: &Vm| {
+        if let Some(sched) = vm.current_scheduler() {
+            sched.unpark_main();
+        }
+    };
+
+    // Per-arm waker registrations. Each iteration re-registers every
+    // open arm and drops the prior guards first, so a stale waker is
+    // deregistered before a fresh one is minted (no `waiting_*` leak —
+    // same rationale as the receive/send single-waker paths, but here
+    // the guards are a `Vec` over the arm set).
+    let mut registrations: Vec<crate::value::WakerRegistration> = Vec::with_capacity(ops.len());
+    // Re-check helper: returns Some(result) when an arm is ready,
+    // dropping the registrations FIRST then unparking MAIN — same
+    // drop/unpark ordering as the receive/send recheck closures.
+    let try_finish =
+        |registrations: &mut Vec<crate::value::WakerRegistration>| -> Result<Option<Value>, VmError> {
+            if let Some(result) = try_select_sweep(ops)? {
+                registrations.clear();
+                unpark_main(vm);
+                return Ok(Some(result));
+            }
+            Ok(None)
+        };
+    loop {
+        if let Some(result) = try_finish(&mut registrations)? {
+            return Ok(result);
+        }
+        // Drop the previous iteration's guards before minting new ones
+        // so old wakers are deregistered first.
+        registrations.clear();
+        for op in ops {
+            let pair2 = pair.clone();
+            let waker = Box::new(move || {
+                let (lock, cvar) = &*pair2;
+                *lock.lock() = true;
+                cvar.notify_one();
+            });
+            match op {
+                SelectOp::Receive(ch) if !ch.is_closed() => {
+                    registrations.push(ch.register_recv_waker_guard(waker));
+                }
+                SelectOp::Send(ch, _) if !ch.is_closed() => {
+                    registrations.push(ch.register_send_waker_guard(waker));
+                }
+                // Closed channels: no registration — `try_select_sweep`
+                // observes the closed state directly.
+                SelectOp::Receive(_) | SelectOp::Send(_, _) => {}
+            }
+        }
+        // Re-check after registering to close the lost-wakeup window
+        // between the sweep above and the registrations.
+        if let Some(result) = try_finish(&mut registrations)? {
+            return Ok(result);
+        }
+        // Pre-wait starvation check: if the wake graph already proves
+        // no arm can ever be made ready, this is a candidate deadlock.
+        if main_thread_is_starved(vm, &target) {
+            // Catch an arm that raced ready between the re-check above
+            // and this BFS.
+            if let Some(result) = try_finish(&mut registrations)? {
+                return Ok(result);
+            }
+            // Confirm the starvation is STABLE before firing — a single
+            // snapshot can be transiently starved under contention.
+            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
+            // An arm that raced ready during the confirm window wins
+            // over the deadlock verdict.
+            if let Some(result) = try_finish(&mut registrations)? {
+                return Ok(result);
+            }
+            if confirmed {
+                registrations.clear();
+                unpark_main(vm);
+                return Err(VmError::new(
+                    "deadlock on main thread: channel select with no counterparty".into(),
+                ));
+            }
+            // Progress signalled or starvation cleared: re-evaluate.
+            continue;
+        }
+        // Indefinite wait — woken by any arm's waker (channel state
+        // change) or the wake-graph signal callback. No 100ms tick.
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            while !*notified {
+                cvar.wait(&mut notified);
+            }
+            *notified = false;
+        }
     }
 }
 
