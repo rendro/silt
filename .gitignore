@@ -20,7 +20,9 @@
 .DS_Store
 .env
 .silt_history
-.claude/
+.claude/*
+!.claude/workflows/
+!.claude/skills/
 /output.txt
 /output/reports/
 /slow-unit-*
