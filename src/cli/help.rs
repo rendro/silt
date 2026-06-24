@@ -69,10 +69,7 @@ pub(crate) fn usage_text() -> String {
         "silt lsp",
         "Start the language server  [feature: lsp]",
     ));
-    out.push_str(&line(
-        "silt disasm [--watch] [<file.silt>]",
-        &disasm_desc,
-    ));
+    out.push_str(&line("silt disasm [--watch] [<file.silt>]", &disasm_desc));
     out.push_str(&line(
         "silt self-update [--dry-run] [--force]",
         "Update the silt binary to the latest release",

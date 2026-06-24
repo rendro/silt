@@ -35,8 +35,9 @@ fn encode_type_expr(resolver: &crate::types::canonical::Resolver, te: &TypeExpr)
         TypeExprKind::Named(n) => {
             let s = resolve(*n);
             match s.as_str() {
-                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time"
-                | "DateTime" => s,
+                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime" => {
+                    s
+                }
                 _ if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
                     format!("Record:{s}")
                 }

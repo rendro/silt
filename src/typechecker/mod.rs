@@ -5496,9 +5496,8 @@ impl TypeChecker {
         // and routes them through `user_decl_type_names` already, so the
         // `pkg == builtin_pkg` arm covers them; an imported type there
         // still carries its real producer package and is excluded.
-        let owned_for_synth = |pkg: Symbol| -> bool {
-            pkg == builtin_pkg || current_pkg == Some(pkg)
-        };
+        let owned_for_synth =
+            |pkg: Symbol| -> bool { pkg == builtin_pkg || current_pkg == Some(pkg) };
         let mut builtin_enum_names: Vec<Symbol> = self
             .enums
             .iter()

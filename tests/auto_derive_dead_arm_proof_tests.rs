@@ -568,8 +568,7 @@ fn dead_arm_prose_does_not_regress() {
     // 3. Sanity: the corrected prose is actually present (so this
     //    lock can't be satisfied by an empty/renamed source).
     assert!(
-        dispatch_src.contains("Defensive fallback")
-            || dispatch_src.contains("defensive fallback"),
+        dispatch_src.contains("Defensive fallback") || dispatch_src.contains("defensive fallback"),
         "expected the corrected 'defensive fallback' prose in \
          src/vm/dispatch.rs"
     );
@@ -601,11 +600,17 @@ fn dispatch_value_rs_citations_resolve() {
     // and confirming the value.rs line at <N> contains `needle`.
     let checks: &[(&str, &str)] = &[
         // arm 1: PartialEq for Value
-        ("impl PartialEq for Value` (src/value.rs", "impl PartialEq for Value"),
+        (
+            "impl PartialEq for Value` (src/value.rs",
+            "impl PartialEq for Value",
+        ),
         // arm 2: fn cmp
         ("fn cmp` (src/value.rs", "fn cmp"),
         // float canonical bit-hash citation
-        ("canonical bit-hash for floats (see src/value.rs:", "Value::Float(f) =>"),
+        (
+            "canonical bit-hash for floats (see src/value.rs:",
+            "Value::Float(f) =>",
+        ),
         // arm 3: impl Hash for Value (full reference, with line on next line)
         ("impl Hash for Value` (src/value.rs", "impl Hash for Value"),
         // Range-hash inline citation

@@ -3643,9 +3643,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             // line). Without this, `fn foo(a, b -- note\n)` mis-attaches
             // the comment to the first param. Mirrors the call / collection
             // emitters.
-            let is_last_on_line = !param_lines[i + 1..]
-                .iter()
-                .any(|l| *l == Some(p_line));
+            let is_last_on_line = !param_lines[i + 1..].iter().any(|l| *l == Some(p_line));
             let trailing = if is_last_on_line {
                 take_trailing_for_line(p_line)
                     .map(|c| format!(" {c}"))

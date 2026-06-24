@@ -80,7 +80,10 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
         (2045, r#"Type::Channel(_) => Some(intern("Channel"))"#),
         (2056, r#"Type::Fun(_, _) => Some(intern("Fn"))"#),
         // dispatch.rs compare-arm comment block.
-        (7796, r#"register_auto_derived_impls_for(checker, &["List"]"#),
+        (
+            7796,
+            r#"register_auto_derived_impls_for(checker, &["List"]"#,
+        ),
         (7793, r#""Unit""#),
     ];
 

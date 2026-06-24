@@ -87,9 +87,10 @@ fn language_eq(a: &Value, b: &Value) -> bool {
             let names_ok = na.as_str() == "<anon>" || nb.as_str() == "<anon>" || na == nb;
             names_ok
                 && fa.len() == fb.len()
-                && fa.iter().zip(fb.iter()).all(|((ka, va), (kb, vb))| {
-                    ka == kb && language_eq(va, vb)
-                })
+                && fa
+                    .iter()
+                    .zip(fb.iter())
+                    .all(|((ka, va), (kb, vb))| ka == kb && language_eq(va, vb))
         }
         (Value::Variant(na, xa), Value::Variant(nb, xb)) => {
             na == nb
