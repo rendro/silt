@@ -29,13 +29,23 @@ pub(crate) fn usage_text() -> String {
     // other rows instead of being pushed right by 12 characters.
     const SIG_WIDTH: usize = 58;
     let line = |sig: &str, desc: &str| format!("  {sig:<SIG_WIDTH$}  {desc}\n");
-    let run_desc: String = {
-        let mut d = String::from("Run a program");
+    // Rows whose signatures advertise `[--watch]` get the same up-front
+    // "requires feature: watch" caveat as `run` when the watch feature is
+    // not compiled in. Appending to the *description* (rather than the
+    // signature) keeps the description column aligned and leaves the
+    // shared `*_usage_banner()` helpers — which other code paths render —
+    // byte-identical across builds.
+    let watch_caveat = |base: &str| -> String {
+        let mut d = String::from(base);
         if !cfg!(feature = "watch") {
             d.push_str("  [--watch requires feature: watch]");
         }
         d
     };
+    let run_desc = watch_caveat("Run a program");
+    let check_desc = watch_caveat("Type-check without running");
+    let test_desc = watch_caveat("Run test functions");
+    let disasm_desc = watch_caveat("Show bytecode disassembly");
     let mut out = String::new();
     out.push_str("silt — a statically-typed, expression-based language\n");
     out.push('\n');
@@ -46,9 +56,9 @@ pub(crate) fn usage_text() -> String {
     ));
     out.push_str(&line(
         "silt check [--format json] [--watch] <file.silt>",
-        "Type-check without running",
+        &check_desc,
     ));
-    out.push_str(&line(test_usage_banner(), "Run test functions"));
+    out.push_str(&line(test_usage_banner(), &test_desc));
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
@@ -61,7 +71,7 @@ pub(crate) fn usage_text() -> String {
     ));
     out.push_str(&line(
         "silt disasm [--watch] [<file.silt>]",
-        "Show bytecode disassembly",
+        &disasm_desc,
     ));
     out.push_str(&line(
         "silt self-update [--dry-run] [--force]",
