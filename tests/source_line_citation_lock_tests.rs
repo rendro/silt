@@ -32,7 +32,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "completion.rs -> builtin_trait_decls def",
         "src/typechecker/mod.rs",
-        7560,
+        7589,
         "fn builtin_trait_decls",
     ),
     // vm/runtime.rs:450 — "Rust 1.80+ thread-local env SAFETY note"
@@ -53,21 +53,21 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "execute.rs/tests.rs -> And short-circuit JumpIfFalse emit",
         "src/compiler/mod.rs",
-        2326,
+        2327,
         "Op::JumpIfFalse",
     ),
     // vm/execute.rs:1362 / vm/tests.rs:622 — Or short-circuit JumpIfTrue
     (
         "execute.rs/tests.rs -> Or short-circuit JumpIfTrue emit",
         "src/compiler/mod.rs",
-        2337,
+        2338,
         "Op::JumpIfTrue",
     ),
     // vm/execute.rs:1346 — `BinOp::And | BinOp::Or => unreachable!()`
     (
         "execute.rs -> And/Or unreachable guard",
         "src/compiler/mod.rs",
-        2358,
+        2359,
         "BinOp::And | BinOp::Or => unreachable!()",
     ),
     // workspace.rs:284 — "FieldAccess.span is the receiver span" construction
@@ -88,19 +88,19 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "pipeline.rs -> compiler 'is not imported' #1",
         "src/compiler/mod.rs",
-        2561,
+        2562,
         "is not imported",
     ),
     (
         "pipeline.rs -> compiler 'is not imported' #2",
         "src/compiler/mod.rs",
-        2657,
+        2658,
         "is not imported",
     ),
     (
         "pipeline.rs -> compiler 'is not imported' #3",
         "src/compiler/mod.rs",
-        3476,
+        3477,
         "is not imported",
     ),
     // compiler/mod.rs:441 — typechecker round-58 prefix-mirror logic

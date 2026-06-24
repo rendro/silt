@@ -451,7 +451,7 @@ pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
 
 /// Returns true iff `err` is the typechecker's "module 'X' is not
 /// imported" error. The compiler emits the same diagnostic (with
-/// identical wording, see `src/compiler/mod.rs:2561`, `:2657`, `:3476`)
+/// identical wording, see `src/compiler/mod.rs:2562`, `:2658`, `:3477`)
 /// as a hard compile error that actually blocks bytecode emission, so
 /// the CLI pipeline drops the typechecker's copy to avoid rendering the
 /// same sentence twice. See `reportable_type_errors` for the call site.

@@ -3189,7 +3189,7 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:7896`); Channel and Fn are not
+                    // in `src/typechecker/mod.rs:7925`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2045`,
@@ -5755,6 +5755,13 @@ pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
 /// nondeterministic) is rejected there with a field-precise message.
 /// This free function stays stateless because every other arm is
 /// purely structural.
+///
+/// Round 97: the same applies to CONTAINER heads. `List(_)` / `Range(_)`
+/// (ordering + equality) and `Tuple`/`Map`/`Set` (equality) pass this
+/// shape gate, but a container whose element / component / value type is
+/// `Fn`-shaped would launder into the same Arc-pointer-address ordering
+/// at runtime. `operand_builtin_trait_violation` recurses into the
+/// element types (via `gate_field_supports_trait`) and rejects those.
 pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     match ty {
         Type::Int

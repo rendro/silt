@@ -750,6 +750,26 @@ enum ScanMode {
 /// rather than a per-line walk; behavior is intentionally divergent
 /// for that reason and the two scaffolds are not unified.
 fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize {
+    compute_bracket_end_line_opts(start_line, open, close, false)
+}
+
+/// Variant of [`compute_bracket_end_line`] that, when
+/// `require_open_on_start_line` is set, returns `start_line` unchanged if
+/// the `open` delimiter is not found (in code context) on `start_line`
+/// itself. `expr_max_line` runs over arbitrary expressions — including
+/// paren-less trailing-block calls (`list.map { ... }`) that have no `(`
+/// of their own. The plain scanner would skip past such a construct and
+/// latch onto a *later* statement's bracket, dragging the intervening
+/// standalone comments into the wrong statement on re-layout. Requiring
+/// the opener on the first scanned line confines the match to this
+/// construct. All pre-existing callers pass `false` (they already pass the
+/// exact line the opener lives on), preserving their behavior unchanged.
+fn compute_bracket_end_line_opts(
+    start_line: usize,
+    open: char,
+    close: char,
+    require_open_on_start_line: bool,
+) -> usize {
     FMT_STATE.with(|cell| {
         let borrowed = cell.borrow();
         let Some(state) = borrowed.as_ref() else {
@@ -899,6 +919,13 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
                         i += 1;
                     }
                 }
+            }
+            // Strict mode: if the opener never appeared on the first
+            // scanned line, this construct has no delimiter of its own
+            // (e.g. a paren-less trailing-block call). Don't scan into
+            // later statements looking for an unrelated bracket.
+            if require_open_on_start_line && line_idx == start_idx && !found_open {
+                return start_line;
             }
             // End-of-line fallback: a `}` that pops back into a regular
             // string is allowed (we're in InRegular at end of line) as
@@ -2475,16 +2502,44 @@ fn expr_max_line(expr: &Expr) -> usize {
                     ListElem::Single(e) | ListElem::Spread(e) => visit(e),
                 }
             }
+            // Include the construct's own closing-bracket line so a
+            // trailing comment on the close-delimiter line (e.g.
+            // `[\n  1\n] -- note`) — which no element occupies — is
+            // reachable to the outer statement drain and not orphaned in
+            // `trailing_map`. Mirrors the Lambda/Block handling below.
+            let close = compute_bracket_end_line_opts(expr.span.line, '[', ']', true);
+            if close > max {
+                max = close;
+            }
         }
         ExprKind::Map(pairs) => {
             for (k, v) in pairs {
                 visit(k);
                 visit(v);
             }
+            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            if close > max {
+                max = close;
+            }
         }
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+        ExprKind::SetLit(elems) => {
             for e in elems {
                 visit(e);
+            }
+            // `#[ ... ]` — the `#` is a scalar the scanner skips; the
+            // bracket pair is `[`/`]`.
+            let close = compute_bracket_end_line_opts(expr.span.line, '[', ']', true);
+            if close > max {
+                max = close;
+            }
+        }
+        ExprKind::Tuple(elems) => {
+            for e in elems {
+                visit(e);
+            }
+            let close = compute_bracket_end_line_opts(expr.span.line, '(', ')', true);
+            if close > max {
+                max = close;
             }
         }
         ExprKind::FieldAccess(e, _) => visit(e),
@@ -2501,6 +2556,15 @@ fn expr_max_line(expr: &Expr) -> usize {
             visit(callee);
             for a in args {
                 visit(a);
+            }
+            // Include the call's own `)` close line so a trailing comment
+            // on the close-paren line (e.g. `bar(\n  1\n) -- note`) is
+            // reachable to the outer statement drain rather than orphaned
+            // in `trailing_map`. The call's span is at the callee and the
+            // opening `(` lives on the same line. Mirrors Lambda/Block.
+            let close = compute_bracket_end_line_opts(expr.span.line, '(', ')', true);
+            if close > max {
+                max = close;
             }
         }
         ExprKind::Lambda { body, .. } => {
@@ -2523,11 +2587,24 @@ fn expr_max_line(expr: &Expr) -> usize {
             for (_, v) in fields {
                 visit(v);
             }
+            // Include the record's `}` close line so a trailing comment on
+            // the close-brace line is reachable to the outer statement
+            // drain. Mirrors Lambda/Block.
+            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            if close > max {
+                max = close;
+            }
         }
-        ExprKind::RecordUpdate { expr, fields } => {
-            visit(expr);
+        ExprKind::RecordUpdate { expr: recv, fields } => {
+            visit(recv);
             for (_, v) in fields {
                 visit(v);
+            }
+            // `RecordUpdate.span` is the receiver's span; the update brace
+            // is the first `{` at or after that line. Reach its close `}`.
+            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            if close > max {
+                max = close;
             }
         }
         ExprKind::AnonRecord { spread, fields } => {
@@ -2536,6 +2613,10 @@ fn expr_max_line(expr: &Expr) -> usize {
             }
             for (_, v) in fields {
                 visit(v);
+            }
+            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            if close > max {
+                max = close;
             }
         }
         ExprKind::Match { expr, arms } => {

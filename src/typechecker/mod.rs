@@ -6099,6 +6099,36 @@ impl TypeChecker {
                     })
                 });
             }
+            // Round 97: container HEADS (List/Range/Tuple/Map/Set) pass the
+            // structural shape gate in `is_valid_compare_operand`, but the
+            // Value-level operation recurses into element types — and the VM
+            // fallback for a `Fn`-shaped element is Arc-pointer-address
+            // ordering (ASLR-nondeterministic), exactly the bug round 3 fixed
+            // for bare `Fn` operands and round 93 fixed for nominal fields.
+            // Mirror the round-93 field walk: a container is compare/equality
+            // -valid IFF every element / component / value type is itself
+            // valid. `gate_field_supports_trait` already does this recursion
+            // honestly (and bottoms out at `Type::Fun(..) => false`), so we
+            // reuse it and surface the whole container type as the reason.
+            Type::List(_) | Type::Range(_) | Type::Tuple(_) | Type::Map(..) | Type::Set(_) => {
+                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
+                    std::collections::HashSet::new();
+                let no_negatives = HashMap::new();
+                return (!self.gate_field_supports_trait(
+                    trait_sym,
+                    &resolved,
+                    &no_rescue,
+                    &no_negatives,
+                    0,
+                ))
+                .then(|| {
+                    format!(
+                        "type '{resolved}' cannot derive '{}': element type is not {}",
+                        resolve(trait_sym),
+                        builtin_trait_adjective(trait_sym),
+                    )
+                });
+            }
             _ => return None,
         };
         let canon = canonicalize_type_name(&self.resolver, name);
