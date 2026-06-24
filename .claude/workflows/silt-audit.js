@@ -30,9 +30,18 @@ export const meta = {
 
 const NTFY = 'ntfy.sh/rendro-silt-completion-987'
 const PRIOR = '/tmp/prior-audit-fixes.txt'
-const BRANCH = args && args.branch ? args.branch : 'audit/auto-nightly'
-const MAX_ROUNDS = args && args.maxRounds ? args.maxRounds : 6
-const CLEAN_TARGET = 2 // stop after this many consecutive clean rounds
+
+// args may arrive as an object OR as a JSON-encoded string depending on how the
+// caller passed it; normalize so {maxRounds,branch,cleanTarget} are honored either way.
+let _args = args
+if (typeof _args === 'string') {
+  try { _args = JSON.parse(_args) } catch (e) { _args = {} }
+}
+_args = _args && typeof _args === 'object' ? _args : {}
+
+const BRANCH = _args.branch || 'audit/auto-nightly'
+const MAX_ROUNDS = Number(_args.maxRounds) > 0 ? Number(_args.maxRounds) : 6
+const CLEAN_TARGET = Number(_args.cleanTarget) > 0 ? Number(_args.cleanTarget) : 2 // stop after this many consecutive clean rounds
 
 // The seven audit areas. Dead-code is special (grep-structural, not a
 // correctness probe) and runs first per the doc.
