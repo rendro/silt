@@ -3706,7 +3706,7 @@ impl Parser {
     /// `..[-]N` exits stay in lock-step.
     ///
     /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
-    /// lex time (see src/lexer.rs:599-603), so `Token::Int(n)` is always
+    /// lex time (see src/lexer.rs:626-627), so `Token::Int(n)` is always
     /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
     /// underflows, and the caller's `-n` for the head is likewise safe.
     /// We still spell the negation as a plain unary minus to match the

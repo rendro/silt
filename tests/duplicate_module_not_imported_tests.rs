@@ -1,9 +1,9 @@
 //! Round 60 B9 regression lock.
 //!
 //! The typechecker emits `"module 'X' is not imported; add \`import X\`..."`
-//! at `src/typechecker/inference.rs:1897`. The compiler independently
-//! re-emits the identical sentence at `src/compiler/mod.rs:1923,
-//! :2029, :2782`. Before this fix, the CLI pipeline fed both phases'
+//! at `src/typechecker/inference.rs:2909`. The compiler independently
+//! re-emits the identical sentence at `src/compiler/mod.rs:2561,
+//! :2657, :3476`. Before this fix, the CLI pipeline fed both phases'
 //! errors into the combined diagnostic vec with no deduplication, so
 //! `silt check main.silt` rendered the same message twice — once as
 //! `error[type]`, once as `error[compile]`.

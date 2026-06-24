@@ -6,10 +6,10 @@
 //! `src/vm/execute.rs:1282-1313` previously contained eager-eval
 //! dispatch arms for `Op::And` and `Op::Or` that popped two booleans
 //! and pushed `a && b` / `a || b`. The compiler does not emit those
-//! opcodes — `compiler/mod.rs:2010, 2021` lower `BinOp::And` to
+//! opcodes — `compiler/mod.rs:2326, 2337` lower `BinOp::And` to
 //! `JumpIfFalse` short-circuit and `BinOp::Or` to `JumpIfTrue`
 //! short-circuit; the `BinOp::And | BinOp::Or => unreachable!()` at
-//! `compiler/mod.rs:2047` confirms no other emission path exists.
+//! `compiler/mod.rs:2358` confirms no other emission path exists.
 //!
 //! Round-75 VM-2 replaces the two arms with `unreachable!()` to match
 //! the `Op::LoopSetup` precedent at `execute.rs:2070-2076` (deliberate
@@ -72,7 +72,7 @@ fn op_or_discriminant_is_pinned() {
 
 /// Source-grep lock: the compiler must never emit Op::And or Op::Or.
 /// The `BinOp::And | BinOp::Or => unreachable!()` at
-/// `compiler/mod.rs:2047` already enforces this at the AST → bytecode
+/// `compiler/mod.rs:2358` already enforces this at the AST → bytecode
 /// boundary, but a regression that introduces a new emission path
 /// (e.g. a future "fold both operands eagerly" optimization) would
 /// be silently wrong. This test scans the compiler source for
@@ -101,8 +101,8 @@ fn compiler_source_does_not_emit_op_and_or() {
             "compiler/mod.rs contains `{forbidden}` — round-75 VM-2 \
              requires that Op::And/Op::Or never be emitted. The \
              compiler must lower BinOp::And/Or to JumpIfFalse / \
-             JumpIfTrue short-circuit form (see compiler/mod.rs:2010, \
-             2021); the dispatch arms in execute.rs are now \
+             JumpIfTrue short-circuit form (see compiler/mod.rs:2326, \
+             2337); the dispatch arms in execute.rs are now \
              `unreachable!()`."
         );
     }

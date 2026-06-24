@@ -365,7 +365,7 @@ impl Vm {
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: the typechecker auto-derives Compare for
-                    // List (see src/typechecker/mod.rs:3386), so a value of
+                    // List (see src/typechecker/mod.rs:7796), so a value of
                     // `List(T)` flowing through a `Compare` bound must
                     // resolve here. Defer to the existing element-wise
                     // ordering on `Value::cmp`, which already handles
@@ -394,7 +394,7 @@ impl Vm {
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
-                    // (src/typechecker/mod.rs:3383). All units are equal.
+                    // (src/typechecker/mod.rs:7793). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     _ => {
                         return Some(Err(VmError::new(format!(

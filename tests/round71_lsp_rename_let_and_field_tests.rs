@@ -15,7 +15,7 @@
 //!
 //! - **DX-2** — `collect_references_in_expr` matched on
 //!   `ExprKind::FieldAccess(_, field) if *field == name`, but
-//!   `FieldAccess.span = receiver.span` (parser.rs:2369-2370). Symbols
+//!   `FieldAccess.span = receiver.span` (parser.rs:2598/2674). Symbols
 //!   are interned, so a top-level `let name` and a record field `name`
 //!   share the same `Symbol`. Renaming the let pushed the receiver's
 //!   span as a "reference", silently corrupting `r.name` into

@@ -281,7 +281,7 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
             out.push(expr.span);
         }
         // Round-71 DX-2 fix: do NOT match on FieldAccess by symbol equality.
-        // `FieldAccess.span` is the receiver's span (parser.rs:2369-2370),
+        // `FieldAccess.span` is the receiver's span (parser.rs:2598/2674),
         // not the field's, so pushing it here would corrupt the receiver
         // identifier on rename. Field names live in a separate namespace
         // from let/fn names; symbol-collision matching across the two

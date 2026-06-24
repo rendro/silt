@@ -41,7 +41,7 @@ impl EnvGuard {
     fn acquire() -> Self {
         let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // SAFETY: matches the convention in
-        // src/scheduler.rs:1614 — Rust 1.80+ uses thread-local env
+        // src/scheduler.rs:1830 — Rust 1.80+ uses thread-local env
         // caches and these tests are serialized by ENV_LOCK so no
         // concurrent reader observes the transient remove.
         unsafe { std::env::remove_var("SILT_IO_POOL_SIZE") };
