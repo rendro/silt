@@ -80,9 +80,12 @@ patch, and exactly ONE integrator owns all git history, the old doc's no-git-ops
 5. **Fix** — one worktree-isolated agent per in-scope finding, editing + adding
    the lock test, returning a patch. No cargo.
 6. **Integrate** — one agent applies all patches, runs the single build+test,
-   re-verifies each BROKEN/REGRESSION repro from the built binary, bisects out any
-   patch that breaks the tree, makes ONE commit whose subject starts with
-   `Fix audit findings:` (parseable by the next round), and force-pushes the branch.
+   then the **lint gate** (`cargo fmt`, then `cargo clippy --all-features -- -D warnings`,
+   then `cargo fmt -- --check` + `cargo check --benches --all-features`) — CI enforces
+   these and patches routinely land unformatted, so a tests-green-but-lint-red round
+   still reddens the PR. Re-verifies each BROKEN/REGRESSION repro from the built binary,
+   bisects out any patch that breaks the tree, makes ONE commit whose subject starts
+   with `Fix audit findings:` (parseable by the next round), and force-pushes the branch.
 
 ## Scope of auto-fixing
 
