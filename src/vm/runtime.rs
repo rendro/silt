@@ -447,7 +447,7 @@ mod tests {
             // If a prior test poisoned the lock, recover — env-var state
             // is still safe to clean up below.
             let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            // SAFETY: see scheduler.rs:1614 — Rust 1.80+ uses thread-local
+            // SAFETY: see scheduler.rs:1830 — Rust 1.80+ uses thread-local
             // env caches and these tests do not spawn concurrent env readers.
             unsafe { std::env::remove_var("SILT_IO_POOL_SIZE") };
             EnvGuard { _lock: lock }

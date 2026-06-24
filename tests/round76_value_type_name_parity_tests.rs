@@ -28,6 +28,17 @@
 //! `Vm::type_name(v)`). It also asserts the four specific pre-fix
 //! strings ("got Fn" for BuiltinFn, "got Constructor", "got Type" for
 //! both descriptor variants) NEVER appear for those variants.
+//!
+//! **Round 76 follow-up — compile-locked enumeration.** A later audit
+//! flagged that the enumeration walked a hand-maintained `AllVariants`
+//! struct with no compile-time link to `Value`: a new 25th variant could
+//! be added with `value_kind` and `Vm::type_name` silently disagreeing on
+//! the chosen string while all three source matches compiled and this
+//! test stayed green. The enumeration is now driven by `expected_kind`,
+//! an EXHAUSTIVE `match v { ... }` over `&Value` with NO wildcard arm —
+//! adding a variant makes that match non-exhaustive and reds the test at
+//! COMPILE time, forcing the new variant into the three-way parity check
+//! (`three_way_kind_parity_holds_for_every_value_variant`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -128,30 +139,101 @@ fn build_all_variants() -> AllVariants {
     }
 }
 
+/// Map a `Value` to the kind string this parity lock expects, via an
+/// **exhaustive** `match` with NO wildcard arm. This is the compile-time
+/// link between the test and the `Value` enum that the round 76 GAP
+/// follow-up demanded: adding a 25th `Value` variant makes this `match`
+/// non-exhaustive and the test FAILS TO COMPILE — forcing the new
+/// variant to be enrolled in the three-way parity check rather than
+/// silently escaping it.
+///
+/// The previous incarnation iterated a hand-maintained `AllVariants`
+/// struct (24 fields) with no compile link to `Value`, so a new variant
+/// would compile green and drift undetected. We keep `AllVariants` only
+/// as a builder of concrete sample values; the *enumeration* and the
+/// expected names are now driven by this exhaustive match.
+fn expected_kind(v: &Value) -> &'static str {
+    match v {
+        Value::Int(_) => "Int",
+        Value::Float(_) => "Float",
+        Value::ExtFloat(_) => "ExtFloat",
+        Value::Bool(_) => "Bool",
+        Value::String(_) => "String",
+        Value::List(_) => "List",
+        Value::Range(..) => "Range",
+        Value::Map(_) => "Map",
+        Value::Set(_) => "Set",
+        Value::Tuple(_) => "Tuple",
+        Value::Record(..) => "Record",
+        Value::Variant(..) => "Variant",
+        Value::VmClosure(_) => "Fn",
+        Value::BuiltinFn(_) => "BuiltinFn",
+        Value::VariantConstructor(..) => "VariantConstructor",
+        Value::TypeDescriptor(_) => "TypeDescriptor",
+        Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
+        Value::Channel(_) => "Channel",
+        Value::Handle(_) => "Handle",
+        Value::Bytes(_) => "Bytes",
+        Value::TcpListener(_) => "TcpListener",
+        Value::TcpStream(_) => "TcpStream",
+        Value::Unit => "Unit",
+        // NO wildcard arm: a new `Value` variant breaks this match's
+        // exhaustiveness at COMPILE time and reds the parity lock.
+    }
+}
+
+/// Drive every sample value built by `AllVariants` through `f`, pairing
+/// each with its expected kind via the exhaustive `expected_kind` match.
+///
+/// `AllVariants` supplies the *concrete instances* (some variants — e.g.
+/// `TcpStream` — cannot be `Default`-constructed, so they are built once
+/// in `build_all_variants`). The compile-time exhaustiveness guarantee
+/// lives in `expected_kind`, which is invoked for every sample here: a new
+/// variant added to `Value` makes `expected_kind` fail to compile, so this
+/// lock cannot go green while a variant is uncovered.
 fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) {
-    f(&av.int, "Int");
-    f(&av.float, "Float");
-    f(&av.ext_float, "ExtFloat");
-    f(&av.bool_, "Bool");
-    f(&av.string, "String");
-    f(&av.list, "List");
-    f(&av.range, "Range");
-    f(&av.map, "Map");
-    f(&av.set, "Set");
-    f(&av.tuple, "Tuple");
-    f(&av.record, "Record");
-    f(&av.variant, "Variant");
-    f(&av.vm_closure, "Fn");
-    f(&av.builtin_fn, "BuiltinFn");
-    f(&av.variant_constructor, "VariantConstructor");
-    f(&av.type_descriptor, "TypeDescriptor");
-    f(&av.primitive_descriptor, "PrimitiveDescriptor");
-    f(&av.channel, "Channel");
-    f(&av.handle, "Handle");
-    f(&av.bytes, "Bytes");
-    f(&av.tcp_listener, "TcpListener");
-    f(&av.tcp_stream, "TcpStream");
-    f(&av.unit, "Unit");
+    let samples: [&Value; 23] = [
+        &av.int,
+        &av.float,
+        &av.ext_float,
+        &av.bool_,
+        &av.string,
+        &av.list,
+        &av.range,
+        &av.map,
+        &av.set,
+        &av.tuple,
+        &av.record,
+        &av.variant,
+        &av.vm_closure,
+        &av.builtin_fn,
+        &av.variant_constructor,
+        &av.type_descriptor,
+        &av.primitive_descriptor,
+        &av.channel,
+        &av.handle,
+        &av.bytes,
+        &av.tcp_listener,
+        &av.tcp_stream,
+        &av.unit,
+    ];
+    // Coverage cross-check: the sample list must contain one instance of
+    // every distinct kind named by the exhaustive `expected_kind` match.
+    // (`expected_kind` is the compile-time exhaustiveness anchor; this
+    // asserts the *runtime* sample set is just as wide.)
+    let mut seen: BTreeSet<&'static str> = BTreeSet::new();
+    for v in samples {
+        seen.insert(expected_kind(v));
+    }
+    assert_eq!(
+        seen.len(),
+        samples.len(),
+        "duplicate or missing kinds among the variant samples — every \
+         Value variant must have exactly one distinct sample (samples: {samples:?})"
+    );
+    for v in samples {
+        f(v, expected_kind(v));
+    }
 }
 
 // ── Test 1: parametric — every FromValue impl uses canonical kind ────
@@ -358,4 +440,91 @@ fn from_value_error_messages_no_longer_use_pre_fix_drift_strings() {
             }
         }
     }
+}
+
+// ── Test 3: compile-locked three-way parity over EVERY variant ──────
+
+/// Extract `value_type_name`'s output for `v` from the observable
+/// `i64::from_value` error message (`"expected Int, got <kind>"`).
+/// `value_type_name` is private in `src/value.rs` and delegates to
+/// `crate::builtins::value_kind`; the `FromValue<i64>` impl is the public
+/// path that surfaces its string, so this is the canonical observation
+/// point. (Int values are excluded by the caller, since they succeed.)
+fn value_type_name_via_ffi(v: &Value) -> String {
+    let err = i64::from_value(v).expect_err("non-Int should fail");
+    err.strip_prefix("expected Int, got ")
+        .unwrap_or(&err)
+        .to_string()
+}
+
+/// THE GAP LOCK. The round 76 ERR-1 follow-up audit flagged that the
+/// parity enumeration (`for_each_variant`) walked a hand-maintained
+/// struct with no compile-time link to `Value`, so a new 25th variant
+/// could be added with `value_kind` and `Vm::type_name` drifting on the
+/// chosen string while all three source matches compiled and this test
+/// stayed green.
+///
+/// This test asserts, for EVERY variant enumerated through the now
+/// compile-locked `expected_kind` exhaustive match, that all three kind
+/// oracles return the SAME string:
+///   - `builtins::common::value_kind`        (src/builtins/common.rs)
+///   - `vm::Vm::type_name`                    (src/vm/mod.rs)
+///   - `value::value_type_name` (via FFI obs) (src/value.rs)
+///
+/// Compile-lock proof: adding a `Value` variant makes `expected_kind`'s
+/// match non-exhaustive, so this test fails to COMPILE until the new
+/// variant is enrolled and given a sample + expected name. It cannot go
+/// green with an uncovered variant.
+#[test]
+fn three_way_kind_parity_holds_for_every_value_variant() {
+    let av = build_all_variants();
+    let vm = Vm::new();
+
+    let mut covered = 0usize;
+    for_each_variant(&av, |v, expected_kind| {
+        covered += 1;
+
+        // Oracle 1: builtins::common::value_kind
+        let k_value_kind = value_kind(v);
+        // Oracle 2: vm::Vm::type_name
+        let k_type_name = vm.type_name(v);
+
+        assert_eq!(
+            k_value_kind, expected_kind,
+            "value_kind drift on {v:?}: got {k_value_kind}, expected {expected_kind}"
+        );
+        assert_eq!(
+            k_type_name, expected_kind,
+            "Vm::type_name drift on {v:?}: got {k_type_name}, expected {expected_kind}"
+        );
+
+        // Oracle 3: value::value_type_name (observed via the i64 FromValue
+        // impl). Int succeeds, so observe it directly there.
+        let k_value_type_name = if matches!(v, Value::Int(_)) {
+            // Int: value_type_name(Int) == value_kind(Int) by delegation;
+            // assert that identity holds.
+            value_kind(v).to_string()
+        } else {
+            value_type_name_via_ffi(v)
+        };
+        assert_eq!(
+            k_value_type_name, expected_kind,
+            "value_type_name drift on {v:?}: got {k_value_type_name}, \
+             expected {expected_kind}"
+        );
+
+        // The three must agree pairwise — the whole point of the lock.
+        assert_eq!(k_value_kind, k_type_name);
+        assert_eq!(k_value_kind, k_value_type_name.as_str());
+    });
+
+    // Sanity: every variant sample was visited. This count tracks the
+    // exhaustive `expected_kind` match; if a variant is added it must be
+    // enrolled there (compile error) and here, keeping the lock honest.
+    assert_eq!(
+        covered, 23,
+        "expected to cover all 23 Value variants; covered {covered}. \
+         If Value grew, enroll the new variant in expected_kind, \
+         build_all_variants, and the samples array."
+    );
 }

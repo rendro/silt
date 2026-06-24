@@ -568,9 +568,92 @@ fn dead_arm_prose_does_not_regress() {
     // 3. Sanity: the corrected prose is actually present (so this
     //    lock can't be satisfied by an empty/renamed source).
     assert!(
-        dispatch_src.contains("Defensive fallback")
-            || dispatch_src.contains("defensive fallback"),
+        dispatch_src.contains("Defensive fallback") || dispatch_src.contains("defensive fallback"),
         "expected the corrected 'defensive fallback' prose in \
          src/vm/dispatch.rs"
     );
+}
+
+/// Cross-reference lock: every `src/value.rs <N>` line citation in the
+/// dead-arm comments of `src/vm/dispatch.rs` must point at a line in
+/// `src/value.rs` that actually contains the item the comment names.
+///
+/// Round-95 introduced five stale citations here — e.g. the comment
+/// said `impl PartialEq for Value` lived at value.rs 1586/1610 when it
+/// is actually at 1662, and `fn cmp` was cited at 1728/1742 when it is
+/// at 1782. Those numbers were wrong the moment they were written and
+/// nothing caught it. This test asserts each cited line resolves to its
+/// named item, so the references cannot silently drift again.
+#[test]
+fn dispatch_value_rs_citations_resolve() {
+    let dispatch_src = include_str!("../src/vm/dispatch.rs");
+    let value_src = include_str!("../src/value.rs");
+    let value_lines: Vec<&str> = value_src.lines().collect();
+
+    // (substring that must appear in the dispatch comment immediately
+    //  before/around the citation, identifier the target value.rs line
+    //  must contain). Each pair is checked against EVERY `src/value.rs
+    //  <N>` citation found in dispatch.rs; the citation whose comment
+    //  mentions the cue string must land on a line containing `needle`.
+    //
+    // We resolve by scanning dispatch.rs for the literal citation text
+    // and confirming the value.rs line at <N> contains `needle`.
+    let checks: &[(&str, &str)] = &[
+        // arm 1: PartialEq for Value
+        (
+            "impl PartialEq for Value` (src/value.rs",
+            "impl PartialEq for Value",
+        ),
+        // arm 2: fn cmp
+        ("fn cmp` (src/value.rs", "fn cmp"),
+        // float canonical bit-hash citation
+        (
+            "canonical bit-hash for floats (see src/value.rs:",
+            "Value::Float(f) =>",
+        ),
+        // arm 3: impl Hash for Value (full reference, with line on next line)
+        ("impl Hash for Value` (src/value.rs", "impl Hash for Value"),
+        // Range-hash inline citation
+        ("impl Hash for Value`\n", "impl Hash for Value"),
+    ];
+
+    // Pull out every "src/value.rs<sep><N>" occurrence with its number,
+    // ignoring whether the separator is `:` or ` ` (some citations wrap
+    // the number onto the next comment line).
+    fn cited_line_after(text: &str, anchor: &str) -> Option<usize> {
+        let idx = text.find(anchor)?;
+        let rest = &text[idx + anchor.len()..];
+        // Skip non-digit comment scaffolding (spaces, `:`, `//`, newlines).
+        let digits: String = rest
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse::<usize>().ok()
+    }
+
+    for (anchor, needle) in checks {
+        let n = cited_line_after(dispatch_src, anchor).unwrap_or_else(|| {
+            panic!(
+                "could not find a numeric value.rs citation after the \
+                 anchor {anchor:?} in src/vm/dispatch.rs — the dead-arm \
+                 cross-reference comments changed shape; update this lock"
+            )
+        });
+        assert!(
+            n >= 1 && n <= value_lines.len(),
+            "dispatch.rs cites src/value.rs:{n} (anchor {anchor:?}) but \
+             value.rs only has {} lines",
+            value_lines.len()
+        );
+        let target = value_lines[n - 1];
+        assert!(
+            target.contains(needle),
+            "stale cross-reference in src/vm/dispatch.rs: comment near \
+             {anchor:?} cites src/value.rs:{n}, but that line is \
+             {target:?} — it does NOT contain the named item {needle:?}. \
+             Find the real line (grep `{needle}` in src/value.rs) and \
+             correct the citation."
+        );
+    }
 }

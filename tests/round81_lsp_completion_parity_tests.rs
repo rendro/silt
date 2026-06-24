@@ -208,7 +208,7 @@ fn lsp_auto_derive_non_ordering_arm_matches_typechecker() {
 ///   3. Convert each trait name in `non_ordering_traits` to its method
 ///      name via the canonical lowercase mapping (`Equal -> equal`,
 ///      `Hash -> hash`, `Display -> display` — see
-///      `builtin_trait_decls` at `src/typechecker/mod.rs:6926`: every
+///      `builtin_trait_decls` at `src/typechecker/mod.rs:7560`: every
 ///      auto-derive built-in trait has a single method whose name is
 ///      the lowercase form of the trait name). Assert the resulting
 ///      set equals the LSP method set.
@@ -262,7 +262,7 @@ fn lsp_auto_derive_method_names_match_typechecker_trait_names() {
     // LSP method set out of the arm, and assert they match.
     //
     // Mapping rationale: `builtin_trait_decls()` at
-    // src/typechecker/mod.rs:6926 declares each auto-derive built-in
+    // src/typechecker/mod.rs:7560 declares each auto-derive built-in
     // trait with a single method whose name is the lowercase of the
     // trait name (Display -> display, Compare -> compare,
     // Equal -> equal, Hash -> hash). The mapping is intentionally
@@ -321,7 +321,7 @@ fn lsp_auto_derive_method_names_match_typechecker_trait_names() {
          typechecker-derived expected set {expected_lsp_methods:?}. \
          The mapping is lowercase-of-trait-name (Equal -> equal, \
          Hash -> hash, Display -> display) per `builtin_trait_decls` \
-         at src/typechecker/mod.rs:6926. Either the LSP advertises a \
+         at src/typechecker/mod.rs:7560. Either the LSP advertises a \
          method the typechecker doesn't register (phantom completion \
          risk) or it omits one (missing completion). Update both \
          sides AND this test in lock-step."

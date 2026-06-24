@@ -27,8 +27,8 @@ pub mod test_hooks;
 pub mod test_support;
 pub mod wake_graph;
 
-pub use wake_graph::MainTarget;
-use wake_graph::{NodeId, ParkEdge, SelectEdge, WakeGraph};
+pub use wake_graph::{MainTarget, SelectEdge};
+use wake_graph::{NodeId, ParkEdge, WakeGraph};
 
 /// Callback invoked on every wake-graph state change. Type-aliased to
 /// keep `SchedulerInner::main_waiters` legible — clippy's

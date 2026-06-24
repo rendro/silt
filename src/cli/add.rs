@@ -277,6 +277,13 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    if silt::manifest::is_reserved_keyword(&name) {
+        return Err(format!(
+            "silt add: dependency name `{name}` is a reserved silt keyword; \
+             pick a different name"
+        )
+        .into());
+    }
     let already_present = manifest
         .dependencies
         .keys()

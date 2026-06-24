@@ -24,7 +24,7 @@ use crate::cli::package::find_project_root;
 pub(crate) fn maybe_handle_watch(args: &[String]) -> bool {
     #[cfg(feature = "watch")]
     {
-        if args.iter().any(|a| a == "--watch" || a == "-w") {
+        if has_watch_flag_before_separator(args) {
             handle_watch(args);
             return true;
         }
@@ -32,7 +32,7 @@ pub(crate) fn maybe_handle_watch(args: &[String]) -> bool {
 
     #[cfg(not(feature = "watch"))]
     {
-        if args.iter().any(|a| a == "--watch" || a == "-w") {
+        if has_watch_flag_before_separator(args) {
             eprintln!(
                 "The 'watch' feature is not enabled. Rebuild with: cargo build --features watch"
             );
@@ -43,13 +43,48 @@ pub(crate) fn maybe_handle_watch(args: &[String]) -> bool {
     false
 }
 
+/// Index (into `args`) of the first standalone `--` token in `args[1..]`,
+/// or `args.len()` when there is none. The `--` separator marks the end of
+/// silt's own CLI flags: everything after it is verbatim program args (see
+/// `cli::run::dispatch` and `cli::check::dispatch`). We skip `args[0]` (the
+/// binary path) so a literal `--` program name can't be misread — argv[0]
+/// is never a separator.
+fn separator_index(args: &[String]) -> usize {
+    args.iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, a)| a.as_str() == "--")
+        .map(|(i, _)| i)
+        .unwrap_or(args.len())
+}
+
+/// True iff `--watch` / `-w` appears as a silt CLI flag — i.e. BEFORE the
+/// first standalone `--` separator. A `-w` (or even `--watch`) that the user
+/// passes as a program argument (`silt run prog.silt -- -w`) lives after the
+/// separator and must NOT trigger watch mode; it is forwarded to the program
+/// via `io.args()` instead. Scanning the entire arg vector (the pre-fix
+/// behavior) hijacked such program args and forced watch mode.
+fn has_watch_flag_before_separator(args: &[String]) -> bool {
+    let sep = separator_index(args);
+    args[..sep].iter().any(|a| a == "--watch" || a == "-w")
+}
+
 #[cfg(feature = "watch")]
 fn handle_watch(args: &[String]) {
-    let filtered: Vec<String> = args[1..]
+    // Strip `--watch` / `-w` ONLY from the CLI-flag region (before the
+    // first standalone `--`). Everything from the separator onward is
+    // forwarded verbatim into the re-invoked subprocess, so a `-w` /
+    // `--watch` the user passes as a program arg (`silt run prog.silt
+    // -- -w`) survives to `io.args()` instead of being silently dropped.
+    // `separator_index` works on the full `args` (it skips `args[0]`); the
+    // post-`--` tail starts at `sep` and is spliced through unchanged.
+    let sep = separator_index(args);
+    let mut filtered: Vec<String> = args[1..sep]
         .iter()
         .filter(|a| *a != "--watch" && *a != "-w")
         .cloned()
         .collect();
+    filtered.extend(args[sep..].iter().cloned());
 
     // BEFORE entering the watcher, dry-validate the underlying subcommand
     // so we don't spawn a watcher for a command that's going to fail

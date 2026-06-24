@@ -15,7 +15,7 @@ use crate::lexer::Span;
 ///
 /// LSP positions count characters in **UTF-16 code units** (per the spec,
 /// and what nearly every client uses as the default encoding). The lexer
-/// increments `span.col` once per Unicode codepoint (src/lexer.rs:247),
+/// increments `span.col` once per Unicode codepoint (src/lexer.rs:311),
 /// which is NOT the same as a UTF-16 unit count for characters outside
 /// the BMP (e.g. `😀` is 1 codepoint but 2 UTF-16 units).
 ///

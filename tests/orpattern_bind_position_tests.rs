@@ -61,7 +61,11 @@ fn pick(e: E) -> Int {
 }
 fn main() -> Int { pick(B(99, 20)) }
     "#);
-    assert_eq!(b, Value::Int(20), "pick(B(99, 20)) should bind field 1, not 99");
+    assert_eq!(
+        b,
+        Value::Int(20),
+        "pick(B(99, 20)) should bind field 1, not 99"
+    );
 }
 
 /// Control case from the report: same position across alternatives must
@@ -150,7 +154,11 @@ fn classify(e: E) -> Int {
 }
 fn main() -> Int { classify(B(99, 20)) }
     "#);
-    assert_eq!(r, Value::Int(40), "x must be 20 (field 1): 20>50 false, so 20*2=40");
+    assert_eq!(
+        r,
+        Value::Int(40),
+        "x must be 20 (field 1): 20>50 false, so 20*2=40"
+    );
 
     // And when the correctly-bound value DOES pass the guard:
     let hi = run(r#"
@@ -190,7 +198,11 @@ fn pick(p: (Int, E)) -> Int {
 }
 fn main() -> Int { pick((0, B(99, 22))) }
     "#);
-    assert_eq!(right, Value::Int(22), "nested B binds inner field 1, not 99");
+    assert_eq!(
+        right,
+        Value::Int(22),
+        "nested B binds inner field 1, not 99"
+    );
 }
 
 /// Multiple shared bindings at swapped positions across alternatives.

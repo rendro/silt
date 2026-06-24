@@ -87,9 +87,10 @@ fn language_eq(a: &Value, b: &Value) -> bool {
             let names_ok = na.as_str() == "<anon>" || nb.as_str() == "<anon>" || na == nb;
             names_ok
                 && fa.len() == fb.len()
-                && fa.iter().zip(fb.iter()).all(|((ka, va), (kb, vb))| {
-                    ka == kb && language_eq(va, vb)
-                })
+                && fa
+                    .iter()
+                    .zip(fb.iter())
+                    .all(|((ka, va), (kb, vb))| ka == kb && language_eq(va, vb))
         }
         (Value::Variant(na, xa), Value::Variant(nb, xb)) => {
             na == nb
@@ -98,6 +99,41 @@ fn language_eq(a: &Value, b: &Value) -> bool {
         }
 
         _ => a == b,
+    }
+}
+
+/// Gate the language-level `==` / `!=` operators against function-shaped
+/// values, returning the canonical surface name (`"Fn"`) to name in the
+/// error if the value cannot participate in equality, or `None` if it can.
+///
+/// silt does NOT statically enforce inferred trait bounds on polymorphic
+/// templates: `pending_numeric_checks` (src/typechecker/inference.rs)
+/// skips operands whose type is still a `Var`, on the documented promise
+/// that "the VM catches it at runtime with a clean operator-domain
+/// diagnostic." Ordering honors that promise (`compare()`'s catch-all in
+/// src/vm/arithmetic.rs errors on function-shaped values) and so does
+/// string-interpolation Display (the `Op::DisplayValue` gate). Equality was
+/// the lone bypass: a polymorphic `fn eq(x: a, y: a) -> Bool { x == y }`
+/// called with two functions used to silently return a `Bool` — `PartialEq
+/// for Value` does `Arc::ptr_eq` on closures and name-equality on builtins
+/// (src/value.rs) — instead of erroring like the concrete `f == g`, which
+/// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
+/// its `_ => false` arm).
+///
+/// The rejected set is exactly the function-shaped values, all of which the
+/// typechecker types as `Type::Fun` — the only type its equality gate
+/// rejects. Channel / Handle / TcpListener / TcpStream are deliberately NOT
+/// rejected: they are equatable by identity at runtime and the typechecker
+/// accepts them (`Type::Channel` and `Type::Generic(..)` in
+/// `is_valid_compare_operand`), keeping the runtime and compile-time layers
+/// in parity. Collection keying / dedup uses `PartialEq for Value` directly,
+/// not this operator path, so its function-identity equality is untouched
+/// (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
+/// tests/round96_eq_fn_runtime_tests.rs.
+fn equality_operand_violation(val: &Value) -> Option<&'static str> {
+    match val {
+        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Some("Fn"),
+        _ => None,
     }
 }
 
@@ -1284,6 +1320,17 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
+                // Reject function-shaped operands at the execution site: the
+                // typechecker skips this bound on still-polymorphic operands
+                // and relies on the VM to catch it (see
+                // `equality_operand_violation`). `check_same_type` has
+                // already proven `a` and `b` share a discriminant, so gating
+                // on `a` alone covers both.
+                if let Some(name) = equality_operand_violation(&a) {
+                    return Err(VmError::new(format!(
+                        "type '{name}' does not implement Equal"
+                    )));
+                }
                 // The language-level `==` operator follows IEEE-754 for
                 // `ExtFloat` (so NaN != NaN). `PartialEq for Value` on
                 // `ExtFloat` uses `to_bits()` equality so that NaN is
@@ -1296,6 +1343,11 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
+                if let Some(name) = equality_operand_violation(&a) {
+                    return Err(VmError::new(format!(
+                        "type '{name}' does not implement Equal"
+                    )));
+                }
                 self.push(Value::Bool(!language_eq(&a, &b)));
             }
             Op::Lt => self.compare(|ord| ord.is_lt())?,
@@ -1341,9 +1393,9 @@ impl Vm {
             Op::And => {
                 // Round-75 VM-2: the compiler always lowers `BinOp::And`
                 // to a `JumpIfFalse` short-circuit (see
-                // `src/compiler/mod.rs:2010`); the
+                // `src/compiler/mod.rs:2326`); the
                 // `BinOp::And | BinOp::Or => unreachable!()` at
-                // `compiler/mod.rs:2047` confirms no other emission
+                // `compiler/mod.rs:2358` confirms no other emission
                 // path exists. Match the LoopSetup precedent
                 // (execute.rs:Op::LoopSetup) and crash loudly on
                 // accidental re-emission rather than silently
@@ -1359,7 +1411,7 @@ impl Vm {
             }
             Op::Or => {
                 // See Op::And above — same rationale. Compiler emits
-                // `JumpIfTrue` short-circuit at compiler/mod.rs:2021;
+                // `JumpIfTrue` short-circuit at compiler/mod.rs:2337;
                 // `Op::Or` is reserved-but-never-emitted.
                 unreachable!(
                     "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \
@@ -1371,33 +1423,51 @@ impl Vm {
                 match &val {
                     Value::String(_) => self.push(val),
                     // Mirror the typechecker's string-interpolation Display
-                    // gate (inference.rs ~2654): function-shaped values and
-                    // channels have no Display impl. For a *concrete* operand
-                    // the typechecker rejects these at compile time; but for a
+                    // gate (inference.rs ~2654): the typechecker's
+                    // `type_name_for_impl` reduces a *concrete* operand to a
+                    // canonical name and rejects interpolation when that name
+                    // is absent from the Display `trait_impl_set` — which
+                    // excludes every first-class value that has no Display
+                    // impl: function-shaped values (`Fn`), `Channel`,
+                    // `Handle` (task handles), `TcpListener` / `TcpStream`
+                    // (opaque resources left explicitly unprintable, see
+                    // mod.rs ~7878), and the descriptor values
+                    // (`TypeDescriptor` / `PrimitiveDescriptor`). For a
                     // polymorphic type variable the operand type is still
                     // `Var` at the interpolation site (type_name_for_impl ->
-                    // None), so the gate is skipped and the value reaches
-                    // here. Erroring at the execution site closes the
+                    // None), so the compile-time gate is skipped and the value
+                    // reaches here. Erroring at the execution site closes the
                     // silent-wrong-behavior hole and matches how a polymorphic
                     // `x > y` on incomparable values (e.g. two Channels) errors
                     // at runtime rather than silently producing a result.
-                    // These are the only first-class values whose surface type
-                    // (`Fn` / `Channel`) the Display gate rejects yet can flow
-                    // through an unbounded type variable. Parity is locked by
+                    //
+                    // The rejected set is sourced from the single predicate
+                    // `value_implements_display` (below) so the runtime gate
+                    // and the surface-name reporting cannot drift from the
+                    // `type_name` oracle. Parity is locked by
                     // tests/round95_interp_display_runtime_tests.rs.
-                    Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => {
-                        return Err(VmError::new(
-                            "type 'Fn' does not implement Display \
+                    _ if !Self::value_implements_display(&val) => {
+                        // Report the canonical surface name so the runtime
+                        // message matches the typechecker's compile-time one
+                        // (which names `Type::Fun` -> "Fn", not the per-shape
+                        // `BuiltinFn` / `VariantConstructor` tags). Function-
+                        // shaped values, Channel, Handle and the Tcp resources
+                        // collapse to their canonical name via
+                        // `dispatch_name_for_value`; the descriptor values
+                        // (whose canonical name is the *carried* type name)
+                        // fall back to their `type_name` so the diagnostic
+                        // names the descriptor kind, not the reflected type.
+                        let name = match &val {
+                            Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
+                                self.type_name(&val).to_string()
+                            }
+                            _ => crate::types::canonical::dispatch_name_for_value(&val)
+                                .unwrap_or_else(|| self.type_name(&val).to_string()),
+                        };
+                        return Err(VmError::new(format!(
+                            "type '{name}' does not implement Display \
                              (required for string interpolation)"
-                                .to_string(),
-                        ));
-                    }
-                    Value::Channel(_) => {
-                        return Err(VmError::new(
-                            "type 'Channel' does not implement Display \
-                             (required for string interpolation)"
-                                .to_string(),
-                        ));
+                        )));
                     }
                     _ => {
                         let s = self.display_value(&val);

@@ -214,6 +214,20 @@ impl Manifest {
                 path: absolute,
             });
         }
+        // Reserved-keyword check: a package named after a keyword
+        // (`loop`, `match`, …) lexes as that keyword, so `import loop`
+        // can never parse. Same import-shadowing footgun as the builtin
+        // collision above; share the predicate so init/add/load agree.
+        if is_reserved_keyword(&raw.package.name) {
+            return Err(ManifestError::Validation {
+                message: format!(
+                    "package name `{}` is a reserved silt keyword; \
+                     pick a different name",
+                    raw.package.name
+                ),
+                path: absolute,
+            });
+        }
         validate_version(&raw.package.version, &absolute)?;
 
         let mut dependencies = BTreeMap::new();
@@ -223,6 +237,15 @@ impl Manifest {
                 return Err(ManifestError::Validation {
                     message: format!(
                         "dependency name `{raw_name}` collides with builtin module `{raw_name}`; \
+                         pick a different name"
+                    ),
+                    path: absolute,
+                });
+            }
+            if is_reserved_keyword(&raw_name) {
+                return Err(ManifestError::Validation {
+                    message: format!(
+                        "dependency name `{raw_name}` is a reserved silt keyword; \
                          pick a different name"
                     ),
                     path: absolute,
@@ -348,7 +371,27 @@ pub fn validate_package_name(name: &str) -> Result<(), String> {
              pick a different name"
         ));
     }
+    if is_reserved_keyword(name) {
+        return Err(format!(
+            "package name `{name}` is a reserved silt keyword; \
+             pick a different name"
+        ));
+    }
     Ok(())
+}
+
+/// Is `name` a reserved silt keyword? Consults both `lexer::KEYWORDS`
+/// (keyword-shaped tokens like `loop`, `match`, `type`) and
+/// `lexer::KEYWORD_LITERALS` (`true`, `false`, lexed as `Token::Bool`).
+///
+/// A package/dependency named after a reserved word lexes as that keyword
+/// rather than a `Token::Ident`, so `import loop` can never parse — the
+/// same import-shadowing footgun that round-75 fixed for builtin module
+/// names. Rejecting up front (init / add / Manifest::load) keeps the
+/// failure where the user can act on it instead of surfacing as a
+/// confusing parser diagnostic far from the offending name.
+pub fn is_reserved_keyword(name: &str) -> bool {
+    crate::lexer::KEYWORDS.contains(&name) || crate::lexer::KEYWORD_LITERALS.contains(&name)
 }
 
 fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(), ManifestError> {

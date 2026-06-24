@@ -154,8 +154,5 @@ fn main() {
   }
 }
 "#);
-    assert_eq!(
-        result,
-        Value::String("alice|age=None|nick=bob".into())
-    );
+    assert_eq!(result, Value::String("alice|age=None|nick=bob".into()));
 }

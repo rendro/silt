@@ -35,8 +35,9 @@ fn encode_type_expr(resolver: &crate::types::canonical::Resolver, te: &TypeExpr)
         TypeExprKind::Named(n) => {
             let s = resolve(*n);
             match s.as_str() {
-                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time"
-                | "DateTime" => s,
+                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime" => {
+                    s
+                }
                 _ if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
                     format!("Record:{s}")
                 }
@@ -438,7 +439,7 @@ pub struct Compiler {
     /// non-curated submodule functions (registered in the typechecker
     /// env / VM dispatcher but absent from `module::builtin_module_functions`)
     /// remain callable through the alias. Mirrors the typechecker's
-    /// round-58 prefix-mirror (see src/typechecker/mod.rs:1107) on the
+    /// round-58 prefix-mirror (see src/typechecker/mod.rs:2941) on the
     /// compiler side; without it `l.sum` failed with
     /// "undefined global: l.sum" at runtime even though `list.sum` worked.
     imported_builtin_module_aliases: HashMap<String, String>,

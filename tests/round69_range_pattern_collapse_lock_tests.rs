@@ -369,7 +369,7 @@ fn symmetry_negated_head_applies_sign() {
 // ── 4. i64 boundary cases ────────────────────────────────────────────
 
 /// silt's lexer rejects `9223372036854775808` (one past i64::MAX) at
-/// lex time — see src/lexer.rs:599-603 ("number literal too large").
+/// lex time — see src/lexer.rs:626-627 ("number literal too large").
 /// This is the invariant that lets the parser's helper safely write
 /// `-n` for the head and `-m` for the tail without overflow checks:
 /// `Token::Int(n)` always satisfies `0 <= n <= i64::MAX`, and

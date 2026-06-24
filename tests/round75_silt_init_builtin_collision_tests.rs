@@ -257,7 +257,30 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
         );
     }
 
-    // A handful of non-builtin identifiers are accepted.
+    // Every reserved keyword must be rejected too: a package named
+    // after a keyword lexes as that keyword, so `import loop` can never
+    // parse. Same import-shadowing footgun as the builtin collision.
+    for name in silt::lexer::KEYWORDS
+        .iter()
+        .chain(silt::lexer::KEYWORD_LITERALS.iter())
+    {
+        let result = silt::manifest::validate_package_name(name);
+        assert!(
+            result.is_err(),
+            "validate_package_name should reject reserved keyword `{name}`, got Ok"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("reserved silt keyword"),
+            "rejection for keyword `{name}` should describe a keyword collision: {msg}"
+        );
+        assert!(
+            msg.contains("pick a different name"),
+            "rejection for keyword `{name}` should suggest picking a different name: {msg}"
+        );
+    }
+
+    // A handful of non-builtin, non-keyword identifiers are accepted.
     for name in ["mypkg", "my_app", "calc", "_priv", "foo123"] {
         let result = silt::manifest::validate_package_name(name);
         assert!(
@@ -274,6 +297,86 @@ fn round75_validate_package_name_rejects_builtins_accepts_others() {
         assert!(
             result.is_err(),
             "validate_package_name should reject malformed name `{bad}`, got Ok"
+        );
+    }
+}
+
+// ─── 8. reserved-keyword GAP: `silt init` in a keyword-named dir ───────
+//
+// A directory named after a silt keyword (e.g. `loop`) would previously
+// produce a `silt.toml` whose `name = "loop"`. The package runs as a
+// single file, but `import loop` can never parse: `loop` lexes as a
+// keyword token, not an `Ident`. Same import-shadowing footgun the
+// builtin-collision check above guards against, now extended to keywords.
+
+#[test]
+fn keyword_init_in_dir_named_loop_is_rejected() {
+    let dir = temp_dir_named("loop");
+    let out = silt_cmd()
+        .arg("init")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke silt init");
+    assert!(
+        !out.status.success(),
+        "silt init should refuse a package whose name is the reserved keyword `loop`; \
+         stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("loop"),
+        "stderr should name the offending package name `loop`: {stderr}"
+    );
+    assert!(
+        stderr.contains("reserved silt keyword"),
+        "stderr should describe the collision as a reserved-keyword clash: {stderr}"
+    );
+    assert!(
+        stderr.contains("pick a different name"),
+        "stderr should suggest picking a different name (canonical shape): {stderr}"
+    );
+    // No partial state left behind.
+    assert!(
+        !dir.join("silt.toml").exists(),
+        "silt.toml must not be written when init refuses a keyword name"
+    );
+    assert!(
+        !dir.join("src").exists(),
+        "src/ must not be created when init refuses a keyword name"
+    );
+}
+
+// ─── 9. reserved-keyword GAP: every keyword name is rejected ───────────
+
+#[test]
+fn keyword_init_rejects_every_reserved_keyword() {
+    for name in silt::lexer::KEYWORDS
+        .iter()
+        .chain(silt::lexer::KEYWORD_LITERALS.iter())
+    {
+        let dir = temp_dir_named(name);
+        let out = silt_cmd()
+            .arg("init")
+            .current_dir(&dir)
+            .output()
+            .expect("failed to invoke silt init");
+        assert!(
+            !out.status.success(),
+            "silt init must refuse reserved-keyword name `{name}` \
+             (stdout={}, stderr={})",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("reserved silt keyword"),
+            "stderr for `{name}` should describe a reserved-keyword collision: {stderr}"
+        );
+        assert!(
+            !dir.join("silt.toml").exists(),
+            "silt.toml must not be written when init refuses (`{name}`)"
         );
     }
 }
