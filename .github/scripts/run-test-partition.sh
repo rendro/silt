@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a partitioned subset of `cargo test` for CI parallelisation.
 #
-# Usage: run-test-partition.sh <heavy|concurrency|rest>
+# Usage: run-test-partition.sh <heavy|concurrency|rest1|rest2>
 #
 # Partitioning strategy:
 #   - heavy:        integration.rs + integration_concurrency.rs
@@ -10,16 +10,17 @@
 #                   walker / TLS — tests whose runtime is dominated by
 #                   spawning silt scheduler threads or subprocesses, and
 #                   which interact poorly with parallel binary contention.
-#   - rest:         everything else — lib + bins unit tests + every
-#                   other tests/*.rs binary. Default partition.
+#   - rest1/rest2:  everything else — every other tests/*.rs binary,
+#                   split across two shards by index parity (rest1 also
+#                   carries the lib + bins unit tests). Default bucket.
 #
 # Each test binary in tests/*.rs is a separate cargo test target; we
-# pass an explicit `--test NAME` list per partition. The `rest`
-# partition runs `cargo test --lib --bins` plus every test binary not
-# in `heavy` or `concurrency`.
+# pass an explicit `--test NAME` list per partition. The `rest1`/`rest2`
+# shards run every test binary not in `heavy` or `concurrency`, split
+# evenly; `rest1` additionally runs `cargo test --lib --bins`.
 #
 # Adding a new test file:
-#   - For a small binary (<5s), do nothing — it joins `rest`
+#   - For a small binary (<5s), do nothing — it joins `rest1`/`rest2`
 #     automatically via the diff-the-directory logic below.
 #   - For a slow concurrency-leaning binary, append it to
 #     CONCURRENCY_TESTS below.
@@ -90,27 +91,48 @@ case "$partition" in
       exec cargo test --all-features "${args[@]}"
     fi
     ;;
-  rest)
-    # Discover every tests/*.rs basename; exclude HEAVY + CONCURRENCY.
+  rest1 | rest2)
+    # Discover every tests/*.rs basename; exclude HEAVY + CONCURRENCY, then
+    # split the remainder across two shards by index parity. Interleaving
+    # (rest1 = even indices, rest2 = odd) — rather than a first-half/second-half
+    # cut — spreads alphabetically-clustered slow suites (e.g. the round93_*
+    # subprocess tests) evenly, so neither shard inherits a hot block. Windows
+    # `rest` had outgrown the 30-min wall-clock cap as one bucket; halved, each
+    # shard lands ~15 min with headroom for future growth.
+    if [[ "$partition" == "rest2" ]]; then want_parity=1; else want_parity=0; fi
     excluded_list="$(printf '%s\n' "${HEAVY_TESTS[@]}" "${CONCURRENCY_TESTS[@]}")"
-    rest_tests=()
+    args=()
+    idx=0
     while IFS= read -r f; do
       base="$(basename "$f" .rs)"
-      if ! printf '%s\n' "$excluded_list" | grep -qFx -- "$base"; then
-        rest_tests+=("--test" "$base")
+      if printf '%s\n' "$excluded_list" | grep -qFx -- "$base"; then
+        continue
       fi
+      if (( idx % 2 == want_parity )); then
+        args+=("--test" "$base")
+      fi
+      idx=$((idx + 1))
     done < <(find tests -maxdepth 1 -name '*.rs' -type f | sort)
     set -x
-    # `--lib` runs unit tests in src/; `--bin silt` runs unit tests in src/main.rs.
+    # The `--lib` (src/) and `--bin silt` (src/main.rs) unit tests ride along on
+    # rest1 only, so they run exactly once across the two shards.
     if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; then
       # nextest spelling: --lib + --bin <name> (not --bins).
-      exec cargo nextest run --all-features --lib --bin silt "${rest_tests[@]}"
+      if [[ "$partition" == "rest1" ]]; then
+        exec cargo nextest run --all-features --lib --bin silt "${args[@]}"
+      else
+        exec cargo nextest run --all-features "${args[@]}"
+      fi
     else
-      exec cargo test --all-features --lib --bins "${rest_tests[@]}"
+      if [[ "$partition" == "rest1" ]]; then
+        exec cargo test --all-features --lib --bins "${args[@]}"
+      else
+        exec cargo test --all-features "${args[@]}"
+      fi
     fi
     ;;
   *)
-    echo "unknown partition: $partition (expected: heavy|concurrency|rest)" >&2
+    echo "unknown partition: $partition (expected: heavy|concurrency|rest1|rest2)" >&2
     exit 2
     ;;
 esac

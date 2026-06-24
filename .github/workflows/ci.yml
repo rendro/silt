@@ -37,13 +37,14 @@ jobs:
         run: cargo fmt -- --check
 
   test-linux:
-    # Split Linux test runs across 3 parallel matrix partitions so total
+    # Split Linux test runs across 4 parallel matrix partitions so total
     # wall-clock approximates max(slowest partition) instead of the sum.
     # Partitions are hand-curated for balance:
     #   * heavy   : integration.rs (~180s) + integration_concurrency
     #   * concurrency : scheduler / channel / concurrency_stress / docs_stdlib walker
-    #   * rest    : everything else (lib unit tests + 180+ small binaries)
-    # Adding a new test file → defaults to the `rest` partition. Move it
+    #   * rest1/rest2 : everything else (lib unit tests + 180+ small binaries),
+    #                   split evenly by index parity (rest1 carries lib+bins)
+    # Adding a new test file → defaults to the `rest1`/`rest2` shards. Move it
     # into the `heavy` or `concurrency` list only when its wall-clock
     # justifies the partition split.
     name: Test Linux (${{ matrix.partition }})
@@ -52,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [heavy, concurrency, rest]
+        partition: [heavy, concurrency, rest1, rest2]
     steps:
       - uses: actions/checkout@v6
 
@@ -102,7 +103,9 @@ jobs:
   # Windows runners are 3-5× slower than Linux/macOS at file I/O and
   # process spawning, so a single-job sweep of 3800+ tests pushes past
   # the 25-min cap. Partition the same way Linux does so total wall-
-  # clock is max(slowest partition) ~10 min instead of >25 min.
+  # clock is max(slowest partition) instead of the sum. The `rest` bucket
+  # alone outgrew the 30-min in-script cap as the suite kept growing, so
+  # it is split into rest1/rest2 (~15 min each, headroom for growth).
   test-windows:
     name: Test Windows (${{ matrix.partition }})
     runs-on: windows-latest
@@ -110,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [heavy, concurrency, rest]
+        partition: [heavy, concurrency, rest1, rest2]
     steps:
       - name: Configure git for LF on Windows
         run: |
