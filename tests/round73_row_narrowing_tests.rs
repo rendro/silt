@@ -22,6 +22,25 @@
 
 use silt::typechecker;
 use silt::types::Severity;
+use std::process::Command;
+
+/// Drive the full public pipeline (lexer → parser → typechecker →
+/// compiler → VM) the same way `silt run` does, by spawning the built
+/// `silt` binary. Returns `(stdout, stderr, success)` so callers can
+/// assert that a type-rejected program never reaches runtime.
+fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
+    let tmp = std::env::temp_dir().join(format!("silt_round73_row_{label}.silt"));
+    std::fs::write(&tmp, src).expect("write temp file");
+    let bin = env!("CARGO_BIN_EXE_silt");
+    let out = Command::new(bin)
+        .arg("run")
+        .arg(&tmp)
+        .output()
+        .expect("spawn silt run");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status.success())
+}
 
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = silt::lexer::Lexer::new(input)
@@ -147,5 +166,31 @@ fn main() {
             .iter()
             .any(|e| e.message.contains("zzznosuchfield")),
         "typecheck error must mention the bogus field 'zzznosuchfield'; got: {hard_errors:?}"
+    );
+
+    // Compile-stage guard (the claim this lock makes): drive the SAME
+    // source through the full public pipeline `silt run` uses. The CLI
+    // gates on hard type errors (src/cli/pipeline.rs `compile_file_with_options`:
+    // it `process::exit(1)`s before handing functions to the VM), so the
+    // rejected program must EXIT NON-ZERO, never reach runtime, and print
+    // the field error to stderr. If a future regression let the compiler
+    // hand out bytecode despite the typecheck error, the program would run
+    // and crash — this assertion catches that.
+    let (stdout, stderr, ok) = run_silt_raw("bogus_field_blocks_compile", src);
+    assert!(
+        !ok,
+        "silt run must reject the bogus-field program before runtime; \
+         instead it succeeded — the compiler handed out runnable bytecode. \
+         stdout={stdout:?}, stderr={stderr:?}"
+    );
+    assert!(
+        stderr.contains("zzznosuchfield"),
+        "the pipeline must surface the field error on stderr; \
+         stdout={stdout:?}, stderr={stderr:?}"
+    );
+    assert!(
+        stdout.is_empty(),
+        "a type-rejected program must never produce runtime output; \
+         got stdout={stdout:?}"
     );
 }

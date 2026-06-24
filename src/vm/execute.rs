@@ -1393,9 +1393,9 @@ impl Vm {
             Op::And => {
                 // Round-75 VM-2: the compiler always lowers `BinOp::And`
                 // to a `JumpIfFalse` short-circuit (see
-                // `src/compiler/mod.rs:2326`); the
+                // `src/compiler/mod.rs:2327`); the
                 // `BinOp::And | BinOp::Or => unreachable!()` at
-                // `compiler/mod.rs:2358` confirms no other emission
+                // `compiler/mod.rs:2359` confirms no other emission
                 // path exists. Match the LoopSetup precedent
                 // (execute.rs:Op::LoopSetup) and crash loudly on
                 // accidental re-emission rather than silently
@@ -1411,7 +1411,7 @@ impl Vm {
             }
             Op::Or => {
                 // See Op::And above — same rationale. Compiler emits
-                // `JumpIfTrue` short-circuit at compiler/mod.rs:2337;
+                // `JumpIfTrue` short-circuit at compiler/mod.rs:2338;
                 // `Op::Or` is reserved-but-never-emitted.
                 unreachable!(
                     "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \

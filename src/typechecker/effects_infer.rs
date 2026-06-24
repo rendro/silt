@@ -326,8 +326,34 @@ fn stmt_effects(stmt: &Stmt, env: &TypeEnv, aliases: &mut AliasMap) -> EffectSet
             val_effects
         }
         Stmt::When {
-            expr, else_body, ..
-        } => walk_expr(expr, env, aliases).union(walk_expr(else_body, env, aliases)),
+            pattern,
+            expr,
+            else_body,
+        } => {
+            // Round 97 BROKEN (soundness): `when let pat = expr else { .. }`
+            // binds `pat`'s names into the enclosing block scope, exactly
+            // like `Stmt::Let`. The arm previously ignored the pattern, so a
+            // binder that shadows a same-named imported module was still
+            // treated as a live module qualifier — a later `name.fn(...)`
+            // resolved through the MODULE's qualified scheme and charged the
+            // module fn's declared effects instead of conservative TOP,
+            // letting a real effectful field-fn slip past --strict-effects.
+            // Mirror the `Stmt::Let` arm: resolve any aliasing source first
+            // (the scrutinee sits outside the new binding's scope), then mark
+            // the binders rebound and invalidate stale alias entries.
+            let scrutinee_effects = walk_expr(expr, env, aliases);
+            let src = resolvable_callee_name(expr, env, aliases);
+            aliases.mark_pattern_rebound(pattern);
+            if let PatternKind::Ident(name) = &pattern.kind {
+                if let Some(src) = src {
+                    let src_eff = scheme_effects_of(src, env, aliases);
+                    aliases.insert(*name, src_eff);
+                } else {
+                    aliases.remove(name);
+                }
+            }
+            scrutinee_effects.union(walk_expr(else_body, env, aliases))
+        }
         Stmt::WhenBool {
             condition,
             else_body,

@@ -415,7 +415,7 @@ fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
     //   - Tuple/Map/Set → Equal/Hash/Display only (no Compare).
     //
     // Trait method names are sourced from `builtin_trait_decls`
-    // (src/typechecker/mod.rs:7560):
+    // (src/typechecker/mod.rs:7589):
     //   Display → display, Compare → compare, Equal → equal, Hash → hash.
     //
     // `Bytes` is a stdlib alias for `List(Int)` and thus collapses onto
