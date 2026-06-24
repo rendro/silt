@@ -101,6 +101,41 @@ fn language_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// Gate the language-level `==` / `!=` operators against function-shaped
+/// values, returning the canonical surface name (`"Fn"`) to name in the
+/// error if the value cannot participate in equality, or `None` if it can.
+///
+/// silt does NOT statically enforce inferred trait bounds on polymorphic
+/// templates: `pending_numeric_checks` (src/typechecker/inference.rs)
+/// skips operands whose type is still a `Var`, on the documented promise
+/// that "the VM catches it at runtime with a clean operator-domain
+/// diagnostic." Ordering honors that promise (`compare()`'s catch-all in
+/// src/vm/arithmetic.rs errors on function-shaped values) and so does
+/// string-interpolation Display (the `Op::DisplayValue` gate). Equality was
+/// the lone bypass: a polymorphic `fn eq(x: a, y: a) -> Bool { x == y }`
+/// called with two functions used to silently return a `Bool` — `PartialEq
+/// for Value` does `Arc::ptr_eq` on closures and name-equality on builtins
+/// (src/value.rs) — instead of erroring like the concrete `f == g`, which
+/// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
+/// its `_ => false` arm).
+///
+/// The rejected set is exactly the function-shaped values, all of which the
+/// typechecker types as `Type::Fun` — the only type its equality gate
+/// rejects. Channel / Handle / TcpListener / TcpStream are deliberately NOT
+/// rejected: they are equatable by identity at runtime and the typechecker
+/// accepts them (`Type::Channel` and `Type::Generic(..)` in
+/// `is_valid_compare_operand`), keeping the runtime and compile-time layers
+/// in parity. Collection keying / dedup uses `PartialEq for Value` directly,
+/// not this operator path, so its function-identity equality is untouched
+/// (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
+/// tests/round96_eq_fn_runtime_tests.rs.
+fn equality_operand_violation(val: &Value) -> Option<&'static str> {
+    match val {
+        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Some("Fn"),
+        _ => None,
+    }
+}
+
 /// Kind of higher-order builtin iteration, used by `iterate_builtin` to
 /// determine how to interpret the accumulator and what to do with each
 /// callback result.
@@ -1284,6 +1319,17 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
+                // Reject function-shaped operands at the execution site: the
+                // typechecker skips this bound on still-polymorphic operands
+                // and relies on the VM to catch it (see
+                // `equality_operand_violation`). `check_same_type` has
+                // already proven `a` and `b` share a discriminant, so gating
+                // on `a` alone covers both.
+                if let Some(name) = equality_operand_violation(&a) {
+                    return Err(VmError::new(format!(
+                        "type '{name}' does not implement Equal"
+                    )));
+                }
                 // The language-level `==` operator follows IEEE-754 for
                 // `ExtFloat` (so NaN != NaN). `PartialEq for Value` on
                 // `ExtFloat` uses `to_bits()` equality so that NaN is
@@ -1296,6 +1342,11 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
+                if let Some(name) = equality_operand_violation(&a) {
+                    return Err(VmError::new(format!(
+                        "type '{name}' does not implement Equal"
+                    )));
+                }
                 self.push(Value::Bool(!language_eq(&a, &b)));
             }
             Op::Lt => self.compare(|ord| ord.is_lt())?,
