@@ -71,14 +71,25 @@ impl Vm {
             // of which side was a plain `Float`.
             (Value::Float(a) | Value::ExtFloat(a), Value::Float(b) | Value::ExtFloat(b)) => {
                 let (a, b) = (*a, *b);
-                match op {
-                    Op::Add => Value::ExtFloat(a + b),
-                    Op::Sub => Value::ExtFloat(a - b),
-                    Op::Mul => Value::ExtFloat(a * b),
-                    Op::Div => Value::ExtFloat(a / b),
-                    Op::Mod => Value::ExtFloat(a % b),
+                let result = match op {
+                    Op::Add => a + b,
+                    Op::Sub => a - b,
+                    Op::Mul => a * b,
+                    Op::Div => a / b,
+                    Op::Mod => a % b,
                     _ => unreachable!(),
-                }
+                };
+                // Canonicalize -0.0 -> +0.0 to uphold the "an ExtFloat never
+                // holds -0.0" invariant, exactly as the `(Float, Float)` Div
+                // arm above (and Op::Negate, NarrowFloat, the numeric builtins)
+                // already do. ExtFloat Eq/Ord/Hash are *bitwise* (value.rs), so
+                // a stray ExtFloat(-0.0) — reachable here via e.g. `(-1.0) *
+                // (0.0 / 1.0)` or `(-1.0) / (1.0 / 0.0)` — would be a distinct
+                // container key from ExtFloat(+0.0) even though the IEEE `==`
+                // operator calls them equal, letting a set/map hold two "equal"
+                // elements. The dedicated finite `(Float, Float)` arm above
+                // means this only runs with at least one ExtFloat operand.
+                Value::ExtFloat(if result == 0.0 { 0.0 } else { result })
             }
             (Value::String(a), Value::String(b)) if op == Op::Add => {
                 Value::String(format!("{a}{b}"))

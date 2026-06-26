@@ -1368,7 +1368,15 @@ impl Vm {
                         self.push(Value::Float(result));
                     }
                     Value::ExtFloat(n) => {
-                        self.push(Value::ExtFloat(-n));
+                        // Canonicalize -0.0 -> +0.0 to match every other
+                        // ExtFloat producer (Div in arithmetic.rs, NarrowFloat,
+                        // the numeric builtins). ExtFloat Eq/Ord/Hash are
+                        // *bitwise* (value.rs), so a stray ExtFloat(-0.0) would
+                        // be a distinct container key from ExtFloat(+0.0) even
+                        // though the `==` operator (IEEE) calls them equal —
+                        // letting a set/map hold two "equal" elements.
+                        let result = -n;
+                        self.push(Value::ExtFloat(if result == 0.0 { 0.0 } else { result }));
                     }
                     other => {
                         return Err(VmError::new(format!(
