@@ -3063,21 +3063,65 @@ fn splice_inline_block_comments(
     // multiple block comments keep their source order.
     gap_comments.sort_by_key(|(g, _)| *g);
 
+    // Round-100 relocation accounting. The main pretty-printer may emit a
+    // block comment in a DIFFERENT token gap than its source position —
+    // e.g. a trailing `{- c -}` on a `let a = match … {- c -}` statement
+    // whose match expands across lines is attached to an arm line, an
+    // EARLIER gap than the source position (after the match's `}`). The
+    // per-gap presence checks below only look inside the comment's own
+    // source gap, so they miss the relocated copy and re-splice it,
+    // duplicating the comment. To catch this we keep a global per-text
+    // budget of "already present in the output but not accounted for by a
+    // same-gap match": `output occurrences − comments kept in place`. Each
+    // not-locally-present gap comment that still has budget was relocated
+    // by the formatter and must be SKIPPED rather than re-spliced.
+    let mut output_block_counts: HashMap<String, usize> = HashMap::new();
+    for (_, text) in collect_source_block_comments(&output) {
+        *output_block_counts.entry(text).or_insert(0) += 1;
+    }
+    // First pass: which gap comments are present in their own source gap
+    // (kept in place by the formatter). Those consume one output instance
+    // each; the remainder of `output_block_counts` is the relocation pool.
+    let mut locally_present = vec![false; gap_comments.len()];
+    for (idx, (gap, cmt_text)) in gap_comments.iter().enumerate() {
+        let present = if *gap == tail_gap {
+            let tail_start = out_token_offsets[src_to_out[tail_gap]];
+            output[tail_start..].contains(cmt_text.as_str())
+        } else {
+            let gap_lo = out_token_offsets[src_to_out[*gap]];
+            let gap_hi_out = src_to_out[gap + 1];
+            let gap_hi = out_token_offsets[gap_hi_out];
+            gap_hi <= output.len() && output[gap_lo..gap_hi].contains(cmt_text.as_str())
+        };
+        if present {
+            locally_present[idx] = true;
+            if let Some(n) = output_block_counts.get_mut(cmt_text) {
+                *n = n.saturating_sub(1);
+            }
+        }
+    }
+
     // Build a list of (insertion_offset, text_to_insert) pairs. Apply
     // right-to-left so earlier positions stay valid.
     let mut insertions: Vec<(usize, String)> = Vec::new();
-    for (gap, cmt_text) in &gap_comments {
+    for (idx, (gap, cmt_text)) in gap_comments.iter().enumerate() {
+        if locally_present[idx] {
+            // Already emitted in its own source gap — leave it untouched.
+            continue;
+        }
+        // Not in its own gap: was it relocated elsewhere by the formatter?
+        // If an unaccounted output occurrence remains, consume it and skip
+        // (re-splicing would duplicate the relocated copy).
+        if let Some(n) = output_block_counts.get_mut(cmt_text)
+            && *n > 0
+        {
+            *n -= 1;
+            continue;
+        }
         if *gap == tail_gap {
-            // Tail-of-file comment. Check whether it's already emitted
-            // anywhere after the last source-corresponding token in the
-            // output; if so, skip. Otherwise insert it just before the
-            // output's final trailing newline(s) so the file still ends
-            // with `\n`.
-            let tail_start = out_token_offsets[src_to_out[tail_gap]];
-            let tail_slice = &output[tail_start..];
-            if tail_slice.contains(cmt_text.as_str()) {
-                continue;
-            }
+            // Tail-of-file comment that the formatter genuinely dropped:
+            // insert it just before the output's final trailing
+            // newline(s) so the file still ends with `\n`.
             // Find insertion point: just before any trailing newline(s).
             let bytes = output.as_bytes();
             let mut insert_at = output.len();

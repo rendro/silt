@@ -52,7 +52,7 @@ impl Server {
                 continue;
             };
             let mut spans: Vec<Span> = Vec::new();
-            collect_references(program, name, &mut spans);
+            collect_references(program, name, &doc.source, &mut spans);
             if include_definition && let Some(def) = doc.definitions.get(&name) {
                 spans.push(def.span);
             }
@@ -180,19 +180,19 @@ fn push_type_symbols(
 
 // ── AST walk for references ────────────────────────────────────────
 
-fn collect_references(program: &Program, name: Symbol, out: &mut Vec<Span>) {
+fn collect_references(program: &Program, name: Symbol, source: &str, out: &mut Vec<Span>) {
     for decl in &program.decls {
-        collect_references_in_decl(decl, name, out);
+        collect_references_in_decl(decl, name, source, out);
     }
 }
 
-fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
+fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut Vec<Span>) {
     match decl {
         Decl::Fn(f) => {
             // Include the param-pattern binders so renaming a parameter
             // updates the param list AND every body use (round-60 B8).
             for param in &f.params {
-                collect_references_in_pattern(&param.pattern, name, out);
+                collect_references_in_pattern(&param.pattern, name, source, out);
             }
             // Round-75 DX-4: where-clause trait references.
             for wc in &f.where_clauses {
@@ -200,7 +200,7 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
                     push_named_span(out, wc.trait_name_span);
                 }
             }
-            collect_references_in_expr(&f.body, name, out);
+            collect_references_in_expr(&f.body, name, source, out);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
@@ -221,14 +221,14 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
             }
             for method in &ti.methods {
                 for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, out);
+                    collect_references_in_pattern(&param.pattern, name, source, out);
                 }
                 for wc in &method.where_clauses {
                     if wc.trait_name == name {
                         push_named_span(out, wc.trait_name_span);
                     }
                 }
-                collect_references_in_expr(&method.body, name, out);
+                collect_references_in_expr(&method.body, name, source, out);
             }
         }
         Decl::Trait(t) => {
@@ -247,7 +247,7 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
             }
             for method in &t.methods {
                 for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, out);
+                    collect_references_in_pattern(&param.pattern, name, source, out);
                 }
                 for wc in &method.where_clauses {
                     if wc.trait_name == name {
@@ -255,12 +255,12 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
                     }
                 }
                 // Default method bodies, if any.
-                collect_references_in_expr(&method.body, name, out);
+                collect_references_in_expr(&method.body, name, source, out);
             }
         }
         Decl::Let { value, pattern, .. } => {
-            collect_references_in_pattern(pattern, name, out);
-            collect_references_in_expr(value, name, out);
+            collect_references_in_pattern(pattern, name, source, out);
+            collect_references_in_expr(value, name, source, out);
         }
         _ => {}
     }
@@ -275,7 +275,26 @@ fn push_named_span(out: &mut Vec<Span>, span: Span) {
     out.push(span);
 }
 
-fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
+/// Resolve the precise span of a shorthand record-field binder (`{ x }`,
+/// `Point { x }`). `record_span` is the record pattern head; we scan
+/// forward to the closing `}` for the field-name token. Mirrors
+/// `ast_walk::check_shorthand_field_binder` so hover/definition and rename
+/// agree on where the binder lives. Returns `None` when the token can't be
+/// located (the caller then falls back to the head span).
+fn shorthand_binder_span(record_span: Span, field: &str, source: &str) -> Option<Span> {
+    let start = record_span.offset.min(source.len());
+    let end = source[start..]
+        .find('}')
+        .map(|p| start + p)
+        .unwrap_or(source.len());
+    let off = super::text_utils::find_ident_in_range(source, start, end, field)?;
+    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
+    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col = source[line_start..off].chars().count() + 1;
+    Some(Span::with_offset(line, col, off))
+}
+
+fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut Vec<Span>) {
     match &expr.kind {
         ExprKind::Ident(n) if *n == name => {
             out.push(expr.span);
@@ -289,22 +308,22 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
         // top-level `let name` mangled `r.name` into `<newname>.name`).
         ExprKind::Block(stmts) => {
             for s in stmts {
-                collect_references_in_stmt(s, name, out);
+                collect_references_in_stmt(s, name, source, out);
             }
         }
         _ => {
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
+                collect_references_in_expr(child, name, source, out);
             });
         }
     }
 }
 
-fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, out: &mut Vec<Span>) {
+fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, source: &str, out: &mut Vec<Span>) {
     match stmt {
         Stmt::Let { value, pattern, .. } => {
-            collect_references_in_pattern(pattern, name, out);
-            collect_references_in_expr(value, name, out);
+            collect_references_in_pattern(pattern, name, source, out);
+            collect_references_in_expr(value, name, source, out);
         }
         Stmt::When {
             expr,
@@ -312,23 +331,28 @@ fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, out: &mut Vec<Span>) {
             pattern,
             ..
         } => {
-            collect_references_in_pattern(pattern, name, out);
-            collect_references_in_expr(expr, name, out);
-            collect_references_in_expr(else_body, name, out);
+            collect_references_in_pattern(pattern, name, source, out);
+            collect_references_in_expr(expr, name, source, out);
+            collect_references_in_expr(else_body, name, source, out);
         }
         Stmt::WhenBool {
             condition,
             else_body,
             ..
         } => {
-            collect_references_in_expr(condition, name, out);
-            collect_references_in_expr(else_body, name, out);
+            collect_references_in_expr(condition, name, source, out);
+            collect_references_in_expr(else_body, name, source, out);
         }
-        Stmt::Expr(e) => collect_references_in_expr(e, name, out),
+        Stmt::Expr(e) => collect_references_in_expr(e, name, source, out),
     }
 }
 
-fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<Span>) {
+fn collect_references_in_pattern(
+    pattern: &Pattern,
+    name: Symbol,
+    source: &str,
+    out: &mut Vec<Span>,
+) {
     // Patterns bind new names, so matching identifier-binding positions
     // here is useful for rename (the binding itself) but not for
     // general reference collection in a reader role. For rename to
@@ -339,12 +363,12 @@ fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<
         }
         PatternKind::Tuple(pats) | PatternKind::List(pats, _) | PatternKind::Or(pats) => {
             for p in pats {
-                collect_references_in_pattern(p, name, out);
+                collect_references_in_pattern(p, name, source, out);
             }
         }
         PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
-                collect_references_in_pattern(p, name, out);
+                collect_references_in_pattern(p, name, source, out);
             }
         }
         PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
@@ -354,9 +378,22 @@ fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<
             // (binder + uses).
             for (fname, sub) in fields {
                 if let Some(p) = sub {
-                    collect_references_in_pattern(p, name, out);
+                    collect_references_in_pattern(p, name, source, out);
                 } else if *fname == name {
-                    out.push(pattern.span);
+                    // Round-100 BROKEN: a shorthand binder (`{ x }`) has
+                    // no sub-pattern, so the field name token IS the
+                    // binder. `pattern.span` is the record HEAD (the
+                    // constructor name for a nominal record, the opening
+                    // `{` for an anon record), not the field token —
+                    // pushing it made `textDocument/rename` rewrite the
+                    // constructor / brace and leave the binder untouched,
+                    // corrupting the source into uncompilable code.
+                    // Resolve the precise field offset instead.
+                    let field_str = crate::intern::resolve(*fname);
+                    match shorthand_binder_span(pattern.span, &field_str, source) {
+                        Some(span) => out.push(span),
+                        None => out.push(pattern.span),
+                    }
                 }
             }
         }

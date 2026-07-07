@@ -72,9 +72,21 @@ pub(crate) fn dispatch(args: &[String]) {
             eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
-        } else {
+        } else if file.is_none() {
             file = Some(args[i].clone());
             i += 1;
+        } else {
+            // Reject extra positionals — `silt test` takes at most one
+            // path (a single file or a directory to scan). Pre-fix the
+            // assign was unconditional and last-wins, so
+            // `silt test a_test.silt b_test.silt` silently ran only
+            // `b_test.silt` and reported green while `a_test.silt` never
+            // ran — a CI hazard (a skipped test reads as passing).
+            // Mirror the rejection pattern in `silt check`/`silt run`.
+            eprintln!("silt test: unexpected extra argument '{}'", args[i]);
+            eprintln!("silt test takes at most one path (a file or a directory to scan).");
+            eprintln!("Run 'silt test --help' for usage.");
+            process::exit(1);
         }
     }
     run_tests(file.as_deref(), filter, strict_effects);

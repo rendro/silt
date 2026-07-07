@@ -38,11 +38,14 @@ See `examples/` in the repository for runnable sample programs — start with `e
 
 ## 1. Bindings
 
-Everything is immutable. `let` binds a name to a value. You can shadow, but you can't reassign.
+Everything is immutable. `let` binds a name to a value. You can shadow within a block or function body, but you can't reassign. (Top-level names must be unique at module scope, so shadowing applies to local bindings.)
 
 ```silt
-let x = 42
-let x = x + 1   -- shadows, x is now 43
+fn main() {
+  let x = 42
+  let x = x + 1   -- shadows, x is now 43
+  print(x)
+}
 ```
 
 ## 2. Functions

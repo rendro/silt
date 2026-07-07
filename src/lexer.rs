@@ -933,6 +933,18 @@ impl Lexer {
                     .to_string(),
                 span: start,
             }),
+            // ASCII/Unicode control characters (U+0001–U+001F, U+007F,
+            // …) are invisible, so quoting the raw byte renders an
+            // empty-looking error in any non-`cat -v` sink (log files,
+            // LSP JSON diagnostics, captured test output). Escape them —
+            // the same reasoning the BOM arm above applies, generalised
+            // to every invisible control char. `escape_default` yields
+            // `\u{1}`, `\t`, etc.; printable chars (`@`, …) are not
+            // control and keep their plain quoted form.
+            _ if ch.is_control() => Err(LexError {
+                message: format!("unexpected character: '{}'", ch.escape_default()),
+                span: start,
+            }),
             _ => Err(LexError {
                 message: format!("unexpected character: '{ch}'"),
                 span: start,

@@ -389,6 +389,105 @@ mod tests {
         assert!(collected.contains(&Effect::Random));
     }
 
+    /// Round-100 parity lock: the `Effect` enum has THREE independent
+    /// hand-maintained mirrors that must stay in sync but were derived
+    /// from nothing and locked by nothing:
+    ///   1. `Effect::ALL_ALPHABETIC` (the array `EffectSet::iter` filters)
+    ///      — a variant missing here is never iterated or Displayed.
+    ///   2. `EffectSet::ALL_BITS` (the mask backing `TOP`) — a variant not
+    ///      in the mask makes `TOP` no longer the true top, a soundness
+    ///      break in `is_subset` / `union` and `--strict-effects`.
+    ///   3. the parser's effect-name match (`src/parser.rs`) — covered by
+    ///      a name round-trip below.
+    ///
+    /// The `match` over every variant has NO wildcard arm, so adding a new
+    /// `Effect` variant forces this test to be updated (compile error),
+    /// and the assertions then guarantee the array, the mask, and the
+    /// name-set were all updated to match.
+    #[test]
+    fn effect_enum_mirrors_stay_in_sync() {
+        // No-wildcard census: the compiler forces this list to cover every
+        // variant. A new variant breaks compilation here until added.
+        fn census(e: Effect) -> &'static str {
+            match e {
+                Effect::Io => "io",
+                Effect::Fs => "fs",
+                Effect::Net => "net",
+                Effect::Time => "time",
+                Effect::Random => "random",
+            }
+        }
+        const ALL: [Effect; 5] = [
+            Effect::Io,
+            Effect::Fs,
+            Effect::Net,
+            Effect::Time,
+            Effect::Random,
+        ];
+        let n = ALL.len();
+
+        // Mirror 1: the alphabetic array must list every variant exactly once.
+        assert_eq!(
+            Effect::ALL_ALPHABETIC.len(),
+            n,
+            "Effect::ALL_ALPHABETIC must list every Effect variant"
+        );
+        for e in ALL {
+            assert!(
+                Effect::ALL_ALPHABETIC.contains(&e),
+                "Effect::ALL_ALPHABETIC is missing {e:?} — it would never be \
+                 iterated or Displayed"
+            );
+        }
+        // ...and `TOP` (which filters that array) yields all of them.
+        assert_eq!(EffectSet::TOP.iter().count(), n);
+
+        // Mirror 2: the bitmask must have exactly one bit per variant.
+        assert_eq!(
+            EffectSet::ALL_BITS.count_ones() as usize,
+            n,
+            "EffectSet::ALL_BITS must set exactly one bit per Effect variant; \
+             a missing bit makes TOP not the true top"
+        );
+        for e in ALL {
+            assert!(
+                EffectSet::TOP.contains(e),
+                "EffectSet::TOP must contain {e:?} (ALL_BITS drift)"
+            );
+        }
+
+        // Mirror 3: every variant's source name must round-trip through the
+        // parser back to the singleton set for that variant, so the
+        // parser's name match and its "valid effects are: …" error list
+        // cannot silently drift from the enum.
+        for e in ALL {
+            let name = census(e);
+            assert_eq!(name, e.name(), "census/name disagreement for {e:?}");
+            let src = format!("fn f() -> Int !{{{name}}} = 0");
+            let tokens = crate::lexer::Lexer::new(&src)
+                .tokenize()
+                .unwrap_or_else(|err| panic!("lex {name}: {err:?}"));
+            let program = crate::parser::Parser::new(tokens)
+                .parse_program()
+                .unwrap_or_else(|err| panic!("parse effect name {name:?}: {err:?}"));
+            let declared = program
+                .decls
+                .iter()
+                .find_map(|d| match d {
+                    crate::ast::Decl::Fn(f) => Some(f.declared_effects),
+                    _ => None,
+                })
+                .expect("a fn decl");
+            assert_eq!(
+                declared,
+                EffectSet::singleton(e),
+                "effect name {name:?} did not parse back to a singleton {e:?} \
+                 set — the parser's effect-name match drifted from the Effect \
+                 enum"
+            );
+        }
+    }
+
     #[test]
     fn display_empty_is_brace_pair() {
         assert_eq!(EffectSet::EMPTY.to_string(), "!{}");

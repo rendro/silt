@@ -13,6 +13,15 @@ use super::*;
 /// silently assuming the match is exhaustive.
 pub(super) const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
 
+/// Cap on the number of or-free rows a single pattern may expand into.
+/// Or-patterns spread across several columns expand as a cartesian
+/// product (`(A | B, C | D)` → 4 rows), exponential in the number of
+/// or-columns. Real matches stay tiny; this only stops a pathological
+/// pattern from blowing up the checker. On overflow the row is left
+/// un-expanded — the pre-round-100 behaviour, which is sound (it can
+/// only over-reject, never wrongly certify an inexhaustive match).
+const MAX_OR_EXPANSION: usize = 4096;
+
 /// Shortcut for building synthetic patterns used by the usefulness
 /// algorithm. Keeps the body of the algorithm readable. The patterns
 /// (wildcards, tuples of wildcards, witness constructors) don't
@@ -143,16 +152,36 @@ impl TypeChecker {
             return true;
         }
 
-        // Expand or-patterns in the query.
-        if let PatternKind::Or(alts) = &query.kind {
-            return alts
+        // Expand or-patterns in the query, at every nesting level. A
+        // query is useful iff any of its or-free expansions is useful, so
+        // `(A | B, true)` is split into `(A, true)` / `(B, true)` before
+        // constructor analysis. (A bare wildcard/ident expands to itself,
+        // length 1, so this is a no-op on the common case.)
+        let query_expansions = Self::expand_or_deep(query);
+        if query_expansions.len() > 1 {
+            return query_expansions
                 .iter()
                 .any(|alt| self.is_useful(matrix, alt, ty, depth));
         }
 
-        // Expand or-patterns in the matrix.
-        let expanded: Vec<&Pattern> = matrix.iter().flat_map(|p| Self::expand_or(p)).collect();
-        let matrix = &expanded[..];
+        // Expand or-patterns in the matrix, at every nesting level.
+        // BROKEN (round 100): the old `expand_or` flattened only a
+        // *top-level* `A | B`, so an or buried inside a tuple column
+        // (`(A | B, true)`), a constructor payload (`Som(A | B)`), or a
+        // list element survived into Maranget specialization — whose
+        // specialization arms match rows only by `Tuple(ps)` / `Wildcard`
+        // / `Ident` and drop any row whose column is an `Or` through their
+        // `_ => {}` arm. Dropping those rows shrank coverage and wrongly
+        // reported exhaustive matches like `(A | B, true) | (A | B, false)`
+        // as non-exhaustive. Replacing a row by its or-free expansion set
+        // (`expand_or_deep`) preserves the covered value-set exactly, so
+        // every specialization step sees concrete constructors only.
+        let expanded: Vec<Pattern> = matrix
+            .iter()
+            .flat_map(|p| Self::expand_or_deep(p))
+            .collect();
+        let expanded_refs: Vec<&Pattern> = expanded.iter().collect();
+        let matrix = &expanded_refs[..];
 
         if matches!(query.kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
             // Maranget shortcut: a bare wildcard/ident row in the matrix
@@ -172,11 +201,158 @@ impl TypeChecker {
         self.is_constructor_useful(matrix, query, ty, depth)
     }
 
-    fn expand_or(pat: &Pattern) -> Vec<&Pattern> {
+    /// Expand *every* or-pattern in `pat`, at any nesting level, into the
+    /// set of or-free patterns whose union covers exactly the same values
+    /// as `pat`. Top-level `A | B` → `[A, B]`; a buried or such as
+    /// `(A | B, true)` → `[(A, true), (B, true)]`; `Som(A | B)` →
+    /// `[Som(A), Som(B)]`; `[A | B, c]` → `[[A, c], [B, c]]`; record /
+    /// map field values likewise. Ors across several columns expand as a
+    /// cartesian product (`(A | B, C | D)` → 4 rows). Replacing a matrix
+    /// row by this set lets Maranget specialization reason about concrete
+    /// constructors only — see the call site in `is_useful`.
+    fn expand_or_deep(pat: &Pattern) -> Vec<Pattern> {
         match &pat.kind {
-            PatternKind::Or(alts) => alts.iter().flat_map(Self::expand_or).collect(),
-            _ => vec![pat],
+            PatternKind::Or(alts) => alts.iter().flat_map(Self::expand_or_deep).collect(),
+            PatternKind::Tuple(ps) => match Self::cartesian_expand(ps) {
+                Some(rows) => rows
+                    .into_iter()
+                    .map(|cols| synth(PatternKind::Tuple(cols)))
+                    .collect(),
+                None => vec![pat.clone()],
+            },
+            PatternKind::Constructor { module, name, args } if !args.is_empty() => {
+                match Self::cartesian_expand(args) {
+                    Some(rows) => rows
+                        .into_iter()
+                        .map(|a| {
+                            synth(PatternKind::Constructor {
+                                module: *module,
+                                name: *name,
+                                args: a,
+                            })
+                        })
+                        .collect(),
+                    None => vec![pat.clone()],
+                }
+            }
+            PatternKind::List(elems, rest) if !elems.is_empty() => {
+                match Self::cartesian_expand(elems) {
+                    Some(rows) => rows
+                        .into_iter()
+                        .map(|e| synth(PatternKind::List(e, rest.clone())))
+                        .collect(),
+                    None => vec![pat.clone()],
+                }
+            }
+            PatternKind::Record {
+                module,
+                name,
+                fields,
+                has_rest,
+            } => match Self::expand_opt_fields(fields) {
+                Some(rows) => rows
+                    .into_iter()
+                    .map(|f| {
+                        synth(PatternKind::Record {
+                            module: *module,
+                            name: *name,
+                            fields: f,
+                            has_rest: *has_rest,
+                        })
+                    })
+                    .collect(),
+                None => vec![pat.clone()],
+            },
+            PatternKind::AnonRecord { fields, rest } => match Self::expand_opt_fields(fields) {
+                Some(rows) => rows
+                    .into_iter()
+                    .map(|f| {
+                        synth(PatternKind::AnonRecord {
+                            fields: f,
+                            rest: *rest,
+                        })
+                    })
+                    .collect(),
+                None => vec![pat.clone()],
+            },
+            PatternKind::Map(entries) => {
+                let slots: Vec<Vec<(String, Pattern)>> = entries
+                    .iter()
+                    .map(|(k, v)| {
+                        Self::expand_or_deep(v)
+                            .into_iter()
+                            .map(|q| (k.clone(), q))
+                            .collect()
+                    })
+                    .collect();
+                match Self::cartesian(&slots) {
+                    Some(rows) => rows
+                        .into_iter()
+                        .map(|e| synth(PatternKind::Map(e)))
+                        .collect(),
+                    None => vec![pat.clone()],
+                }
+            }
+            _ => vec![pat.clone()],
         }
+    }
+
+    /// Cartesian product of the per-column or-free expansions of an
+    /// ordered pattern slice (tuple columns, constructor args, list
+    /// elements). `None` if the product would exceed [`MAX_OR_EXPANSION`].
+    fn cartesian_expand(cols: &[Pattern]) -> Option<Vec<Vec<Pattern>>> {
+        let slots: Vec<Vec<Pattern>> = cols.iter().map(Self::expand_or_deep).collect();
+        Self::cartesian(&slots)
+    }
+
+    /// Cartesian product for keyed field lists with optional sub-patterns
+    /// (record / anon-record fields). A shorthand-bind field (`None`)
+    /// contributes a single unchanged slot; a `Some(p)` field expands `p`.
+    fn expand_opt_fields(
+        fields: &[(Symbol, Option<Pattern>)],
+    ) -> Option<Vec<Vec<(Symbol, Option<Pattern>)>>> {
+        let slots: Vec<Vec<(Symbol, Option<Pattern>)>> = fields
+            .iter()
+            .map(|(sym, sub)| match sub {
+                Some(p) => Self::expand_or_deep(p)
+                    .into_iter()
+                    .map(|q| (*sym, Some(q)))
+                    .collect(),
+                None => vec![(*sym, None)],
+            })
+            .collect();
+        Self::cartesian(&slots)
+    }
+
+    /// Generic cartesian product over per-slot alternatives. Returns one
+    /// row per combination, or `None` when the total would exceed
+    /// [`MAX_OR_EXPANSION`] — in which case the caller leaves the pattern
+    /// un-expanded, identical to the pre-round-100 behaviour (sound: it
+    /// can only over-reject, never certify an inexhaustive match).
+    fn cartesian<T: Clone>(slots: &[Vec<T>]) -> Option<Vec<Vec<T>>> {
+        let mut total: usize = 1;
+        for alts in slots {
+            total = total.checked_mul(alts.len().max(1))?;
+            if total > MAX_OR_EXPANSION {
+                return None;
+            }
+        }
+        let mut rows: Vec<Vec<T>> = vec![Vec::new()];
+        for alts in slots {
+            if alts.is_empty() {
+                continue;
+            }
+            let mut next = Vec::with_capacity(rows.len() * alts.len());
+            for row in &rows {
+                for alt in alts {
+                    let mut r = row.clone();
+                    r.push(alt.clone());
+                    next.push(r);
+                }
+            }
+            rows = next;
+        }
+        Some(rows)
     }
 
     /// Check if a wildcard is useful: enumerate constructors of the type
