@@ -1130,8 +1130,11 @@ impl Compiler {
                 // so the emitted global key matches the typechecker's
                 // registration site (`register_trait_impl` in
                 // src/typechecker/mod.rs) and the VM's runtime dispatch
-                // name (`Vm::value_type_name_for_dispatch`). Today the
-                // only collapse is `Range -> List`: a
+                // name (`Vm::value_type_name_for_dispatch`). The
+                // collapse rules — `Range -> List`, `Fun -> Fn`,
+                // `() -> Unit`, and user-alias routing (see
+                // `src/types/canonical.rs::canonicalize_type_name`) —
+                // all apply here. For example, a
                 // `trait Foo for Range(a) { fn bar(self) = ... }` impl
                 // emits `"List.bar"` here, matches the `"List.bar"` key
                 // the typechecker registered, and is found by the VM

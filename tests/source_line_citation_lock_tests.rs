@@ -49,25 +49,25 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
         627,
         "number literal too large",
     ),
-    // vm/execute.rs:1344 / vm/tests.rs:602 — And short-circuit JumpIfFalse
+    // vm/execute.rs:1420 / vm/tests.rs:602 — And short-circuit JumpIfFalse
     (
         "execute.rs/tests.rs -> And short-circuit JumpIfFalse emit",
         "src/compiler/mod.rs",
-        2327,
+        2330,
         "Op::JumpIfFalse",
     ),
-    // vm/execute.rs:1362 / vm/tests.rs:622 — Or short-circuit JumpIfTrue
+    // vm/execute.rs:1438 / vm/tests.rs:622 — Or short-circuit JumpIfTrue
     (
         "execute.rs/tests.rs -> Or short-circuit JumpIfTrue emit",
         "src/compiler/mod.rs",
-        2338,
+        2341,
         "Op::JumpIfTrue",
     ),
-    // vm/execute.rs:1346 — `BinOp::And | BinOp::Or => unreachable!()`
+    // vm/execute.rs:1422 — `BinOp::And | BinOp::Or => unreachable!()`
     (
         "execute.rs -> And/Or unreachable guard",
         "src/compiler/mod.rs",
-        2359,
+        2362,
         "BinOp::And | BinOp::Or => unreachable!()",
     ),
     // workspace.rs:284 — "FieldAccess.span is the receiver span" construction
@@ -88,19 +88,19 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "pipeline.rs -> compiler 'is not imported' #1",
         "src/compiler/mod.rs",
-        2562,
+        2565,
         "is not imported",
     ),
     (
         "pipeline.rs -> compiler 'is not imported' #2",
         "src/compiler/mod.rs",
-        2658,
+        2661,
         "is not imported",
     ),
     (
         "pipeline.rs -> compiler 'is not imported' #3",
         "src/compiler/mod.rs",
-        3477,
+        3480,
         "is not imported",
     ),
     // compiler/mod.rs:441 — typechecker round-58 prefix-mirror logic

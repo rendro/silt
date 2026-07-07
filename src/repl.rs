@@ -690,9 +690,11 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
             eprintln!("{line}");
         }
     } else {
-        // Span-less runtime error: `VmError::Display` leaks the
-        // `"VM error: "` prefix. Route through the shared helper to render
-        // the canonical `error[runtime]:` header instead. Round-59 GAP #4.
+        // Span-less runtime error: route through the shared helper so the
+        // `error[runtime]:` header gets the same ANSI color gating and
+        // `= note:` continuation splitting as every other REPL diagnostic
+        // (`VmError::Display` emits the same header but is intentionally
+        // plain text — see src/vm/error.rs). Round-59 GAP #4.
         eprintln!("{}", render_runtime_error_without_source(&e.message, false));
     }
 }
@@ -966,10 +968,11 @@ fn span_fits_input(span: Span, input: &str) -> bool {
 ///
 ///   * `VmError::span == None` — the VM reported a runtime failure with
 ///     no span at all. Previously this fell through to `eprintln!("{e}")`,
-///     which leaks the internal `"VM error: "` prefix from
-///     `VmError::Display`. Now we route through this helper so the output
-///     matches the canonical `error[runtime]:` header used by
-///     `silt run` / `silt test`.
+///     which at the time emitted a legacy internal Display prefix (since
+///     fixed: `VmError::Display` now emits the canonical `error[runtime]:`
+///     header, though deliberately without color — see src/vm/error.rs).
+///     Routing through this helper keeps the output colored and
+///     note-split exactly like `silt run` / `silt test`.
 ///
 ///   * `VmError::span == Some(_)` but the span doesn't fit the current
 ///     REPL entry — the error originated inside a chunk compiled in a

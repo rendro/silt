@@ -5663,6 +5663,15 @@ impl TypeChecker {
 /// (the enclosing trait's supplied args at the call site). Nested forms
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
+///
+/// INVARIANT (round 101): the shapes produced here must be
+/// CANONICAL — identical to what `resolve_type_expr` builds for the
+/// same surface syntax on the impl side — because
+/// `trait_arg_compatible_canon` compares them structurally and
+/// `canonicalize()` does not collapse `Generic("List", …)` onto
+/// `Type::List` (etc.). Non-canonical output makes every builtin
+/// container / ExtFloat / Unit supertrait arg spuriously incompatible
+/// with its own impl.
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
     trait_info: &TraitInfo,
@@ -5677,20 +5686,52 @@ pub(super) fn resolve_supertrait_arg(
             }
             // Bare type name that isn't a trait param — interpret as a
             // concrete type reference (Int, String, or user type).
+            // Round 101: mirror `resolve_type_expr` (mod.rs Named arm)
+            // exactly for primitives — ExtFloat and Unit/() previously
+            // fell through to `Type::Generic`, which never compares
+            // equal to the canonical `Type::ExtFloat`/`Type::Unit` the
+            // impl side produces, spuriously failing
+            // `trait_arg_compatible_canon` with identical Display
+            // strings on both sides of the error.
             match resolve(*sym).as_str() {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
+                "ExtFloat" => Type::ExtFloat,
                 "Bool" => Type::Bool,
                 "String" => Type::String,
+                "()" | "Unit" => Type::Unit,
                 _ => Type::Generic(*sym, Vec::new()),
             }
         }
         TypeExprKind::Generic(sym, args) => {
-            let resolved: Vec<Type> = args
+            let mut resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
-            Type::Generic(*sym, resolved)
+            // Round 101: builtin container heads must produce the same
+            // canonical `Type::…` shapes `resolve_type_expr` builds for
+            // the impl side (mod.rs Generic arm). `canonicalize()` does
+            // NOT collapse `Generic("List",[T])` onto `Type::List(T)`,
+            // so leaving these as `Type::Generic` made supertrait args
+            // like `List(b)` incomparable with the registered impl's
+            // `Type::List(Int)`. Wrong-arity forms fall through to
+            // `Type::Generic` (they can't match any canonical impl
+            // shape, and resolve_type_expr diagnoses the arity at the
+            // declaration site).
+            match resolve(*sym).as_str() {
+                "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
+                "Range" if resolved.len() == 1 => Type::Range(Box::new(resolved.pop().unwrap())),
+                "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
+                "Channel" if resolved.len() == 1 => {
+                    Type::Channel(Box::new(resolved.pop().unwrap()))
+                }
+                "Map" if resolved.len() == 2 => {
+                    let v = resolved.pop().unwrap();
+                    let k = resolved.pop().unwrap();
+                    Type::Map(Box::new(k), Box::new(v))
+                }
+                _ => Type::Generic(*sym, resolved),
+            }
         }
         TypeExprKind::Tuple(elems) => Type::Tuple(
             elems

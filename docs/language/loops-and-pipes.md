@@ -82,7 +82,7 @@ Silt strings support inline expressions with curly braces:
 ```silt
 let name = "world"
 let greeting = "hello {name}"          -- "hello world"
-let math = "sum is {1 + 2 + 3}"       -- "sum is 6"
+let sum = "sum is {1 + 2 + 3}"        -- "sum is 6"
 println("{user.name} is {user.age}")   -- field access in interpolation
 ```
 
@@ -99,7 +99,7 @@ Escape literal braces with backslash: `"\{not interpolation}"`.
 No escape processing, no interpolation, indentation stripping:
 
 ```silt
-let json = """
+let json_text = """
   {
     "name": "Alice",
     "age": 30
@@ -111,7 +111,7 @@ The closing `"""` indentation determines whitespace stripping. Useful for
 regex patterns with `{N}` quantifiers that would conflict with interpolation:
 
 ```silt
-let regex = """[\w]+@[\w]+\.\w{2,}"""
+let pattern = """[\w]+@[\w]+\.\w{2,}"""
 ```
 
 **Design rationale.** String `+` is supported, but interpolation

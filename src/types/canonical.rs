@@ -608,8 +608,23 @@ pub fn canonical_name(ty: &Type) -> String {
 /// Mirror of [`canonical_name`] for the case where only the head
 /// constructor's surface name is in hand (as a `Symbol`) — typically
 /// because a parser/AST node carries the user-supplied identifier
-/// rather than a fully reconstructed [`Type`]. Today the only collapse
-/// is `Range -> List`, matching [`canonical_name`]'s reduction rule.
+/// rather than a fully reconstructed [`Type`]. The collapse rules,
+/// matching [`canonical_name`]'s reductions:
+///
+/// - `Range` -> `List` (Phase B; `Range` is a nominal alias of
+///   `List`, so Range-targeted impls register under the key both
+///   List and Range receivers reach at dispatch time).
+/// - `Fun`   -> `Fn` (round 71 follow-up; deprecated surface alias
+///   of the function-type name — the VM dispatches closures under
+///   `"Fn"`, so a `trait T for Fun` impl must register there too).
+/// - `()`    -> `Unit` (round 75 TYPE-3; surface alias of the
+///   canonical primitive name, matching
+///   `canonical_name(&Type::Unit) = "Unit"` and
+///   `dispatch_name_for_value(&Value::Unit) = "Unit"`).
+/// - Registered user aliases route to the canonical head of their
+///   target (Phase D): `type Bytes = List(Int)` collapses to
+///   `"List"`; chained aliases collapse fully via recursion.
+///
 /// Other names round-trip unchanged so the function is safe to apply
 /// unconditionally to any target-type symbol.
 ///
@@ -619,11 +634,12 @@ pub fn canonical_name(ty: &Type) -> String {
 /// phase C adds this canonical-module copy so the compiler
 /// (`src/compiler/mod.rs`) can route `trait_impl.target_type` through
 /// the same reduction without depending on the typechecker module.
-/// Both copies share the same single-rule (`Range -> List`)
-/// implementation, so they stay in lock-step by construction; if the
-/// canonicalisation rules ever expand, both must be updated together
-/// (see also: the architectural lock test in
-/// `tests/canonical_type_arch_lock_tests.rs`).
+/// The two copies are hand-maintained duplicates with no automatic
+/// parity guarantee: if the canonicalisation rules ever change, both
+/// MUST be updated together. Doc-comment parity is locked by
+/// `tests/round86_canonicalize_type_name_doc_parity_tests.rs`; see
+/// also the architectural lock test in
+/// `tests/canonical_type_arch_lock_tests.rs`.
 pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     let name_str = resolve(name);
     if name_str.as_str() == "Range" {

@@ -889,6 +889,52 @@ impl Vm {
         )
     }
 
+    /// Whether a runtime value is, or transitively CONTAINS, a
+    /// function-shaped leaf (`VmClosure` / `BuiltinFn` /
+    /// `VariantConstructor`) — the single runtime-side oracle for the
+    /// execution-site Compare/Equal gates, the sibling of
+    /// `value_implements_display` above.
+    ///
+    /// silt does NOT statically enforce inferred trait bounds on
+    /// polymorphic templates: `pending_numeric_checks`
+    /// (src/typechecker/inference.rs) skips operands whose type is still
+    /// a `Var`, on the documented promise that the VM catches the
+    /// violation at the execution site. Round 97 made the CONCRETE
+    /// container forms (`[fn(x) { x }] < [fn(x) { x }]`) a compile error
+    /// (`operand_builtin_trait_violation` recurses into element types),
+    /// but a polymorphic wrapper (`fn lt(a: x, b: x) -> Bool { a < b }`
+    /// called with lists of lambdas) still launders a container of
+    /// functions past the typechecker. Without a runtime backstop such
+    /// values fell into `Value::cmp` / `PartialEq for Value`, which order
+    /// closures by `Arc::as_ptr` (src/value.rs) — an ASLR-nondeterministic
+    /// Bool for ordering and a silent identity-equality Bool for `==`.
+    ///
+    /// Consulted by the container arms of `compare()`
+    /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
+    /// (`equality_operand_violation`, src/vm/execute.rs), and the
+    /// `"equal"` / `"compare"` trait-method arms of
+    /// `dispatch_trait_method` (src/vm/dispatch.rs). Locked by
+    /// tests/container_fn_compare_runtime_gate_tests.rs.
+    ///
+    /// `Range` / `Bytes` and the scalar leaves can never contain a
+    /// function, and Channel / Handle / TcpListener / TcpStream stay
+    /// equatable-by-identity (round-96 parity), so all fall to `false`.
+    pub fn value_contains_fn(val: &Value) -> bool {
+        match val {
+            Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => true,
+            Value::List(items) => items.iter().any(Self::value_contains_fn),
+            Value::Tuple(items) | Value::Variant(_, items) => {
+                items.iter().any(Self::value_contains_fn)
+            }
+            Value::Set(items) => items.iter().any(Self::value_contains_fn),
+            Value::Map(entries) => entries
+                .iter()
+                .any(|(k, v)| Self::value_contains_fn(k) || Self::value_contains_fn(v)),
+            Value::Record(_, fields) => fields.values().any(Self::value_contains_fn),
+            _ => false,
+        }
+    }
+
     /// Human-readable type name for error messages. Renders descriptor
     /// and function-shaped values in surface-syntax terms rather than
     /// leaking internal `Value` variant names.

@@ -19,38 +19,16 @@ use crate::lexer::Span;
 /// which is NOT the same as a UTF-16 unit count for characters outside
 /// the BMP (e.g. `😀` is 1 codepoint but 2 UTF-16 units).
 ///
-/// To produce a correct position we walk the source from the start of
-/// the line containing `span.offset` up to `span.offset`, summing
-/// `ch.len_utf16()` for each character. This uses `span.offset` (a byte
-/// offset) as the source of truth rather than the potentially-mismatched
-/// codepoint `col`, which the lexer records but which the LSP protocol
-/// does not consume.
+/// The UTF-16 column is derived from `span.offset` (a byte offset) by
+/// delegating to the canonical [`offset_to_position`] walk, so the
+/// code-unit accumulation logic lives in exactly one place. The line,
+/// however, comes from the lexer's `span.line` rather than being
+/// re-derived from the source: it is authoritative for spans, and it
+/// degrades sensibly for malformed spans (e.g. a span referring past
+/// the end of an empty source still reports its recorded line).
 pub(super) fn span_to_position(span: &Span, source: &str) -> Position {
     let line = span.line.saturating_sub(1) as u32;
-    let bytes = source.as_bytes();
-    let offset = span.offset.min(bytes.len());
-
-    // Find the byte offset of the start of the line that `offset` lives in.
-    // We scan backwards for the most recent '\n' before `offset`.
-    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-
-    // Walk from `line_start` to `offset`, accumulating UTF-16 code units.
-    // We must respect char boundaries: if `offset` lands mid-character
-    // (shouldn't happen for well-formed spans, but be defensive) we clamp
-    // at the boundary we reach just before it.
-    let mut character: u32 = 0;
-    let mut idx = line_start;
-    while idx < offset {
-        let rest = &source[idx..];
-        let Some(ch) = rest.chars().next() else { break };
-        let ch_len = ch.len_utf8();
-        if idx + ch_len > offset {
-            break;
-        }
-        character += ch.len_utf16() as u32;
-        idx += ch_len;
-    }
-
+    let character = offset_to_position(source, span.offset).character;
     Position::new(line, character)
 }
 
@@ -172,17 +150,25 @@ pub(super) fn span_to_range(span: &Span, source: &str) -> Range {
 
 /// Convert a byte offset into the source to a 0-based LSP `Position`.
 ///
-/// Mirrors [`span_to_position`] but takes a raw byte offset rather than
-/// a [`Span`] — useful when computing positions for arbitrary slice
-/// boundaries (e.g. matching-brace offsets, region endpoints) where no
-/// lexer span exists. Uses UTF-16 code-unit columns to match the LSP
-/// spec (see [`span_to_position`] for rationale).
+/// This is the canonical byte-offset → position conversion:
+/// [`span_to_position`] delegates its column math here, so this is the
+/// single definition of the UTF-16 code-unit walk. It takes a raw byte
+/// offset rather than a [`Span`] — useful when computing positions for
+/// arbitrary slice boundaries (e.g. matching-brace offsets, region
+/// endpoints) where no lexer span exists. Uses UTF-16 code-unit columns
+/// to match the LSP spec (see [`span_to_position`] for rationale).
 ///
 /// Out-of-range offsets are clamped to the end of `source`; offsets that
 /// land mid-character are clamped to the previous char boundary so this
 /// function never panics on malformed input.
 pub(crate) fn offset_to_position(source: &str, offset: usize) -> Position {
-    let offset = offset.min(source.len());
+    let mut offset = offset.min(source.len());
+    // Snap a mid-character offset back to the previous char boundary so
+    // the slices below cannot panic (`is_char_boundary(0)` is true, so
+    // this always terminates).
+    while !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
     let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line = source[..line_start].bytes().filter(|&b| b == b'\n').count() as u32;
     let mut character: u32 = 0;
@@ -638,6 +624,65 @@ mod tests {
         assert_eq!(
             offset_to_position(source, 14),
             span_to_position(&span, source)
+        );
+    }
+
+    // ── single-definition lock (dedup of the UTF-16 column loop) ──
+
+    /// `span_to_position` must agree with `offset_to_position` for every
+    /// byte offset — ASCII, multibyte BMP chars, astral emoji, mid-char
+    /// (non-boundary) offsets, EOF, and past-EOF. This holds because
+    /// `span_to_position` delegates its column math to the canonical
+    /// `offset_to_position` walk; any fork between the two would break
+    /// this sweep at the first diverging offset.
+    #[test]
+    fn test_span_to_position_delegates_across_all_offsets() {
+        // ASCII + 'é' (2 bytes, 1 UTF-16 unit) + 😀 (4 bytes, 2 units)
+        // + newline + '𝕊' (4 bytes, 2 units) on a second line.
+        let source = "ab é 😀!\nx𝕊y";
+        for offset in 0..=source.len() + 3 {
+            let clamped = offset.min(source.len());
+            // 1-indexed line the (clamped) offset lives on, matching what
+            // a well-formed lexer span would record. Counted over the byte
+            // slice so mid-character offsets don't panic; snapping to a
+            // char boundary can never cross a '\n' (a 1-byte char), so
+            // this agrees with the line the converters derive.
+            let line = source.as_bytes()[..clamped]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count()
+                + 1;
+            let span = Span {
+                line,
+                col: 1, // unused by the conversion; offset is authoritative
+                offset,
+            };
+            assert_eq!(
+                span_to_position(&span, source),
+                offset_to_position(source, offset),
+                "span_to_position and offset_to_position diverge at byte offset {offset}"
+            );
+        }
+    }
+
+    /// Source-grep lock: the UTF-16 code-unit accumulation loop must be
+    /// defined exactly once in this file (in `offset_to_position`).
+    /// A second copy means someone re-forked `span_to_position`'s column
+    /// math — the acknowledged-mirror shape that has previously caused
+    /// silent LSP position drift between span-based and offset-based
+    /// consumers. Delegate instead of copying.
+    #[test]
+    fn test_utf16_column_accumulation_defined_once() {
+        let src = include_str!("conversions.rs");
+        // Assembled at compile time so this test's own source doesn't
+        // contain the needle as a contiguous literal.
+        let needle = concat!("character += ch.len_utf16", "() as u32");
+        assert_eq!(
+            src.matches(needle).count(),
+            1,
+            "the UTF-16 column accumulation loop must have exactly one \
+             definition in conversions.rs (offset_to_position); make other \
+             converters delegate to it instead of copying the loop"
         );
     }
 }

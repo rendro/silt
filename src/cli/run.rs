@@ -324,11 +324,15 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
                 SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");
         } else {
-            // Span-less runtime error: `VmError::Display` starts with the
-            // bare "VM error:" prefix, which leaks that internal label to
-            // users. Round-36: funnel through `SourceError::runtime_at`
-            // with a zero span so output renders with the canonical
-            // `error[runtime]:` header and never contains "VM error:".
+            // Span-less runtime error: funnel through
+            // `SourceError::runtime_at` with a zero span so the output
+            // carries the file path and the ANSI color gating every other
+            // diagnostic gets — a bare `VmError` Display is plain text
+            // with no file to point at. (Round-36 originally added this
+            // to route around a legacy internal Display prefix; that
+            // Display has since been canonicalized to the
+            // `error[runtime]:` header itself — see src/vm/error.rs — so
+            // the prefix concern is historical.)
             let source_err =
                 SourceError::runtime_at(&e.message, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");

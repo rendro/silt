@@ -147,11 +147,12 @@ impl Vm {
             // List vs List and the mixed List/Range pairings share the same
             // Silt type (`List(T)`), so must be ordered element-wise. The
             // `Value::cmp` impl already handles every pairing, including
-            // Range vs List, so defer to it.
+            // Range vs List, so defer to it — after the function-leaf gate
+            // (see `ordering_with_fn_gate` below).
             (Value::List(_), Value::List(_))
             | (Value::List(_), Value::Range(..))
             | (Value::Range(..), Value::List(_))
-            | (Value::Range(..), Value::Range(..)) => a.cmp(&b),
+            | (Value::Range(..), Value::Range(..)) => Self::ordering_with_fn_gate(&a, &b)?,
             // Round 85: mirror the `<anon>`-wildcard logic from
             // `Value::PartialEq`/`Ord` (src/value.rs ~1729, ~1875).
             // The typechecker normally rejects source-level ordering of
@@ -163,9 +164,9 @@ impl Vm {
             (Value::Record(na, _), Value::Record(nb, _))
                 if na == nb || na.as_str() == "<anon>" || nb.as_str() == "<anon>" =>
             {
-                a.cmp(&b)
+                Self::ordering_with_fn_gate(&a, &b)?
             }
-            (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
+            (Value::Variant(..), Value::Variant(..)) => Self::ordering_with_fn_gate(&a, &b)?,
             _ => {
                 return Err(VmError::new(format!(
                     "unsupported operation: cannot compare {} and {}",
@@ -176,6 +177,32 @@ impl Vm {
         };
         self.push(Value::Bool(pred(ordering)));
         Ok(())
+    }
+
+    /// Order two container-shaped operands element-wise via `Value::cmp`,
+    /// first rejecting any operand that transitively contains a
+    /// function-shaped leaf (`Vm::value_contains_fn`, src/vm/mod.rs).
+    ///
+    /// This is the execution-site backstop for the round-97 typechecker
+    /// gate: the CONCRETE form (`[fn(x) { x }] < [fn(x) { x }]`) is a
+    /// compile error, but a polymorphic wrapper (`fn lt(a: x, b: x) ->
+    /// Bool { a < b }`) launders a container of functions past
+    /// `pending_numeric_checks` (which skips `Var`-typed operands on the
+    /// documented promise that the VM catches the violation at runtime).
+    /// Without this gate, `Value::cmp` ordered `VmClosure` leaves by
+    /// `Arc::as_ptr` (src/value.rs), so the resulting Bool depended on
+    /// heap allocation order — nondeterministic across runs. Bare
+    /// function-shaped operands never reach this helper: they fall to
+    /// `compare()`'s catch-all arm and keep its "cannot compare Fn and
+    /// Fn" wording. Locked by
+    /// tests/container_fn_compare_runtime_gate_tests.rs.
+    fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
+        if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
+            return Err(VmError::new(
+                "type 'Fn' does not implement Compare".to_string(),
+            ));
+        }
+        Ok(a.cmp(b))
     }
 
     // ── Type compatibility ────────────────────────────────────────

@@ -316,6 +316,19 @@ impl Vm {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
+                // Execution-site backstop mirroring the `Op::Eq` gate
+                // (`equality_operand_violation`, src/vm/execute.rs): an
+                // operand that is, or transitively contains, a
+                // function-shaped leaf has no Equal impl. A polymorphic
+                // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
+                // can launder such values past the typechecker's
+                // concrete-operand gate, and `PartialEq for Value` would
+                // silently answer with `Arc::ptr_eq` identity.
+                if Self::value_contains_fn(receiver) || Self::value_contains_fn(&extra_args[0]) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Equal".into(),
+                    )));
+                }
                 // Defensive fallback. For every valid user/builtin type
                 // that passes the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
@@ -339,6 +352,18 @@ impl Vm {
                     return Some(Err(VmError::new("compare() takes 1 argument".into())));
                 }
                 let other = &extra_args[0];
+                // Execution-site backstop mirroring `ordering_with_fn_gate`
+                // (src/vm/arithmetic.rs): reject operands that are, or
+                // transitively contain, a function-shaped leaf before any
+                // arm can defer to `Value::cmp`, which orders closures by
+                // `Arc::as_ptr` — an ASLR-nondeterministic result for a
+                // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
+                // laundering a container of functions past the typechecker.
+                if Self::value_contains_fn(receiver) || Self::value_contains_fn(other) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Compare".into(),
+                    )));
+                }
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
                     // Round-71: collapsed four byte-identical NaN /

@@ -120,20 +120,30 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
 /// its `_ => false` arm).
 ///
-/// The rejected set is exactly the function-shaped values, all of which the
-/// typechecker types as `Type::Fun` — the only type its equality gate
-/// rejects. Channel / Handle / TcpListener / TcpStream are deliberately NOT
-/// rejected: they are equatable by identity at runtime and the typechecker
-/// accepts them (`Type::Channel` and `Type::Generic(..)` in
-/// `is_valid_compare_operand`), keeping the runtime and compile-time layers
-/// in parity. Collection keying / dedup uses `PartialEq for Value` directly,
-/// not this operator path, so its function-identity equality is untouched
-/// (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
-/// tests/round96_eq_fn_runtime_tests.rs.
+/// The rejected set is the values that are, or transitively CONTAIN, a
+/// function-shaped leaf — everything the typechecker's equality gate
+/// rejects for a concrete operand. The bare shapes (round 96) are the
+/// direct `Type::Fun` values; the recursion (via `Vm::value_contains_fn`,
+/// src/vm/mod.rs) mirrors the round-97 container gate, whose
+/// `operand_builtin_trait_violation` walker rejects the concrete forms
+/// (`[fn(x) { x }] == [fn(x) { x }]`, tuples/records/variants wrapping
+/// functions) at compile time. Without the recursion, laundering the same
+/// values through a polymorphic wrapper (`fn eq(a: x, b: x) -> Bool
+/// { a == b }`) silently produced an `Arc::ptr_eq`-based Bool. Channel /
+/// Handle / TcpListener / TcpStream are deliberately NOT rejected: they
+/// are equatable by identity at runtime and the typechecker accepts them
+/// (`Type::Channel` and `Type::Generic(..)` in
+/// `is_valid_compare_operand`), keeping the runtime and compile-time
+/// layers in parity. Collection keying / dedup uses `PartialEq for Value`
+/// directly, not this operator path, so its function-identity equality is
+/// untouched (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
+/// tests/round96_eq_fn_runtime_tests.rs and
+/// tests/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
-    match val {
-        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Some("Fn"),
-        _ => None,
+    if Vm::value_contains_fn(val) {
+        Some("Fn")
+    } else {
+        None
     }
 }
 
@@ -1323,10 +1333,14 @@ impl Vm {
                 // Reject function-shaped operands at the execution site: the
                 // typechecker skips this bound on still-polymorphic operands
                 // and relies on the VM to catch it (see
-                // `equality_operand_violation`). `check_same_type` has
-                // already proven `a` and `b` share a discriminant, so gating
-                // on `a` alone covers both.
-                if let Some(name) = equality_operand_violation(&a) {
+                // `equality_operand_violation`). Both operands are checked:
+                // the gate recurses into containers, and a shared
+                // discriminant no longer implies a shared violation (an
+                // empty list and a list of closures both have the List
+                // discriminant).
+                if let Some(name) =
+                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
+                {
                     return Err(VmError::new(format!(
                         "type '{name}' does not implement Equal"
                     )));
@@ -1343,7 +1357,9 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
-                if let Some(name) = equality_operand_violation(&a) {
+                if let Some(name) =
+                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
+                {
                     return Err(VmError::new(format!(
                         "type '{name}' does not implement Equal"
                     )));
@@ -1401,9 +1417,9 @@ impl Vm {
             Op::And => {
                 // Round-75 VM-2: the compiler always lowers `BinOp::And`
                 // to a `JumpIfFalse` short-circuit (see
-                // `src/compiler/mod.rs:2327`); the
+                // `src/compiler/mod.rs:2330`); the
                 // `BinOp::And | BinOp::Or => unreachable!()` at
-                // `compiler/mod.rs:2359` confirms no other emission
+                // `compiler/mod.rs:2362` confirms no other emission
                 // path exists. Match the LoopSetup precedent
                 // (execute.rs:Op::LoopSetup) and crash loudly on
                 // accidental re-emission rather than silently
@@ -1419,7 +1435,7 @@ impl Vm {
             }
             Op::Or => {
                 // See Op::And above — same rationale. Compiler emits
-                // `JumpIfTrue` short-circuit at compiler/mod.rs:2338;
+                // `JumpIfTrue` short-circuit at compiler/mod.rs:2341;
                 // `Op::Or` is reserved-but-never-emitted.
                 unreachable!(
                     "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \

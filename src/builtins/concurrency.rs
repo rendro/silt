@@ -452,9 +452,20 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         if vm.is_scheduled_task {
                             return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
                         }
-                        // Main thread: block on condvar until data or close.
-                        match ch.receive_blocking() {
-                            TryReceiveResult::Value(val) => {
+                        // Main thread: wait through the same deadlock-aware
+                        // protocol as `channel.receive` (no-scheduler fast
+                        // path, wake-graph park/unpark, starvation BFS,
+                        // confirm-stable gate). A bare `ch.receive_blocking()`
+                        // here was an infinite condvar wait with no deadlock
+                        // detection: with no counterparty that could ever
+                        // send, the process hung forever where receive/send/
+                        // select/join all report "deadlock on main thread"
+                        // (same class as the round-2 `channel.select` fix —
+                        // `each` was the arm left behind). Locked by
+                        // `tests/main_thread_each_deadlock_tests.rs`.
+                        match main_thread_wait_for_receive(&ch, vm)? {
+                            Value::Variant(tag, mut vals) if tag == "Message" => {
+                                let val = vals.pop().unwrap_or(Value::Unit);
                                 match vm.invoke_callable(&callback, &[val]) {
                                     Ok(_) => {}
                                     Err(e) if e.is_yield => {
@@ -466,10 +477,12 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                                     Err(e) => return Err(e),
                                 }
                             }
-                            TryReceiveResult::Closed => {
+                            Value::Variant(tag, _) if tag == "Closed" => {
                                 return Ok(Value::Unit);
                             }
-                            TryReceiveResult::Empty => unreachable!(),
+                            _ => unreachable!(
+                                "main_thread_wait_for_receive returns Message or Closed"
+                            ),
                         }
                     }
                 }

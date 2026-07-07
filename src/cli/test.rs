@@ -390,11 +390,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                     }
                 }
             } else {
-                // Span-less runtime error: avoid leaking the bare
-                // "VM error:" prefix from `VmError::Display`. Funnel
-                // through `SourceError::runtime_at` with a zero span so
-                // the output renders with the canonical `error[runtime]:`
-                // header, matching every other diagnostic.
+                // Span-less runtime error: funnel through
+                // `SourceError::runtime_at` with a zero span so the
+                // output carries the file path and color gating that a
+                // bare `VmError` Display (plain text, no file) cannot
+                // provide. The legacy internal Display prefix this once
+                // guarded against is gone — `VmError::Display` now emits
+                // the canonical `error[runtime]:` header itself (see
+                // src/vm/error.rs).
                 let source_err = SourceError::runtime_at(
                     &e.message,
                     silt::lexer::Span::new(0, 0),
@@ -499,12 +502,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                                     }
                                 }
                             } else {
-                                // Span-less runtime error: avoid leaking
-                                // the bare "VM error:" prefix from
-                                // `VmError::Display`. Render via
+                                // Span-less runtime error: render via
                                 // `SourceError::runtime_at` with a zero
-                                // span and indent to match the FAIL
-                                // header's alignment.
+                                // span (adding the file path and color
+                                // gating a bare `VmError` Display lacks)
+                                // and indent to match the FAIL header's
+                                // alignment.
                                 let source_err = SourceError::runtime_at(
                                     &e.message,
                                     silt::lexer::Span::new(0, 0),

@@ -132,3 +132,91 @@ fn authoritative_doc_or_body_mentions_each_collapse_term() {
          way this lock doesn't recognise. Required terms: {required_terms:?}."
     );
 }
+
+// ── Round 100: canonical-side DOC-only parity + stale-claim rejection ──
+//
+// The round-86 check above accepts a collapse term appearing anywhere
+// in the doc OR the function body, so the canonical-side doc-comment
+// drifted: it kept claiming "Today the only collapse is `Range ->
+// List`" / "single-rule" while the body below it implemented FOUR
+// collapses (Range→List, Fun→Fn round 71, ()→Unit round 75 TYPE-3,
+// Phase-D alias routing). The tests below close that hole:
+//
+//   * the canonical-side DOC block itself (not the body) must
+//     enumerate every collapse term, exactly like the typechecker
+//     mirror fixed in round 86;
+//   * the stale "single-rule"-era phrases must not reappear above
+//     either copy, nor may the "only collapse is `Range -> List`"
+//     claim resurface at the compiler call site that routes
+//     `trait_impl.target_type` through this function.
+
+const COMPILER_SRC: &str = include_str!("../src/compiler/mod.rs");
+
+#[test]
+fn canonical_doc_itself_enumerates_every_collapse() {
+    let canonical_doc = extract_doc_above_fn(CANONICAL_SRC, "pub fn canonicalize_type_name(");
+    assert!(
+        !canonical_doc.is_empty(),
+        "authoritative `canonicalize_type_name` in src/types/canonical.rs \
+         has no doc-comment — expected one enumerating the \
+         Range/Fun/Unit/alias collapses."
+    );
+
+    let required_terms = ["Range", "Fun", "Unit", "alias"];
+    let mut missing: Vec<&str> = Vec::new();
+    for term in &required_terms {
+        if !canonical_doc.contains(term) {
+            missing.push(term);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "the DOC-COMMENT above `canonicalize_type_name` in \
+         src/types/canonical.rs is missing the following collapse \
+         term(s): {missing:?}. The doc block itself (not merely the \
+         function body) must enumerate every collapse the body \
+         implements: {required_terms:?}.\n\nCurrent doc:\n{canonical_doc}"
+    );
+}
+
+#[test]
+fn no_single_rule_era_claims_above_either_copy() {
+    let canonical_doc = extract_doc_above_fn(CANONICAL_SRC, "pub fn canonicalize_type_name(");
+    let typechecker_doc =
+        extract_doc_above_fn(TYPECHECKER_SRC, "pub(super) fn canonicalize_type_name(");
+
+    // Pre-round-100 the canonical-side doc claimed the function had a
+    // single `Range -> List` rule and that the two hand-maintained
+    // copies "stay in lock-step by construction" — both false once
+    // rounds 71/75 and Phase D added three more collapses with no
+    // behavioural parity lock. Reject the stale phrasing outright.
+    let banned_phrases = ["only collapse", "single-rule", "lock-step by construction"];
+    for (label, doc) in [
+        ("src/types/canonical.rs", &canonical_doc),
+        ("src/typechecker/mod.rs", &typechecker_doc),
+    ] {
+        for phrase in &banned_phrases {
+            assert!(
+                !doc.contains(phrase),
+                "doc-comment above `canonicalize_type_name` in {label} \
+                 contains the stale phrase {phrase:?} — the function \
+                 implements four collapse rules (Range/Fun/Unit/alias) \
+                 and the two copies are hand-maintained, not in \
+                 lock-step by construction. Reword the doc.\n\n\
+                 Current doc:\n{doc}"
+            );
+        }
+    }
+
+    // Same stale claim at the compiler call site (src/compiler/mod.rs,
+    // Decl::TraitImpl arm): the comment there must not narrow the
+    // rules back to a lone `Range -> List` collapse either.
+    assert!(
+        !COMPILER_SRC.contains("only collapse is `Range -> List`"),
+        "src/compiler/mod.rs reintroduced the stale claim that \
+         `canonicalize_type_name`'s only collapse is `Range -> List`; \
+         the function also collapses Fun -> Fn, () -> Unit, and routes \
+         user aliases. Update the comment to enumerate (or reference) \
+         all four rules."
+    );
+}
