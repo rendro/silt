@@ -215,7 +215,7 @@ async function runRound(round) {
 
   // --- Fix: one worktree-isolated agent per finding (parallel edit, NO cargo) ---
   phase('Fix')
-  const patches = (await parallel(inScope.map((f) => () =>
+  const fixResults = await parallel(inScope.map((f) => () =>
     agent(
       `Fix exactly ONE silt audit finding inside your isolated git worktree.\n\n` +
       `FINDING [${f.severity}] ${f.title}\n` +
@@ -234,12 +234,28 @@ async function runRound(round) {
       `When done, from your worktree root run:  git add -A && git diff --cached --binary\n` +
       `Return that full patch text in the "patch" field (it includes new test files). If you could not produce a correct fix, set applied=false and patch="".`,
       { label: `fix:${(f.file || '').split(':')[0].split('/').pop()}:${round}`, phase: 'Fix', schema: FIX_SCHEMA, isolation: 'worktree' }
-    ).then((r) => (r && r.applied && r.patch ? { ...r, finding: f } : null))
-  ))).filter(Boolean)
+    ).then((r) => ({ r, f }))
+  ))
+
+  // A fix agent that dies on a terminal API error resolves to null (or its
+  // thunk to null). Those findings never reach the integrator, so surface
+  // them explicitly as `lost` — a silent .filter(Boolean) here once dropped
+  // 5 findings (2 BROKEN) from a round that reported dropped=[] (see f9d4957).
+  const patches = []
+  const lost = []
+  fixResults.forEach((entry, i) => {
+    const f = entry && entry.f ? entry.f : inScope[i]
+    const r = entry ? entry.r : null
+    if (r && r.applied && r.patch) patches.push({ ...r, finding: f })
+    else lost.push(`[${f.severity}] ${f.title}`)
+  })
 
   log(`Round ${round}: ${patches.length}/${inScope.length} fixes produced patches`)
+  if (lost.length) {
+    log(`Round ${round}: WARNING — ${lost.length} in-scope finding(s) produced NO patch (fix agent error or applied=false); they are NOT in this round's commit: ` + lost.join('; '))
+  }
   if (!patches.length) {
-    return { round, regressions: regressions.length, broken: broken.length, fixed: 0, committed: false, sha: '', clean, deferred }
+    return { round, regressions: regressions.length, broken: broken.length, fixed: 0, committed: false, sha: '', clean, deferred, lost }
   }
 
   // --- Integrate: ONE agent applies all patches, runs the single build+test,
@@ -282,6 +298,7 @@ async function runRound(round) {
     dropped: integration ? integration.dropped || [] : [],
     clean,
     deferred,
+    lost,
   }
 }
 
@@ -317,10 +334,12 @@ const totalRegr = history.reduce((s, r) => s + r.regressions, 0)
 const totalFixed = history.reduce((s, r) => s + r.fixed, 0)
 const shas = history.filter((r) => r.committed).map((r) => r.sha).join(' ')
 const allDeferred = [...new Set(history.flatMap((r) => (r.deferred || []).map((f) => f.title)))]
+const allLost = [...new Set(history.flatMap((r) => r.lost || []))]
 const summary =
   `silt nightly audit done: ${round} round(s), stop=${stopReason}. ` +
   `fixed=${totalFixed}, regressions-seen=${totalRegr}, commits=[${shas || 'none'}], branch=${BRANCH}. ` +
-  (allDeferred.length ? `deferred(user-decision)=${allDeferred.length}: ${allDeferred.join('; ')}` : 'no deferred items.')
+  (allDeferred.length ? `deferred(user-decision)=${allDeferred.length}: ${allDeferred.join('; ')}. ` : 'no deferred items. ') +
+  (allLost.length ? `LOST(fix agent died, NOT committed — needs re-dispatch)=${allLost.length}: ${allLost.join('; ')}` : 'no lost fixes.')
 
 await agent(
   `Send a completion notification. Run exactly:\n` +
@@ -330,4 +349,4 @@ await agent(
 )
 
 log(summary)
-return { rounds: round, stopReason, totalFixed, totalRegressions: totalRegr, commits: shas, branch: BRANCH, deferred: allDeferred, history }
+return { rounds: round, stopReason, totalFixed, totalRegressions: totalRegr, commits: shas, branch: BRANCH, deferred: allDeferred, lost: allLost, history }
