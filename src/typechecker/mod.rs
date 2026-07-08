@@ -2122,7 +2122,8 @@ impl TypeChecker {
     /// the inverse of `register_trait_impl`'s self_type construction:
     /// `Type::Generic(_, args)` yields `args`; the parameterized builtin
     /// containers (List, Set, Channel, Map) yield their element types in
-    /// declaration order. Anything else (Int, String, Record without type
+    /// declaration order; tuples yield their elements and functions their
+    /// params-then-return. Anything else (Int, String, Record without type
     /// params, etc.) has no positional args. Used by `verify_trait_obligation`
     /// to walk into an impl's where-clause obligations.
     ///
@@ -2136,6 +2137,27 @@ impl TypeChecker {
                 vec![(**inner).clone()]
             }
             Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+            // Tuple-/Fn-shaped alias impls (`type P2 = (Int, Int)`;
+            // `type IntOp = Fn(Int) -> Int`) register under the synthetic
+            // heads `"Tuple"`/`"Fn"` with the expanded structural self
+            // type. Their positional args are the element types (params
+            // plus return for `Fn`) so `verify_trait_obligation`'s
+            // self-type-args comparison sees them. Pre-fix both shapes
+            // fell through to `Vec::new()`: obligated-vs-impl args
+            // compared as empty-vs-empty and ANY tuple/function satisfied
+            // a bound whose only impl targeted a concrete alias shape
+            // (round-102 hole, same class as the head-key-only bug it
+            // fixed). Differing arities land on the caller's equal-length
+            // conservative-skip guard, so the bare `trait T for Tuple`
+            // wildcard (`Generic("Tuple", [])`, zero args) keeps matching
+            // every tuple, and mismatched-arity functions defer to the
+            // direct-dispatch unify.
+            Type::Tuple(elems) => elems.clone(),
+            Type::Fun(params, ret) => {
+                let mut args = params.clone();
+                args.push((**ret).clone());
+                args
+            }
             _ => Vec::new(),
         }
     }
@@ -4580,7 +4602,7 @@ impl TypeChecker {
         // value-side types (e.g. the `Range(Int)` from a `1..n`
         // expression) is preserved because expression-level inference
         // (`ExprKind::Range` in `inference.rs`) keeps producing
-        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:594`)
+        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:1492`)
         // therefore still fires for the asymmetric case of a
         // (canonicalised) annotation meeting an internally-inferred
         // Range, but only the value side carries Range past this
@@ -6772,10 +6794,31 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = Vec::new();
-        // Parallel structure indexed by target_param_names position, used to
-        // populate self.impl_constraints below so that call-site constraint
-        // resolution can recursively verify the impl's own where clauses
-        // against the actual concrete type arguments at the call site.
+        // Parallel structure used to populate self.impl_constraints below so
+        // that call-site constraint resolution can recursively verify the
+        // impl's own where clauses against the actual concrete type
+        // arguments at the call site.
+        //
+        // Round 101 BROKEN: the stored index MUST live in the index space
+        // the consumer uses. `verify_trait_obligation` resolves an
+        // obligation via `type_args_of(resolved_receiver).get(idx)` — the
+        // positional args of the CANONICAL EXPANDED type. For direct
+        // targets (`Box(a)`, `Map(k, v)`) that space coincides with
+        // `target_param_names` order, but for ALIAS targets it does not:
+        // with `type Named(a) = Map(String, a)`, param `a` is at param
+        // position 0 but EXPANDED slot 1, so indexing by param position
+        // verified the key slot (`String`) instead of `a` — both false
+        // rejects ("'String' does not implement 'Marked'" on a valid
+        // program) and false accepts (a `where a: Display` bound checked
+        // against `String` while the actual value type was `Fn`). Compute
+        // the index as the position of the param's tyvar within the
+        // expanded self_type's positional args so both sides of the table
+        // agree. A param that never surfaces as a top-level positional
+        // slot (Tuple/Fn alias targets, occurrences nested deeper than
+        // one wrapper) gets no entry — the same effective behavior as
+        // before, where `args.get(idx)` returned `None` at verify time
+        // and the obligation was skipped.
+        let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
             let type_param = &wc.type_param;
@@ -6826,12 +6869,20 @@ impl TypeChecker {
                             self.trait_arg_bindings
                                 .insert((tv, *trait_name), resolved_bound_args.clone());
                         }
+                        // Round 101 BROKEN: index in the EXPANDED-args
+                        // space (see the `expanded_self_args` comment
+                        // above), NOT the `target_param_names` space —
+                        // the two diverge for alias targets.
+                        if let Some(idx) = expanded_self_args
+                            .iter()
+                            .position(|slot| matches!(slot, Type::Var(v) if *v == tv))
+                        {
+                            impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
+                        }
                     }
                     // If resolved is concrete (shouldn't happen — impl_param_map
-                    // only inserts fresh Var entries) treat it as a tautology.
-                    if let Some(idx) = ti.target_param_names.iter().position(|n| n == type_param) {
-                        impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
-                    }
+                    // only inserts fresh Var entries) treat it as a tautology
+                    // and register no positional obligation.
                 }
                 None => {
                     self.error(
@@ -7235,7 +7286,7 @@ impl TypeChecker {
                     None => {
                         // Give the user the full "declare it in the sig or
                         // target" hint — this is the same spirit as the
-                        // register_fn_decl error at mod.rs:1690.
+                        // register_fn_decl error at mod.rs:5163.
                         self.error(
                             format!(
                                 "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
@@ -7399,7 +7450,7 @@ pub(super) fn canonicalize_type_name(
     // typecheck pass but emitted compiler globals under `()` while
     // the VM dispatched under `Unit`, leaving runtime lookups
     // missing. Flipping to `() → Unit` lets the FieldAccess arm
-    // (inference.rs:2582) and auto-derive (`mod.rs:6983`) — both
+    // (inference.rs:3215) and auto-derive (`mod.rs:8060`) — both
     // updated in this round — converge with the runtime side.
     // The typechecker's `register_trait_impl` therefore registers a
     // user `trait T for Unit { ... }` (or `trait T for ()`) impl
@@ -7507,7 +7558,7 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
         // (`{...r}`) or an `AssocProj` would have its where-clause
         // tyvars stranded on the pre-narrowing ids — the call-site
         // pass-3 remap loop at the trait-impl recheck site (around
-        // mod.rs:3217) would then drop those constraints because
+        // mod.rs:3583) would then drop those constraints because
         // `remap.get(old_tv)` returns `None`, silently losing the
         // constraint at the narrowed scheme.
         (
@@ -7996,7 +8047,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
 
     // Primitives + List: all four auto-derived traits.
     // `ExtFloat` is the widened-float result of `Float / Float` (see
-    // `src/typechecker/inference.rs:2326-2333`); it must auto-derive all
+    // `src/typechecker/inference.rs:3435-3451`); it must auto-derive all
     // four built-in traits so that a divided Float can flow through a
     // `Display`/`Equal`/`Compare`/`Hash` trait bound without a spurious
     // "type 'ExtFloat' does not implement trait ..." rejection.
@@ -8083,7 +8134,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
     // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
     // `Value::Bytes` already has a runtime Display impl
-    // (`format_bytes_preview` at src/value.rs:1258 — short hex preview
+    // (`format_bytes_preview` at src/value.rs:1364 — short hex preview
     // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
     // `bytes.eq(a, b)` but is not auto-derived through the trait
     // surface; Compare / Hash are intentionally omitted (Bytes is an

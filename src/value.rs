@@ -1828,22 +1828,22 @@ impl Ord for Value {
                 // ever appears.
                 a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
-            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits().cmp(&b.to_bits()),
-            // Cross-arms: Float ↔ ExtFloat. PartialEq widens both to `f64`
-            // and uses the standard `f64` PartialEq (line ~1705), so Ord
-            // must agree. We use `partial_cmp` (not `total_cmp`) so finite
-            // Float vs ExtFloat 1.0 returns `Equal` exactly when PartialEq
-            // returns `true`. NaN cases (only possible from ExtFloat) fall
-            // back to bit ordering — PartialEq returns `false` there, so
-            // Ord must NOT return `Equal`. `total_cmp` on the bits side
-            // satisfies that distinctness contract.
+            // ExtFloat/ExtFloat: `f64::total_cmp` (IEEE totalOrder) —
+            // sign-aware numeric order (`list.sort` agrees with scalar
+            // `<`); `Equal` iff identical bits, matching bitwise PartialEq
+            // (NaN self-equal; no ExtFloat(-0.0) exists — arithmetic.rs).
+            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.total_cmp(b),
+            // Cross-arms: Float ↔ ExtFloat. `partial_cmp` first so finite
+            // Float vs ExtFloat 1.0 is `Equal` exactly when PartialEq says
+            // `true`; NaN (only from ExtFloat) falls back to `total_cmp`,
+            // never `Equal` for finite-vs-NaN, so Ord matches PartialEq.
             (Value::Float(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
                 Some(o) => o,
-                None => a.to_bits().cmp(&b.to_bits()),
+                None => a.total_cmp(b),
             },
             (Value::ExtFloat(a), Value::Float(b)) => match a.partial_cmp(b) {
                 Some(o) => o,
-                None => a.to_bits().cmp(&b.to_bits()),
+                None => a.total_cmp(b),
             },
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),

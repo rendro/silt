@@ -426,11 +426,11 @@ impl Vm {
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: the typechecker auto-derives Compare for
-                    // List (see src/typechecker/mod.rs:8012), so a value of
+                    // List (see src/typechecker/mod.rs:8063), so a value of
                     // `List(T)` flowing through a `Compare` bound must
                     // resolve here. Defer to the existing element-wise
                     // ordering on `Value::cmp`, which already handles
-                    // List/Range pairings (see src/vm/arithmetic.rs:138).
+                    // List/Range pairings (see src/vm/arithmetic.rs:152).
                     (Value::List(_), Value::List(_))
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
@@ -455,7 +455,7 @@ impl Vm {
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
-                    // (src/typechecker/mod.rs:8009). All units are equal.
+                    // (src/typechecker/mod.rs:8060). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     _ => {
                         return Some(Err(VmError::new(format!(

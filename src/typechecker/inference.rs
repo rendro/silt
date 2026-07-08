@@ -209,7 +209,7 @@ pub(super) fn format_undefined_variable_message(
         "break" | "continue" => {
             Some("silt has no 'break'/'continue' — return early or restructure the recursion")
         }
-        // F12 (round 67): mirror parser.rs G1 (parser.rs:2084-2118) for
+        // F12 (round 67): mirror parser.rs G1 (parser.rs:2245-2255) for
         // the expression-position case. The parser only catches these
         // at statement position (and gates on a "looks like a mistake"
         // lookahead); in expression position the parser parses `if` /
@@ -3183,7 +3183,7 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:8112`); Channel and Fn are not
+                    // in `src/typechecker/mod.rs:8163`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
@@ -3468,7 +3468,7 @@ impl TypeChecker {
                                 // `lt` so the outer ascribed-let
                                 // (`let n: Int = s + 1`) hits the
                                 // cascade-suppression branch in `unify`
-                                // (`mod.rs:741`) and doesn't re-emit
+                                // (`mod.rs:1387`) and doesn't re-emit
                                 // (G2, round 60).
                                 let unify_errored = self.unify_binop_operands(
                                     &lt,
@@ -3547,7 +3547,7 @@ impl TypeChecker {
                                 // on unify failure so an outer ascribed-let
                                 // (`let n: Int = s - 1`) hits the
                                 // cascade-suppression branch in `unify`
-                                // (`mod.rs:741`).
+                                // (`mod.rs:1387`).
                                 let unify_errored = self.unify_binop_operands(
                                     &lt,
                                     &rt,
@@ -3605,7 +3605,7 @@ impl TypeChecker {
                                 // failure so an outer ascribed-let
                                 // (`let n: Int = b / 1`) hits the
                                 // cascade-suppression branch in `unify`
-                                // (`mod.rs:741`).
+                                // (`mod.rs:1387`).
                                 let unify_errored = self.unify_binop_operands(
                                     &lt,
                                     &rt,
@@ -5978,7 +5978,7 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
 /// let-binding sites (top-level in `mod.rs`, inline in `infer_stmt`)
 /// build their scheme via `generalize` / `Scheme::mono`, both of which
 /// hardcode `effects: EffectSet::TOP` (see the doc-comment on
-/// `generalize` at `mod.rs:1593-1601` warning every caller MUST
+/// `generalize` at `mod.rs:1834-1842` warning every caller MUST
 /// overwrite the field). Neither caller did, so an alias call became
 /// `!*`-equivalent and any caller fn declared with anything narrower
 /// than the full five-effect row started failing the body-subset

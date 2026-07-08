@@ -5,6 +5,33 @@
 //! handlers (binding collection, signature help, etc.).
 
 use crate::ast::*;
+use crate::lexer::Span;
+
+/// Convert a byte offset in `source` into a lexer `Span` (1-based line,
+/// 1-based **codepoint** column, byte offset) — the same convention the
+/// lexer stamps on tokens (lexer.rs advances `col` once per `char`).
+///
+/// Single source of truth for the offset→Span math used when an LSP
+/// handler re-derives a precise token span from a byte offset it found by
+/// scanning raw source (shorthand record binders, rename target
+/// resolution, …). Do NOT inline this computation at call sites: the
+/// column convention here is codepoints, while `conversions.rs`'s
+/// `offset_to_position` speaks LSP `Position` (0-based, UTF-16 code
+/// units) — a documented trap. Keeping one copy means a future fix to
+/// the line/col semantics lands everywhere at once.
+///
+/// `off` is clamped to `source.len()` and must lie on a `char` boundary
+/// (offsets produced by `find_ident_in_range` always do).
+///
+/// Lock: tests/lsp_span_at_offset_dedup_lock_tests.rs + the unit tests
+/// below.
+pub(super) fn span_at_offset(source: &str, off: usize) -> Span {
+    let off = off.min(source.len());
+    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
+    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col = source[line_start..off].chars().count() + 1;
+    Span::with_offset(line, col, off)
+}
 
 /// Return the approximate end-offset extent of an expression in the source.
 /// For block expressions we scan forward to the matching `}` using a simple
@@ -532,6 +559,65 @@ mod tests {
         // A same-named ident AFTER the record's own `}` must not match.
         let source = "Point { a } x";
         assert_eq!(find_shorthand_binder(source, 0, "x"), None);
+    }
+
+    // ── span_at_offset ───────────────────────────────────────────
+    //
+    // These fixtures assert the exact (line, col, offset) triples the
+    // previously-inlined math produced, so delegating call sites to
+    // `span_at_offset` is provably a semantic no-op.
+
+    #[test]
+    fn test_span_at_offset_first_line() {
+        let source = "let alpha = 1";
+        //            0123456789
+        // `alpha` starts at byte 4 → line 1, col 5.
+        let span = span_at_offset(source, 4);
+        assert_eq!((span.line, span.col, span.offset), (1, 5, 4));
+    }
+
+    #[test]
+    fn test_span_at_offset_start_of_file() {
+        let span = span_at_offset("abc", 0);
+        assert_eq!((span.line, span.col, span.offset), (1, 1, 0));
+    }
+
+    #[test]
+    fn test_span_at_offset_multiline() {
+        let source = "let a = 1\nlet b = 2\n  point";
+        // Byte layout: line 1 = bytes 0..9, '\n' at 9; line 2 = 10..19,
+        // '\n' at 19; line 3 starts at 20. `point` starts at byte 22 →
+        // line 3, col 3.
+        let off = source.find("point").unwrap();
+        assert_eq!(off, 22);
+        let span = span_at_offset(source, off);
+        assert_eq!((span.line, span.col, span.offset), (3, 3, 22));
+    }
+
+    #[test]
+    fn test_span_at_offset_multibyte_column_counts_codepoints() {
+        // `é` is 2 bytes / 1 char, `日` is 3 bytes / 1 char. Column is
+        // a CODEPOINT count (matching the lexer), not a byte count and
+        // not UTF-16 units.
+        let source = "-- é日\nlet x = 1";
+        let off = source.find('x').unwrap();
+        // Line 2 starts after the '\n'; `let ` = 4 chars before `x`.
+        let span = span_at_offset(source, off);
+        assert_eq!((span.line, span.col, span.offset), (2, 5, off));
+        // Multibyte chars BEFORE the offset on the same line compress:
+        // byte offset of `日` is 5 (after 2-byte `é`), but it is only
+        // the 5th codepoint (`-`, `-`, ` `, `é` precede it) → col 5.
+        let off_cjk = source.find('日').unwrap();
+        assert_eq!(off_cjk, 5);
+        let span = span_at_offset(source, off_cjk);
+        assert_eq!((span.line, span.col, span.offset), (1, 5, 5));
+    }
+
+    #[test]
+    fn test_span_at_offset_clamps_past_eof() {
+        let source = "ab\ncd";
+        let span = span_at_offset(source, 999);
+        assert_eq!((span.line, span.col, span.offset), (2, 3, 5));
     }
 
     #[test]

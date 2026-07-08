@@ -164,13 +164,24 @@ fn main() {
     );
 }
 
-// ── Hash on Record with non-hashable tuple field ────────────────────
+// ── Hash on Record with a hashable tuple field ──────────────────────
 
-/// Record with a tuple field. The tuple is hashable by the runtime
-/// `impl Hash for Value`, but the typechecker's synth gate doesn't
-/// emit `Pair.hash` for tuple fields, so the call falls through to
-/// the runtime dispatch arm. Verify the call succeeds and prints
-/// an Int.
+/// Record with a tuple field. Tuples DO support Hash — `(Hash,
+/// Tuple)` is stamped by `register_auto_derived_impls_for` under the
+/// Equal/Hash/Display policy (see this file's header), so
+/// `field_type_supports_trait` passes, `hash_ok` stays true, and the
+/// call resolves through a synth-emitted `Pair.hash` global that
+/// `Op::CallMethod`'s qualified-global lookup finds BEFORE
+/// `dispatch_trait_method` is ever consulted. The runtime dispatch
+/// arm this program exercises is therefore the TUPLE entry of the
+/// hash allowlist (reached by the synthesized body's `self.t.hash()`
+/// field call), NOT the `Value::Record` entry — the Record/Variant
+/// hash-allowlist entries remain a defensive-dead fallback with no
+/// positive behavioral lock (see the comment block in the `"hash"`
+/// arm of `src/vm/dispatch.rs`). Verify the call succeeds and prints
+/// an Int. The mechanism claim is locked in-process by
+/// `synth_pass_emits_pair_hash_trait_impl_for_tuple_field_record`
+/// below.
 #[test]
 fn hash_runs_on_user_record_with_tuple_field() {
     let out = run_silt_ok(
@@ -189,5 +200,139 @@ fn main() {
     assert!(
         parsed.is_ok(),
         "hash() on Pair must produce a parseable Int; got {line:?}"
+    );
+}
+
+// ── Round-100 doc-drift locks ────────────────────────────────────────
+//
+// The doc on `hash_runs_on_user_record_with_tuple_field` previously
+// claimed the synth gate skips `Pair.hash` emission for tuple fields
+// and the call "falls through" to the Record hash dispatch arm. That
+// contradicted this file's own header (tuples DO support Hash) and
+// the mechanism: `(Hash, Tuple)` is stamped by
+// `register_auto_derived_impls_for(checker, ["Tuple","Map","Set"],
+// non_ordering_traits)` in `src/typechecker/mod.rs`, so
+// `field_type_supports_trait` passes and the synth pass emits
+// `Pair.hash`. Two locks below:
+//   1. an in-process MECHANISM lock proving the synth pass emits an
+//      auto-derived `Pair.hash` TraitImpl for a tuple-field record,
+//      and
+//   2. a source-grep lock keeping the corrected prose in place (here
+//      and in the reciprocal claim in
+//      `tests/vm_dispatch_variant_record_runtime_tests.rs`).
+
+/// MECHANISM LOCK: run the exact `Pair { t: (Int, Int) }` program
+/// from `hash_runs_on_user_record_with_tuple_field` through the
+/// typechecker and assert its auto-derive synth pass pushed a
+/// `trait Hash for Pair` TraitImpl (with a `hash` method) into
+/// `program.decls`. This is the decl the compiler lowers to the
+/// `Pair.hash` qualified global that `Op::CallMethod` resolves ahead
+/// of `dispatch_trait_method` — i.e. the runtime test above locks the
+/// SYNTH path plus the Tuple hash-allowlist entry, not the
+/// `Value::Record` entry. If this ever fails, the doc claims on both
+/// hash tests must be re-audited.
+#[test]
+fn synth_pass_emits_pair_hash_trait_impl_for_tuple_field_record() {
+    let src = r#"
+type Pair { t: (Int, Int) }
+fn h(x: a) -> Int where a: Hash { x.hash() }
+fn main() {
+    let p = Pair { t: (1, 2) }
+    println(h(p))
+}
+"#;
+    let tokens = silt::lexer::Lexer::new(src)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse error");
+    let errors = silt::typechecker::check(&mut program);
+    assert!(
+        errors
+            .iter()
+            .all(|e| e.severity != silt::types::Severity::Error),
+        "tuple-field record Hash program must typecheck cleanly: {errors:?}"
+    );
+
+    let hash_trait = silt::intern::intern("Hash");
+    let pair_type = silt::intern::intern("Pair");
+    let synth_impl = program.decls.iter().find_map(|d| match d {
+        silt::ast::Decl::TraitImpl(ti)
+            if ti.is_auto_derived && ti.trait_name == hash_trait && ti.target_type == pair_type =>
+        {
+            Some(ti)
+        }
+        _ => None,
+    });
+    let ti = synth_impl.expect(
+        "the auto-derive synth pass must emit an is_auto_derived `trait Hash for \
+         Pair` impl for a tuple-field record — (Hash, Tuple) is stamped, so the \
+         field-aware gate passes and the call resolves via the synth global, \
+         never the Value::Record hash dispatch arm",
+    );
+    let hash_method = silt::intern::intern("hash");
+    assert!(
+        ti.methods.iter().any(|m| m.name == hash_method),
+        "synthesized `trait Hash for Pair` impl must contain a `hash` method"
+    );
+}
+
+/// SOURCE-GREP LOCK: the false pre-round-100 prose must stay gone and
+/// the corrected prose must stay present, in both this file and the
+/// reciprocal doc in `tests/vm_dispatch_variant_record_runtime_tests.rs`.
+/// Needles that would otherwise match this test's own literals are
+/// assembled by concatenation so only real doc text can match.
+#[test]
+fn tuple_field_hash_doc_claims_stay_corrected() {
+    let this_src = include_str!("vm_dispatch_unsupportable_field_runtime_tests.rs");
+    let sibling_src = include_str!("vm_dispatch_variant_record_runtime_tests.rs");
+
+    // Old false claim in this file: the synth gate skips Pair.hash and
+    // the call "falls through" to the Record dispatch arm.
+    let bad_gate_claim = ["the typechecker's synth gate", " doesn't"].concat();
+    assert!(
+        !this_src.contains(&bad_gate_claim),
+        "stale claim resurfaced: the synth gate DOES emit `Pair.hash` for \
+         tuple fields ((Hash, Tuple) is stamped; see file header)"
+    );
+    let bad_fallthrough_claim = ["so the call falls", " through to"].concat();
+    assert!(
+        !this_src.contains(&bad_fallthrough_claim),
+        "stale claim resurfaced: the tuple-field record hash call resolves \
+         via the synth-emitted global, it does not fall through to the \
+         Record dispatch arm"
+    );
+    // Positive control: the corrected mechanism prose is present.
+    let good_claim = ["synth-emitted `Pair.hash`", " global"].concat();
+    assert!(
+        this_src.contains(&good_claim),
+        "corrected doc on hash_runs_on_user_record_with_tuple_field went \
+         missing; keep the synth-global mechanism description"
+    );
+
+    // Reciprocal doc in the variant/record suite: it must not claim the
+    // Record/Variant hash DISPATCH ARM is positively locked by the
+    // unsupportable-field tests, nor cite the long-renamed
+    // `hash_runs_..._with_channel_field` runtime test.
+    let stale_test_name = ["hash_runs_on_user_record", "_with_channel_field"].concat();
+    assert!(
+        !sibling_src.contains(&stale_test_name),
+        "vm_dispatch_variant_record_runtime_tests.rs cites a test renamed in \
+         round 93 (now hash_on_user_record_with_channel_field_rejected_statically)"
+    );
+    let bad_force_fallthrough = ["non-derivable fields to force", " fall-through"].concat();
+    assert!(
+        !sibling_src.contains(&bad_force_fallthrough),
+        "vm_dispatch_variant_record_runtime_tests.rs re-acquired the false \
+         claim that the unsupportable-field suite forces dispatch-arm \
+         fall-through for hash"
+    );
+    // Positive control: the corrected reciprocal prose is present.
+    assert!(
+        sibling_src.contains("defensive-dead"),
+        "vm_dispatch_variant_record_runtime_tests.rs must state the \
+         Record/Variant hash-allowlist entries are a defensive-dead \
+         fallback with no positive behavioral lock"
     );
 }

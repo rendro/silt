@@ -386,6 +386,11 @@ impl Lexer {
                     });
                 }
                 Some('\\') => {
+                    // Capture the backslash's position BEFORE consuming
+                    // it: the unknown-escape diagnostic below must anchor
+                    // its caret on `\`, not two columns past the sequence
+                    // (rustc anchors bad escapes the same way).
+                    let esc_span = self.span();
                     self.advance_char();
                     match self.advance_char() {
                         Some('n') => text.push('\n'),
@@ -397,7 +402,7 @@ impl Lexer {
                         Some(c) => {
                             return Err(LexError {
                                 message: format!("unknown escape sequence: \\{c}"),
-                                span: self.span(),
+                                span: esc_span,
                             });
                         }
                         None => {

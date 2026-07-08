@@ -411,10 +411,9 @@ fn collect_references_in_fn_signature(f: &FnDecl, name: Symbol, out: &mut Vec<Sp
 fn qualified_head_span(head_span: Span, name: Symbol, source: &str) -> Option<Span> {
     let name_str = resolve_sym(name);
     let off = super::text_utils::qualified_head_name_offset(source, head_span.offset, &name_str)?;
-    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
-    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let col = source[line_start..off].chars().count() + 1;
-    Some(Span::with_offset(line, col, off))
+    // Shared offset->Span math — see text_utils::span_at_offset (dedup lock:
+    // tests/lsp_span_at_offset_dedup_lock_tests.rs).
+    Some(super::text_utils::span_at_offset(source, off))
 }
 
 /// Resolve the precise span of a shorthand record-field binder (`{ x }`,
@@ -429,10 +428,11 @@ fn qualified_head_span(head_span: Span, name: Symbol, source: &str) -> Option<Sp
 fn shorthand_binder_span(record_span: Span, field: &str, source: &str) -> Option<Span> {
     let start = record_span.offset.min(source.len());
     let off = super::text_utils::find_shorthand_binder(source, start, field)?;
-    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
-    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let col = source[line_start..off].chars().count() + 1;
-    Some(Span::with_offset(line, col, off))
+    // Offset→Span math is deliberately NOT inlined here — every raw-scan
+    // rename/hover site must share text_utils::span_at_offset so the
+    // line/col convention (codepoint columns, lexer-compatible) cannot
+    // silently diverge between call sites.
+    Some(super::text_utils::span_at_offset(source, off))
 }
 
 fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut Vec<Span>) {
@@ -441,7 +441,7 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
             out.push(expr.span);
         }
         // Round-71 DX-2 fix: do NOT match on FieldAccess by symbol equality.
-        // `FieldAccess.span` is the receiver's span (parser.rs:2602/2678),
+        // `FieldAccess.span` is the receiver's span (parser.rs:2620/2696),
         // not the field's, so pushing it here would corrupt the receiver
         // identifier on rename. Field names live in a separate namespace
         // from let/fn names; symbol-collision matching across the two
@@ -567,10 +567,9 @@ fn loop_binder_span(init_span: Span, name: Symbol, source: &str) -> Option<Span>
             return None;
         }
     }
-    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
-    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let col = source[line_start..off].chars().count() + 1;
-    Some(Span::with_offset(line, col, off))
+    // Shared offset->Span math — see text_utils::span_at_offset (dedup lock:
+    // tests/lsp_span_at_offset_dedup_lock_tests.rs).
+    Some(super::text_utils::span_at_offset(source, off))
 }
 
 fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, source: &str, out: &mut Vec<Span>) {
@@ -703,14 +702,21 @@ fn collect_references_in_pattern(
             // `collect_pattern_vars`. Both the shorthand field and the
             // rest binder lack a dedicated Pattern node; recover the
             // precise token offset with `shorthand_binder_span`.
+            //
+            // Round-103: on a failed scan push NOTHING, mirroring the
+            // `Record` arm above. `pattern.span` here is the opening `{`
+            // of the anon record; the old head-span fallback made a
+            // failed binder scan rewrite that brace into the new name —
+            // the exact source-corrupting failure mode the round-101 fix
+            // removed from the nominal arm. Missing one edit is strictly
+            // safer than a wrong edit.
             for (fname, sub) in fields {
                 if let Some(p) = sub {
                     collect_references_in_pattern(p, name, source, out);
                 } else if *fname == name {
                     let field_str = crate::intern::resolve(*fname);
-                    match shorthand_binder_span(pattern.span, &field_str, source) {
-                        Some(span) => out.push(span),
-                        None => out.push(pattern.span),
+                    if let Some(span) = shorthand_binder_span(pattern.span, &field_str, source) {
+                        out.push(span);
                     }
                 }
             }
@@ -718,9 +724,8 @@ fn collect_references_in_pattern(
                 && *r == name
             {
                 let rest_str = crate::intern::resolve(*r);
-                match shorthand_binder_span(pattern.span, &rest_str, source) {
-                    Some(span) => out.push(span),
-                    None => out.push(pattern.span),
+                if let Some(span) = shorthand_binder_span(pattern.span, &rest_str, source) {
+                    out.push(span);
                 }
             }
         }
@@ -732,5 +737,91 @@ fn collect_references_in_pattern(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::intern;
+
+    /// Build an `AnonRecord` pattern whose head span sits on the `{` at
+    /// `offset` in the source under test — exactly where the parser puts
+    /// it for an anon-record pattern.
+    fn anon_pat(
+        fields: Vec<(Symbol, Option<Pattern>)>,
+        rest: Option<Symbol>,
+        offset: usize,
+    ) -> Pattern {
+        Pattern::new(
+            PatternKind::AnonRecord { fields, rest },
+            Span::with_offset(1, offset + 1, offset),
+        )
+    }
+
+    /// Round-103 lock: when `shorthand_binder_span` cannot locate a
+    /// shorthand FIELD binder of an anon-record pattern, the collector
+    /// must emit NO span — never the head span. `pattern.span` is the
+    /// record's opening `{`; the old fallback made `textDocument/rename`
+    /// replace that brace with the new name, producing non-compiling
+    /// source (the failure mode round 101 removed from the nominal
+    /// `Record` arm). The parser guarantees the scan succeeds for
+    /// well-formed source, so the invariant break is simulated with a
+    /// pattern whose field is absent from the scanned text.
+    #[test]
+    fn anon_record_shorthand_scan_failure_emits_no_edit() {
+        let source = "{ y: q }";
+        let field = intern("r103_missing_field");
+        let pat = anon_pat(vec![(field, None)], None, 0);
+        let mut out = Vec::new();
+        collect_references_in_pattern(&pat, field, source, &mut out);
+        assert!(
+            out.is_empty(),
+            "a failed shorthand-binder scan must yield zero edits, not a \
+             head edit on the opening `{{`; got {out:?}"
+        );
+    }
+
+    /// Same lock for the named REST binder (`{ x, ...rest }`): a failed
+    /// scan must not fall back to the head `{`.
+    #[test]
+    fn anon_record_rest_scan_failure_emits_no_edit() {
+        let source = "{ y: q }";
+        let rest = intern("r103_missing_rest");
+        let pat = anon_pat(vec![], Some(rest), 0);
+        let mut out = Vec::new();
+        collect_references_in_pattern(&pat, rest, source, &mut out);
+        assert!(
+            out.is_empty(),
+            "a failed rest-binder scan must yield zero edits, not a head \
+             edit on the opening `{{`; got {out:?}"
+        );
+    }
+
+    /// Positive control: for well-formed source the shorthand binder IS
+    /// found and the emitted span targets the binder token, never the
+    /// pattern head — the fix must not silence real edits.
+    #[test]
+    fn anon_record_shorthand_scan_success_targets_binder_token() {
+        let source = "{ x }";
+        let field = intern("x");
+        let pat = anon_pat(vec![(field, None)], None, 0);
+        let mut out = Vec::new();
+        collect_references_in_pattern(&pat, field, source, &mut out);
+        assert_eq!(out.len(), 1, "exactly the binder token; got {out:?}");
+        assert_eq!(out[0].offset, 2, "span must sit on `x`, got {out:?}");
+    }
+
+    /// Positive control for the rest binder: `{ x, ...rest }` emits a
+    /// span on the `rest` token itself.
+    #[test]
+    fn anon_record_rest_scan_success_targets_binder_token() {
+        let source = "{ x, ...rest }";
+        let rest = intern("rest");
+        let pat = anon_pat(vec![(intern("x"), None)], Some(rest), 0);
+        let mut out = Vec::new();
+        collect_references_in_pattern(&pat, rest, source, &mut out);
+        assert_eq!(out.len(), 1, "exactly the rest token; got {out:?}");
+        assert_eq!(out[0].offset, 8, "span must sit on `rest`, got {out:?}");
     }
 }

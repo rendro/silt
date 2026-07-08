@@ -427,45 +427,15 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
             }
         }
         PatternKind::Record { fields, .. } => {
-            // Round-62 B8 + B9: shorthand binders (`{ x, y }`) bind the
-            // field name as a local; emit a VARIABLE token for them so
-            // they highlight consistently with the bare `let x = ...` case.
-            // There is no sub-pattern span for shorthand fields; recover
-            // the binder offset with the brace-depth-aware scan shared
-            // with `ast_walk::check_shorthand_field_binder` (round-101:
-            // emitting at the enclosing pattern span mislabeled the
-            // record HEAD as a VARIABLE and never lit the binder itself).
-            // If the scan fails, emit nothing — a mislabeled head token
-            // is worse than a missing one.
-            for (fname, sub) in fields {
-                if let Some(p) = sub {
-                    emit_pattern_binding_tokens(p, source, out);
-                } else if resolve(*fname) != "_" {
-                    let fname_str = resolve(*fname);
-                    if let Some(off) = super::text_utils::find_shorthand_binder(
-                        source,
-                        pattern.span.offset.min(source.len()),
-                        &fname_str,
-                    ) {
-                        push_token_at_offset(source, off, &fname_str, TT_VARIABLE, out);
-                    }
-                }
-            }
+            emit_shorthand_field_tokens(pattern, fields, source, out);
         }
         PatternKind::AnonRecord { fields, rest } => {
-            // Same shorthand handling as the nominal `Record` arm above.
-            // Round-101: the named rest binder (`{ x, ...rest }`) binds
-            // `rest` too — emit a VARIABLE token for it (same
-            // pattern-span imprecision as shorthand fields).
-            for (fname, sub) in fields {
-                if let Some(p) = sub {
-                    emit_pattern_binding_tokens(p, source, out);
-                } else if resolve(*fname) != "_" {
-                    emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
-                }
-            }
-            if let Some(r) = rest {
-                emit_binding_token(source, &pattern.span, *r, TT_VARIABLE, out);
+            emit_shorthand_field_tokens(pattern, fields, source, out);
+            // `{x, ...rest}` binds `rest` to the unmatched fields. Like
+            // shorthand fields it has no sub-pattern node, so recover
+            // its real offset by source scan.
+            if let Some(rname) = rest {
+                emit_shorthand_binder_token(pattern, *rname, source, out);
             }
         }
         PatternKind::Map(entries) => {
@@ -476,6 +446,51 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
             }
         }
         _ => {}
+    }
+}
+
+/// Emit VARIABLE tokens for the shorthand field binders of a record /
+/// anon-record pattern (`{ x, y }` binds `x` and `y` as locals), recursing
+/// into explicit sub-patterns (`{ x: sub }`).
+fn emit_shorthand_field_tokens(
+    pattern: &Pattern,
+    fields: &[(Symbol, Option<Pattern>)],
+    source: &str,
+    out: &mut Vec<RawToken>,
+) {
+    for (fname, sub) in fields {
+        if let Some(p) = sub {
+            emit_pattern_binding_tokens(p, source, out);
+        } else {
+            emit_shorthand_binder_token(pattern, *fname, source, out);
+        }
+    }
+}
+
+/// Emit a VARIABLE token for a shorthand field / rest binder at its REAL
+/// source position. Round-62 B8 + B9 anchored these tokens at the
+/// enclosing pattern span — the record HEAD (the constructor name for a
+/// nominal record, the opening `{` for an anon record), NOT the binder
+/// ident, so `let {x, ...rest} = p` highlighted the `{` instead of `x`
+/// and `rest`. The AST carries no sub-span for shorthand binders, so
+/// recover the offset by source scan (same strategy as
+/// `workspace::shorthand_binder_span`); when the scan fails, emit
+/// nothing — a head-anchored token mislabels the `{` / constructor name,
+/// which is worse than no token (round-102 BROKEN fix).
+fn emit_shorthand_binder_token(
+    pattern: &Pattern,
+    name: Symbol,
+    source: &str,
+    out: &mut Vec<RawToken>,
+) {
+    let name_str = resolve(name);
+    if name_str == "_" {
+        return;
+    }
+    if let Some(off) =
+        super::text_utils::find_shorthand_binder(source, pattern.span.offset, &name_str)
+    {
+        push_token_at_offset(source, off, &name_str, TT_VARIABLE, out);
     }
 }
 
@@ -685,5 +700,86 @@ mod tests {
         assert!(legend.token_types.contains(&SemanticTokenType::FUNCTION));
         assert!(legend.token_types.contains(&SemanticTokenType::INTERFACE));
         assert!(legend.token_modifiers.is_empty());
+    }
+
+    // ── pattern binding tokens: shorthand / rest binder anchoring ──
+
+    /// Round-102 BROKEN lock: anon-record shorthand and rest binders must
+    /// get VARIABLE tokens at the binder idents THEMSELVES, not at the
+    /// pattern head (the `{`). The pre-fix code anchored the `x` token at
+    /// `pattern.span.offset` (the `{`) and emitted nothing for `rest` at
+    /// all — a count-only assertion would not catch the mis-anchoring, so
+    /// this test pins exact (line, col, length) coordinates.
+    #[test]
+    fn pattern_binding_tokens_anchor_anon_record_shorthand_and_rest_binders() {
+        let source = "fn main(p) {\n  let {x, ...rest} = p\n  x\n}";
+        // Line 1 (0-based): `  let {x, ...rest} = p`
+        //   col:             0123456789012345678
+        //   `{` at col 6, `x` at col 7, `rest` at col 13.
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        out.sort_by_key(|t| (t.line, t.col_utf16));
+        assert_eq!(out.len(), 2, "one token for `x`, one for `rest`: {out:?}");
+        assert_eq!(
+            (
+                out[0].line,
+                out[0].col_utf16,
+                out[0].length_utf16,
+                out[0].token_type
+            ),
+            (1, 7, 1, TT_VARIABLE),
+            "`x` binder token must sit on the `x` ident, not the `{{`: {out:?}"
+        );
+        assert_eq!(
+            (
+                out[1].line,
+                out[1].col_utf16,
+                out[1].length_utf16,
+                out[1].token_type
+            ),
+            (1, 13, 4, TT_VARIABLE),
+            "`rest` binder token must sit on the `rest` ident: {out:?}"
+        );
+    }
+
+    /// Same anchoring contract for the nominal record arm: `Pt {x, y}`
+    /// shorthand binder tokens must sit on `x` / `y`, not on `Pt` (the
+    /// pattern head span).
+    #[test]
+    fn pattern_binding_tokens_anchor_nominal_record_shorthand_binders() {
+        let source = "fn main(p) {\n  let Pt {x, y} = p\n  x\n}";
+        // Line 1 (0-based): `  let Pt {x, y} = p`
+        //   `Pt` at col 6, `{` at col 9, `x` at col 10, `y` at col 13.
+        let pattern = first_let_pattern(source);
+        assert!(
+            matches!(&pattern.kind, PatternKind::Record { .. }),
+            "expected a nominal record pattern, got {:?}",
+            pattern.kind
+        );
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        out.sort_by_key(|t| (t.line, t.col_utf16));
+        assert_eq!(out.len(), 2, "one token for `x`, one for `y`: {out:?}");
+        assert_eq!(
+            (
+                out[0].line,
+                out[0].col_utf16,
+                out[0].length_utf16,
+                out[0].token_type
+            ),
+            (1, 10, 1, TT_VARIABLE),
+            "`x` binder token must sit on the `x` ident, not on `Pt`: {out:?}"
+        );
+        assert_eq!(
+            (
+                out[1].line,
+                out[1].col_utf16,
+                out[1].length_utf16,
+                out[1].token_type
+            ),
+            (1, 13, 1, TT_VARIABLE),
+            "`y` binder token must sit on the `y` ident: {out:?}"
+        );
     }
 }

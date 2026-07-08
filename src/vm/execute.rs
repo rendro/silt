@@ -64,7 +64,7 @@ fn language_eq(a: &Value, b: &Value) -> bool {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
         }
         (Value::Set(x), Value::Set(y)) => {
-            // Sets are `BTreeSet`s ordered by `Ord` (bitwise on floats), so
+            // Sets are `BTreeSet`s ordered by `Ord` (total_cmp on floats), so
             // a positional zip over the sorted elements is a valid pairing.
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
         }
@@ -1391,8 +1391,8 @@ impl Vm {
                     Value::ExtFloat(n) => {
                         // Canonicalize -0.0 -> +0.0 to match every other
                         // ExtFloat producer (Div in arithmetic.rs, NarrowFloat,
-                        // the numeric builtins). ExtFloat Eq/Ord/Hash are
-                        // *bitwise* (value.rs), so a stray ExtFloat(-0.0) would
+                        // the numeric builtins). ExtFloat Eq is bitwise and
+                        // Ord is total_cmp (value.rs); a stray ExtFloat(-0.0) would
                         // be a distinct container key from ExtFloat(+0.0) even
                         // though the `==` operator (IEEE) calls them equal —
                         // letting a set/map hold two "equal" elements.

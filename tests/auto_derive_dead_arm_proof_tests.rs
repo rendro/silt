@@ -657,3 +657,235 @@ fn dispatch_value_rs_citations_resolve() {
         );
     }
 }
+
+// ── 5. Cross-file citation lock: cited names must exist, false
+//       dispatch-routing claims must stay gone ─────────────────────
+
+/// Doc-drift lock for the dispatch-arm "reachability proof" prose
+/// (round 100). The header of
+/// `tests/vm_dispatch_variant_record_runtime_tests.rs` used to claim
+/// built-in enums "are not processed by the synth pass" and
+/// "continue to hit the dispatch arms below" — false since the
+/// built-in walk was added to `synthesize_auto_derive_impls`
+/// (src/typechecker/mod.rs) — and it billed
+/// `compare_runs_on_builtin_weekday` as an arm-reachability proof
+/// when the call resolves through the synth-emitted global. It also
+/// cross-referenced hash-arm locks by test names that had since been
+/// renamed, and `tests/auto_derive_builtin_synth_tests.rs` cited a
+/// nonexistent companion test plus a long-gone counter mechanism.
+/// Two guards:
+///
+///   1. The false phrases must stay gone, with positive controls
+///      asserting the corrected prose (and the corrected companion
+///      citation) IS present, so the bans cannot pass vacuously
+///      against a gutted or reworded-away file.
+///   2. Every backticked snake_case identifier cited in the comments
+///      of the three doc-bearing files must exist as real (non-
+///      comment) code somewhere in the corpus below. A renamed or
+///      deleted test/function then fails here instead of silently
+///      misleading a future editor into believing a lock exists.
+#[test]
+fn dispatch_doc_citations_resolve_and_false_claims_stay_gone() {
+    let variant_record = include_str!("vm_dispatch_variant_record_runtime_tests.rs");
+    let builtin_synth = include_str!("auto_derive_builtin_synth_tests.rs");
+    let dead_arm = include_str!("auto_derive_dead_arm_proof_tests.rs");
+
+    // Comment text with the line-wrap scaffolding collapsed to
+    // single spaces, so a banned phrase cannot dodge the ban (or a
+    // positive control go missing) just because a re-wrap moved a
+    // line break into the middle of it.
+    fn comment_text(src: &str) -> String {
+        src.lines()
+            .filter_map(|l| {
+                let t = l.trim_start();
+                t.strip_prefix("//!")
+                    .or_else(|| t.strip_prefix("///"))
+                    .or_else(|| t.strip_prefix("//"))
+            })
+            .map(|s| s.trim())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    let variant_record_prose = comment_text(variant_record);
+    let builtin_synth_prose = comment_text(builtin_synth);
+
+    // 1a. Banned false claims in the variant/record runtime suite.
+    for banned in [
+        // Builtins ARE processed by the synth pass (builtin walk in
+        // `synthesize_auto_derive_impls`); they resolve through their
+        // synth-emitted `<Type>.<method>` global, never the arms.
+        "are not processed by the synth pass",
+        "continue to hit the dispatch arms",
+        // The Weekday test resolves through the synth global, so it
+        // proves nothing about dispatch-arm reachability.
+        "remains the runtime variant-dispatch",
+        "serves as the reachability proof",
+        // The dead-arm proof's counter mechanism was removed; the
+        // proof is now the behavioural barrage itself.
+        "counters stay zero",
+    ] {
+        assert!(
+            !variant_record_prose.contains(banned),
+            "stale false claim regressed in \
+             tests/vm_dispatch_variant_record_runtime_tests.rs: \
+             {banned:?} — built-in enums/records are synthesized like \
+             user types, so nothing arm-specific is locked by tests \
+             that resolve through the synth globals"
+        );
+    }
+    assert!(
+        !builtin_synth_prose.contains("six dispatch counters"),
+        "stale claim regressed in tests/auto_derive_builtin_synth_tests.rs: \
+         the dispatch-counter mechanism no longer exists in the \
+         dead-arm proof; cite the behavioural barrage instead"
+    );
+
+    // 1b. Positive controls: the corrected prose is actually present,
+    //     so the bans above cannot be satisfied by emptying the files.
+    assert!(
+        variant_record_prose.contains("defensive-dead for every valid program"),
+        "expected the corrected header prose ('defensive-dead for \
+         every valid program') in \
+         tests/vm_dispatch_variant_record_runtime_tests.rs"
+    );
+    assert!(
+        variant_record_prose.contains("LOCKS THE BUILTIN SYNTH SEMANTICS, NOT THE DISPATCH ARM"),
+        "expected the corrected Weekday-test doc ('LOCKS THE BUILTIN \
+         SYNTH SEMANTICS, NOT THE DISPATCH ARM') in \
+         tests/vm_dispatch_variant_record_runtime_tests.rs"
+    );
+
+    // 2. Backticked-identifier existence check. Extract every
+    //    `identifier` citation (all-lowercase snake_case, so test and
+    //    helper names — Type names, paths, and expressions are
+    //    skipped) from the comment lines of the three files, and
+    //    require each to appear as a whole word in the non-comment
+    //    code of the corpus.
+    fn backticked_idents_in_comments(src: &str) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for (idx, line) in src.lines().enumerate() {
+            let t = line.trim_start();
+            if !t.starts_with("//") {
+                continue;
+            }
+            let mut segs = t.split('`');
+            let _before = segs.next();
+            while let Some(inside) = segs.next() {
+                let ident_ok = !inside.is_empty()
+                    && inside.contains('_')
+                    && inside
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                if ident_ok {
+                    out.push((idx + 1, inside.to_string()));
+                }
+                if segs.next().is_none() {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    // Non-comment lines only, so a name surviving solely in stale
+    // prose elsewhere does not count as "exists".
+    fn code_lines(src: &str) -> String {
+        src.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn contains_word(code: &str, ident: &str) -> bool {
+        let bytes = code.as_bytes();
+        let mut start = 0;
+        while let Some(pos) = code[start..].find(ident) {
+            let i = start + pos;
+            let before_ok = i == 0 || {
+                let c = bytes[i - 1] as char;
+                !(c.is_ascii_alphanumeric() || c == '_')
+            };
+            let end = i + ident.len();
+            let after_ok = end >= bytes.len() || {
+                let c = bytes[end] as char;
+                !(c.is_ascii_alphanumeric() || c == '_')
+            };
+            if before_ok && after_ok {
+                return true;
+            }
+            start = i + 1;
+        }
+        false
+    }
+
+    // Everything the three files' comments legitimately cite lives in
+    // one of these (tests cite each other's lock tests; src files
+    // define the typechecker/vm machinery the prose references).
+    let corpus: String = [
+        variant_record,
+        builtin_synth,
+        dead_arm,
+        include_str!("vm_dispatch_unsupportable_field_runtime_tests.rs"),
+        include_str!("../src/typechecker/mod.rs"),
+        include_str!("../src/typechecker/auto_derive.rs"),
+        include_str!("../src/typechecker/builtins.rs"),
+        include_str!("../src/vm/dispatch.rs"),
+        include_str!("../src/vm/mod.rs"),
+        include_str!("../src/vm/execute.rs"),
+        include_str!("../src/value.rs"),
+    ]
+    .into_iter()
+    .map(code_lines)
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    // Names cited as HISTORY — prose explicitly describing something
+    // that was removed/replaced. Keep this list short and only for
+    // mentions that state the name is gone.
+    let historical: &[&str] = &["weekday_ordinal"];
+
+    let scanned: &[(&str, &str)] = &[
+        (
+            "tests/vm_dispatch_variant_record_runtime_tests.rs",
+            variant_record,
+        ),
+        ("tests/auto_derive_builtin_synth_tests.rs", builtin_synth),
+        ("tests/auto_derive_dead_arm_proof_tests.rs", dead_arm),
+    ];
+    let mut all_cited: Vec<String> = Vec::new();
+    for (file, src) in scanned {
+        for (line, ident) in backticked_idents_in_comments(src) {
+            if historical.contains(&ident.as_str()) {
+                continue;
+            }
+            assert!(
+                contains_word(&corpus, &ident),
+                "dangling citation in {file}:{line}: comment cites \
+                 `{ident}` but no file in this lock's corpus defines or \
+                 uses it outside comments — the cited test/function was \
+                 renamed or removed; re-aim the comment (and extend the \
+                 corpus in dispatch_doc_citations_resolve_and_false_claims_stay_gone \
+                 only if the citation genuinely points elsewhere)"
+            );
+            all_cited.push(ident);
+        }
+    }
+
+    // Positive control for the extractor itself: the corrected
+    // cross-references must be among the extracted citations, so a
+    // rewrite that strips all backticks cannot pass vacuously.
+    for expected in [
+        "compare_runs_on_builtin_weekday",
+        "hash_runs_on_user_record_with_tuple_field",
+        "hash_on_user_record_with_channel_field_rejected_statically",
+        "builtin_types_compile_and_run_through_synth_globals",
+    ] {
+        assert!(
+            all_cited.iter().any(|c| c == expected),
+            "citation extractor no longer sees `{expected}` in the \
+             scanned comments — either the corrected cross-reference \
+             prose was removed or the extractor broke; restore the \
+             citation or fix the extractor"
+        );
+    }
+}

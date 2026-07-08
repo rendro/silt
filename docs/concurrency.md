@@ -249,7 +249,49 @@ match channel.select([Recv(ch), Recv(timer)]) {
 
 The timeout channel carries no values -- it simply closes when the duration
 elapses. Receiving from it will block until closure, at which point it
-returns `Closed`.
+returns `Closed`. For the common case of a *single* receive with a deadline,
+prefer `channel.recv_timeout` (next section) -- it does the same race in one
+call.
+
+### Receive with timeout: `channel.recv_timeout(ch, dur)`
+
+`channel.recv_timeout` is a blocking receive with a deadline. It is the
+direct form of the `channel.timeout` + `channel.select` pattern above when
+you only need to wait on one channel:
+
+```silt
+let ch = channel.new(10)
+
+task.spawn(fn() {
+  channel.send(ch, 42)
+})
+
+match channel.recv_timeout(ch, time.ms(500)) {
+  Ok(val)             -> println("got: {val}")
+  Err(ChannelTimeout) -> println("timed out")
+  Err(ChannelClosed)  -> println("channel closed")
+}
+```
+
+Unlike the other receive builtins, it returns a `Result(a, ChannelError)`
+rather than a `ChannelResult(a)`:
+
+- `Ok(val)` -- a value was delivered within `dur`.
+- `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
+- `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
+
+A value already sitting in the buffer (or a rendezvous sender already
+parked) wins over an expired timer: the non-blocking path is always tried
+first, so a ready value is never preempted by the deadline. A `Duration` of
+zero gives try-receive semantics (no timer is scheduled); negative durations
+are an error. Positive sub-millisecond durations are rounded up to one
+millisecond, so the caller always waits at least one timer tick.
+
+The `dur` argument is a `Duration` built with `time.ms` / `time.seconds`
+(the same shape `task.deadline` takes), and `ChannelError` implements the
+built-in `Error` trait, so `e.message()` works in generic error handling.
+
+Signature: `channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)`.
 
 
 ## 3. Tasks
@@ -1071,7 +1113,10 @@ Consequences:
   zombie work -- threads that are still blocked on a syscall whose
   result nobody will read. New I/O submissions queue behind them.
 - The I/O pool is sized at VM startup. The default is `min(available
-  parallelism, 4)`, floor 2. Set the `SILT_IO_POOL_SIZE` environment
+  parallelism, 4)`, falling back to 2 only when the platform cannot
+  report parallelism (a single-core host gets 1; unlike the scheduler
+  worker pool there is no deadlock-driven minimum, because I/O jobs
+  never block on one another). Set the `SILT_IO_POOL_SIZE` environment
   variable to override; the value must be a positive integer and is
   silently clamped at 64 (anything larger is almost certainly a
   misconfiguration). Invalid or zero values fall back to the default.
@@ -1153,6 +1198,7 @@ operations block synchronously, just like channel operations.
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
 | Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
+| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, ChannelError)` -- `Ok(val)`, `Err(ChannelTimeout)`, or `Err(ChannelClosed)`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` |

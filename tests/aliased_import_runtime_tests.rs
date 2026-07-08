@@ -21,7 +21,7 @@
 //! Fix: track alias → canonical-builtin-module in the compiler and
 //! rewrite `l.sum(…)` as `CallBuiltin("list.sum", …)` in
 //! `extract_builtin_name`, matching the typechecker's prefix-mirror
-//! invariant (src/typechecker/mod.rs:3021).
+//! invariant (src/typechecker/mod.rs:3043).
 //!
 //! These tests exercise the runtime via the `silt` CLI so they fail
 //! before the compiler-side fix and pass after.

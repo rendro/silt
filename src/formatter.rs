@@ -3165,7 +3165,7 @@ fn splice_inline_block_comments(
         //
         // Special case: `StringMiddle(s)` and `StringEnd(s)` tokens have
         // their span starting AFTER the `}` that closes the preceding
-        // string interpolation (see lexer.rs:748 `cont_start = self.span()`
+        // string interpolation (see lexer.rs:829 `cont_start = self.span()`
         // is captured after `}` is consumed). A block comment that sat
         // inside the interpolation body in source must land INSIDE the
         // interpolation in the output too — i.e., BEFORE that `}`, not
@@ -5785,7 +5785,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             // so the output round-trips through the parser; the bare
             // `!*` token is reserved for the gradual-rollout default
             // and is not parseable. Mirrors round 62's `FnDecl` fix
-            // (see `format_fn_decl`'s effect slot).
+            // (see `format_fn_with_comments`'s effect slot).
             let effects_str = if !*is_annotated {
                 String::new()
             } else if *effects == EffectSet::TOP {

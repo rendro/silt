@@ -82,7 +82,7 @@ impl Vm {
                 // Canonicalize -0.0 -> +0.0 to uphold the "an ExtFloat never
                 // holds -0.0" invariant, exactly as the `(Float, Float)` Div
                 // arm above (and Op::Negate, NarrowFloat, the numeric builtins)
-                // already do. ExtFloat Eq/Ord/Hash are *bitwise* (value.rs), so
+                // already do. ExtFloat Eq is bitwise, Ord total_cmp (value.rs);
                 // a stray ExtFloat(-0.0) — reachable here via e.g. `(-1.0) *
                 // (0.0 / 1.0)` or `(-1.0) / (1.0 / 0.0)` — would be a distinct
                 // container key from ExtFloat(+0.0) even though the IEEE `==`
