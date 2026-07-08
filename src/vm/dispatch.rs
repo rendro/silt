@@ -310,6 +310,42 @@ impl Vm {
                 if !extra_args.is_empty() {
                     return Some(Err(VmError::new("display() takes no arguments".into())));
                 }
+                // Runtime Display gate — the .display() twin of the
+                // round-95 `Op::DisplayValue` gate (src/vm/execute.rs
+                // ~:1457). For a *concrete* receiver the typechecker
+                // already rejects `.display()` on no-Display types
+                // ("unknown method 'display' on type Fn"), but silt
+                // enforces inferred trait bounds at the EXECUTION site
+                // for polymorphic code, so a Var-typed receiver reaches
+                // this arm ungated. Pre-fix, `fn show(x: a) -> String
+                // { x.display() }` over a lambda / channel / task handle
+                // silently rendered `<fn:..>` / `<channel:0>` /
+                // `<handle:0>` — while the equivalent interpolation
+                // `"{x}"` errored at runtime and the sibling `.equal()` /
+                // `.compare()` arms below carry their own runtime gates.
+                // Reject the same set here, sourced from the single
+                // oracle `Vm::value_implements_display` so the two
+                // execution-site gates cannot drift. Records, variants
+                // (incl. stdlib error enums) and every printable
+                // built-in pass the oracle and fall through unchanged.
+                if !Self::value_implements_display(receiver) {
+                    // Same canonical-name reporting as Op::DisplayValue:
+                    // function-shaped values collapse to "Fn" via
+                    // `dispatch_name_for_value`; the descriptor values
+                    // (whose canonical name is the *carried* type name)
+                    // fall back to `type_name` so the diagnostic names
+                    // the descriptor kind, not the reflected type.
+                    let name = match receiver {
+                        Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
+                            self.type_name(receiver).to_string()
+                        }
+                        _ => crate::types::canonical::dispatch_name_for_value(receiver)
+                            .unwrap_or_else(|| self.type_name(receiver).to_string()),
+                    };
+                    return Some(Err(VmError::new(format!(
+                        "type '{name}' does not implement Display"
+                    ))));
+                }
                 Some(Ok(Value::String(self.display_value(receiver))))
             }
             "equal" => {
@@ -390,7 +426,7 @@ impl Vm {
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: the typechecker auto-derives Compare for
-                    // List (see src/typechecker/mod.rs:7893), so a value of
+                    // List (see src/typechecker/mod.rs:8012), so a value of
                     // `List(T)` flowing through a `Compare` bound must
                     // resolve here. Defer to the existing element-wise
                     // ordering on `Value::cmp`, which already handles
@@ -419,7 +455,7 @@ impl Vm {
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
-                    // (src/typechecker/mod.rs:7890). All units are equal.
+                    // (src/typechecker/mod.rs:8009). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     _ => {
                         return Some(Err(VmError::new(format!(
@@ -449,6 +485,25 @@ impl Vm {
                 // matches `HashMap<Value, Value>` keying.
                 if !extra_args.is_empty() {
                     return Some(Err(VmError::new("hash() takes no arguments".into())));
+                }
+                // Execution-site backstop mirroring the `"equal"` /
+                // `"compare"` arms above: a receiver that is, or
+                // transitively contains, a function-shaped leaf has no
+                // Hash impl (`gate_field_supports_trait`,
+                // src/typechecker/mod.rs: "Functions support none of
+                // Equal/Compare/Hash"). The `(Hash, List)` auto-derive
+                // stamp is registered unconditionally
+                // (`register_auto_derived_impls_for`,
+                // src/typechecker/mod.rs) without walking element types,
+                // so `[fn(y) { y }].hash()` reaches this arm — and the
+                // std `Hash` impl on `Value` hashes every closure as a
+                // constant discriminant tag ("not meaningfully
+                // hashable", src/value.rs), so two distinct closures
+                // would hash identically and collide silently.
+                if Self::value_contains_fn(receiver) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Hash".into(),
+                    )));
                 }
                 // Only honour hash() for types the typechecker actually
                 // auto-derives Hash for — emitting a dispatch error for

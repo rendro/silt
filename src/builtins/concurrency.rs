@@ -244,15 +244,49 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 ));
             };
             let ch = ch.clone();
-            let dur_ns = crate::builtins::data::extract_duration(&args[1])?;
-            if dur_ns < 0 {
-                return Err(VmError::new(
-                    "channel.recv_timeout: duration must be non-negative".into(),
-                ));
+
+            // Resume detection. A scheduled task that parks below re-pushes
+            // its args with args[1] swapped for an internal marker record
+            // carrying the ORIGINAL private timer channel (see the park
+            // site). Recovering that channel preserves the original absolute
+            // deadline across parks: the timer thread will close (or has
+            // already closed) that exact channel at the originally scheduled
+            // instant. Re-deriving a fresh timer from the user's Duration on
+            // every re-entry (the pre-round-101 behavior) livelocked — a
+            // wake caused by the timer itself re-armed a brand-new
+            // full-length timer whose closed predecessor was no longer in
+            // the select ops, so a recv_timeout on a quiet channel inside a
+            // spawned task never timed out.
+            let resume_timer: Option<Arc<Channel>> = match &args[1] {
+                Value::Record(name, fields) if name.as_str() == RECV_TIMEOUT_RESUME_MARKER => {
+                    match fields.get(RECV_TIMEOUT_RESUME_TIMER_FIELD) {
+                        Some(Value::Channel(t)) => Some(t.clone()),
+                        _ => {
+                            return Err(VmError::new(
+                                "channel.recv_timeout: malformed internal resume marker".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => None,
+            };
+
+            // Fresh entry: validate the duration up front. Negative duration
+            // is a construction error even when a value is already buffered
+            // (pinned by tests/channel_timeout_tests.rs).
+            let mut fresh_dur_ns: i64 = 0;
+            if resume_timer.is_none() {
+                fresh_dur_ns = crate::builtins::data::extract_duration(&args[1])?;
+                if fresh_dur_ns < 0 {
+                    return Err(VmError::new(
+                        "channel.recv_timeout: duration must be non-negative".into(),
+                    ));
+                }
             }
 
             // Always try non-blocking first — delivery beats timeout even at
-            // zero duration (matches the "ready value wins" corner case).
+            // zero duration and on a resume whose wake was the timer expiring
+            // (matches the "ready value wins" corner case).
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     return Ok(Value::Variant("Ok".into(), vec![val]));
@@ -266,31 +300,38 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 TryReceiveResult::Empty => {}
             }
             // Zero duration on an empty channel = instant timeout.
-            if dur_ns == 0 {
+            if resume_timer.is_none() && fresh_dur_ns == 0 {
                 return Ok(Value::Variant(
                     "Err".into(),
                     vec![Value::Variant("ChannelTimeout".into(), vec![])],
                 ));
             }
 
-            // Ceil the nanosecond duration up to at least 1ms so any positive
-            // sub-ms request still gets a real tick of wait. The timer wheel
-            // is ms-granular.
-            let ms: u64 = {
-                let ns = dur_ns as u64;
-                ns.div_ceil(1_000_000).max(1)
-            };
+            let timer_ch = match resume_timer {
+                Some(t) => t,
+                None => {
+                    // Ceil the nanosecond duration up to at least 1ms so any
+                    // positive sub-ms request still gets a real tick of wait.
+                    // The timer wheel is ms-granular.
+                    let ms: u64 = {
+                        let ns = fresh_dur_ns as u64;
+                        ns.div_ceil(1_000_000).max(1)
+                    };
 
-            // Build the private timer channel. Reuses the shared TimerManager
-            // thread — no per-call OS thread. `channel.timeout` marks the
-            // channel as pending-timer-close so the main-thread deadlock
-            // detector correctly treats a recv-timeout wait as "external
-            // wake pending".
-            let timer_id = vm.next_channel_id();
-            let timer_ch = Arc::new(Channel::new(timer_id, 1));
-            vm.runtime
-                .timer
-                .schedule(Duration::from_millis(ms), timer_ch.clone());
+                    // Build the private timer channel. Reuses the shared
+                    // TimerManager thread — no per-call OS thread.
+                    // `TimerManager::schedule` marks the channel as
+                    // pending-timer-close so the main-thread deadlock
+                    // detector correctly treats a recv-timeout wait as
+                    // "external wake pending".
+                    let timer_id = vm.next_channel_id();
+                    let t = Arc::new(Channel::new(timer_id, 1));
+                    vm.runtime
+                        .timer
+                        .schedule(Duration::from_millis(ms), t.clone());
+                    t
+                }
+            };
 
             // Race ch vs timer_ch via a two-op select. Dropping timer_ch on
             // return deallocates the private channel; any straggling wake
@@ -313,15 +354,29 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
                     })
                     .collect();
-                // Note: we DO re-enter this arm on resume because CallBuiltin
-                // replays its args, and the `try_receive` above will either
-                // deliver a value landed during the park (correct) or fall
-                // through to a FRESH timer + select. A stale timer from this
-                // park would already have closed timer_ch and been dropped
-                // here — it can't keep us alive. So: rely on `try_receive`
-                // post-wake, otherwise re-arm a new timer. Worst-case extra
-                // delay on resume is one timer tick; acceptable.
-                return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
+                // We DO re-enter this arm on resume because CallBuiltin
+                // replays its args — but the replayed args carry the resume
+                // marker (SAME timer channel) instead of the user's
+                // Duration, so the re-entry races the ORIGINAL absolute
+                // deadline rather than arming a fresh full-length timer.
+                // Wake causes and their re-entry outcomes:
+                //   * value landed during the park → `try_receive` at entry
+                //     returns it (delivery beats an expired timer);
+                //   * user channel closed → `try_receive` maps to
+                //     Err(ChannelClosed);
+                //   * timer expired → timer_ch is closed, the
+                //     `try_select_sweep` above sees it and
+                //     `map_recv_timeout_result` yields Err(ChannelTimeout);
+                //   * spurious wake (e.g. a racing sibling consumed the
+                //     value) → nothing ready, re-park on the same pair.
+                // If the timer fires between the sweep and the waker
+                // registration below, `register_recv_waker`'s closed-state
+                // double-check fires the waker inline — no lost wakeup.
+                let resume_args = vec![
+                    Value::Channel(ch.clone()),
+                    make_recv_timeout_resume_marker(&timer_ch),
+                ];
+                return Err(vm.park_with_reason(&resume_args, BlockReason::Select(select_ops)));
             }
             // Main-thread path: drive the same select condvar loop that the
             // `channel.select` builtin uses. Mirrors the structure there;
@@ -723,6 +778,33 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 }
 
 // ── Select helpers ────────────────────────────────────────────────
+
+/// Record name of the internal `channel.recv_timeout` resume marker.
+///
+/// When a scheduled task parks inside `recv_timeout`, the re-pushed args
+/// replace the user's `Duration` (args[1]) with a record of this name
+/// wrapping the call's private timer channel, so the re-entry after a wake
+/// races the ORIGINAL absolute deadline instead of arming a fresh
+/// full-length timer (the round-101 livelock: every timer expiry re-armed
+/// the timeout forever). The marker only ever exists on the VM stack
+/// between a park and its CallBuiltin replay — it is never user-visible,
+/// and the double-underscore name cannot collide with a typechecked
+/// `Duration` argument.
+const RECV_TIMEOUT_RESUME_MARKER: &str = "__recv_timeout_resume__";
+
+/// Field of the resume marker record holding the private timer channel.
+const RECV_TIMEOUT_RESUME_TIMER_FIELD: &str = "timer";
+
+/// Build the internal resume marker for `channel.recv_timeout` parks. See
+/// [`RECV_TIMEOUT_RESUME_MARKER`].
+fn make_recv_timeout_resume_marker(timer_ch: &Arc<Channel>) -> Value {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert(
+        RECV_TIMEOUT_RESUME_TIMER_FIELD.to_string(),
+        Value::Channel(timer_ch.clone()),
+    );
+    Value::Record(RECV_TIMEOUT_RESUME_MARKER.to_string(), Arc::new(fields))
+}
 
 /// Translate a `try_select_sweep` result (a `(Channel, Variant)` tuple) into
 /// the `Result(a, ChannelError)` shape expected by `channel.recv_timeout`:

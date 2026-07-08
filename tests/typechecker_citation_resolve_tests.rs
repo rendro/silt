@@ -76,15 +76,15 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
     // purpose — it never existed; the real mapper is `type_name_for_impl`.
     let expectations: &[(usize, &str)] = &[
         // inference.rs primitive-dispatch comment block.
-        (7993, "fn register_auto_derived_impls_for"),
-        (2045, r#"Type::Channel(_) => Some(intern("Channel"))"#),
-        (2056, r#"Type::Fun(_, _) => Some(intern("Fn"))"#),
+        (8112, "fn register_auto_derived_impls_for"),
+        (2081, r#"Type::Channel(_) => Some(intern("Channel"))"#),
+        (2092, r#"Type::Fun(_, _) => Some(intern("Fn"))"#),
         // dispatch.rs compare-arm comment block.
         (
-            7893,
+            8012,
             r#"register_auto_derived_impls_for(checker, &["List"]"#,
         ),
-        (7890, r#""Unit""#),
+        (8009, r#""Unit""#),
     ];
 
     let mut expected_lines: BTreeSet<usize> = BTreeSet::new();
@@ -117,7 +117,7 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
         !INFERENCE_RS.contains("type_name_for_method_dispatch"),
         "the phantom function `type_name_for_method_dispatch` reappeared in \
          src/typechecker/inference.rs — it does not exist; the real canonical \
-         name mapper is `type_name_for_impl` (src/typechecker/mod.rs:2027)."
+         name mapper is `type_name_for_impl` (src/typechecker/mod.rs:2063)."
     );
     assert!(
         !DISPATCH_RS.contains("type_name_for_method_dispatch"),

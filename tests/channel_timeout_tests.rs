@@ -2,7 +2,10 @@
 //!
 //! Covers the three canonical outcomes (Ok / Err("timeout") / Err("closed")),
 //! the "ready value beats expired timer" corner case, zero-duration semantics,
-//! negative-duration rejection, cancel cleanup, and basic concurrency fairness.
+//! negative-duration rejection, cancel cleanup, basic concurrency fairness,
+//! and the round-101 scheduled-task expiry lock (a recv_timeout parked inside
+//! a spawned task must actually time out — the timer wake must not re-arm a
+//! fresh full-duration timer).
 //!
 //! All tests drive Silt source through `InProcessRunner` so the full
 //! compile → VM → scheduler → TimerManager chain is exercised end-to-end.
@@ -253,6 +256,96 @@ fn main() {
         outcome.result,
         Some(Value::Int(36)), // 1+2+3+4+5+6+7+8
         "fair recv_timeout must collect every value; outcome={outcome:?}",
+    );
+}
+
+/// ROUND 101 REGRESSION LOCK — recv_timeout inside a SPAWNED TASK must
+/// actually time out.
+///
+/// Before the fix, a scheduled task's recv_timeout livelocked forever on a
+/// quiet channel: the park re-pushed the ORIGINAL args, so every wake
+/// caused by the timer itself re-entered the builtin, found the channel
+/// empty, and armed a BRAND-NEW full-duration timer whose closed
+/// predecessor was no longer in the select ops — the program hung until
+/// killed. (The main-thread path, covered by
+/// `recv_timeout_returns_err_timeout_when_no_sender` above, was always
+/// correct; no prior test drove the scheduled-task path to an actual
+/// expiry.) The fix carries the SAME private timer channel across parks
+/// via an internal resume marker in the replayed args, so a timer-driven
+/// wake maps to `Err(ChannelTimeout)`.
+///
+/// Before the fix this test times out at the harness budget
+/// (`timed_out: true`); after it completes in roughly the 50ms window.
+#[test]
+fn recv_timeout_in_spawned_task_times_out_when_no_sender() {
+    let src = r#"
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(1)
+  -- Nobody ever sends to `ch` and nobody closes it: the ONLY way the
+  -- spawned task can finish is a real timer expiry inside the scheduler
+  -- park/replay path.
+  let h = task.spawn(fn() {
+    match channel.recv_timeout(ch, time.ms(50)) {
+      Ok(_) -> "got value"
+      Err(ChannelTimeout) -> "timed out"
+      Err(ChannelClosed) -> "closed"
+    }
+  })
+  task.join(h)
+}
+"#;
+    let runner = InProcessRunner::new(src).with_budget(TEST_HARNESS_TIMEOUT);
+    let outcome = runner.run_trial();
+    assert!(
+        !outcome.timed_out,
+        "scheduled-task recv_timeout livelocked instead of expiring \
+         (timer wake must NOT re-arm a fresh full-duration timer); \
+         outcome={outcome:?}",
+    );
+    assert!(outcome.ok(), "run should succeed: {outcome:?}");
+    assert_eq!(
+        outcome.result,
+        Some(Value::String("timed out".into())),
+        "expected Err(ChannelTimeout) from the spawned task, got {:?}",
+        outcome.result,
+    );
+}
+
+/// Positive control for the scheduled-task path: a receiver task parks in
+/// recv_timeout, and a value delivered mid-window (well before the
+/// deadline) must surface as `Ok(v)` on resume. Guards the fix's resume
+/// marker against over-rotating — a wake caused by the USER channel must
+/// still deliver the value, not misreport a timeout.
+#[test]
+fn recv_timeout_in_spawned_task_returns_ok_when_value_arrives_mid_window() {
+    let src = r#"
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() {
+    match channel.recv_timeout(ch, time.ms(5000)) {
+      Ok(v) -> v
+      Err(_) -> -1
+    }
+  })
+  -- Let the receiver park first, then deliver inside the window.
+  time.sleep(time.ms(50))
+  channel.send(ch, 42)
+  task.join(h)
+}
+"#;
+    let runner = InProcessRunner::new(src).with_budget(TEST_HARNESS_TIMEOUT);
+    let outcome = runner.run_trial();
+    assert!(outcome.ok(), "run should succeed: {outcome:?}");
+    assert_eq!(
+        outcome.result,
+        Some(Value::Int(42)),
+        "mid-window delivery must beat the pending timer; outcome={outcome:?}",
     );
 }
 

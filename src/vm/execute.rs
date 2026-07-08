@@ -134,9 +134,14 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// are equatable by identity at runtime and the typechecker accepts them
 /// (`Type::Channel` and `Type::Generic(..)` in
 /// `is_valid_compare_operand`), keeping the runtime and compile-time
-/// layers in parity. Collection keying / dedup uses `PartialEq for Value`
-/// directly, not this operator path, so its function-identity equality is
-/// untouched (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
+/// layers in parity. Rust-level collection keying / dedup uses `PartialEq
+/// for Value` directly, not this operator path (see
+/// tests/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
+/// collection builtins that consume that ordering/equality (list.sort /
+/// unique / contains / index_of, set.from_list / insert / contains /
+/// remove and the set algebra ops) carry their own mirror of this gate:
+/// `ensure_no_fn` in src/builtins/collections.rs, locked by
+/// tests/collection_builtin_fn_gate_tests.rs. Locked by
 /// tests/round96_eq_fn_runtime_tests.rs and
 /// tests/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {

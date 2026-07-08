@@ -240,6 +240,130 @@ pub(super) fn find_matching_close_brace(source: &str, start: usize) -> Option<(u
     None
 }
 
+/// Locate a shorthand record-field binder (`x` in `Point { a, x }` or
+/// `{ a, x }`) by scanning forward from the record pattern's head.
+///
+/// Round-101 BROKEN fix: the previous strategy — scan to the FIRST `}`
+/// after the head and search that window — truncated the range whenever a
+/// nested braced sub-pattern preceded the binder (`Point { a: Inner { y },
+/// x }`: the first `}` closes `Inner { y }`, so `x` was never found and
+/// callers fell back to the record HEAD span, which rename then rewrote
+/// into garbage). This scanner is brace-depth-aware instead: it enters the
+/// record's own `{` (depth 1) and only matches identifier tokens sitting
+/// at depth 1 — i.e. direct fields of THIS record — until the record's own
+/// matching `}` closes it. Nested record / anon-record / map sub-patterns
+/// (depth ≥ 2) are skipped entirely, as are `{- -}` block comments, `--`
+/// line comments, and string literals (mirroring
+/// [`find_matching_close_brace`]). Matches immediately followed by `:` are
+/// rejected — those are field labels with an explicit sub-pattern, not
+/// shorthand binders. Returns the absolute byte offset of the LAST
+/// qualifying token (legal silt has at most one binder per name, so
+/// first/last is moot; last matches [`find_ident_in_range`]'s historical
+/// direction).
+pub(super) fn find_shorthand_binder(source: &str, head_offset: usize, name: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let name_bytes = name.as_bytes();
+    if name.is_empty() {
+        return None;
+    }
+    let mut i = head_offset.min(bytes.len());
+    let mut depth = 0usize;
+    let mut found: Option<usize> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // `{- ... -}` block comment (nestable); no brace depth.
+                i += 2;
+                let mut comment_depth = 1u32;
+                while i < bytes.len() && comment_depth > 0 {
+                    if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                        comment_depth += 1;
+                        i += 2;
+                    } else if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                        comment_depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                if depth <= 1 {
+                    // The record's own closing brace: the binder must
+                    // precede it, so whatever we have is the answer.
+                    return found;
+                }
+                depth -= 1;
+                i += 1;
+            }
+            b'"' => {
+                // String literal (regular or triple-quoted); skip it so a
+                // `}` inside a string pattern doesn't close the record.
+                if i + 2 < bytes.len() && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+                    i += 3;
+                    while i + 2 < bytes.len()
+                        && !(bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
+                    {
+                        i += 1;
+                    }
+                    i = (i + 3).min(bytes.len());
+                } else {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                }
+            }
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // `--` line comment: skip to end of line.
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            _ if depth == 1 && (b.is_ascii_alphabetic() || b == b'_') => {
+                // Identifier token directly inside the record's braces.
+                // Guard against being the tail of a digit-led token
+                // (`0xff`): a preceding ident byte means this is not a
+                // token start.
+                let tok_start = i;
+                let prev_is_ident = tok_start > 0 && {
+                    let p = bytes[tok_start - 1];
+                    p.is_ascii_alphanumeric() || p == b'_'
+                };
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                if !prev_is_ident && &bytes[tok_start..i] == name_bytes {
+                    // Skip trailing whitespace; a `:` next means this is
+                    // an explicit `field: sub-pattern` label, not a
+                    // shorthand binder.
+                    let mut j = i;
+                    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j >= bytes.len() || bytes[j] != b':' {
+                        found = Some(tok_start);
+                    }
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    found
+}
+
 /// Scan `source[start..end]` for the LAST occurrence of `name` as a whole
 /// word (not surrounded by identifier characters). Returns the absolute byte
 /// offset in `source`.
@@ -350,6 +474,64 @@ mod tests {
             Some(25),
             "block comment `{{- }} -}}` should be skipped"
         );
+    }
+
+    // ── find_shorthand_binder ────────────────────────────────────
+
+    #[test]
+    fn test_find_shorthand_binder_flat() {
+        let source = "Point { x, y }";
+        //            0123456789
+        assert_eq!(find_shorthand_binder(source, 0, "x"), Some(8));
+        assert_eq!(find_shorthand_binder(source, 0, "y"), Some(11));
+    }
+
+    #[test]
+    fn test_find_shorthand_binder_after_nested_braced_subpattern() {
+        // Round-101 BROKEN: the first-`}` scan stopped at the `}` closing
+        // `Inner { y }`, so the shorthand binder `x` after it was never
+        // found. The depth-aware scan must find it.
+        let source = "Point { a: Inner { y }, x }";
+        //            0         1         2
+        //            0123456789012345678901234567
+        assert_eq!(find_shorthand_binder(source, 0, "x"), Some(24));
+        // `y` is NOT a direct field of the outer record (depth 2) — the
+        // outer scan must not claim it; the nested pattern's own scan
+        // (head at `Inner`, offset 11) must.
+        assert_eq!(find_shorthand_binder(source, 0, "y"), None);
+        assert_eq!(find_shorthand_binder(source, 11, "y"), Some(19));
+    }
+
+    #[test]
+    fn test_find_shorthand_binder_rejects_explicit_field_label() {
+        // `a` is an explicit `field: sub` label, not a shorthand binder.
+        let source = "Point { a: b, x }";
+        assert_eq!(find_shorthand_binder(source, 0, "a"), None);
+        assert_eq!(find_shorthand_binder(source, 0, "x"), Some(14));
+    }
+
+    #[test]
+    fn test_find_shorthand_binder_skips_string_and_comment_braces() {
+        // A `}` inside a string-literal sub-pattern or a block comment
+        // must not close the record early.
+        let source = "Point { s: \"}\", x }";
+        assert_eq!(find_shorthand_binder(source, 0, "x"), Some(16));
+        let source2 = "Point { {- } -} x }";
+        assert_eq!(find_shorthand_binder(source2, 0, "x"), Some(16));
+    }
+
+    #[test]
+    fn test_find_shorthand_binder_anon_record_head() {
+        // Anon-record patterns: the head span sits AT the `{`.
+        let source = "{ a: { y }, x }";
+        assert_eq!(find_shorthand_binder(source, 0, "x"), Some(12));
+    }
+
+    #[test]
+    fn test_find_shorthand_binder_stops_at_own_close_brace() {
+        // A same-named ident AFTER the record's own `}` must not match.
+        let source = "Point { a } x";
+        assert_eq!(find_shorthand_binder(source, 0, "x"), None);
     }
 
     #[test]

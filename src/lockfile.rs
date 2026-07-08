@@ -663,7 +663,18 @@ fn resolve_dep_path_offline(
 /// before we know they exist, and we want stable absolute paths even
 /// for missing deps so the error message matches the path the user
 /// would expect on disk).
-fn normalize_path(p: &Path) -> PathBuf {
+///
+/// This is the single definition of lexical path normalization in the
+/// tree. `pub` (not `pub(crate)`) because the CLI lives in the bin
+/// crate: `silt add` (src/cli/add.rs) delegates here so the path form
+/// it records in `silt.toml` (and prints on success) is normalized by
+/// exactly the same rules lockfile resolution applies when it later
+/// resolves that dep path. Audit round 101 LATENT: this body used to
+/// be mirrored in src/cli/paths.rs; keep it unmirrored — a lock test
+/// (tests/round101_normalize_path_dedup_tests.rs) asserts the
+/// `Component::ParentDir` pop-or-push loop appears exactly once under
+/// src/.
+pub fn normalize_path(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for comp in p.components() {
         use std::path::Component;

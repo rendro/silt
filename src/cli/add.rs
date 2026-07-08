@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::process;
 
 use silt::intern;
-use silt::lockfile::Lockfile;
+use silt::lockfile::{Lockfile, normalize_path};
 use silt::manifest::Manifest;
 
 use crate::cli::package::find_project_root;
-use crate::cli::paths::{normalize_path, relative_from};
+use crate::cli::paths::relative_from;
 
 /// Dispatch `silt add <name> <source-flag> [<ref-flag>]`.
 pub(crate) fn dispatch(args: &[String]) {

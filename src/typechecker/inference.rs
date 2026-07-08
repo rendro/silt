@@ -3183,11 +3183,11 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:7993`); Channel and Fn are not
+                    // in `src/typechecker/mod.rs:8112`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
-                    // `type_name_for_impl` (see `src/typechecker/mod.rs:2045`,
-                    // `src/typechecker/mod.rs:2056`), so dispatch must route those
+                    // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
+                    // `src/typechecker/mod.rs:2092`), so dispatch must route those
                     // receivers through the same `method_table` lookup. The
                     // `"Fn"` key matches `canonical_name(Type::Fun)`,
                     // `head_symbol_of_canon`, and `dispatch_name_for_value`

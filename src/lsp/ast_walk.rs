@@ -591,15 +591,13 @@ fn check_shorthand_field_binder(
     };
     let name_str = crate::intern::resolve(name);
     let start = pattern.span.offset.min(source.len());
-    // Upper bound: the closing `}` of this pattern — but we cannot
-    // recover that precisely from the AST. Use the next `}` after the
-    // pattern start as an approximation; that's safe because the field
-    // name token must precede it.
-    let end = source[start..]
-        .find('}')
-        .map(|p| start + p)
-        .unwrap_or(source.len());
-    if let Some(off) = super::text_utils::find_ident_in_range(source, start, end, &name_str)
+    // Round-101 BROKEN fix: the old scan stopped at the FIRST `}` after
+    // the pattern head, so a nested braced sub-pattern before the binder
+    // (`Point { a: Inner { y }, x }`) truncated the range and blinded
+    // hover / goto-def / prepareRename to the binder. The depth-aware
+    // scan in `text_utils::find_shorthand_binder` walks the record's own
+    // braces only.
+    if let Some(off) = super::text_utils::find_shorthand_binder(source, start, &name_str)
         && cursor >= off
         && cursor < off + name_str.len()
     {

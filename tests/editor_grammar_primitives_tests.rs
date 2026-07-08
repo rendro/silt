@@ -12,14 +12,17 @@
 //! there without updating both grammars would regress editor
 //! highlighting silently; this test enforces the coupling.
 //!
-//! Round-61 extension: the set was widened to include the 6 builtin
-//! container / callable / resource types recognised by
-//! `src/typechecker/mod.rs::is_builtin_container` (Range, Channel,
-//! Tuple, Fn, Fun, Handle). These are legal in type-annotation
-//! position (see docs/language/operators.md, stdlib/channel-task.md,
-//! stdlib/http.md, stdlib/stream.md) and must highlight as types.
-//! Authoritative source of the widened list: the `match` arm in
-//! `src/typechecker/mod.rs::is_builtin_container` (around line 2823).
+//! Round-61 extension: the set was widened to include the builtin
+//! container / callable / resource types (Range, Channel, Tuple, Fn,
+//! Fun, Handle). These are legal in type-annotation position (see
+//! docs/language/operators.md; the former per-module stdlib pages were
+//! inlined verbatim into the doc constants in
+//! `src/typechecker/builtins/docs.rs` in round 62 phase-2) and must
+//! highlight as types. Authoritative source of the widened list: the
+//! `BUILTIN_TYPES` table in `src/types/builtins.rs` (container-kind
+//! entries, queried via `src/types/builtins.rs::is_container`), which
+//! `primitives()` below consumes through
+//! `silt::types::builtins::iter_all()`.
 //!
 //! Mirrors the pattern of:
 //!   - tests/editor_grammar_constructors_tests.rs
@@ -119,6 +122,44 @@ fn grammar_mentions_name(grammar: &str, name: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// Round-101 citation-drift lock. The round-61 header above used to
+/// cite per-module stdlib markdown pages (channel-task, http, stream)
+/// under a `stdlib/` path — pages deleted in round 62 phase-2 when
+/// their prose was inlined into `src/typechecker/builtins/docs.rs` —
+/// and named a typechecker `is_builtin_container` function as the
+/// authoritative source, a function that no longer exists (the check
+/// now lives in `src/types/builtins.rs::is_container`, and this test
+/// sources its list from `silt::types::builtins::iter_all()`). Assert
+/// neither stale citation reappears in this file. The needles are
+/// assembled at runtime from fragments so this test's own source text
+/// can never satisfy the search.
+#[test]
+fn header_cites_no_deleted_stdlib_pages_or_moved_container_fn() {
+    let src = include_str!("editor_grammar_primitives_tests.rs");
+
+    for page in ["channel-task", "http", "stream", "index", "io-fs"] {
+        let needle = format!("stdlib/{}{}", page, ".md");
+        assert!(
+            !src.contains(&needle),
+            "tests/editor_grammar_primitives_tests.rs cites `{}`, but the \
+             docs/stdlib/ pages were deleted in round 62 phase-2; their prose \
+             lives in src/typechecker/builtins/docs.rs. Re-aim the citation \
+             (see this test's doc-comment).",
+            needle
+        );
+    }
+
+    let stale_fn = format!("{}::{}", "mod.rs", "is_builtin_container");
+    assert!(
+        !src.contains(&stale_fn),
+        "tests/editor_grammar_primitives_tests.rs cites `typechecker/{}` as \
+         authoritative, but that function no longer exists — the widened type \
+         list comes from src/types/builtins.rs::BUILTIN_TYPES (is_container / \
+         iter_all). Re-aim the citation.",
+        stale_fn
+    );
 }
 
 #[test]

@@ -509,6 +509,31 @@ pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
         && silt::diagnostic_filters::is_user_import_resolvable_error_message(&err.message)
 }
 
+/// Exit gate for `compile_file_with_options`: does `result` carry a
+/// real (non-suppressed) hard error that must abort the run?
+///
+/// A hard error is real only if it's a parse error, a compile error,
+/// or a non-suppressed type diagnostic with severity Error. Warnings
+/// (type or compile) never trip the gate.
+///
+/// `compile_errors` is part of the gate even though, today, it is
+/// non-empty only when `compile_program` returned `Err` (in which case
+/// `functions` is `None` and the caller exits anyway): the Ok-arm
+/// `module_parse_errors()` drain in `run_compile_pipeline_with_options`
+/// exists precisely so a future compiler that keeps going past a broken
+/// imported module can still return `Some(functions)` alongside its
+/// `error[compile]` diagnostics. Without this term, that evolution
+/// would PRINT the compile error but then execute the program and exit
+/// 0. Pure (no printing, no `process::exit`) so it is unit-testable —
+/// lock: `tests::compile_error_with_functions_still_trips_the_gate`.
+pub(crate) fn pipeline_has_real_hard_errors(result: &CompilePipelineResult) -> bool {
+    // Filter per-entry: drop the "unknown module" warnings the compiler
+    // will resolve, but keep every other type diagnostic so real errors
+    // still surface. See `reportable_type_errors` for the rationale.
+    let has_real_type_error = reportable_type_errors(result).iter().any(|e| !e.is_warning);
+    !result.parse_errors.is_empty() || has_real_type_error || !result.compile_errors.is_empty()
+}
+
 /// Compile a file end-to-end (lex → parse → typecheck → compile),
 /// printing diagnostics and exiting on hard errors. Two knobs:
 /// `auto_update_lock` controls whether stale lockfiles are silently
@@ -527,11 +552,8 @@ pub(crate) fn compile_file_with_options(
     // resolve, but keep every other type diagnostic so real errors still
     // surface. See `reportable_type_errors` for the rationale.
     let reportable = reportable_type_errors(&result);
-    // A hard error is real only if it's a parse/compile error or a
-    // non-suppressed type error with severity Error.
-    let has_real_type_error = reportable.iter().any(|e| !e.is_warning);
-    let has_parse_errors = !result.parse_errors.is_empty();
-    let has_real_hard_errors = has_parse_errors || has_real_type_error;
+    // See `pipeline_has_real_hard_errors` for what counts as "real".
+    let has_real_hard_errors = pipeline_has_real_hard_errors(&result);
 
     // F14 (audit round 17): print diagnostics with a blank line between
     // consecutive errors so multi-error output doesn't form a solid wall
@@ -563,4 +585,95 @@ pub(crate) fn compile_file_with_options(
     }
 
     (functions, result.source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use silt::errors::ErrorKind;
+    use silt::lexer::Span;
+
+    fn diag(kind: ErrorKind, message: &str, is_warning: bool) -> SourceError {
+        SourceError {
+            kind,
+            message: message.to_string(),
+            span: Span::new(1, 1),
+            source_line: None,
+            file: Some("main.silt".to_string()),
+            is_warning,
+        }
+    }
+
+    /// A fully clean pipeline result whose compile step succeeded
+    /// (`functions: Some`). Tests mutate one field at a time.
+    fn clean_ok_result() -> CompilePipelineResult {
+        CompilePipelineResult {
+            source: String::new(),
+            parse_errors: Vec::new(),
+            type_errors: Vec::new(),
+            functions: Some(Vec::new()),
+            compile_errors: Vec::new(),
+            compile_warnings: Vec::new(),
+        }
+    }
+
+    /// Lock for the LATENT exit-gate hole: a result carrying BOTH
+    /// compiled functions AND an `error[compile]` diagnostic (the shape
+    /// the Ok-arm `module_parse_errors()` drain produces if the
+    /// compiler ever keeps going past a broken imported module) must
+    /// trip the hard-error gate. Before the fix the gate was
+    /// `parse_errors || real type error` only, so `silt run` would
+    /// print the compile error and then execute the program anyway,
+    /// exiting 0.
+    #[test]
+    fn compile_error_with_functions_still_trips_the_gate() {
+        let mut result = clean_ok_result();
+        let err = diag(
+            ErrorKind::Compile,
+            "module 'broken' has a parse error",
+            false,
+        );
+        result.compile_errors.push(err);
+        assert!(
+            pipeline_has_real_hard_errors(&result),
+            "an error[compile] diagnostic must abort the run even when \
+             the compiler still produced functions"
+        );
+    }
+
+    /// Positive control: warnings alone (compile warnings and
+    /// non-suppressed type warnings) must NOT trip the gate — the
+    /// program should still run.
+    #[test]
+    fn warnings_alone_do_not_trip_the_gate() {
+        let mut result = clean_ok_result();
+        let compile_warning = diag(ErrorKind::Compile, "unused function 'helper'", true);
+        result.compile_warnings.push(compile_warning);
+        let type_warning = diag(ErrorKind::Type, "unused variable 'x'", true);
+        result.type_errors.push(type_warning);
+        assert!(
+            !pipeline_has_real_hard_errors(&result),
+            "warnings must not abort the run"
+        );
+    }
+
+    /// Controls pinning the pre-existing arms of the gate.
+    #[test]
+    fn parse_and_type_errors_trip_the_gate() {
+        let mut with_parse = clean_ok_result();
+        let parse_err = diag(ErrorKind::Parse, "unexpected token '}'", false);
+        with_parse.parse_errors.push(parse_err);
+        assert!(pipeline_has_real_hard_errors(&with_parse));
+
+        let mut with_type = clean_ok_result();
+        let type_err = diag(
+            ErrorKind::Type,
+            "type mismatch: expected Int, got String",
+            false,
+        );
+        with_type.type_errors.push(type_err);
+        assert!(pipeline_has_real_hard_errors(&with_type));
+
+        assert!(!pipeline_has_real_hard_errors(&clean_ok_result()));
+    }
 }

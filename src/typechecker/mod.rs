@@ -481,6 +481,10 @@ pub(super) struct TraitImplExport {
     pub(super) span: Span,
     pub(super) impl_constraints: Vec<(usize, Symbol, Vec<Type>)>,
     pub(super) impl_trait_args: Vec<Type>,
+    /// The impl's full canonicalized self type (see
+    /// `TypeChecker::impl_self_types`). `None` for impls the producer
+    /// never routed through `register_trait_impl`.
+    pub(super) self_type: Option<Type>,
     /// Method entries keyed by method name.
     pub(super) methods: Vec<(Symbol, MethodEntry)>,
 }
@@ -587,6 +591,22 @@ pub struct TypeChecker {
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
     pub(super) impl_trait_args: HashMap<(Symbol, Symbol), Vec<Type>>,
+    /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
+    /// self type as constructed by `register_trait_impl`. Coherence
+    /// guarantees at most one user impl per key. Consulted by
+    /// `verify_trait_obligation` AFTER the head-membership check so that
+    /// an alias-expanded impl with concrete self-type args (e.g.
+    /// `type Bytes2 = List(Int)`; `trait Total for Bytes2` stores
+    /// `List(Int)`) rejects obligations on a mismatched instantiation
+    /// like `List(String)`. Without this, where-bound verification was
+    /// head-keyed only: `(Total, "List")` in `trait_impl_set` satisfied
+    /// ANY `List(T)`, and the Int-assuming method body ran on String
+    /// elements at runtime. Generic impls (`for List(a)`) store `Var`
+    /// args, which the positional comparison treats as wildcards, so
+    /// they keep matching every instantiation. Absent for impls that
+    /// never pass through `register_trait_impl` (builtin pre-stamps,
+    /// auto-derive synthesis) — the check silently skips those.
+    pub(super) impl_self_types: HashMap<(Symbol, Symbol), Type>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -850,6 +870,7 @@ impl TypeChecker {
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
             impl_trait_args: HashMap::new(),
+            impl_self_types: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
@@ -1438,6 +1459,21 @@ impl TypeChecker {
             (Type::Fun(_, _), Type::Generic(name, args))
             | (Type::Generic(name, args), Type::Fun(_, _))
                 if args.is_empty() && resolve(*name) == "Fn" => {}
+
+            // `trait T for Tuple { ... }` likewise registers a self_type
+            // of `Generic("Tuple", [])` — tuples are variadic, so unlike
+            // List/Map/Set/Channel there is no fresh-var element shape
+            // `register_trait_impl` could synthesize for the bare target.
+            // Treat the bare-`Tuple` Generic as a wildcard for any tuple
+            // shape so direct receiver dispatch (`(1, 2).pretty()`)
+            // matches the where-bound path, which already dispatched via
+            // the head-keyed obligation. Bare `Tuple` is rejected as a
+            // type annotation (`resolve_type_expr`'s uppercase fallback
+            // errors "unknown type"), so this arm is reachable only via
+            // trait-impl self-types, mirroring the `Fn` arm above.
+            (Type::Tuple(_), Type::Generic(name, args))
+            | (Type::Generic(name, args), Type::Tuple(_))
+                if args.is_empty() && resolve(*name) == "Tuple" => {}
 
             (Type::List(a), Type::List(b)) => {
                 self.unify(a, b, span);
@@ -2144,6 +2180,40 @@ impl TypeChecker {
             );
             return;
         }
+        // Head-key membership alone is not enough: an alias-expanded impl
+        // can carry CONCRETE self-type args (`type Bytes2 = List(Int)`;
+        // `trait Total for Bytes2` registers under head "List" with
+        // self_type `List(Int)`), yet the membership check above matches
+        // any `List(T)`. Compare the obligated type's positional args
+        // against the stored impl self type's, with defer-on-Var logic —
+        // generic impls (`for List(a)`) store `Var` args and keep matching
+        // everything; only concrete-vs-concrete mismatches reject. A
+        // length mismatch means the two sides describe differently shaped
+        // representations of the same head (e.g. a `Record` receiver
+        // against a `Generic` impl form); skip conservatively — the
+        // method-entry unify at direct dispatch sites still guards those.
+        // Impls without a stored self type (builtin pre-stamps,
+        // auto-derive synthesis) skip the check, preserving prior
+        // behavior.
+        if let Some(impl_self) = self.impl_self_types.get(&(trait_name, type_name)).cloned() {
+            let obligated_args = self.type_args_of(&resolved);
+            let impl_args = self.type_args_of(&impl_self);
+            if obligated_args.len() == impl_args.len()
+                && obligated_args
+                    .iter()
+                    .zip(impl_args.iter())
+                    .any(|(ob, im)| !self.trait_arg_compatible(ob, im))
+            {
+                self.error(
+                    format!(
+                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        resolved, trait_name, impl_self
+                    ),
+                    span,
+                );
+                return;
+            }
+        }
         // Parameterized-trait verification: if the bound carries trait
         // args (e.g. `where a: TryInto(Int)`) and the matched impl also
         // registered its own args (`trait TryInto(Float) for String`),
@@ -2452,6 +2522,11 @@ impl TypeChecker {
             for v in free_vars_in_types(&entry.impl_trait_args) {
                 producer_tyvars.insert(v);
             }
+            if let Some(st) = &entry.self_type {
+                for v in free_vars_in(st) {
+                    producer_tyvars.insert(v);
+                }
+            }
             for (_, m) in &entry.methods {
                 for v in free_vars_in(&m.method_type) {
                     producer_tyvars.insert(v);
@@ -2652,6 +2727,10 @@ impl TypeChecker {
                     .collect();
                 self.impl_trait_args.insert(key, remapped);
             }
+            if let Some(st) = &entry.self_type {
+                self.impl_self_types
+                    .insert(key, substitute_vars(st, &ty_remap));
+            }
             for (mname, m) in &entry.methods {
                 let new_method_type = substitute_vars(&m.method_type, &ty_remap);
                 let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = m
@@ -2830,6 +2909,7 @@ impl TypeChecker {
                 span: *span,
                 impl_constraints: self.impl_constraints.get(key).cloned().unwrap_or_default(),
                 impl_trait_args: self.impl_trait_args.get(key).cloned().unwrap_or_default(),
+                self_type: self.impl_self_types.get(key).cloned(),
                 methods,
             };
             exports.trait_impl_entries.push(entry);
@@ -6515,17 +6595,45 @@ impl TypeChecker {
                     .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
                     .unwrap_or(0);
                 if user_arity == 0 {
-                    // Use the canonicalised target name so the self_type
-                    // built here matches the `method_table` registration
-                    // key (also canonicalised at line :5386). Without
-                    // this, `trait T for Fun` produces a self_type of
-                    // `Generic("Fun", [])` while the impl_key is
-                    // `("T", "Fn")` — and the dispatch unify of
-                    // `Type::Fun(_, _)` against `Generic("Fun", [])`
-                    // misses the `(Type::Fun, Generic("Fn", []))` arm
-                    // we added in `unify`. Round 71 follow-up TYPE-3
-                    // canonical-name unification.
-                    Self::type_from_name(target_type)
+                    // Bare builtin-container targets (`trait T for List`,
+                    // Map/Set/Channel; a bare `Range` target arrives here
+                    // as `List` via `canonicalize_type_name`) mirror
+                    // `resolve_type_expr`'s bare-name annotation
+                    // semantics: synthesize a fresh var per element slot
+                    // so the self_type unifies with any concrete receiver
+                    // (`List(Int)`, `Map(String, Bool)`, ...). Pre-fix
+                    // these fell through to `type_from_name`'s
+                    // `Generic("List", [])`, which unify's catch-all
+                    // rejected against `Type::List(Int)` with the
+                    // self-contradictory "type mismatch: expected List,
+                    // got List(Int)" — even though the SAME impl
+                    // dispatched fine through a where-bound fn
+                    // (head-keyed obligation + runtime dispatch). The
+                    // fresh vars are per-registration, like the alias /
+                    // user-arity branches: `instantiate_method_entry`
+                    // refreshes them per call site.
+                    //
+                    // Variadic `Tuple` has no fresh-var shape; it keeps
+                    // the `Generic("Tuple", [])` fallback and is matched
+                    // by the bare-`Tuple` wildcard arm in `unify` (same
+                    // strategy as `Fn`).
+                    match resolve(target_type).as_str() {
+                        "List" => Type::List(Box::new(self.fresh_var())),
+                        "Set" => Type::Set(Box::new(self.fresh_var())),
+                        "Channel" => Type::Channel(Box::new(self.fresh_var())),
+                        "Map" => Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var())),
+                        // Use the canonicalised target name so the
+                        // self_type built here matches the `method_table`
+                        // registration key (also canonicalised). Without
+                        // this, `trait T for Fun` produces a self_type of
+                        // `Generic("Fun", [])` while the impl_key is
+                        // `("T", "Fn")` — and the dispatch unify of
+                        // `Type::Fun(_, _)` against `Generic("Fun", [])`
+                        // misses the `(Type::Fun, Generic("Fn", []))` arm
+                        // we added in `unify`. Round 71 follow-up TYPE-3
+                        // canonical-name unification.
+                        _ => Self::type_from_name(target_type),
+                    }
                 } else {
                     let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
                     Type::Generic(target_type, args)
@@ -6640,6 +6748,17 @@ impl TypeChecker {
                 }
             }
         };
+
+        // Record the impl's full self type under the canonical head key so
+        // `verify_trait_obligation` can compare an obligated type's
+        // positional args against the impl's — closing the alias-expansion
+        // soundness hole where `trait Total for Bytes2` (with
+        // `type Bytes2 = List(Int)`) satisfied a where-bound for ANY
+        // `List(T)`. Overwrites are fine: coherence rejects duplicate user
+        // impls above, and the one permitted overwrite (user impl
+        // overriding an auto-derived one) should win here too.
+        self.impl_self_types
+            .insert((ti.trait_name, target_type), self_type.clone());
 
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
@@ -7962,7 +8081,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // the field-support gate.
 
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
-    // src/vm/dispatch.rs:295 routes `display` to `display_value`, and
+    // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
     // `Value::Bytes` already has a runtime Display impl
     // (`format_bytes_preview` at src/value.rs:1258 — short hex preview
     // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as

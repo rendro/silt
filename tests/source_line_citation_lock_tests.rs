@@ -32,7 +32,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "completion.rs -> builtin_trait_decls def",
         "src/typechecker/mod.rs",
-        7657,
+        7776,
         "fn builtin_trait_decls",
     ),
     // vm/runtime.rs:450 — "Rust 1.80+ thread-local env SAFETY note"
@@ -107,7 +107,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "compiler/mod.rs -> typechecker round-58 prefix-mirror",
         "src/typechecker/mod.rs",
-        2941,
+        3021,
         "round 58",
     ),
 ];

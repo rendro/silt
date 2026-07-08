@@ -3,7 +3,7 @@
 //!
 //! The `(Variant, Variant)` / `(Record, Record)` fallback arms in
 //! compare / equal / hash STILL EXIST in `src/vm/dispatch.rs`
-//! (the compare pair lives at dispatch.rs:384-385; re-added round 62,
+//! (the compare pair lives at dispatch.rs:454-455; re-added round 62,
 //! commit 5b3f240, and never removed). This file does NOT prove the
 //! arms are gone — it proves the OTHER path is always taken first, so
 //! the arms are dead for any program a user can write.
@@ -551,7 +551,7 @@ fn dead_arm_prose_does_not_regress() {
 
     // 2. This proof-test's own header must not re-assert the false
     //    claim that the arms were deleted. They still exist at
-    //    dispatch.rs:384-385.
+    //    dispatch.rs:454-455.
     let this_src = include_str!("auto_derive_dead_arm_proof_tests.rs");
     let header_end = this_src
         .find("\nuse ")
@@ -561,7 +561,7 @@ fn dead_arm_prose_does_not_regress() {
         !header.contains("deleted"),
         "stale false comment regressed in this file's header: it must \
          NOT claim the dispatch arms were 'deleted' — they still exist \
-         at src/vm/dispatch.rs:384-385 as a defensive fallback; this \
+         at src/vm/dispatch.rs:454-455 as a defensive fallback; this \
          file proves the synth-global path is reached FIRST"
     );
 

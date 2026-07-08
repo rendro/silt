@@ -418,18 +418,17 @@ fn qualified_head_span(head_span: Span, name: Symbol, source: &str) -> Option<Sp
 }
 
 /// Resolve the precise span of a shorthand record-field binder (`{ x }`,
-/// `Point { x }`). `record_span` is the record pattern head; we scan
-/// forward to the closing `}` for the field-name token. Mirrors
+/// `Point { x }`). `record_span` is the record pattern head; the
+/// brace-depth-aware scan in `text_utils::find_shorthand_binder` walks the
+/// record's own braces only, so a nested braced sub-pattern before the
+/// binder (`Point { a: Inner { y }, x }` — round-101 BROKEN) no longer
+/// truncates the search at the first `}`. Mirrors
 /// `ast_walk::check_shorthand_field_binder` so hover/definition and rename
 /// agree on where the binder lives. Returns `None` when the token can't be
-/// located (the caller then falls back to the head span).
+/// located (the caller then emits NO edit — never the head span).
 fn shorthand_binder_span(record_span: Span, field: &str, source: &str) -> Option<Span> {
     let start = record_span.offset.min(source.len());
-    let end = source[start..]
-        .find('}')
-        .map(|p| start + p)
-        .unwrap_or(source.len());
-    let off = super::text_utils::find_ident_in_range(source, start, end, field)?;
+    let off = super::text_utils::find_shorthand_binder(source, start, field)?;
     let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
     let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let col = source[line_start..off].chars().count() + 1;
@@ -491,12 +490,87 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
                 collect_references_in_expr(child, name, source, out);
             });
         }
+        // Round-102: lambda PARAMS are binders (and may carry type
+        // annotations), but `visit_expr_children` walks only the lambda
+        // body (ast_walk.rs). Without this arm, renaming a lambda param
+        // from a body use-site edited the uses and never the `fn(n)` /
+        // `{ n -> ... }` binder token — `fn(n) { m * 2 }` no longer
+        // compiles — and `textDocument/references` omitted the binder.
+        // Walking `param.ty` also keeps `fn(p: Point) { ... }`
+        // annotations in sync on a type rename (mirrors the round-101
+        // fn-signature handling in `collect_references_in_fn_signature`).
+        ExprKind::Lambda { params, .. } => {
+            for param in params {
+                collect_references_in_pattern(&param.pattern, name, source, out);
+                if let Some(ty) = &param.ty {
+                    collect_references_in_type_expr(ty, name, out);
+                }
+            }
+            visit_expr_children(expr, |child| {
+                collect_references_in_expr(child, name, source, out);
+            });
+        }
+        // Round-102 (same class): `loop x = init { ... }` binders. The
+        // AST keeps only the `Symbol` for a loop binding — no span — so
+        // recover the binder token by scanning backward from the init
+        // expression's start. Without this, body uses of `x` were
+        // renamed while the `loop x = init` binder token was not.
+        ExprKind::Loop { bindings, .. } => {
+            for (bname, init) in bindings {
+                if *bname == name
+                    && let Some(sp) = loop_binder_span(init.span, name, source)
+                {
+                    out.push(sp);
+                }
+            }
+            visit_expr_children(expr, |child| {
+                collect_references_in_expr(child, name, source, out);
+            });
+        }
         _ => {
             visit_expr_children(expr, |child| {
                 collect_references_in_expr(child, name, source, out);
             });
         }
     }
+}
+
+/// Resolve the span of a `loop` binding's binder token (`x` in
+/// `loop x = init { ... }`). Loop bindings carry only a `Symbol` in the
+/// AST (parser.rs `parse_loop_expr` discards the ident span), so recover
+/// the token by scanning backward from the init expression's start over
+/// the mandatory `<binder> = <init>` shape: skip whitespace, require the
+/// `=` sign, skip whitespace again, and match the identifier ending
+/// there. Returns `None` (no edit — conservative) when the shape doesn't
+/// match, so a failed scan can never corrupt unrelated text.
+fn loop_binder_span(init_span: Span, name: Symbol, source: &str) -> Option<Span> {
+    let init_start = init_span.offset.min(source.len());
+    let before = source[..init_start].trim_end();
+    // Last non-whitespace byte before the init must be the binding `=`.
+    // (`=` is ASCII, so byte indexing is safe; a multibyte char here
+    // simply fails the comparison.)
+    let eq = before.len().checked_sub(1)?;
+    if before.as_bytes()[eq] != b'=' {
+        return None;
+    }
+    let ident_part = before[..eq].trim_end();
+    let name_str = resolve_sym(name);
+    if !ident_part.ends_with(name_str.as_str()) {
+        return None;
+    }
+    let off = ident_part.len() - name_str.len();
+    // Whole-token check: the byte before the match must not be an
+    // identifier character (guards `loop xy = ...` matching name `y`).
+    if off > 0 {
+        let prev = ident_part.as_bytes()[off - 1];
+        if prev == b'_' || prev.is_ascii_alphanumeric() {
+            return None;
+        }
+    }
+    let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
+    let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col = source[line_start..off].chars().count() + 1;
+    Some(Span::with_offset(line, col, off))
 }
 
 fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, source: &str, out: &mut Vec<Span>) {
@@ -607,10 +681,17 @@ fn collect_references_in_pattern(
                     // constructor / brace and leave the binder untouched,
                     // corrupting the source into uncompilable code.
                     // Resolve the precise field offset instead.
+                    //
+                    // Round-101 BROKEN: when the offset can't be resolved,
+                    // push NOTHING. An edit on the record HEAD is never a
+                    // correct rename of a field binder — the old
+                    // `out.push(pattern.span)` fallback rewrote the
+                    // constructor / brace token whenever the scan failed,
+                    // producing non-compiling source. Missing one edit is
+                    // strictly safer than a wrong edit.
                     let field_str = crate::intern::resolve(*fname);
-                    match shorthand_binder_span(pattern.span, &field_str, source) {
-                        Some(span) => out.push(span),
-                        None => out.push(pattern.span),
+                    if let Some(span) = shorthand_binder_span(pattern.span, &field_str, source) {
+                        out.push(span);
                     }
                 }
             }

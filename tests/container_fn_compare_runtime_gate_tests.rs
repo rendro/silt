@@ -1,4 +1,4 @@
-//! Execution-site locks for the container-of-`Fn` Compare/Equal gate.
+//! Execution-site locks for the container-of-`Fn` Compare/Equal/Hash gate.
 //!
 //! ## Background
 //!
@@ -36,6 +36,23 @@
 //! test below FAILS on the pre-fix code (the program ran and produced a
 //! pointer-derived Bool/Int) and PASSES post-fix; the positive controls
 //! guard against over-rejection.
+//!
+//! ## Hash follow-up
+//!
+//! `hash()` was the ungated sibling: the `(Hash, List)` auto-derive
+//! stamp is registered unconditionally
+//! (`register_auto_derived_impls_for`, src/typechecker/mod.rs) without
+//! walking element types, so `[fn(y) { y }].hash()` typechecked AND ran
+//! — the `"hash"` arm of `dispatch_trait_method` (src/vm/dispatch.rs)
+//! admitted List/Tuple receivers with no `value_contains_fn` backstop,
+//! and `impl Hash for Value` (src/value.rs) hashes every closure as a
+//! constant tag, so two distinct closures hashed identically
+//! (`h([fn(y){y}]) == h([fn(z){z * 99}])` printed `true`). That
+//! contradicts the policy source (`gate_field_supports_trait`,
+//! src/typechecker/mod.rs: "Functions support none of
+//! Equal/Compare/Hash"). The `"hash"` arm now carries the same
+//! receiver gate as its `"equal"` / `"compare"` siblings; locked by
+//! the Hash section below.
 
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
@@ -259,5 +276,79 @@ fn main() -> Int { cmpm([1, 2], [3, 4]) }
         Ok(Value::Int(n)) => assert_eq!(n, -1, "[1,2].compare([3,4]) must be -1"),
         Ok(other) => panic!("expected Int, got {other:?}"),
         Err(e) => panic!("int-list compare() must not error, got: {e}"),
+    }
+}
+
+// ── Hash: `.hash()` on containers of functions errors at the exec site ───
+
+#[test]
+fn polymorphic_hash_of_fn_lists_errors_at_runtime() {
+    // The finding's exact repro shape. Pre-fix `h([fn(y){y}])` and
+    // `h([fn(z){z * 99}])` both returned the SAME contentless Int
+    // (every closure hashes as a constant tag in `impl Hash for
+    // Value`), so this ran clean and the two hashes compared equal.
+    let src = r#"
+fn h(a: x) -> Int where x: Hash { a.hash() }
+fn main() {
+  println(h([fn(y) { y }]) == h([fn(z) { z * 99 }]))
+}
+"#;
+    assert_runtime_fn_gate("hash_fn_lists", src, "Hash");
+}
+
+#[test]
+fn polymorphic_hash_of_fn_tuples_errors_at_runtime() {
+    let src = r#"
+fn h(a: x) -> Int where x: Hash { a.hash() }
+fn main() {
+  println(h((fn(y) { y }, 1)) == h((fn(z) { z + 5 }, 1)))
+}
+"#;
+    assert_runtime_fn_gate("hash_fn_tuples", src, "Hash");
+}
+
+#[test]
+fn concrete_hash_of_fn_list_errors_at_runtime() {
+    // Unlike Equal/Compare, the CONCRETE form also slips the static
+    // layer (the `(Hash, List)` auto-derive stamp never walks element
+    // types), so the runtime gate is the load-bearing rejection here.
+    // The harness's non-fatal typecheck keeps this lock valid even if
+    // a future static gate starts rejecting it earlier.
+    let src = r#"
+fn main() {
+  let xs = [fn(y) { y }]
+  println(xs.hash())
+}
+"#;
+    assert_runtime_fn_gate("hash_fn_list_concrete", src, "Hash");
+}
+
+// ── Hash positive controls: fn-free receivers still hash ─────────────────
+
+#[test]
+fn polymorphic_hash_of_int_lists_still_works() {
+    // Same-content lists must agree; hashing must not error.
+    let src = r#"
+fn h(a: x) -> Int where x: Hash { a.hash() }
+fn main() -> Bool { h([1, 2, 3]) == h([1, 2, 3]) }
+"#;
+    match run(src) {
+        Ok(Value::Bool(b)) => assert!(b, "equal int lists must hash equal"),
+        Ok(other) => panic!("expected Bool, got {other:?}"),
+        Err(e) => panic!("int-list hash() must not error, got: {e}"),
+    }
+}
+
+#[test]
+fn concrete_hash_of_tuple_and_string_still_works() {
+    // Exercises the gated `"hash"` dispatch arm positively for the
+    // Tuple and String receivers named in the finding's controls.
+    let src = r#"
+fn main() -> Bool { (1, "a").hash() == (1, "a").hash() && "abc".hash() == "abc".hash() }
+"#;
+    match run(src) {
+        Ok(Value::Bool(b)) => assert!(b, "equal tuples/strings must hash equal"),
+        Ok(other) => panic!("expected Bool, got {other:?}"),
+        Err(e) => panic!("tuple/string hash() must not error, got: {e}"),
     }
 }

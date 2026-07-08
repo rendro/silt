@@ -430,16 +430,25 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
             // Round-62 B8 + B9: shorthand binders (`{ x, y }`) bind the
             // field name as a local; emit a VARIABLE token for them so
             // they highlight consistently with the bare `let x = ...` case.
-            // We don't have a sub-pattern span for shorthand fields, so
-            // we use the enclosing pattern span — slightly imprecise for
-            // the second+ field but matches the strategy in
-            // `local_bindings.rs` (where the binder offset is recovered
-            // by source scan, not used for highlighting).
+            // There is no sub-pattern span for shorthand fields; recover
+            // the binder offset with the brace-depth-aware scan shared
+            // with `ast_walk::check_shorthand_field_binder` (round-101:
+            // emitting at the enclosing pattern span mislabeled the
+            // record HEAD as a VARIABLE and never lit the binder itself).
+            // If the scan fails, emit nothing — a mislabeled head token
+            // is worse than a missing one.
             for (fname, sub) in fields {
                 if let Some(p) = sub {
                     emit_pattern_binding_tokens(p, source, out);
                 } else if resolve(*fname) != "_" {
-                    emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
+                    let fname_str = resolve(*fname);
+                    if let Some(off) = super::text_utils::find_shorthand_binder(
+                        source,
+                        pattern.span.offset.min(source.len()),
+                        &fname_str,
+                    ) {
+                        push_token_at_offset(source, off, &fname_str, TT_VARIABLE, out);
+                    }
                 }
             }
         }

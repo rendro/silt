@@ -849,7 +849,9 @@ impl Vm {
 
     /// Whether a runtime value's type has a Display impl — the single
     /// runtime-side oracle for the string-interpolation Display gate
-    /// (`Op::DisplayValue`, src/vm/execute.rs).
+    /// (`Op::DisplayValue`, src/vm/execute.rs) and the polymorphic
+    /// `.display()` method gate (`dispatch_trait_method`'s "display"
+    /// arm, src/vm/dispatch.rs).
     ///
     /// This mirrors the typechecker's compile-time gate: the typechecker
     /// reduces a *concrete* operand to its canonical name
@@ -912,7 +914,7 @@ impl Vm {
     /// Consulted by the container arms of `compare()`
     /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
     /// (`equality_operand_violation`, src/vm/execute.rs), and the
-    /// `"equal"` / `"compare"` trait-method arms of
+    /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
     /// `dispatch_trait_method` (src/vm/dispatch.rs). Locked by
     /// tests/container_fn_compare_runtime_gate_tests.rs.
     ///
