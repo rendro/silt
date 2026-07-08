@@ -1,27 +1,28 @@
-//! Round-71 regression: LSP rename on top-level `let` bindings and
-//! cross-namespace symbol-collision corruption via FieldAccess.
+//! Regression: LSP rename / goto-def on user-defined enum variants.
 //!
-//! - **DX-1** — `Decl::Let.span` was the `let` keyword's span (parser
-//!   stored `let span = self.span()` before consuming `let`).
-//!   `build_definitions` recorded that span as the binding's
-//!   `DefInfo.span`; LSP rename applied the new name as a TextEdit over
-//!   `token_len_at(source, span.offset)` bytes, so renaming `counter`
-//!   in `let counter = 42` produced `ctr ctr = 42` (clobbering `let`),
-//!   and renaming through `pub let counter = 42` clobbered `pub`. The
-//!   fix mirrors round-63 B1: add a `name_span` field on `Decl::Let`
-//!   that the parser fills in from the bound identifier's span, and
-//!   thread it through `definitions.rs` so the binder's `DefInfo.span`
-//!   covers the name (not the keyword).
+//! `build_definitions` used to register each enum variant's `DefInfo`
+//! with the enum decl's span (`t.span`), which sits on the `type`
+//! KEYWORD — `ast::EnumVariant` had no name span. Consequences:
 //!
-//! - **DX-2** — `collect_references_in_expr` matched on
-//!   `ExprKind::FieldAccess(_, field) if *field == name`, but
-//!   `FieldAccess.span = receiver.span` (parser.rs:2602/2678). Symbols
-//!   are interned, so a top-level `let name` and a record field `name`
-//!   share the same `Symbol`. Renaming the let pushed the receiver's
-//!   span as a "reference", silently corrupting `r.name` into
-//!   `<newname>.name`. Field names live in a separate namespace from
-//!   let/fn names; co-renaming by symbol identity is wrong. Fix: drop
-//!   the FieldAccess arm.
+//! - Renaming a variant from a usage site (`Circle(2)` -> `Disc`)
+//!   emitted a TextEdit over the `type` keyword (definition site is
+//!   included in the rename edit set), producing `Disc Shape { ... }`
+//!   — unparseable source corruption. Same bug class as round-63 B1
+//!   (`fn` keyword), round-71 DX-1 (`let`/`pub` keyword), and
+//!   round-75 DX-2 (`trait` keyword).
+//! - goto-definition on a variant usage landed on the `type` keyword.
+//! - prepareRename/rename on the variant's own declaration line
+//!   returned null (variant name spans were never visited by
+//!   `find_ident_in_decl`).
+//!
+//! Fix mirrors the earlier keyword-clobber fixes: the parser records
+//! `EnumVariant::name_span` at the variant-name token; `definitions.rs`
+//! uses it for the variant `DefInfo`, and `ast_walk::find_ident_in_decl`
+//! visits it so the declaration site itself resolves.
+//!
+//! The load-bearing gate here is parse-level: the pre-fix corruption
+//! produced source that no longer parses, so after applying the
+//! WorkspaceEdit we re-lex + re-parse the document and assert success.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -42,7 +43,7 @@ fn next_id() -> u64 {
 
 fn unique_uri(tag: &str) -> String {
     let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("file:///tmp/silt_lsp_r71_letrename_{tag}_{n}.silt")
+    format!("file:///tmp/silt_lsp_enum_variant_rename_{tag}_{n}.silt")
 }
 
 struct LspClient {
@@ -239,7 +240,7 @@ fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
     }
 }
 
-// ── Edit helpers (mirrors lsp_fn_decl_rename_and_handlers_tests) ──────
+// ── Edit helpers (mirrors round71_lsp_rename_let_and_field_tests) ─────
 
 fn apply_edit(source: &str, edit: &Value) -> String {
     let new_text = edit
@@ -308,241 +309,159 @@ fn apply_all_edits(source: &str, edits: &[Value]) -> String {
     out
 }
 
-// ── DX-1: rename of top-level `let` does not clobber the `let` keyword ──
+/// Parse-level gate: the pre-fix corruption (`Disc Shape { ... }`)
+/// produced source that fails to parse, so a successful re-parse of
+/// the renamed document is the authoritative "no keyword was
+/// clobbered" assertion.
+fn parses_ok(source: &str) -> bool {
+    let Ok(tokens) = silt::lexer::Lexer::new(source).tokenize() else {
+        return false;
+    };
+    silt::parser::Parser::new(tokens).parse_program().is_ok()
+}
 
-#[test]
-fn rename_let_top_level_does_not_clobber_keyword() {
-    // Pre-fix: `let counter = 42` after rename `counter` -> `ctr`
-    // produced `ctr ctr = 42` because the `Decl::Let.span` pointed at
-    // the `let` keyword and the rename TextEdit covered three bytes
-    // starting at offset 0 (i.e. it overwrote `let`).
-    let source = "let counter = 42\nfn main() {\n  println(counter)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("rename_let_top");
-    client.did_open_and_wait(&uri, source);
+/// Shared fixture. 0-based layout used by the tests:
+///   line 0: `type Shape {`
+///   line 1: `  Circle(Int),`   (variant name `Circle` at chars 2..8)
+///   line 5: `  let c = Circle(2)`  (usage `Circle` at chars 10..16)
+const SOURCE: &str = "type Shape {\n  Circle(Int),\n  Square(Int),\n}\nfn main() {\n  let c = Circle(2)\n  println(1)\n}\n";
 
-    // Cursor on `counter`: line 0, char=4 (after `let `).
+fn rename_edits_at(client: &mut LspClient, uri: &str, line: u64, character: u64) -> Vec<Value> {
     let resp = client.request(
         "textDocument/rename",
         json!({
             "textDocument": { "uri": uri },
-            "position": { "line": 0, "character": 4 },
-            "newName": "ctr"
+            "position": { "line": line, "character": character },
+            "newName": "Disc"
         }),
     );
     let result = resp.get("result").expect("rename has result");
     assert!(
         !result.is_null(),
-        "rename on let-binding name must NOT return null; got {resp}"
+        "rename on user enum variant must NOT return null; got {resp}"
     );
-    let changes = result
+    result
         .get("changes")
         .and_then(|c| c.as_object())
-        .expect("rename result has changes");
-    let edits = changes
-        .get(&uri)
+        .expect("rename result has changes")
+        .get(uri)
         .and_then(|v| v.as_array())
-        .expect("file edits");
+        .expect("file edits")
+        .clone()
+}
 
-    let renamed = apply_all_edits(source, edits);
+fn assert_variant_renamed_cleanly(renamed: &str) {
+    // Pre-fix corruption shape: the definition TextEdit covered the
+    // `type` KEYWORD (enum-decl span), producing `Disc Shape {`.
     assert!(
-        renamed.contains("let ctr = 42"),
-        "rename should produce `let ctr = 42`; got:\n{renamed}"
+        renamed.starts_with("type Shape {"),
+        "must not clobber the `type` keyword or enum name; got:\n{renamed}"
     );
-    // Pre-fix corruption shape:
+    // The variant declaration token itself must be renamed.
     assert!(
-        !renamed.starts_with("ctr ctr"),
-        "must not corrupt the `let` keyword; got:\n{renamed}"
+        renamed.contains("  Disc(Int),"),
+        "variant declaration should be renamed; got:\n{renamed}"
+    );
+    // The usage site must be renamed.
+    assert!(
+        renamed.contains("let c = Disc(2)"),
+        "usage site should be renamed; got:\n{renamed}"
+    );
+    // The sibling variant must be untouched.
+    assert!(
+        renamed.contains("Square(Int)"),
+        "sibling variant must be untouched; got:\n{renamed}"
     );
     assert!(
-        !renamed.contains("let counter"),
-        "old name must be gone from decl; got:\n{renamed}"
+        !renamed.contains("Circle"),
+        "old variant name must be gone; got:\n{renamed}"
     );
+    // Authoritative gate: the renamed document must still PARSE.
     assert!(
-        renamed.contains("println(ctr)"),
-        "use site should be renamed; got:\n{renamed}"
+        parses_ok(renamed),
+        "renamed document must still parse; got:\n{renamed}"
     );
+}
+
+// ── Rename from a usage site must not clobber the `type` keyword ──────
+
+#[test]
+fn rename_enum_variant_from_usage_site_does_not_clobber_type_keyword() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri("usage_site");
+    client.did_open_and_wait(&uri, SOURCE);
+
+    // Cursor on `Circle` in `let c = Circle(2)`: line 5, char 10.
+    let edits = rename_edits_at(&mut client, &uri, 5, 10);
+    let renamed = apply_all_edits(SOURCE, &edits);
+    assert_variant_renamed_cleanly(&renamed);
     client.shutdown();
 }
 
-#[test]
-fn rename_pub_let_does_not_clobber_pub_keyword() {
-    // Pre-fix: `pub let counter = 42` rename `counter` -> `ctr` produced
-    // `ctr let counter = 42` (or worse) — the decl span was placed at
-    // the `pub` keyword by the parser's `pub let` arm, so the TextEdit
-    // covered chars 0..3 (`pub`).
-    let source = "pub let counter = 42\nfn main() {\n  println(counter)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("rename_pub_let");
-    client.did_open_and_wait(&uri, source);
+// ── Rename on the variant's own declaration line must resolve ─────────
 
-    // Cursor on `counter`: line 0, char=8 (after `pub let `).
-    let resp = client.request(
-        "textDocument/rename",
+#[test]
+fn rename_enum_variant_at_declaration_site_resolves_and_renames() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri("decl_site");
+    client.did_open_and_wait(&uri, SOURCE);
+
+    // prepareRename on the variant declaration (`Circle` at line 1,
+    // char 2) used to return null — variant name spans were never
+    // visited by `find_ident_in_decl`.
+    let prep = client.request(
+        "textDocument/prepareRename",
         json!({
             "textDocument": { "uri": uri },
-            "position": { "line": 0, "character": 8 },
-            "newName": "ctr"
+            "position": { "line": 1, "character": 2 }
         }),
     );
-    let result = resp.get("result").expect("rename has result");
+    let prep_result = prep.get("result").expect("prepareRename has result");
+    assert!(
+        !prep_result.is_null(),
+        "prepareRename on a variant's own declaration must NOT return null; got {prep}"
+    );
+
+    let edits = rename_edits_at(&mut client, &uri, 1, 2);
+    let renamed = apply_all_edits(SOURCE, &edits);
+    assert_variant_renamed_cleanly(&renamed);
+    client.shutdown();
+}
+
+// ── goto-definition on a usage must land on the variant name ──────────
+
+#[test]
+fn goto_definition_on_variant_usage_lands_on_variant_name_not_type_keyword() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri("goto_def");
+    client.did_open_and_wait(&uri, SOURCE);
+
+    let resp = client.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 5, "character": 10 }
+        }),
+    );
+    let result = resp.get("result").expect("definition has result");
     assert!(
         !result.is_null(),
-        "rename on pub-let name must NOT return null; got {resp}"
+        "goto-def on variant usage must NOT return null; got {resp}"
     );
-    let changes = result
-        .get("changes")
-        .and_then(|c| c.as_object())
-        .expect("rename result has changes");
-    let edits = changes
-        .get(&uri)
-        .and_then(|v| v.as_array())
-        .expect("file edits");
-
-    let renamed = apply_all_edits(source, edits);
-    assert!(
-        renamed.contains("pub let ctr = 42"),
-        "rename should produce `pub let ctr = 42`; got:\n{renamed}"
+    let start_line = result
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("scalar Location with range");
+    let start_char = result
+        .pointer("/range/start/character")
+        .and_then(|v| v.as_u64())
+        .expect("range start character");
+    // Pre-fix: landed on the `type` keyword at line 0, char 0.
+    assert_eq!(
+        (start_line, start_char),
+        (1, 2),
+        "goto-def must land on the `Circle` variant name (line 1, char 2), \
+         not the `type` keyword; got {resp}"
     );
-    assert!(
-        renamed.starts_with("pub let "),
-        "must not corrupt the `pub` keyword; got:\n{renamed}"
-    );
-    assert!(
-        !renamed.contains("pub let counter"),
-        "old name must be gone; got:\n{renamed}"
-    );
-    assert!(
-        renamed.contains("println(ctr)"),
-        "use site should be renamed; got:\n{renamed}"
-    );
-    client.shutdown();
-}
-
-// ── DX-2: rename does not corrupt receiver via field-name symbol collision ──
-
-#[test]
-fn rename_let_does_not_corrupt_record_field_via_symbol_collision() {
-    // Pre-fix: top-level `let name` shares a `Symbol` with the record
-    // field `name` in `Person { name: String, ... }`. The FieldAccess
-    // arm in `collect_references_in_expr` fired on `r.name` and pushed
-    // the receiver's span (the `r`), so renaming the let mangled
-    // `r.name` into `<newname>.name`.
-    let source = "type Person { name: String, age: Int }\nlet name = \"Alice\"\nfn main() {\n  let r = Person { name: \"Bob\", age: 30 }\n  println(name)\n  println(r.name)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("rename_let_field_collision");
-    client.did_open_and_wait(&uri, source);
-
-    // Cursor on `name` (the let): line 1, char=4 (after `let `).
-    let resp = client.request(
-        "textDocument/rename",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": 1, "character": 4 },
-            "newName": "alice"
-        }),
-    );
-    let result = resp.get("result").expect("rename has result");
-    assert!(
-        !result.is_null(),
-        "rename on let `name` must NOT return null; got {resp}"
-    );
-    let changes = result
-        .get("changes")
-        .and_then(|c| c.as_object())
-        .expect("rename result has changes");
-    let edits = changes
-        .get(&uri)
-        .and_then(|v| v.as_array())
-        .expect("file edits");
-
-    let renamed = apply_all_edits(source, edits);
-    // The let and its bare-Ident use site should be renamed.
-    assert!(
-        renamed.contains("let alice = \"Alice\""),
-        "rename should produce `let alice = \"Alice\"`; got:\n{renamed}"
-    );
-    assert!(
-        renamed.contains("println(alice)"),
-        "bare ident use should be renamed; got:\n{renamed}"
-    );
-    // The record field declaration must NOT be touched.
-    assert!(
-        renamed.contains("name: String"),
-        "record field declaration must be untouched; got:\n{renamed}"
-    );
-    // The record literal field must NOT be touched.
-    assert!(
-        renamed.contains("name: \"Bob\""),
-        "record literal field must be untouched; got:\n{renamed}"
-    );
-    // The receiver `r.name` must NOT be mangled — `r` stays as `r` and
-    // `.name` stays as `.name`. Specifically, pre-fix the receiver `r`
-    // got replaced with `alice`, producing `alice.name`.
-    assert!(
-        renamed.contains("r.name"),
-        "field access receiver must be untouched; got:\n{renamed}"
-    );
-    assert!(
-        !renamed.contains("alice.name"),
-        "must not have mangled `r.name` into `alice.name`; got:\n{renamed}"
-    );
-    client.shutdown();
-}
-
-// ── Destructuring let bail-out ─────────────────────────────────────
-
-#[test]
-fn rename_destructuring_let_is_handled_safely() {
-    // `let (a, b) = (1, 2)` — destructuring patterns at top-level have
-    // no single name span. Either the rename bails (returns null/empty)
-    // or it emits a correct edit that does NOT clobber the `let`
-    // keyword. Both shapes are acceptable; the regression we're
-    // guarding is "must not clobber `let`".
-    let source = "let (a, b) = (1, 2)\nfn main() {\n  println(a)\n  println(b)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("rename_destructure_let");
-    client.did_open_and_wait(&uri, source);
-
-    // Cursor on `a` in the destructuring pattern: line 0, char=5.
-    let resp = client.request(
-        "textDocument/rename",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": 0, "character": 5 },
-            "newName": "first"
-        }),
-    );
-    let result = resp.get("result").expect("rename has result");
-    if result.is_null() {
-        // Acceptable: destructuring rename may bail. Done.
-        client.shutdown();
-        return;
-    }
-    let changes = result
-        .get("changes")
-        .and_then(|c| c.as_object())
-        .expect("rename result has changes");
-    let edits = changes
-        .get(&uri)
-        .and_then(|v| v.as_array())
-        .expect("file edits");
-
-    let renamed = apply_all_edits(source, edits);
-    // The `let` keyword must be preserved regardless of whether or not
-    // the destructured leaf was renamed.
-    assert!(
-        renamed.starts_with("let "),
-        "must not corrupt the `let` keyword on destructuring let; got:\n{renamed}"
-    );
-    // If `a` was renamed, the LHS must contain `first` and the use
-    // sites must too. Not asserting strict equality so a "no-op rename"
-    // also passes.
-    if !renamed.contains("(a, b)") {
-        assert!(
-            renamed.contains("(first, b)"),
-            "if rename happened, leaf should be `first`; got:\n{renamed}"
-        );
-    }
     client.shutdown();
 }

@@ -76,15 +76,15 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
     // purpose — it never existed; the real mapper is `type_name_for_impl`.
     let expectations: &[(usize, &str)] = &[
         // inference.rs primitive-dispatch comment block.
-        (7925, "fn register_auto_derived_impls_for"),
+        (7993, "fn register_auto_derived_impls_for"),
         (2045, r#"Type::Channel(_) => Some(intern("Channel"))"#),
         (2056, r#"Type::Fun(_, _) => Some(intern("Fn"))"#),
         // dispatch.rs compare-arm comment block.
         (
-            7825,
+            7893,
             r#"register_auto_derived_impls_for(checker, &["List"]"#,
         ),
-        (7822, r#""Unit""#),
+        (7890, r#""Unit""#),
     ];
 
     let mut expected_lines: BTreeSet<usize> = BTreeSet::new();

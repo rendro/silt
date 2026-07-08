@@ -56,10 +56,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 collect_pattern_names(p, locals);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
-            // Round-62 B9: anon-record destructure (`let { x, y } = p`)
-            // also binds shorthand fields. Mirror the nominal `Record`
-            // arm's behaviour.
+        PatternKind::Record { fields, .. } => {
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
@@ -71,12 +68,48 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 }
             }
         }
+        PatternKind::AnonRecord { fields, rest } => {
+            // Round-62 B9: anon-record destructure (`let { x, y } = p`)
+            // also binds shorthand fields. Round-101: the named rest
+            // binder (`{ x, ...rest }`) binds too — mirror the
+            // typechecker's `collect_pattern_vars`.
+            for (name, sub) in fields {
+                if let Some(p) = sub {
+                    collect_pattern_names(p, locals);
+                } else {
+                    locals.push(LocalVar {
+                        name: name.to_string(),
+                        ty: None,
+                    });
+                }
+            }
+            if let Some(r) = rest {
+                locals.push(LocalVar {
+                    name: r.to_string(),
+                    ty: None,
+                });
+            }
+        }
         PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_names(p, locals);
             }
             if let Some(r) = rest {
                 collect_pattern_names(r, locals);
+            }
+        }
+        PatternKind::Or(alts) => {
+            // Round-101: all alternatives are validated to bind the same
+            // names; mirror `collect_pattern_vars` and take the first.
+            if let Some(p) = alts.first() {
+                collect_pattern_names(p, locals);
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                collect_pattern_names(p, locals);
             }
         }
         _ => {}
@@ -244,6 +277,47 @@ mod tests {
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
         assert!(names.contains(&"x"), "should contain 'x'");
         assert!(names.contains(&"y"), "should contain 'y'");
+    }
+
+    #[test]
+    fn test_locals_when_let_anon_record_rest_binder() {
+        // Round-101 GAP lock: `when let {x, ...rest} = p` binds BOTH the
+        // shorthand field `x` and the named rest binder `rest`. Pre-fix,
+        // the AnonRecord arm destructured `{ fields, .. }` and dropped
+        // the rest symbol, so completion never offered `rest`.
+        let source = "fn f(p) {\n  when let {x, ...rest} = p else { return 0 }\n  0\n}";
+        let program = parse_and_check(source);
+
+        let locals = locals_at_offset(&program, source.len() - 2);
+        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
+        assert!(
+            names.contains(&"x"),
+            "should contain shorthand 'x': {names:?}"
+        );
+        assert!(
+            names.contains(&"rest"),
+            "should contain rest binder 'rest': {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_locals_match_map_and_or_binders() {
+        // Round-101 GAP lock: match-arm Map patterns (`#{\"k\": v}`) and
+        // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to
+        // the `_ => {}` catch-all so completion missed the binder.
+        let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m { #{\"k\": v} -> v, _ -> 0 }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";
+        let program = parse_and_check(source);
+
+        let locals = locals_at_offset(&program, source.len() - 2);
+        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
+        assert!(
+            names.contains(&"v"),
+            "should contain map binder 'v': {names:?}"
+        );
+        assert!(
+            names.contains(&"v2"),
+            "should contain or-pattern binder 'v2': {names:?}"
+        );
     }
 
     #[test]

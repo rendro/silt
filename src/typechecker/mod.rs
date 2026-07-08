@@ -5654,15 +5654,15 @@ impl TypeChecker {
                 TypeBodyKind::Enum(variants) => {
                     // Convert resolved VariantInfo back into AST EnumVariant
                     // shape (the auto_derive helpers operate on AST forms).
-                    // We only need .name and .fields.len() — the field
-                    // TypeExprs are not actually inspected by the
-                    // synthesis (it just emits .compare() / .hash() /
-                    // .display() / .equal() calls on positionally-named
-                    // bound vars).
+                    // Only .name and .fields.len() matter — the synthesis
+                    // just emits .compare() / .hash() / .display() /
+                    // .equal() calls on positionally-named bound vars, so
+                    // name_span and the field TypeExprs are placeholders.
                     let ast_variants: Vec<EnumVariant> = variants
                         .iter()
                         .map(|v| EnumVariant {
                             name: v.name,
+                            name_span: Span::synthetic(),
                             // Synthesize `Wildcard` placeholder TypeExprs;
                             // the auto_derive helpers only count them.
                             fields: v
@@ -6674,6 +6674,15 @@ impl TypeChecker {
                 );
                 continue;
             }
+            // Round 101: the bound's arity must match the trait's
+            // declared param count in BOTH directions (see
+            // check_where_bound_arity). Skip registering the malformed
+            // bound — a length-mismatched arg list would sail past
+            // verify_trait_obligation's equal-length zip guard and
+            // degrade to a bare "implements the trait" check.
+            if !self.check_where_bound_arity(*trait_name, trait_args.len(), ti.span) {
+                continue;
+            }
             // Resolve the bound's trait args through the impl's
             // param_map so any lowercase tyvars from the impl header
             // bind to the impl's fresh tyvars. For concrete args
@@ -7074,6 +7083,13 @@ impl TypeChecker {
                     );
                     continue;
                 }
+                // Round 101: bound arity must match the trait's declared
+                // param count (see check_where_bound_arity — it dedupes
+                // against the identical diagnostic the method body's
+                // check_fn_body_with_name pass emits for the same span).
+                if !self.check_where_bound_arity(*trait_name, trait_args.len(), method.span) {
+                    continue;
+                }
                 // Resolve the bound's trait args through the method's
                 // param_map (which sees both the impl-level binders
                 // and any method-local type annos). Empty for
@@ -7153,6 +7169,58 @@ impl TypeChecker {
             }
             env.define(key, scheme);
         }
+    }
+
+    /// Round 60 G1, extended round 101: a where-clause bound must
+    /// supply exactly the trait's declared number of type arguments.
+    /// Returns `true` when the arity matches (or the trait is unknown
+    /// — the caller has already reported that).
+    ///
+    /// Both directions are soundness-relevant, not just hygiene: the
+    /// parameterized-trait verification in `verify_trait_obligation`
+    /// only runs its round-58 positional arg-compatibility zip when
+    /// `impl_args.len() == bound_trait_args.len()`, so a
+    /// length-mismatched bound like `where a: Cast(Int, String)` on a
+    /// one-param `trait Cast(to)` silently degraded to a bare
+    /// "implements Cast" check — matching (and dispatching through!)
+    /// any `Cast(*)` impl. Zero args on a parameterized trait
+    /// additionally leaves the implied params unresolved (the original
+    /// round-60 direction).
+    ///
+    /// Callers: the fn-level where-clause loop in
+    /// `check_fn_body_with_name`, and the impl-level and method-level
+    /// where-clause loops in `register_trait_impl`. Method-level
+    /// bounds pass through BOTH the registration site and the body
+    /// check, so the emit dedupes on (message, span) to keep the
+    /// diagnostic single.
+    pub(super) fn check_where_bound_arity(
+        &mut self,
+        trait_name: Symbol,
+        got: usize,
+        span: Span,
+    ) -> bool {
+        let Some(info) = self.traits.get(&trait_name) else {
+            return true;
+        };
+        let n = info.params.len();
+        if got == n {
+            return true;
+        }
+        let msg = format!(
+            "trait '{}' expects {} {} in bound, got {}",
+            resolve(trait_name),
+            n,
+            inference::plural(n, "type argument", "type arguments"),
+            got
+        );
+        if !self
+            .errors
+            .iter()
+            .any(|e| e.message == msg && e.span == span)
+        {
+            self.error(msg, span);
+        }
+        false
     }
 }
 

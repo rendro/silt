@@ -18,6 +18,15 @@
 //! Lt/Gt/Leq/Geq (same dual-emit bug), and applied the snapshot pattern
 //! defensively to Eq/Neq to close the latent door.
 //!
+//! Round 100: the mechanism moved into
+//! `TypeChecker::unify_binop_operands` (which also fixes the
+//! expected/got DIRECTION — see
+//! `tests/binop_mismatch_direction_round100_tests.rs`). WHICH of the
+//! two diagnostics is emitted changed for lone out-of-domain operands
+//! (the operand-domain message now wins over a misdirected mismatch),
+//! but the single-diagnostic invariant locked here is unchanged: these
+//! tests count mismatch + domain and assert the sum is exactly 1.
+//!
 //! See `src/typechecker/inference.rs` BinOp::Add, BinOp::Sub|Mul|Mod,
 //! BinOp::Div, and BinOp::Eq|Neq|Lt|Gt|Leq|Geq arms.
 
@@ -332,7 +341,13 @@ fn main() {
 /// Ascribed-let variant for Div, mirroring
 /// `tests/ascribed_let_binop_single_diagnostic_tests.rs`. Verifies the
 /// `Type::Error` cascade-suppression branch (mod.rs:741) catches the
-/// outer ascription so the mismatch isn't re-emitted.
+/// outer ascription so the diagnostic isn't re-emitted.
+///
+/// Round 100: `String` is outside the `/` operand domain while `Int` is
+/// inside it, so the lone diagnostic is now the operand-domain message
+/// naming the true offender ("operator '/' requires ..., got 'String'")
+/// instead of a misdirected "expected Int, got String" mismatch. The
+/// single-print invariant is unchanged.
 #[test]
 fn test_ascribed_let_div_mismatch_prints_once() {
     let errs = type_errors(
@@ -344,16 +359,18 @@ fn main() {
 }
 "#,
     );
-    let mismatch_count = errs
-        .iter()
-        .filter(|e| {
-            e.contains("type mismatch: expected Int, got String")
-                || (e.contains("expected Int") && e.contains("got String"))
-        })
-        .count();
+    let (mismatch, domain) = count_binop_diagnostics(&errs, "'/'");
     assert_eq!(
-        mismatch_count, 1,
-        "expected the 'expected Int, got String' mismatch exactly once for ascribed-let div; \
-         got {mismatch_count} across:\n{errs:?}"
+        mismatch + domain,
+        1,
+        "expected exactly one of (type mismatch | operator-domain) for ascribed-let div, \
+         got mismatch={mismatch}, domain={domain}, all errors:\n{}",
+        errs.join("\n")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("operator '/' requires Int, Float, or ExtFloat, got 'String'")),
+        "expected the operand-domain diagnostic naming the String offender, got:\n{}",
+        errs.join("\n")
     );
 }

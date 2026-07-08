@@ -32,7 +32,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "completion.rs -> builtin_trait_decls def",
         "src/typechecker/mod.rs",
-        7589,
+        7657,
         "fn builtin_trait_decls",
     ),
     // vm/runtime.rs:450 — "Rust 1.80+ thread-local env SAFETY note"
@@ -70,18 +70,18 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
         2362,
         "BinOp::And | BinOp::Or => unreachable!()",
     ),
-    // workspace.rs:284 — "FieldAccess.span is the receiver span" construction
+    // workspace.rs:444 — "FieldAccess.span is the receiver span" construction
     (
         "workspace.rs -> FieldAccess construction",
         "src/parser.rs",
-        2598,
+        2602,
         "ExprKind::FieldAccess",
     ),
     // duplicate_module_not_imported_tests.rs:4 — typechecker "is not imported"
     (
         "duplicate_module test -> typechecker 'is not imported'",
         "src/typechecker/inference.rs",
-        2909,
+        2903,
         "is not imported",
     ),
     // cli/pipeline.rs:454 — compiler "is not imported" diagnostics (3 sites)

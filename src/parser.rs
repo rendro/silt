@@ -1618,7 +1618,7 @@ impl Parser {
             if self.at(&Token::RBrace) {
                 break;
             }
-            let (name, _) = self.expect_ident()?;
+            let (name, name_span) = self.expect_ident()?;
             let fields = if self.peek() == &Token::LParen {
                 self.advance();
                 let mut fs = Vec::new();
@@ -1632,7 +1632,11 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            variants.push(EnumVariant { name, fields });
+            variants.push(EnumVariant {
+                name,
+                name_span,
+                fields,
+            });
             self.expect_list_sep("enum variant list", '}', &Token::RBrace)?;
         }
         Ok(TypeBody::Enum(variants))

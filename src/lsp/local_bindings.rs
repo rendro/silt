@@ -402,7 +402,7 @@ fn collect_pattern_bindings(
                 }
             }
         }
-        PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::AnonRecord { fields, rest } => {
             // Round-62 B9: row-polymorphism destructure
             // (`let { x, y } = anon_record`). Mirror the `Record` arm.
             // The expr type may be an anonymous record type; for now we
@@ -446,6 +446,38 @@ fn collect_pattern_bindings(
                         });
                     }
                 }
+            }
+            // Round-101: the named rest binder (`{ x, ...rest }`) binds
+            // `rest` to a record of the unmatched fields — mirror the
+            // typechecker's `collect_pattern_vars`.
+            if let Some(r) = rest {
+                let name_str = resolve(*r);
+                if let Some(off) = find_ident_in_range(source, search_start, search_end, &name_str)
+                {
+                    bindings.push(LocalBinding {
+                        name: *r,
+                        binding_offset: off,
+                        binding_len: name_str.len(),
+                        scope_start: search_end,
+                        scope_end,
+                        ty: None,
+                    });
+                }
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                collect_pattern_bindings(
+                    p,
+                    source,
+                    search_start,
+                    search_end,
+                    None,
+                    scope_end,
+                    bindings,
+                );
             }
         }
         PatternKind::List(pats, rest) => {

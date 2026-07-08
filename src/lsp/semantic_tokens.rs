@@ -406,9 +406,19 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             emit_binding_token(source, &pattern.span, *name, TT_VARIABLE, out);
         }
-        PatternKind::Tuple(pats) | PatternKind::List(pats, _) | PatternKind::Or(pats) => {
+        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
                 emit_pattern_binding_tokens(p, source, out);
+            }
+        }
+        PatternKind::List(pats, rest) => {
+            for p in pats {
+                emit_pattern_binding_tokens(p, source, out);
+            }
+            // Round-101: the rest sub-pattern (`[h, ..t]`) binds `t`;
+            // it carries its own span, so recursion emits a precise token.
+            if let Some(r) = rest {
+                emit_pattern_binding_tokens(r, source, out);
             }
         }
         PatternKind::Constructor { args: fields, .. } => {
@@ -416,7 +426,7 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
                 emit_pattern_binding_tokens(p, source, out);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             // Round-62 B8 + B9: shorthand binders (`{ x, y }`) bind the
             // field name as a local; emit a VARIABLE token for them so
             // they highlight consistently with the bare `let x = ...` case.
@@ -431,6 +441,29 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
                 } else if resolve(*fname) != "_" {
                     emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
                 }
+            }
+        }
+        PatternKind::AnonRecord { fields, rest } => {
+            // Same shorthand handling as the nominal `Record` arm above.
+            // Round-101: the named rest binder (`{ x, ...rest }`) binds
+            // `rest` too — emit a VARIABLE token for it (same
+            // pattern-span imprecision as shorthand fields).
+            for (fname, sub) in fields {
+                if let Some(p) = sub {
+                    emit_pattern_binding_tokens(p, source, out);
+                } else if resolve(*fname) != "_" {
+                    emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
+                }
+            }
+            if let Some(r) = rest {
+                emit_binding_token(source, &pattern.span, *r, TT_VARIABLE, out);
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                emit_pattern_binding_tokens(p, source, out);
             }
         }
         _ => {}
@@ -585,6 +618,55 @@ mod tests {
         // New line: delta_line = 2, delta_start = absolute col = 4
         assert_eq!(encoded[1].delta_line, 2);
         assert_eq!(encoded[1].delta_start, 4);
+    }
+
+    /// Parse `source` and return the pattern of the first `let` stmt in
+    /// the first fn's body block.
+    fn first_let_pattern(source: &str) -> Pattern {
+        let tokens = crate::lexer::Lexer::new(source).tokenize().expect("lex");
+        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let Some(Decl::Fn(f)) = program.decls.first() else {
+            panic!("fixture must start with a fn decl");
+        };
+        let ExprKind::Block(stmts) = &f.body.kind else {
+            panic!("fn body must be a block");
+        };
+        let Some(Stmt::Let { pattern, .. }) = stmts.first() else {
+            panic!("first stmt must be a let");
+        };
+        pattern.clone()
+    }
+
+    #[test]
+    fn pattern_binding_tokens_cover_list_rest_binder() {
+        // Round-101 GAP lock: `let [h, ..t] = ...` must emit a VARIABLE
+        // token for the rest binder `t`. Pre-fix, the List arm matched
+        // `List(pats, _)` and discarded the rest sub-pattern.
+        let source = "fn main() {\n  let [h, ..t] = [1, 2, 3]\n  t\n}";
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        assert_eq!(
+            out.len(),
+            2,
+            "expected VARIABLE tokens for BOTH `h` and `...t`: {out:?}"
+        );
+    }
+
+    #[test]
+    fn pattern_binding_tokens_cover_anon_record_rest_binder() {
+        // Round-101 GAP lock: `let {x, ...rest} = ...` must emit a
+        // VARIABLE token for the named rest binder `rest`. Pre-fix, the
+        // AnonRecord arm destructured `{ fields, .. }`, dropping it.
+        let source = "fn main() {\n  let {x, ...rest} = p\n  x\n}";
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        assert_eq!(
+            out.len(),
+            2,
+            "expected VARIABLE tokens for BOTH `x` and `...rest`: {out:?}"
+        );
     }
 
     #[test]

@@ -54,7 +54,15 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                         defs.insert(
                             v.name,
                             DefInfo {
-                                span: t.span,
+                                // Use the variant-name identifier's span
+                                // (parser-recorded), NOT the enum decl's
+                                // span: `t.span` sits on the `type`
+                                // keyword, so rename of a variant from a
+                                // usage site text-edited the keyword into
+                                // the new name (`Disc Shape { ... }`) and
+                                // goto-def landed on `type`. Same bug
+                                // class as round-63 B1 / round-75 DX-2.
+                                span: v.name_span,
                                 ty: None,
                                 params: vec![],
                                 // Variants inherit the enum's doc
@@ -235,7 +243,7 @@ fn collect_let_pattern_defs(
                 }
             }
         }
-        PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::AnonRecord { fields, rest } => {
             // Round-62 B9: anonymous-record destructure at top-level
             // (`let { x, y } = some_anon_record`). Mirrors the nominal
             // `Record` case above.
@@ -265,6 +273,32 @@ fn collect_let_pattern_defs(
                         },
                     );
                 }
+            }
+            // Round-101: the named rest binder (`{ x, ...rest }`) binds
+            // `rest` — mirror the typechecker's `collect_pattern_vars`.
+            // Like a shorthand field, it has no dedicated Pattern node,
+            // so fall back to the decl span.
+            if let Some(r) = rest
+                && resolve(*r) != "_"
+            {
+                defs.insert(
+                    *r,
+                    DefInfo {
+                        span: decl_span,
+                        ty: None,
+                        params: vec![],
+                        doc: None,
+                        declared_effects: None,
+                        inferred_effects: None,
+                    },
+                );
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                collect_let_pattern_defs(p, decl_span, None, None, None, false, defs);
             }
         }
         PatternKind::List(pats, rest) => {

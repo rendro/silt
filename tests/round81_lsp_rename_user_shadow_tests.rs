@@ -391,12 +391,13 @@ fn rename_user_fn_decl_shadowing_builtin_println_succeeds() {
 /// the LSP started rewriting the builtin `Int` type — that's the bug
 /// we are guarding against.
 ///
-/// Note: this test exercises the boundary where `find_ident_at_offset`
-/// returns `None` for a type-annotation cursor (TypeExpr nodes are not
-/// walked for rename today). The DX-G1 fix preserves that conservative
-/// behaviour: no user binding for `Int` is in scope here, so the gate
-/// falls through to `is_user_renameable("Int") == false` if and when
-/// the cursor does resolve to the symbol.
+/// Note: since round-101, TypeExpr nodes ARE walked, so the cursor on
+/// the `Int` annotation resolves to the `Int` symbol. No user binding
+/// for `Int` is in scope here, so the gate falls through to
+/// `is_user_renameable("Int") == false` and the server answers with an
+/// explicit rejection (previously `find_ident_at_offset` returned
+/// `None` for type-annotation cursors and the server answered `null`;
+/// both shapes are accepted below).
 #[test]
 fn rename_use_site_of_actual_builtin_int_is_rejected() {
     let mut client = LspClient::spawn();

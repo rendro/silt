@@ -617,10 +617,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                 collect_pattern_names(p, names);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
-            // Round-62 B9: anonymous record destructure
-            // (`let { x, y } = anon`) binds shorthand fields just like
-            // the nominal record case.
+        PatternKind::Record { fields, .. } => {
             for (field_name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, names);
@@ -628,6 +625,24 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                     // Shorthand field: `{ x }` binds `x`
                     names.push(intern::resolve(*field_name));
                 }
+            }
+        }
+        PatternKind::AnonRecord { fields, rest } => {
+            // Round-62 B9: anonymous record destructure
+            // (`let { x, y } = anon`) binds shorthand fields just like
+            // the nominal record case. Round-101: the named rest binder
+            // (`{ x, ...rest }`) binds too — mirror the typechecker's
+            // `collect_pattern_vars`.
+            for (field_name, sub) in fields {
+                if let Some(p) = sub {
+                    collect_pattern_names(p, names);
+                } else {
+                    // Shorthand field: `{ x }` binds `x`
+                    names.push(intern::resolve(*field_name));
+                }
+            }
+            if let Some(r) = rest {
+                names.push(intern::resolve(*r));
             }
         }
         PatternKind::List(pats, rest) => {
@@ -638,7 +653,21 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                 collect_pattern_names(rest_pat, names);
             }
         }
-        _ => {} // Wildcard, Int, Float, Bool, StringLit, Or, Range, etc.
+        PatternKind::Or(alts) => {
+            // Round-101: all alternatives are validated to bind the same
+            // names; mirror `collect_pattern_vars` and take the first.
+            if let Some(p) = alts.first() {
+                collect_pattern_names(p, names);
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                collect_pattern_names(p, names);
+            }
+        }
+        _ => {} // Wildcard, Int, Float, Bool, StringLit, Range, Pin, etc.
     }
 }
 
