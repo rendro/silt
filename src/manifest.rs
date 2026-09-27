@@ -580,6 +580,15 @@ fn convert_git_dependency(
         })?
         .to_string();
 
+    // The URL is handed to `git` at lock time, and this manifest may be
+    // a transitive dependency's, so it is untrusted input: an
+    // option-shaped value such as `--upload-pack=<cmd>` would make git
+    // run `<cmd>`. Every manifest goes through this one check.
+    crate::git::validate_git_url(&url).map_err(|e| ManifestError::Validation {
+        message: format!("dependency `{name}`: {e}"),
+        path: manifest_path.to_path_buf(),
+    })?;
+
     // Tally which ref forms are present so we can give a tailored error
     // for the multiple-forms case rather than just "missing".
     let mut ref_forms: Vec<(&str, &toml::Value)> = Vec::new();

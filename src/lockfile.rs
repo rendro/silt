@@ -161,15 +161,19 @@ impl fmt::Display for LockfileError {
                 path.display()
             ),
             LockfileError::ManifestError(err) => write!(f, "{err}"),
+            // The URL and the ref come from a manifest, possibly a
+            // transitive dependency's: escaped so a newline or an
+            // escape character in them cannot forge a line of output.
             LockfileError::GitOperation {
                 url,
                 ref_spec,
                 source,
             } => write!(
                 f,
-                "git dependency `{url}` ({} = `{}`): {source}",
+                "git dependency `{}` ({} = `{}`): {source}",
+                git::escape_for_display(url),
                 ref_spec.kind(),
-                ref_spec.as_ref_string()
+                git::escape_for_display(ref_spec.as_ref_string())
             ),
         }
     }
@@ -900,6 +904,21 @@ fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
                                 path: path.to_path_buf(),
                             })?
                             .to_string();
+                        // `rev` names the cache directory the package is
+                        // loaded from. A hand-edited value such as
+                        // `../../../../x` would make silt load code from
+                        // an arbitrary directory, so only a plain
+                        // hexadecimal commit id is accepted.
+                        if !git::is_valid_sha_shape(&resolved_sha) {
+                            return Err(LockfileError::Parse {
+                                message: format!(
+                                    "[[package]] `{name}` git source has invalid `rev` `{}`: \
+                                     expected a commit SHA of 7 to 64 hexadecimal characters",
+                                    git::escape_for_display(&resolved_sha)
+                                ),
+                                path: path.to_path_buf(),
+                            });
+                        }
                         let branch = src_table.get("branch").and_then(|v| v.as_str());
                         let tag = src_table.get("tag").and_then(|v| v.as_str());
                         let ref_spec = match (branch, tag) {
@@ -1022,6 +1041,75 @@ mod tests {
         let bad = "version = 999\n";
         let err = parse_lockfile(bad, Path::new("x.lock")).unwrap_err();
         assert!(matches!(err, LockfileError::Parse { .. }));
+    }
+
+    /// A lockfile with one git package whose `rev` is `rev`.
+    fn lockfile_with_git_rev(rev: &str) -> String {
+        format!(
+            "version = 1\n\n[[package]]\nname = \"remote\"\nversion = \"0.1.0\"\n\
+             source = {{ git = \"https://example.com/r.git\", branch = \"main\", \
+             rev = \"{rev}\" }}\n\
+             checksum = \"sha256:deadbeef\"\n"
+        )
+    }
+
+    #[test]
+    fn rejects_git_rev_that_is_not_a_commit_id() {
+        // `rev` names the cache directory a package is loaded from, so
+        // a path-shaped value must never survive parsing.
+        for rev in ["../../../../x", "abc1234/../x", "-abc1234", "main", ""] {
+            let text = lockfile_with_git_rev(rev);
+            match parse_lockfile(&text, Path::new("x.lock")) {
+                Err(LockfileError::Parse { message, .. }) => assert!(
+                    message.contains("`remote`") && message.contains("invalid `rev`"),
+                    "unexpected message for rev {rev:?}: {message}"
+                ),
+                other => panic!("rev {rev:?} must be a parse error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn git_operation_error_escapes_the_url_and_the_ref() {
+        let hostile = "main\nFORGED\u{1b}[2K\u{202e}";
+        let escaped = "main\\nFORGED\\u{1b}[2K\\u{202e}";
+        for ref_spec in [
+            GitRef::Branch(hostile.into()),
+            GitRef::Tag(hostile.into()),
+            GitRef::Rev(hostile.into()),
+        ] {
+            let rendered = LockfileError::GitOperation {
+                url: format!("https://example.com/{hostile}"),
+                ref_spec: ref_spec.clone(),
+                source: GitError::RefNotFound {
+                    url: "https://example.com/pkg.git".into(),
+                    ref_spec,
+                },
+            }
+            .to_string();
+            assert!(
+                rendered.is_ascii() && !rendered.chars().any(|c| c.is_control()),
+                "the rendered error must be one printable line: {rendered:?}"
+            );
+            // Once for the URL, once for the ref, once in the source.
+            assert_eq!(rendered.matches(escaped).count(), 3, "{rendered}");
+        }
+    }
+
+    #[test]
+    fn accepts_git_rev_of_either_hash_width() {
+        for rev in ["abc1234".to_string(), "a".repeat(40), "b".repeat(64)] {
+            let text = lockfile_with_git_rev(&rev);
+            let lock = parse_lockfile(&text, Path::new("x.lock")).expect("valid rev parses");
+            assert_eq!(
+                lock.packages[0].source,
+                LockedSource::Git {
+                    url: "https://example.com/r.git".into(),
+                    ref_spec: GitRef::Branch("main".into()),
+                    resolved_sha: rev,
+                }
+            );
+        }
     }
 
     #[test]
