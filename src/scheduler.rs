@@ -5,7 +5,9 @@
 //! them when data arrives.
 
 use parking_lot::{Condvar, Mutex};
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -56,6 +58,41 @@ macro_rules! fire_hook {
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
 const MAX_TASKS: usize = 100_000;
+
+/// Stack size of every scheduler worker thread, in bytes.
+///
+/// A task runs on a worker's native stack, and silt recursion that goes
+/// through a builtin (a callback passed to `list.map`, a trait method
+/// called from a builtin) nests native frames. The platform default for
+/// a spawned thread (2 MiB) overflows at depths that the same code
+/// handles on the main thread, and a native stack overflow aborts the
+/// whole process.
+///
+/// On 64-bit targets the value equals the main thread's reserve
+/// (`SILT_STACK_SIZE` in `src/main.rs`, 256 MiB), so a program has the
+/// same depth available inside `task.spawn` as outside of it. The size
+/// is a reservation of address space: memory is committed page by page
+/// as the stack grows, so a worker that never recurses deeply costs
+/// what it cost before. There are `max(cores, 2)` workers; on a
+/// 64-core machine they reserve 16 GiB of a 128 TiB address space.
+///
+/// On 32-bit targets the address space is the limit (2 to 4 GiB for
+/// everything), so workers get 16 MiB there: 8 times the default, and
+/// 64 workers still fit.
+///
+/// The worker passes the same value to the VM as its native stack
+/// budget, which is what the VM's recursion-depth guard measures
+/// against.
+pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
+    256 * 1024 * 1024
+} else {
+    16 * 1024 * 1024
+};
+
+/// Upper bound on the failed tasks kept for the report of failures that
+/// nobody joined. A long-running program whose tasks keep failing must
+/// not grow without bound; what goes beyond the bound is counted.
+const MAX_RECORDED_FAILURES: usize = 64;
 
 /// Test-only process-wide "park-entry pause" in microseconds. When set
 /// to a non-zero value, every worker that enters the Blocked arm for a
@@ -368,6 +405,21 @@ struct SchedulerInner {
     /// Monotonic id source for `main_waiters` entries. Used by the
     /// `MainWaiterGuard` Drop to find its own entry on deregister.
     next_main_waiter_id: AtomicU64,
+    /// Tasks that ended with an error, kept for the report of failures
+    /// that nobody joined. See `report_unjoined_failures`.
+    failed_tasks: Mutex<FailedTasks>,
+}
+
+/// The failed tasks of one scheduler, up to `MAX_RECORDED_FAILURES`.
+#[derive(Default)]
+struct FailedTasks {
+    /// Handles of tasks that ended with an error. Whether a join has
+    /// received the error since is read from the handle, at report
+    /// time.
+    handles: Vec<Arc<TaskHandle>>,
+    /// Number of failed tasks that were not recorded because `handles`
+    /// was full of failures that nobody had joined.
+    not_recorded: usize,
 }
 
 impl Default for Scheduler {
@@ -410,16 +462,21 @@ impl Scheduler {
                 wake_graph: WakeGraph::new(),
                 main_waiters: Mutex::new(Vec::new()),
                 next_main_waiter_id: AtomicU64::new(0),
+                failed_tasks: Mutex::new(FailedTasks::default()),
             }),
             workers: Mutex::new(None),
         }
     }
 
     /// Ensure worker threads are running.
-    fn ensure_workers(&self) {
+    ///
+    /// Returns an error if not a single worker thread could be started.
+    /// If some but not all could be started, the scheduler runs with
+    /// those.
+    fn ensure_workers(&self) -> Result<(), String> {
         let mut guard = self.workers.lock();
         if guard.is_some() {
-            return;
+            return Ok(());
         }
 
         let num_workers = thread::available_parallelism()
@@ -431,9 +488,24 @@ impl Scheduler {
         let mut handles = Vec::with_capacity(num_workers + 1);
         for _ in 0..num_workers {
             let inner = self.inner.clone();
-            handles.push(thread::spawn(move || {
-                worker_loop(inner);
-            }));
+            let spawned = thread::Builder::new()
+                .stack_size(WORKER_STACK_BYTES)
+                .spawn(move || {
+                    crate::vm::set_native_stack_budget(WORKER_STACK_BYTES);
+                    worker_loop(inner);
+                });
+            match spawned {
+                Ok(handle) => handles.push(handle),
+                Err(e) if handles.is_empty() => {
+                    return Err(format!(
+                        "cannot start a scheduler worker thread \
+                         (stack size {} MiB): {e}",
+                        WORKER_STACK_BYTES / (1024 * 1024)
+                    ));
+                }
+                // The workers started so far run the tasks.
+                Err(_) => break,
+            }
         }
         // Always start the watchdog thread. The registry is empty
         // unless something (SILT_IO_TIMEOUT or task.deadline) supplies
@@ -444,6 +516,30 @@ impl Scheduler {
             watchdog_loop(registry);
         }));
         *guard = Some(handles);
+        drop(guard);
+        // The thread that starts the workers is the one that runs the
+        // program. When it ends, the program has ended: see
+        // `StartedSchedulers`.
+        let _ = STARTED_HERE.try_with(|started| {
+            started
+                .schedulers
+                .borrow_mut()
+                .push(Arc::downgrade(&self.inner));
+        });
+        Ok(())
+    }
+
+    /// Report on stderr every task of this scheduler that failed and
+    /// whose error no `task.join` has received. Each failure is
+    /// reported once, so the call can be repeated. Returns the number
+    /// of failures that this call reported.
+    ///
+    /// It runs by itself when the scheduler is dropped and when the
+    /// thread that spawned the first task ends. A caller that ends the
+    /// process in another way (`std::process::exit`) calls it before
+    /// that.
+    pub fn report_unjoined_failures(&self) -> usize {
+        report_unjoined_failures(&self.inner)
     }
 
     /// Returns true if a deadlock has been detected.
@@ -518,7 +614,7 @@ impl Scheduler {
     /// Returns an error if the live-task count has reached the
     /// scheduler's hard task limit.
     pub fn submit(&self, task: Task) -> Result<(), String> {
-        self.ensure_workers();
+        self.ensure_workers()?;
         let current = self.inner.live_tasks.load(Ordering::SeqCst);
         if current >= MAX_TASKS {
             return Err(format!(
@@ -550,6 +646,9 @@ impl Scheduler {
 
 impl Drop for Scheduler {
     fn drop(&mut self) {
+        // The scheduler goes away with the program that used it: nobody
+        // can join a task of it any more.
+        let _ = report_unjoined_failures(&self.inner);
         self.inner.shutdown.store(true, Ordering::SeqCst);
         self.inner.watchdog.shutdown.store(true, Ordering::SeqCst);
         self.inner.condvar.notify_all();
@@ -649,7 +748,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 signal_progress(&inner);
             }
             SliceResult::Failed(err) => {
-                handle.complete(Err(vm.enrich_error(err)));
+                // A failure that no join receives is reported when the
+                // program ends, so it is recorded here. `fail` returns
+                // false if the task had been cancelled before: its
+                // handle keeps the cancellation as its result then.
+                if handle.fail(vm.enrich_error(err)) {
+                    record_failed_task(&inner, &handle);
+                }
                 inner.unsettled_tasks.fetch_sub(1, Ordering::SeqCst);
                 inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                 inner.wake_graph.on_complete(id);
@@ -768,9 +873,19 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         if let Some(handle_for_cancel) = handle_for_cancel_opt {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
+                            let waker_ch = ch.clone();
                             let reg = ch.register_recv_waker_guard(Box::new(move || {
-                                if let Some(task) = slot.lock().take() {
-                                    requeue(&inner2, task, false);
+                                // The slot lock is released before
+                                // anything else happens: see "Lock
+                                // order" on `make_cancel_cleanup`.
+                                let parked = slot.lock().take();
+                                match parked {
+                                    Some(task) => requeue(&inner2, task, false),
+                                    // The task was cancelled after the
+                                    // channel had chosen this waker. It
+                                    // will not receive, so the wake-up
+                                    // goes on to the next waiter.
+                                    None => waker_ch.rewake_waiters(),
                                 }
                             }));
                             // Re-install the cancel cleanup so it ALSO owns
@@ -817,8 +932,18 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // proceed), so our `set_cancel_cleanup` cannot
                             // clobber a newer arm's cleanup. We do the
                             // `set_cancel_cleanup` while still holding the
-                            // lock; the handle's `cancel_cleanup` Mutex is
-                            // a different lock, so no deadlock.
+                            // lock. That is the one permitted order of
+                            // the two locks (slot, then cleanup): the
+                            // handle never runs or drops a closure while
+                            // it holds the lock on its cleanup.
+                            //
+                            // A cancel can have taken the cleanup that
+                            // was installed before this arm out of the
+                            // handle, without having run it yet. It
+                            // then finds the task in the slot, and
+                            // releases the cleanup installed here (and
+                            // with it `reg`) itself: see
+                            // `make_cancel_cleanup`, step 3.
                             let slot_guard = task_slot.lock();
                             if slot_guard.is_some() {
                                 handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
@@ -880,9 +1005,16 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         if let Some(handle_for_cancel) = handle_for_cancel_opt {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
+                            let waker_ch = ch.clone();
                             let reg = ch.register_send_waker_guard(Box::new(move || {
-                                if let Some(task) = slot.lock().take() {
-                                    requeue(&inner2, task, false);
+                                let parked = slot.lock().take();
+                                match parked {
+                                    Some(task) => requeue(&inner2, task, false),
+                                    // Cancelled after the channel had
+                                    // chosen this waker: the wake-up
+                                    // goes on to the next waiter. See
+                                    // the Receive arm.
+                                    None => waker_ch.rewake_waiters(),
                                 }
                             }));
                             // See the Receive arm: cancel cleanup owns the
@@ -922,118 +1054,142 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         fire_hook!(on_park, "blocked_arm_entry_select");
                         // F10 regression-test widener. See Receive arm.
                         f10_park_setup_pause();
-                        // Register waker on ALL channels. First waker to fire
-                        // wakes the task AND deregisters the other siblings'
-                        // wakers — this prevents a leaked `waiting_receivers`
-                        // increment on the non-firing channels. Without this
-                        // cleanup a rendezvous sender on a sibling channel
-                        // would later see `waiting_receivers > 0` in
-                        // `try_send`, place a value into the handoff slot,
-                        // and return `Sent` with no real receiver waiting —
-                        // a broken rendezvous handshake.
-                        let cancelled = Arc::new(AtomicBool::new(false));
-                        // Shared vec of registration guards. Whoever wins
-                        // (winning waker OR cancel) drains the vec; dropping
-                        // the drained guards deregisters every still-pending
-                        // sibling from its channel. The winning waker's own
-                        // entry is also drained but its `Drop` is idempotent:
-                        // `remove_*_waker` returns false when the entry has
-                        // already been popped by `wake_recv` / `wake_send`.
-                        let entries: Arc<Mutex<Vec<WakerRegistration>>> =
-                            Arc::new(Mutex::new(Vec::with_capacity(ops.len())));
+                        // Register a waker on ALL channels. The first
+                        // waker to fire wakes the task AND deregisters
+                        // the wakers of the other arms — this prevents a
+                        // leaked `waiting_receivers` increment on the
+                        // channels that did not fire. Without it a
+                        // rendezvous sender on such a channel would
+                        // later see `waiting_receivers > 0` in
+                        // `try_send`, place a value into the handoff
+                        // slot, and return `Sent` with no real receiver
+                        // waiting — a broken rendezvous handshake.
+                        //
+                        // `park` holds the registrations of all arms.
+                        // Whoever ends the park (the first waker, or a
+                        // cancel) calls `end`, which deregisters every
+                        // arm that is still registered.
+                        let park = Arc::new(SelectPark::new(ops.len()));
                         // Replace the generic cancel_cleanup (set above)
                         // with a select-aware version: same wake-graph
-                        // teardown plus sibling-waker removal via the
-                        // guard vec. Select is never I/O, so the
-                        // watchdog-registry call is omitted.
+                        // teardown, and it ends `park`. Select is never
+                        // I/O, so the watchdog-registry call is omitted.
                         //
                         // NOTE: this arm intentionally does NOT route
-                        // through `make_cancel_cleanup` — it owns a
-                        // shared `entries` guard VEC plus a `cancelled`
-                        // flag (drained/raised here AND by the winning
-                        // waker), not a single moved-in guard, and the
-                        // statically-false `was_io` branch is dropped.
-                        // The differences are by design; do not "unify"
-                        // this with the other four sites.
+                        // through `make_cancel_cleanup` — it owns the
+                        // registrations of several arms (ended here AND
+                        // by the first waker), not a single moved-in
+                        // guard, and the statically-false `was_io`
+                        // branch is dropped. The differences are by
+                        // design; do not "unify" this with the other
+                        // four sites.
+                        //
+                        // The closure owns `end_park`, so the park ends
+                        // when the closure has run and also when it is
+                        // dropped without having run. The second case
+                        // is the generic cleanup that was installed
+                        // before this arm: a cancel can have taken it
+                        // out of the handle before this arm replaced
+                        // it, and it takes the task without knowing the
+                        // registrations of this arm. It releases
+                        // whatever cleanup the handle holds then (see
+                        // `make_cancel_cleanup`, step 3), which is this
+                        // closure.
                         let select_slot = task_slot.clone();
                         let select_inner = inner.clone();
                         let select_task_id = id;
-                        let cancelled_for_cancel = cancelled.clone();
-                        let entries_for_cancel = entries.clone();
-                        // Finding F10: see the Receive arm. A concurrent
-                        // `task.cancel(h)` between :626 and here may
-                        // already have drained `task_slot`; defend with
-                        // an `if let` and take the cancelled-mid-setup
-                        // path on `None`.
-                        let handle_for_select_opt =
-                            task_slot.lock().as_ref().map(|t| t.handle.clone());
-                        if let Some(handle_for_select) = handle_for_select_opt {
-                            handle_for_select.set_cancel_cleanup(Box::new(move || {
-                                if select_slot.lock().take().is_none() {
-                                    return;
+                        let end_park = EndSelectPark(park.clone());
+                        let select_cleanup: Box<dyn FnOnce() + Send> = Box::new(move || {
+                            let _end_park = end_park;
+                            let parked = select_slot.lock().take();
+                            let Some(task) = parked else {
+                                return;
+                            };
+                            task.handle.clear_cancel_cleanup();
+                            select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                            select_inner.wake_graph.on_complete(select_task_id);
+                            signal_progress(&select_inner);
+                        });
+                        // The check that the task is still parked and
+                        // the install happen under one hold of the slot
+                        // lock, as in the other arms. A concurrent
+                        // `task.cancel(h)` may already have taken the
+                        // task (finding F10, see the Receive arm); the
+                        // cancelled-mid-setup path below handles that.
+                        let installed = {
+                            let slot_guard = task_slot.lock();
+                            match slot_guard.as_ref() {
+                                Some(task) => {
+                                    task.handle.set_cancel_cleanup(select_cleanup);
+                                    true
                                 }
-                                // Prevent any still-racing waker from acting.
-                                cancelled_for_cancel.store(true, Ordering::Release);
-                                select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                select_inner.wake_graph.on_complete(select_task_id);
-                                signal_progress(&select_inner);
-                                // Drop every still-pending registration guard;
-                                // each Drop calls remove_*_waker.
-                                drop(std::mem::take(&mut *entries_for_cancel.lock()));
-                            }));
+                                None => false,
+                            }
+                        };
+                        if installed {
                             for (ch, kind) in ops.iter() {
-                                if cancelled.load(Ordering::Acquire) {
-                                    // An earlier iteration's waker fired
-                                    // inline during its double-check. Don't
-                                    // register further wakers that would
-                                    // leak into the channel queue.
+                                if park.is_over() {
+                                    // The waker of an earlier arm has
+                                    // fired, or the task was cancelled.
+                                    // Don't register further wakers
+                                    // that would leak into the channel
+                                    // queue.
                                     break;
                                 }
                                 let slot = task_slot.clone();
                                 let inner2 = inner.clone();
-                                let cancelled2 = cancelled.clone();
-                                let entries2 = entries.clone();
+                                let waker_park = park.clone();
+                                let waker_ch = ch.clone();
                                 let waker = Box::new(move || {
-                                    if cancelled2.load(Ordering::Acquire) {
-                                        return; // Another waker already fired
-                                    }
-                                    if let Some(task) = slot.lock().take() {
-                                        cancelled2.store(true, Ordering::Release);
-                                        // Drain and drop sibling guards —
-                                        // each Drop calls remove_*_waker.
-                                        // Our own entry's guard is also in
-                                        // the vec, but its Drop is a no-op
-                                        // because `wake_*` already popped it.
-                                        drop(std::mem::take(&mut *entries2.lock()));
-                                        requeue(&inner2, task, false);
+                                    let parked = if waker_park.is_over() {
+                                        None
+                                    } else {
+                                        slot.lock().take()
+                                    };
+                                    match parked {
+                                        Some(task) => {
+                                            // First to fire. `end`
+                                            // deregisters the other
+                                            // arms; the registration of
+                                            // this waker is among them,
+                                            // and removing it does
+                                            // nothing, because `wake_*`
+                                            // has taken it out of the
+                                            // queue.
+                                            waker_park.end();
+                                            requeue(&inner2, task, false);
+                                        }
+                                        // Another arm fired first, or
+                                        // the task was cancelled. The
+                                        // task will not perform this
+                                        // arm on account of this
+                                        // wake-up, so the wake-up goes
+                                        // on to the next waiter.
+                                        None => waker_ch.rewake_waiters(),
                                     }
                                 });
                                 let reg = match kind {
                                     SelectOpKind::Receive => ch.register_recv_waker_guard(waker),
                                     SelectOpKind::Send => ch.register_send_waker_guard(waker),
                                 };
-                                // If the waker fired inline during the
-                                // double-check inside register_*_waker, the
-                                // winning waker already drained the vec and
-                                // set `cancelled = true`. In that case drop
-                                // our fresh guard immediately (idempotent
-                                // no-op) and stop iterating.
-                                if !cancelled.load(Ordering::Acquire) {
-                                    entries.lock().push(reg);
-                                } else {
-                                    drop(reg);
+                                // If the park is over (the waker fired
+                                // inline during the double-check inside
+                                // register_*_waker, or on another
+                                // thread), `add` deregisters the fresh
+                                // guard. Stop iterating then.
+                                if !park.add(reg) {
                                     break;
                                 }
                             }
                         } else {
-                            // F10 cancelled-mid-setup: the initial cleanup
-                            // at :626 already took the task. Remove any
-                            // phantom park edge and skip per-channel waker
-                            // registration + cleanup install. See the
-                            // Receive arm for the full rationale. Note:
-                            // `entries` is still empty here (no wakers
-                            // were registered), so there is nothing to
-                            // drop on the channels.
+                            // F10 cancelled-mid-setup: the cleanup that
+                            // was installed before this arm already took
+                            // the task. Remove any phantom park edge and
+                            // skip per-channel waker registration. See
+                            // the Receive arm for the full rationale.
+                            // `park` holds no registration here, so
+                            // there is nothing to deregister on the
+                            // channels.
                             inner.wake_graph.on_wake(NodeId::Task(id));
                             signal_progress(&inner);
                         }
@@ -1060,7 +1216,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             let inner2 = inner.clone();
                             let reg =
                                 target_handle.register_join_waker_guard(Box::new(move || {
-                                    if let Some(task) = slot.lock().take() {
+                                    // A completion wakes all of its
+                                    // waiters, so a waker that finds
+                                    // its task cancelled has nothing to
+                                    // pass on.
+                                    let parked = slot.lock().take();
+                                    if let Some(task) = parked {
                                         requeue(&inner2, task, false);
                                     }
                                 }));
@@ -1169,7 +1330,8 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
                             let reg = completion.register_waker_guard(Box::new(move || {
-                                if let Some(task) = slot.lock().take() {
+                                let parked = slot.lock().take();
+                                if let Some(task) = parked {
                                     requeue(&inner2, task, true);
                                 }
                             }));
@@ -1290,8 +1452,8 @@ fn signal_progress(inner: &Arc<SchedulerInner>) {
 /// or `IoWakerRegistration`).
 ///
 /// The Select arm intentionally does NOT route through this helper:
-/// it tears down a shared guard *vec* (`entries`) plus a `cancelled`
-/// flag instead of a single owned guard, and omits the watchdog call
+/// it ends a `SelectPark` (the registrations of several arms) instead
+/// of dropping a single owned guard, and omits the watchdog call
 /// because `was_io` is statically false for Select.
 ///
 /// ORDER-SENSITIVE — do not reorder the body. The sequence is:
@@ -1300,29 +1462,54 @@ fn signal_progress(inner: &Arc<SchedulerInner>) {
 ///      deregister) runs at the end of this scope on the cancel path,
 ///      or when the closure itself is dropped on the normal-wake path
 ///      (`requeue` calls `clear_cancel_cleanup`). Without the guard
-///      ownership, round-27 B1-B4 leak the waker into the channel
-///      queues (phantom rendezvous peer / starved real peer).
+///      ownership the waker leaks into the channel queues (phantom
+///      rendezvous peer / starved real peer).
 ///   2. Take the task from `slot` or return — the idempotency gate.
 ///      An empty slot means the waker already fired and the task is
 ///      either running or already accounted for; never
 ///      double-decrement the counters.
-///   3. `was_io` → remove the `WatchdogRegistry` entry (round-75
-///      balance fix: the Completed/requeue paths that normally clear
-///      it are unreachable once the task is dropped).
-///   4. Decrement `live_tasks` — the Completed/Failed decrement is
+///   3. Release the cleanup that the handle holds now. `complete`
+///      takes this closure out of the handle before it runs it; in
+///      between, the park arm can have installed its own cleanup,
+///      which owns the arm's waker registration. Nothing would fire
+///      or drop that one, and its waker would stay registered for a
+///      task that no longer exists. No park arm can install a cleanup
+///      for this park after step 2: the arms install only while they
+///      hold the slot lock and see the task in the slot.
+///   4. `was_io` → remove the `WatchdogRegistry` entry (the
+///      Completed/requeue paths that normally clear it are unreachable
+///      once the task is dropped).
+///   5. Decrement `live_tasks` — the Completed/Failed decrement is
 ///      likewise unreachable, so the counter would otherwise leak.
-///   5. `wake_graph.on_complete` — cancelled-while-blocked is the
+///   6. `wake_graph.on_complete` — cancelled-while-blocked is the
 ///      moral equivalent of completion: drop the edge and the live
 ///      entry so a subsequent BFS does not see a phantom fuel node.
-///   6. `signal_progress` — pulse parked main waiters to re-check.
-///      Dropping this step on any one arm would resurrect the
-///      round-90 starvation false positive on that arm's path only.
+///   7. `signal_progress` — pulse parked main waiters to re-check.
+///      Dropping this step on any one arm would bring back a
+///      starvation false positive on that arm's path only.
 ///
-/// Round-31 lock discipline: this helper only builds the boxed
-/// closure and takes no locks itself. Park-arm callers must keep the
-/// `task_slot` is_some-check and the `set_cancel_cleanup` call under
-/// one `task_slot` lock hold so an inline-fire-then-new-arm sequence
-/// cannot clobber a concurrent worker's newer arm cleanup.
+/// # Lock order
+///
+/// Two locks meet on the cancel path: the lock of the parked task's
+/// slot and the lock on the handle's cleanup
+/// (`TaskHandle::cancel_cleanup`). The rule:
+///
+///   * The cleanup lock is a leaf. `TaskHandle` holds it only to move
+///     a closure in or out. It runs and drops closures after it has
+///     released the lock.
+///   * The slot lock may be held while the cleanup lock is acquired
+///     (the park arms do that, to check the slot and install the
+///     cleanup in one step). The opposite order does not occur.
+///   * The slot lock is held only to look at the slot or to take the
+///     task out. This closure and the wakers release it before they do
+///     anything else, so nothing that they call (`requeue`, the wake
+///     graph, the run queue, a channel's waker queue, the callbacks of
+///     a waiting main thread) is reached with the slot lock held.
+///
+/// The park arms must keep the `task_slot` is_some-check and the
+/// `set_cancel_cleanup` call under one `task_slot` lock hold so an
+/// inline-fire-then-new-arm sequence cannot clobber a concurrent
+/// worker's newer arm cleanup.
 fn make_cancel_cleanup<G: Send + 'static>(
     slot: Arc<Mutex<Option<Task>>>,
     inner: Arc<SchedulerInner>,
@@ -1335,22 +1522,201 @@ fn make_cancel_cleanup<G: Send + 'static>(
         // path, including the early return below) or when the closure
         // is dropped unfired (normal wake path).
         let _reg = reg;
-        // Step 2: idempotency gate.
-        if slot.lock().take().is_none() {
+        // Step 2: idempotency gate. The slot lock is released at the
+        // end of this statement.
+        let parked = slot.lock().take();
+        let Some(task) = parked else {
             return;
-        }
-        // Step 3: balance the I/O watchdog entry.
+        };
+        // Step 3: release a cleanup that a park arm installed after
+        // `complete` had taken this closure out of the handle.
+        task.handle.clear_cancel_cleanup();
+        // Step 4: balance the I/O watchdog entry.
         if was_io {
             inner.watchdog.remove(task_id);
         }
-        // Step 4: the blocked task is being dropped; the normal
+        // Step 5: the blocked task is being dropped; the normal
         // decrement sites are unreachable.
         inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-        // Step 5: tear down the wake-graph node + edge.
+        // Step 6: tear down the wake-graph node + edge.
         inner.wake_graph.on_complete(task_id);
-        // Step 6: pulse main waiters to re-check.
+        // Step 7: pulse main waiters to re-check.
         signal_progress(&inner);
     })
+}
+
+/// The waker registrations of one parked `channel.select`: one per arm
+/// that has been registered so far.
+///
+/// Exactly one party ends the park: the first waker that fires, or a
+/// cancel. It calls `end`, which deregisters every arm. From then on
+/// the park is over: the wakers of the other arms do nothing but pass
+/// their wake-up on, and the loop that registers the arms stops.
+struct SelectPark {
+    /// Set by `end`, under the lock of `registrations`.
+    over: AtomicBool,
+    registrations: Mutex<Vec<WakerRegistration>>,
+}
+
+impl SelectPark {
+    fn new(arms: usize) -> Self {
+        SelectPark {
+            over: AtomicBool::new(false),
+            registrations: Mutex::new(Vec::with_capacity(arms)),
+        }
+    }
+
+    fn is_over(&self) -> bool {
+        self.over.load(Ordering::Acquire)
+    }
+
+    /// Keep the registration of one more arm. Returns `false` if the
+    /// park is over; the registration is dropped then, which
+    /// deregisters the arm's waker.
+    ///
+    /// The check and the push happen under one lock hold, and `end`
+    /// sets `over` under the same lock. So a registration is either in
+    /// the list when `end` empties it, or is refused here.
+    fn add(&self, registration: WakerRegistration) -> bool {
+        let mut registrations = self.registrations.lock();
+        if self.over.load(Ordering::Acquire) {
+            drop(registrations);
+            drop(registration);
+            return false;
+        }
+        registrations.push(registration);
+        true
+    }
+
+    /// End the park and deregister every arm. Can be called more than
+    /// once.
+    fn end(&self) {
+        let registrations = {
+            let mut registrations = self.registrations.lock();
+            self.over.store(true, Ordering::Release);
+            std::mem::take(&mut *registrations)
+        };
+        // Each drop removes one waker from its channel's queue. That
+        // happens after the lock above has been released.
+        drop(registrations);
+    }
+}
+
+/// Ends a `SelectPark` when dropped. Owned by the cancel cleanup of the
+/// Select arm, so the park ends when that closure has run and also when
+/// it is dropped without having run.
+struct EndSelectPark(Arc<SelectPark>);
+
+impl Drop for EndSelectPark {
+    fn drop(&mut self) {
+        self.0.end();
+    }
+}
+
+/// Keep the handle of a task that ended with an error, for
+/// `report_unjoined_failures`.
+fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
+    // Handles are dropped after the lock has been released.
+    let mut joined_since: Vec<Arc<TaskHandle>> = Vec::new();
+    {
+        let mut failed = inner.failed_tasks.lock();
+        if failed.handles.len() >= MAX_RECORDED_FAILURES {
+            // Failures that a join has received since they were
+            // recorded need no report: make room.
+            let (unjoined, joined): (Vec<_>, Vec<_>) = std::mem::take(&mut failed.handles)
+                .into_iter()
+                .partition(|h| h.has_unjoined_failure());
+            failed.handles = unjoined;
+            joined_since = joined;
+        }
+        if failed.handles.len() >= MAX_RECORDED_FAILURES {
+            failed.not_recorded += 1;
+        } else {
+            failed.handles.push(handle.clone());
+        }
+    }
+    drop(joined_since);
+}
+
+/// Report on stderr every recorded task that failed and whose error no
+/// join has received. A failure is reported once: the record is emptied
+/// and each handle gives its error out once. Returns the number of
+/// failures that this call reported, those that were counted but not
+/// kept included.
+///
+/// The report has no file name and no source line: the scheduler knows
+/// neither. It shows what `VmError`'s own `Display` shows.
+fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
+    let (handles, not_recorded) = {
+        let mut failed = inner.failed_tasks.lock();
+        (
+            std::mem::take(&mut failed.handles),
+            std::mem::take(&mut failed.not_recorded),
+        )
+    };
+    let mut reported = 0;
+    let mut report = String::new();
+    for handle in &handles {
+        let Some(mut error) = handle.take_unjoined_failure() else {
+            continue;
+        };
+        reported += 1;
+        error.message = format!(
+            "task <handle:{}> failed and was never joined: {}",
+            handle.id, error.message
+        );
+        report.push_str(&format!(
+            "{error}\n  = note: no task.join received this error; \
+             join the task to handle the error in the program\n"
+        ));
+    }
+    if not_recorded > 0 {
+        reported += not_recorded;
+        report.push_str(&format!(
+            "error[runtime]: {not_recorded} more task(s) failed; their errors \
+             were not kept (at most {MAX_RECORDED_FAILURES} unjoined failures are)\n"
+        ));
+    }
+    if !report.is_empty() {
+        // A write error is ignored: there is nowhere left to report it.
+        let _ = std::io::stderr().lock().write_all(report.as_bytes());
+    }
+    reported
+}
+
+/// The schedulers whose workers a thread has started.
+///
+/// The thread that spawns the first task of a program is the thread
+/// that runs the program. When that thread ends, the program has ended,
+/// and the failures that nobody joined are reported. Tasks that are
+/// still parked keep the scheduler itself alive, so its `Drop` alone
+/// would not be reached in a program that leaves a task behind.
+///
+/// This is a thread-local with a destructor. It runs when the thread
+/// returns. Whether it runs when the thread calls
+/// `std::process::exit` depends on the platform; a caller that ends
+/// the process that way calls `Scheduler::report_unjoined_failures`
+/// first.
+struct StartedSchedulers {
+    schedulers: RefCell<Vec<Weak<SchedulerInner>>>,
+}
+
+impl Drop for StartedSchedulers {
+    fn drop(&mut self) {
+        for scheduler in self.schedulers.get_mut().drain(..) {
+            if let Some(inner) = scheduler.upgrade() {
+                let _ = report_unjoined_failures(&inner);
+            }
+        }
+    }
+}
+
+thread_local! {
+    static STARTED_HERE: StartedSchedulers = const {
+        StartedSchedulers {
+            schedulers: RefCell::new(Vec::new()),
+        }
+    };
 }
 
 /// RAII guard for a callback installed via
@@ -1661,6 +2027,156 @@ fn main() {
 }
 "#,
         );
+    }
+
+    // ── Cancel: lock order ─────────────────────────────────────────
+
+    /// `complete` runs the cancel cleanup after it has released the
+    /// lock on the cleanup. The cleanup here uses that lock again, as
+    /// the scheduler's cleanups do (they release what a park arm
+    /// installed in the meantime). If `complete` still held the lock,
+    /// this would never return; the helper thread and the timeout turn
+    /// that into a failure instead of a hang.
+    #[test]
+    fn test_cancel_cleanup_runs_outside_the_cleanup_lock() {
+        let handle = Arc::new(TaskHandle::new(1));
+        let ran = Arc::new(AtomicBool::new(false));
+        let handle_in_cleanup = handle.clone();
+        let ran_in_cleanup = ran.clone();
+        handle.set_cancel_cleanup(Box::new(move || {
+            handle_in_cleanup.clear_cancel_cleanup();
+            ran_in_cleanup.store(true, Ordering::SeqCst);
+        }));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let canceller = handle.clone();
+        std::thread::spawn(move || {
+            canceller.complete(Err(VmError::new("cancelled".to_string())));
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("complete() must not hold the cleanup lock while the cleanup runs");
+        assert!(ran.load(Ordering::SeqCst), "the cleanup must have run");
+    }
+
+    /// A cleanup that is replaced or cleared is dropped after the lock
+    /// on the cleanup has been released: its destructor may use the
+    /// handle. The scheduler's cleanups own waker registrations, whose
+    /// destructors take other locks.
+    #[test]
+    fn test_replaced_cleanup_is_dropped_outside_the_cleanup_lock() {
+        struct UsesHandleOnDrop(Arc<TaskHandle>);
+        impl Drop for UsesHandleOnDrop {
+            fn drop(&mut self) {
+                self.0.clear_cancel_cleanup();
+            }
+        }
+        let handle = Arc::new(TaskHandle::new(1));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = handle.clone();
+        std::thread::spawn(move || {
+            let first = UsesHandleOnDrop(worker.clone());
+            worker.set_cancel_cleanup(Box::new(move || {
+                let _owned = first;
+            }));
+            // Replacing drops `first`.
+            worker.set_cancel_cleanup(Box::new(|| {}));
+            let second = UsesHandleOnDrop(worker.clone());
+            worker.set_cancel_cleanup(Box::new(move || {
+                let _owned = second;
+            }));
+            // Clearing drops `second`.
+            worker.clear_cancel_cleanup();
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a replaced or cleared cleanup must be dropped outside the cleanup lock");
+    }
+
+    // ── Failures that nobody joins ─────────────────────────────────
+
+    /// Wait until the task behind `handle` has ended and the worker
+    /// has recorded its failure, without joining it.
+    fn wait_until_failure_recorded(scheduler: &Scheduler, handle: &Arc<TaskHandle>) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while handle.try_get().is_none() || scheduler.inner.failed_tasks.lock().handles.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "the failed task was not recorded in time"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn test_failed_task_without_join_is_kept_for_the_report() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
+        scheduler.submit(task).unwrap();
+        wait_until_failure_recorded(&scheduler, &handle);
+        assert!(handle.has_unjoined_failure());
+        let error = handle
+            .take_unjoined_failure()
+            .expect("nobody joined the task");
+        assert!(
+            error.message.contains("division"),
+            "the report must carry the task's own error, got: {}",
+            error.message
+        );
+        assert!(
+            handle.take_unjoined_failure().is_none(),
+            "a failure is given out for the report once"
+        );
+    }
+
+    #[test]
+    fn test_joined_failure_is_not_kept_for_the_report() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
+        scheduler.submit(task).unwrap();
+        assert!(handle.join().is_err());
+        assert!(!handle.has_unjoined_failure());
+        assert!(handle.take_unjoined_failure().is_none());
+    }
+
+    #[test]
+    fn test_cancelled_task_is_not_a_failure() {
+        let handle = TaskHandle::new(1);
+        handle.complete(Err(VmError::new("cancelled".to_string())));
+        assert!(!handle.has_unjoined_failure());
+        // The task fails later: the handle keeps the cancellation.
+        assert!(!handle.fail(VmError::new("late failure".to_string())));
+        assert!(!handle.has_unjoined_failure());
+        assert!(handle.take_unjoined_failure().is_none());
+    }
+
+    #[test]
+    fn test_recorded_failures_are_bounded() {
+        let scheduler = Scheduler::new();
+        for id in 0..(MAX_RECORDED_FAILURES + 5) {
+            let handle = Arc::new(TaskHandle::new(id));
+            assert!(handle.fail(VmError::new(format!("failure {id}"))));
+            record_failed_task(&scheduler.inner, &handle);
+        }
+        {
+            let failed = scheduler.inner.failed_tasks.lock();
+            assert_eq!(failed.handles.len(), MAX_RECORDED_FAILURES);
+            assert_eq!(failed.not_recorded, 5);
+        }
+        // Joined failures make room for new ones.
+        for handle in scheduler.inner.failed_tasks.lock().handles.iter() {
+            handle.mark_joined();
+        }
+        let handle = Arc::new(TaskHandle::new(1000));
+        assert!(handle.fail(VmError::new("failure 1000".to_string())));
+        record_failed_task(&scheduler.inner, &handle);
+        let mut failed = scheduler.inner.failed_tasks.lock();
+        assert_eq!(failed.handles.len(), 1);
+        // Leave nothing for the report that runs when the scheduler is
+        // dropped: this test is about the record, not about stderr.
+        failed.handles.clear();
+        failed.not_recorded = 0;
     }
 
     // ── Shutdown ───────────────────────────────────────────────────

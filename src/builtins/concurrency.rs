@@ -401,8 +401,8 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
             }
             loop {
-                if let Some(val) = try_select_sweep(&ops)? {
-                    drop(registrations);
+                // A successful sweep drops the registrations.
+                if let Some(val) = try_select_sweep_registered(&ops, &mut registrations)? {
                     return Ok(map_recv_timeout_result(val, &timer_ch));
                 }
                 let (lock, cvar) = &*pair;
@@ -630,8 +630,14 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             let handle = handle.clone();
 
-            // If already complete, return immediately.
+            // If already complete, return immediately. This is also
+            // where a scheduled task that parked on the join arrives
+            // when it runs again.
             if let Some(result) = handle.try_get() {
+                // The joiner has the result now. If the task failed,
+                // the error is the joiner's to handle and is not
+                // reported as an unjoined failure.
+                handle.mark_joined();
                 return match result {
                     Ok(val) => Ok(val),
                     Err(mut inner) => {
@@ -931,49 +937,79 @@ fn select_start_index(n: usize) -> usize {
 /// iterating circularly from a pseudo-random start index so that readiness
 /// races between channels are resolved fairly rather than always in list order.
 /// A closed channel counts as a successful receive (returns Closed).
+///
+/// When an arm succeeds, the wake-ups that the select may have received
+/// for its other arms are passed on: see `pass_on_wake_ups`.
+///
+/// For a caller that holds no waker registration on the channels of
+/// `ops`. A caller that does uses `try_select_sweep_registered`.
 fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
+    try_select_sweep_registered(ops, &mut Vec::new())
+}
+
+/// `try_select_sweep` for a caller that waits on the channels of `ops`
+/// with the wakers in `registrations` (the main-thread waits). When an
+/// arm succeeds, the registrations are dropped BEFORE the wake-ups are
+/// passed on. Otherwise a channel would hand the passed-on wake-up to
+/// the caller's own waker, which is about to go away, instead of to
+/// the next waiter.
+fn try_select_sweep_registered(
+    ops: &[SelectOp],
+    registrations: &mut Vec<crate::value::WakerRegistration>,
+) -> Result<Option<Value>, VmError> {
     let n = ops.len();
     if n == 0 {
         return Ok(None);
     }
     let start = select_start_index(n);
     for i in 0..n {
-        let op = &ops[(start + i) % n];
-        match op {
+        let index = (start + i) % n;
+        let (ch, outcome) = match &ops[index] {
             SelectOp::Receive(ch) => match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
-                    return Ok(Some(Value::Tuple(vec![
-                        Value::Channel(ch.clone()),
-                        Value::Variant("Message".into(), vec![val]),
-                    ])));
+                    (ch, Some(Value::Variant("Message".into(), vec![val])))
                 }
-                TryReceiveResult::Closed => {
-                    return Ok(Some(Value::Tuple(vec![
-                        Value::Channel(ch.clone()),
-                        Value::Variant("Closed".into(), vec![]),
-                    ])));
-                }
-                TryReceiveResult::Empty => {}
+                TryReceiveResult::Closed => (ch, Some(Value::Variant("Closed".into(), vec![]))),
+                TryReceiveResult::Empty => (ch, None),
             },
             SelectOp::Send(ch, val) => match ch.try_send(val.clone()) {
-                TrySendResult::Sent => {
-                    return Ok(Some(Value::Tuple(vec![
-                        Value::Channel(ch.clone()),
-                        Value::Variant("Sent".into(), vec![]),
-                    ])));
-                }
-                TrySendResult::Closed => {
-                    return Ok(Some(Value::Tuple(vec![
-                        Value::Channel(ch.clone()),
-                        Value::Variant("Closed".into(), vec![]),
-                    ])));
-                }
-                TrySendResult::Full => {}
+                TrySendResult::Sent => (ch, Some(Value::Variant("Sent".into(), vec![]))),
+                TrySendResult::Closed => (ch, Some(Value::Variant("Closed".into(), vec![]))),
+                TrySendResult::Full => (ch, None),
             },
+        };
+        if let Some(outcome) = outcome {
+            registrations.clear();
+            pass_on_wake_ups(ops, index);
+            return Ok(Some(Value::Tuple(vec![
+                Value::Channel(ch.clone()),
+                outcome,
+            ])));
         }
     }
 
     Ok(None)
+}
+
+/// A select that completes arm `taken` performs none of its other
+/// arms. If the select was woken because one of those became possible,
+/// it has used up a wake-up that a waiter on that channel needs: the
+/// channel wakes one waiter for each value and each free place. So
+/// every other arm's channel is asked to wake its next waiter, if its
+/// state allows an operation. A channel on which nothing is possible,
+/// or nobody waits, does nothing.
+///
+/// This covers every caller of `try_select_sweep`: `channel.select`
+/// and `channel.recv_timeout`, in a task and on the main thread.
+fn pass_on_wake_ups(ops: &[SelectOp], taken: usize) {
+    for (index, op) in ops.iter().enumerate() {
+        if index == taken {
+            continue;
+        }
+        match op {
+            SelectOp::Receive(ch) | SelectOp::Send(ch, _) => ch.rewake_waiters(),
+        }
+    }
 }
 
 // ── Main-thread channel wait with event-driven watchdog ──────────
@@ -1222,6 +1258,20 @@ fn confirm_main_starved(
     true
 }
 
+/// Report the tasks that failed and that nobody joined, before a
+/// main-thread wait gives its deadlock verdict.
+///
+/// The verdict ends the program, and a task that failed is the usual
+/// reason why the counterparty of the wait is missing: a producer that
+/// stopped with an error before it sent. Without the report the user
+/// sees the deadlock and not its cause. Each failure is reported once,
+/// so the report at the end of the program does not repeat it.
+fn report_unjoined_failures(vm: &Vm) {
+    if let Some(sched) = vm.current_scheduler() {
+        let _ = sched.report_unjoined_failures();
+    }
+}
+
 fn main_thread_wait_for_send(
     ch: &Arc<crate::value::Channel>,
     val: Value,
@@ -1345,6 +1395,7 @@ fn main_thread_wait_for_send(
             if confirmed {
                 drop(reg);
                 unpark_main(vm);
+                report_unjoined_failures(vm);
                 return Err(VmError::new(
                     "deadlock on main thread: channel send with no counterparty".into(),
                 ));
@@ -1525,6 +1576,7 @@ fn main_thread_wait_for_receive(
             if confirmed {
                 drop(reg);
                 unpark_main(vm);
+                report_unjoined_failures(vm);
                 return Err(VmError::new(
                     "deadlock on main thread: channel receive with no counterparty".into(),
                 ));
@@ -1612,11 +1664,12 @@ fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmErr
     let mut registrations: Vec<crate::value::WakerRegistration> = Vec::with_capacity(ops.len());
     // Re-check helper: returns Some(result) when an arm is ready,
     // dropping the registrations FIRST then unparking MAIN — same
-    // drop/unpark ordering as the receive/send recheck closures.
+    // drop/unpark ordering as the receive/send recheck closures. The
+    // sweep drops the registrations itself, before it passes on the
+    // wake-ups of the arms that were not taken.
     let try_finish =
         |registrations: &mut Vec<crate::value::WakerRegistration>| -> Result<Option<Value>, VmError> {
-            if let Some(result) = try_select_sweep(ops)? {
-                registrations.clear();
+            if let Some(result) = try_select_sweep_registered(ops, registrations)? {
                 unpark_main(vm);
                 return Ok(Some(result));
             }
@@ -1672,6 +1725,7 @@ fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmErr
             if confirmed {
                 registrations.clear();
                 unpark_main(vm);
+                report_unjoined_failures(vm);
                 return Err(VmError::new(
                     "deadlock on main thread: channel select with no counterparty".into(),
                 ));
@@ -1712,6 +1766,7 @@ fn main_thread_wait_for_join(
     // handle already has its result or the join is unsatisfiable.
     if vm.current_scheduler().is_none() {
         if let Some(result) = handle.try_get() {
+            handle.mark_joined();
             return result;
         }
         return Err(VmError::new(
@@ -1749,6 +1804,9 @@ fn main_thread_wait_for_join(
     // immediate deadlock) — do not unify it with this closure.
     let recheck = || match handle.try_get() {
         Some(result) => {
+            // The join has the result: a failure of the task is not an
+            // unjoined failure any more.
+            handle.mark_joined();
             unpark_main(vm);
             Some(result)
         }
@@ -1791,6 +1849,7 @@ fn main_thread_wait_for_join(
             }
             if confirmed {
                 unpark_main(vm);
+                report_unjoined_failures(vm);
                 return Err(VmError::new(
                     "deadlock on main thread: task.join with no progress possible".into(),
                 ));
@@ -1857,5 +1916,134 @@ mod select_fairness_tests {
             ch2_wins >= min_share,
             "ch2 under-selected: {ch2_wins}/{iters}"
         );
+    }
+}
+
+#[cfg(test)]
+mod wake_up_tests {
+    use super::*;
+    use crate::value::{Channel, Waker};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A waker that counts how often it is called.
+    fn counting_waker(calls: &Arc<AtomicUsize>) -> Waker {
+        let calls = calls.clone();
+        Box::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+
+    /// Every value taken out of a buffered channel wakes one parked
+    /// sender, also when the buffer was not full before the receive.
+    #[test]
+    fn every_receive_wakes_one_parked_sender() {
+        let ch = Arc::new(Channel::new(1, 3));
+        for i in 0..3 {
+            assert!(matches!(ch.try_send(Value::Int(i)), TrySendResult::Sent));
+        }
+        let woken = Arc::new(AtomicUsize::new(0));
+        let _first = ch.register_send_waker_guard(counting_waker(&woken));
+        let _second = ch.register_send_waker_guard(counting_waker(&woken));
+        let _third = ch.register_send_waker_guard(counting_waker(&woken));
+        assert_eq!(
+            woken.load(Ordering::SeqCst),
+            0,
+            "the buffer is full: registering must not wake a sender"
+        );
+        for expected in 1..=3 {
+            assert!(matches!(ch.try_receive(), TryReceiveResult::Value(_)));
+            assert_eq!(
+                woken.load(Ordering::SeqCst),
+                expected,
+                "receive number {expected} must wake one more sender"
+            );
+        }
+    }
+
+    /// The same for the blocking receive that the stream stages use.
+    #[test]
+    fn every_blocking_receive_wakes_one_parked_sender() {
+        let ch = Arc::new(Channel::new(1, 3));
+        for i in 0..3 {
+            assert!(matches!(ch.try_send(Value::Int(i)), TrySendResult::Sent));
+        }
+        let woken = Arc::new(AtomicUsize::new(0));
+        let _first = ch.register_send_waker_guard(counting_waker(&woken));
+        let _second = ch.register_send_waker_guard(counting_waker(&woken));
+        for expected in 1..=2 {
+            assert!(matches!(ch.receive_blocking(), TryReceiveResult::Value(_)));
+            assert_eq!(woken.load(Ordering::SeqCst), expected);
+        }
+    }
+
+    /// A select that completes one arm passes the wake-up of the other
+    /// arm on: the receiver that waits on that channel is woken, because
+    /// the channel holds a value for it.
+    #[test]
+    fn select_passes_the_wake_up_of_the_arm_it_did_not_take_on() {
+        let a = Arc::new(Channel::new(1, 4));
+        let b = Arc::new(Channel::new(2, 4));
+        let select_woken = Arc::new(AtomicUsize::new(0));
+        let receiver_woken = Arc::new(AtomicUsize::new(0));
+        // The select waits on `a` in front of the plain receiver.
+        let select_on_a = a.register_recv_waker_guard(counting_waker(&select_woken));
+        let _receiver_on_a = a.register_recv_waker_guard(counting_waker(&receiver_woken));
+        assert!(matches!(a.try_send(Value::Int(1)), TrySendResult::Sent));
+        assert!(matches!(b.try_send(Value::Int(2)), TrySendResult::Sent));
+        assert_eq!(select_woken.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            receiver_woken.load(Ordering::SeqCst),
+            0,
+            "one value in `a` wakes one waiter: the select"
+        );
+        drop(select_on_a);
+        // The select takes arm 1 (`b`) and leaves the value in `a`.
+        let ops = vec![SelectOp::Receive(a.clone()), SelectOp::Receive(b.clone())];
+        assert!(matches!(b.try_receive(), TryReceiveResult::Value(_)));
+        pass_on_wake_ups(&ops, 1);
+        assert_eq!(
+            receiver_woken.load(Ordering::SeqCst),
+            1,
+            "the value in `a` is for the receiver that still waits on it"
+        );
+    }
+
+    /// Passing a wake-up on does nothing on a channel whose state allows
+    /// no operation.
+    #[test]
+    fn passing_on_wakes_nobody_when_nothing_is_possible() {
+        let empty = Arc::new(Channel::new(1, 2));
+        let receiver_woken = Arc::new(AtomicUsize::new(0));
+        let _receiver = empty.register_recv_waker_guard(counting_waker(&receiver_woken));
+        empty.rewake_waiters();
+        assert_eq!(receiver_woken.load(Ordering::SeqCst), 0);
+
+        let full = Arc::new(Channel::new(2, 1));
+        assert!(matches!(full.try_send(Value::Int(1)), TrySendResult::Sent));
+        let sender_woken = Arc::new(AtomicUsize::new(0));
+        let _sender = full.register_send_waker_guard(counting_waker(&sender_woken));
+        full.rewake_waiters();
+        assert_eq!(sender_woken.load(Ordering::SeqCst), 0);
+    }
+
+    /// A channel that was closed refuses a send, and a receiver gets the
+    /// values that were sent before the close, then `Closed`.
+    #[test]
+    fn close_orders_sends_and_receives() {
+        let ch = Arc::new(Channel::new(1, 2));
+        assert!(matches!(ch.try_send(Value::Int(1)), TrySendResult::Sent));
+        ch.close();
+        assert!(matches!(ch.try_send(Value::Int(2)), TrySendResult::Closed));
+        assert!(matches!(ch.try_receive(), TryReceiveResult::Value(_)));
+        assert!(matches!(ch.try_receive(), TryReceiveResult::Closed));
+
+        let rendezvous = Arc::new(Channel::new(2, 0));
+        rendezvous.close();
+        assert!(matches!(
+            rendezvous.try_send(Value::Int(1)),
+            TrySendResult::Closed
+        ));
+        assert!(matches!(rendezvous.try_receive(), TryReceiveResult::Closed));
     }
 }
