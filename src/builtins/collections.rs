@@ -110,6 +110,34 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
     }
 }
 
+/// Runtime backstop for the ordering/equality-consuming collection
+/// builtins: error with the canonical operator-gate wording ("type 'Fn'
+/// does not implement Compare/Equal") if any of `vals` transitively
+/// contains a function-shaped value. Mirrors the `Op::Eq` gate in
+/// src/vm/execute.rs; deliberately NOT enforced as a static `where`
+/// bound on the builtin signatures because that would reject currently
+/// working programs (e.g. sorting tuples or NaN-bearing floats via
+/// `Value::cmp`). Locked by tests/collection_builtin_fn_gate_tests.rs.
+///
+/// The contains-a-fn walk delegates to `Vm::value_contains_fn`
+/// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
+/// execution-site Compare/Equal/Hash gate (operator, dispatch, and
+/// builtin surfaces). Do not re-inline a local copy of the walker
+/// here: a new container `Value` variant added to one copy but not the
+/// other would silently split gate behavior between the operator and
+/// builtin surfaces. Single-definition is pinned by
+/// tests/value_contains_fn_dedup_lock_tests.rs.
+fn ensure_no_fn(fn_name: &str, trait_name: &str, vals: &[&Value]) -> Result<(), VmError> {
+    for v in vals {
+        if Vm::value_contains_fn(v) {
+            return Err(VmError::new(format!(
+                "{fn_name}: type 'Fn' does not implement {trait_name}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Step result for `list.unfold` callback dispatch.
 enum UnfoldStep {
     /// Continue iterating with updated state and result.
@@ -374,6 +402,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if matches!(&args[0], Value::Range(..)) {
                 return Ok(args[0].clone());
             }
+            // Fn elements would sort by Arc pointer address (ASLR-
+            // nondeterministic) — reject like the operator gates do.
+            ensure_no_fn("list.sort", "Compare", &[&args[0]])?;
             let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.sort")?.collect_vec()?;
             v.sort();
             Ok(Value::List(Arc::new(v)))
@@ -386,6 +417,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if matches!(&args[0], Value::Range(..)) {
                 return Ok(args[0].clone());
             }
+            // Fn elements would dedup by identity (Arc pointer / builtin
+            // name) instead of erroring like `f == g` does.
+            ensure_no_fn("list.unique", "Equal", &[&args[0]])?;
             let iter = ValueIter::try_from(&args[0], "list.unique")?;
             let mut seen = BTreeSet::new();
             let mut result = Vec::new();
@@ -400,6 +434,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.contains takes 2 arguments".into()));
             }
+            // Fn membership would silently answer via Arc identity
+            // (`list.contains([f], g)` -> false) instead of erroring.
+            ensure_no_fn("list.contains", "Equal", &[&args[0], &args[1]])?;
             match &args[0] {
                 Value::List(xs) => Ok(Value::Bool(xs.contains(&args[1]))),
                 Value::Range(lo, hi) => {
@@ -750,6 +787,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.index_of takes 2 arguments".into()));
             }
+            // Fn search would silently answer via Arc identity
+            // (`list.index_of([f, g], g)` -> Some(1)) instead of erroring.
+            ensure_no_fn("list.index_of", "Equal", &[&args[0], &args[1]])?;
             let iter = ValueIter::try_from(&args[0], "list.index_of")?;
             let target = &args[1];
             for (i, v) in iter.enumerate() {
@@ -1058,6 +1098,15 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
                 if let Value::Tuple(pair) = item
                     && pair.len() == 2
                 {
+                    // Runtime Fn gate on the KEY only (values are never
+                    // compared): `map.from_entries` has `constraints:
+                    // vec![]` (src/typechecker/builtins/map.rs), unlike
+                    // `map.get`/`set` which carry `k: Hash`, so Fn keys
+                    // typecheck and would be BTreeMap-ordered by Arc
+                    // pointer address — ASLR-nondeterministic entry
+                    // order. The trait name matches the static map-key
+                    // contract.
+                    ensure_no_fn("map.from_entries", "Hash", &[&pair[0]])?;
                     result.insert(pair[0].clone(), pair[1].clone());
                     continue;
                 }
@@ -1130,6 +1179,13 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let key = &args[1];
             let default = &args[2];
             let func = &args[3];
+            // Runtime Fn gate on the KEY only — same rationale as the
+            // `map.from_entries` gate above (`constraints: vec![]`, so a
+            // Fn key typechecks and both the `m.get` probe and the
+            // `insert` below would compare it by Arc pointer address).
+            // The default and the callback result are map VALUES and
+            // stay ungated.
+            ensure_no_fn("map.update", "Hash", &[key])?;
             let current = m.get(key).unwrap_or(default).clone();
             // map.update is a single-callback builtin.  Use the resumable
             // helper so yields inside `func` are handled correctly.
@@ -1153,6 +1209,9 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::List(xs) = &args[0] else {
                 return Err(VmError::new("set.from_list requires a list".into()));
             };
+            // A set of Fn values is BTree-ordered by Arc pointer address —
+            // ASLR-nondeterministic iteration order. Reject at construction.
+            ensure_no_fn("set.from_list", "Compare", &[&args[0]])?;
             Ok(Value::Set(Arc::new(xs.iter().cloned().collect())))
         }
         "to_list" => {
@@ -1171,6 +1230,11 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.contains requires a set".into()));
             };
+            // Gate the probe only (keeps the lookup O(log n)): the
+            // typechecker unifies the probe type with the element type
+            // (`set.contains: (Set(a), a) -> Bool`), so a Fn-bearing set
+            // can only be probed with a Fn-bearing value.
+            ensure_no_fn("set.contains", "Compare", &[&args[1]])?;
             Ok(Value::Bool(s.contains(&args[1])))
         }
         "insert" => {
@@ -1180,6 +1244,9 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.insert requires a set".into()));
             };
+            // See set.contains for why gating the inserted value alone
+            // is sufficient.
+            ensure_no_fn("set.insert", "Compare", &[&args[1]])?;
             let mut new_set = (**s).clone();
             new_set.insert(args[1].clone());
             Ok(Value::Set(Arc::new(new_set)))
@@ -1191,6 +1258,9 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.remove requires a set".into()));
             };
+            // See set.contains for why gating the removed value alone
+            // is sufficient.
+            ensure_no_fn("set.remove", "Compare", &[&args[1]])?;
             let mut new_set = (**s).clone();
             new_set.remove(&args[1]);
             Ok(Value::Set(Arc::new(new_set)))
@@ -1211,6 +1281,10 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("set.union requires sets".into()));
             };
+            // Algebra ops walk both sets anyway, so gate both operands:
+            // catches Fn-bearing sets built by ungated producers
+            // (e.g. a `set.map` callback returning closures).
+            ensure_no_fn("set.union", "Compare", &[&args[0], &args[1]])?;
             Ok(Value::Set(Arc::new(a.union(b).cloned().collect())))
         }
         "intersection" => {
@@ -1220,6 +1294,7 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("set.intersection requires sets".into()));
             };
+            ensure_no_fn("set.intersection", "Compare", &[&args[0], &args[1]])?;
             Ok(Value::Set(Arc::new(a.intersection(b).cloned().collect())))
         }
         "difference" => {
@@ -1229,6 +1304,7 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("set.difference requires sets".into()));
             };
+            ensure_no_fn("set.difference", "Compare", &[&args[0], &args[1]])?;
             Ok(Value::Set(Arc::new(a.difference(b).cloned().collect())))
         }
         "is_subset" => {
@@ -1238,6 +1314,7 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("set.is_subset requires sets".into()));
             };
+            ensure_no_fn("set.is_subset", "Compare", &[&args[0], &args[1]])?;
             Ok(Value::Bool(a.is_subset(b)))
         }
         "symmetric_difference" => {
@@ -1251,6 +1328,7 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
                     "set.symmetric_difference requires sets".into(),
                 ));
             };
+            ensure_no_fn("set.symmetric_difference", "Compare", &[&args[0], &args[1]])?;
             Ok(Value::Set(Arc::new(
                 a.symmetric_difference(b).cloned().collect(),
             )))

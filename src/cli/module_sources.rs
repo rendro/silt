@@ -89,8 +89,11 @@ pub(crate) fn collect_module_function_sources(
     let mut candidates: Vec<(String, PathBuf, String)> = Vec::new();
     let mut name_module_count: HashMap<String, usize> = HashMap::new();
 
-    // BFS from main source: scan import statements, load each module file,
-    // repeat for transitive imports. Each queue item carries the package
+    // Depth-first walk from main source (Vec-as-stack: `push` + `pop`):
+    // scan import statements, load each module file, repeat for
+    // transitive imports. Traversal order is irrelevant to the result —
+    // fn-name and init-key collisions are both resolved by exclusion,
+    // never by who was walked first. Each queue item carries the package
     // context (source root + package name) the file belongs to, so a
     // dep's own imports resolve against the DEP's source root — mirroring
     // the compiler's `compiling_package_stack`. The entry file's package
@@ -110,6 +113,9 @@ pub(crate) fn collect_module_function_sources(
     }];
     let mut seen: HashSet<String> = HashSet::new();
     seen.insert(main_path.to_string());
+    // Init-frame keys (`<module:NAME>`) already registered, for the
+    // collision-exclusion policy below.
+    let mut seen_init_keys: HashSet<String> = HashSet::new();
 
     while let Some(cur) = queue.pop() {
         for import_name in extract_imports(&cur.source) {
@@ -163,8 +169,29 @@ pub(crate) fn collect_module_function_sources(
             // Register the synthetic module-init frame name so that
             // top-level errors (e.g. `pub let x = 1 / 0`) can be
             // resolved to the module's source file.
+            //
+            // Collision policy mirrors the fn-name exclusion in the
+            // second pass below: two DIFFERENT files can legitimately
+            // claim the same import name (e.g. the entry package's
+            // local `util.silt` and a dep whose lib.silt imports its
+            // OWN `util.silt`), and the VM frame name `<module:util>`
+            // cannot disambiguate them. Last-write-wins would render
+            // the losing module's error span against the OTHER file's
+            // text — wrong snippet under the caret — so we exclude the
+            // key instead and let the renderer fall back to the main
+            // source (the documented safe default above). The `seen`
+            // path-gate guarantees a repeated key here always means a
+            // different file: a re-import of the SAME file never
+            // reaches this point.
             let init_key = format!("<module:{import_name}>");
-            out.insert(init_key, (file_path.clone(), mod_source.clone()));
+            if seen_init_keys.insert(init_key.clone()) {
+                out.insert(init_key, (file_path.clone(), mod_source.clone()));
+            } else {
+                // Second (or later) file claiming this init key —
+                // ambiguous; drop any earlier registration. A no-op on
+                // the third-plus occurrence.
+                out.remove(&init_key);
+            }
 
             queue.push(Pending {
                 source: mod_source,
@@ -280,4 +307,168 @@ fn extract_top_level_fn_names(source: &str) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use silt::lockfile::{LockedPackage, LockedSource, Lockfile};
+
+    /// Fresh per-test temp workspace so parallel test runs don't
+    /// collide. Returned canonicalized so paths derived from the
+    /// lockfile (written verbatim) and paths derived from the entry
+    /// file (canonicalized inside `collect_module_function_sources`)
+    /// compare equal.
+    fn temp_workspace(label: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "silt_module_sources_{label}_{}_{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp workspace");
+        dir.canonicalize().expect("canonicalize temp workspace")
+    }
+
+    /// Regression lock (audit: init-frame source-map name collision):
+    /// when the entry package imports a local `util.silt` AND a path
+    /// dep's lib.silt imports the dep's OWN `util.silt`, both files
+    /// used to execute `out.insert("<module:util>", ..)` — silent
+    /// last-write-wins. A top-level init error in whichever util lost
+    /// the race then rendered its span against the OTHER util's source
+    /// text. The frame name `<module:util>` cannot disambiguate the two
+    /// files, so — exactly like colliding fn names — the key must be
+    /// EXCLUDED, letting the renderer fall back to the main source.
+    ///
+    /// Pre-fix this test fails: the map contains `<module:util>`
+    /// pointing at one of the two util files.
+    #[test]
+    fn colliding_module_init_keys_are_excluded() {
+        let ws = temp_workspace("init_collision");
+
+        // Path dep "ms_dep": lib.silt imports the dep's own util.silt.
+        let dep = ws.join("dep");
+        std::fs::create_dir_all(dep.join("src")).expect("create dep dirs");
+        std::fs::write(
+            dep.join("silt.toml"),
+            "[package]\nname = \"ms_dep\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write dep silt.toml");
+        std::fs::write(
+            dep.join("src/lib.silt"),
+            "import util\n\npub fn dep_only_fn() -> Int {\n  1\n}\n",
+        )
+        .expect("write dep lib.silt");
+        std::fs::write(
+            dep.join("src/util.silt"),
+            "pub fn dep_util_only_fn() -> Int {\n  2\n}\n",
+        )
+        .expect("write dep util.silt");
+
+        // Consumer "ms_app": imports its own local util.silt plus the dep.
+        let app = ws.join("app");
+        std::fs::create_dir_all(app.join("src")).expect("create app dirs");
+        std::fs::write(
+            app.join("silt.toml"),
+            "[package]\nname = \"ms_app\"\nversion = \"0.1.0\"\n\n[dependencies]\nms_dep = { path = \"../dep\" }\n",
+        )
+        .expect("write app silt.toml");
+        Lockfile {
+            version: 1,
+            packages: vec![
+                LockedPackage {
+                    name: "ms_app".to_string(),
+                    version: "0.1.0".to_string(),
+                    source: LockedSource::Local,
+                    checksum: String::new(),
+                },
+                LockedPackage {
+                    name: "ms_dep".to_string(),
+                    version: "0.1.0".to_string(),
+                    source: LockedSource::Path { path: dep.clone() },
+                    checksum: "sha256:0000".to_string(),
+                },
+            ],
+        }
+        .write(&app.join("silt.lock"))
+        .expect("write app silt.lock");
+        let main_source = "import util\nimport ms_dep\n\nfn main() {\n}\n";
+        let main_path = app.join("src/main.silt");
+        std::fs::write(&main_path, main_source).expect("write app main.silt");
+        std::fs::write(
+            app.join("src/util.silt"),
+            "pub let boom = 1 / 0\n\npub fn app_util_only_fn() -> Int {\n  3\n}\n",
+        )
+        .expect("write app util.silt");
+
+        let map = collect_module_function_sources(&main_path.display().to_string(), main_source);
+
+        // The colliding init key must be ABSENT — two different files
+        // (app/src/util.silt and dep/src/util.silt) claim it.
+        assert!(
+            !map.contains_key("<module:util>"),
+            "`<module:util>` maps two different files and must be excluded, \
+             not last-write-wins; got {:?}",
+            map.get("<module:util>").map(|(p, _)| p)
+        );
+
+        // Controls: a collision-free init key keeps its mapping...
+        let (dep_lib_path, _) = map
+            .get("<module:ms_dep>")
+            .expect("unique init key `<module:ms_dep>` must survive");
+        assert_eq!(
+            dep_lib_path,
+            &dep.join("src/lib.silt"),
+            "`<module:ms_dep>` must map to the dep's lib.silt"
+        );
+        // ...and collision-free fn names from BOTH utils stay mapped to
+        // their own files (the exclusion is per-key, not per-file).
+        let (app_util_path, _) = map
+            .get("app_util_only_fn")
+            .expect("app util's unique fn must stay mapped");
+        assert_eq!(app_util_path, &app.join("src/util.silt"));
+        let (dep_util_path, _) = map
+            .get("dep_util_only_fn")
+            .expect("dep util's unique fn must stay mapped");
+        assert_eq!(dep_util_path, &dep.join("src/util.silt"));
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Control: two importers reaching the SAME util.silt (main imports
+    /// `util` directly, and a sibling `helper` module also imports
+    /// `util`) is NOT a collision — one file, one key. The `seen`
+    /// path-gate skips the re-import before the init-key registration,
+    /// so the key must survive with its mapping intact.
+    #[test]
+    fn same_file_reimport_keeps_init_key() {
+        let ws = temp_workspace("same_file_reimport");
+        let src = ws.join("app/src");
+        std::fs::create_dir_all(&src).expect("create app dirs");
+        let main_source = "import util\nimport helper\n\nfn main() {\n}\n";
+        let main_path = src.join("main.silt");
+        std::fs::write(&main_path, main_source).expect("write main.silt");
+        std::fs::write(src.join("util.silt"), "pub let x = 1\n").expect("write util.silt");
+        std::fs::write(
+            src.join("helper.silt"),
+            "import util\n\npub fn helper_fn() -> Int {\n  1\n}\n",
+        )
+        .expect("write helper.silt");
+
+        let map = collect_module_function_sources(&main_path.display().to_string(), main_source);
+
+        let (util_path, _) = map
+            .get("<module:util>")
+            .expect("single-file `<module:util>` must not be excluded");
+        assert_eq!(
+            util_path,
+            &src.join("util.silt"),
+            "`<module:util>` must map to the one util.silt on disk"
+        );
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
 }

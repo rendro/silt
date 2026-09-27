@@ -406,9 +406,19 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             emit_binding_token(source, &pattern.span, *name, TT_VARIABLE, out);
         }
-        PatternKind::Tuple(pats) | PatternKind::List(pats, _) | PatternKind::Or(pats) => {
+        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
                 emit_pattern_binding_tokens(p, source, out);
+            }
+        }
+        PatternKind::List(pats, rest) => {
+            for p in pats {
+                emit_pattern_binding_tokens(p, source, out);
+            }
+            // Round-101: the rest sub-pattern (`[h, ..t]`) binds `t`;
+            // it carries its own span, so recursion emits a precise token.
+            if let Some(r) = rest {
+                emit_pattern_binding_tokens(r, source, out);
             }
         }
         PatternKind::Constructor { args: fields, .. } => {
@@ -416,24 +426,71 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
                 emit_pattern_binding_tokens(p, source, out);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
-            // Round-62 B8 + B9: shorthand binders (`{ x, y }`) bind the
-            // field name as a local; emit a VARIABLE token for them so
-            // they highlight consistently with the bare `let x = ...` case.
-            // We don't have a sub-pattern span for shorthand fields, so
-            // we use the enclosing pattern span — slightly imprecise for
-            // the second+ field but matches the strategy in
-            // `local_bindings.rs` (where the binder offset is recovered
-            // by source scan, not used for highlighting).
-            for (fname, sub) in fields {
-                if let Some(p) = sub {
-                    emit_pattern_binding_tokens(p, source, out);
-                } else if resolve(*fname) != "_" {
-                    emit_binding_token(source, &pattern.span, *fname, TT_VARIABLE, out);
-                }
+        PatternKind::Record { fields, .. } => {
+            emit_shorthand_field_tokens(pattern, fields, source, out);
+        }
+        PatternKind::AnonRecord { fields, rest } => {
+            emit_shorthand_field_tokens(pattern, fields, source, out);
+            // `{x, ...rest}` binds `rest` to the unmatched fields. Like
+            // shorthand fields it has no sub-pattern node, so recover
+            // its real offset by source scan.
+            if let Some(rname) = rest {
+                emit_shorthand_binder_token(pattern, *rname, source, out);
+            }
+        }
+        PatternKind::Map(entries) => {
+            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // `v`); keys are string literals, never binders.
+            for (_, p) in entries {
+                emit_pattern_binding_tokens(p, source, out);
             }
         }
         _ => {}
+    }
+}
+
+/// Emit VARIABLE tokens for the shorthand field binders of a record /
+/// anon-record pattern (`{ x, y }` binds `x` and `y` as locals), recursing
+/// into explicit sub-patterns (`{ x: sub }`).
+fn emit_shorthand_field_tokens(
+    pattern: &Pattern,
+    fields: &[(Symbol, Option<Pattern>)],
+    source: &str,
+    out: &mut Vec<RawToken>,
+) {
+    for (fname, sub) in fields {
+        if let Some(p) = sub {
+            emit_pattern_binding_tokens(p, source, out);
+        } else {
+            emit_shorthand_binder_token(pattern, *fname, source, out);
+        }
+    }
+}
+
+/// Emit a VARIABLE token for a shorthand field / rest binder at its REAL
+/// source position. Round-62 B8 + B9 anchored these tokens at the
+/// enclosing pattern span — the record HEAD (the constructor name for a
+/// nominal record, the opening `{` for an anon record), NOT the binder
+/// ident, so `let {x, ...rest} = p` highlighted the `{` instead of `x`
+/// and `rest`. The AST carries no sub-span for shorthand binders, so
+/// recover the offset by source scan (same strategy as
+/// `workspace::shorthand_binder_span`); when the scan fails, emit
+/// nothing — a head-anchored token mislabels the `{` / constructor name,
+/// which is worse than no token (round-102 BROKEN fix).
+fn emit_shorthand_binder_token(
+    pattern: &Pattern,
+    name: Symbol,
+    source: &str,
+    out: &mut Vec<RawToken>,
+) {
+    let name_str = resolve(name);
+    if name_str == "_" {
+        return;
+    }
+    if let Some(off) =
+        super::text_utils::find_shorthand_binder(source, pattern.span.offset, &name_str)
+    {
+        push_token_at_offset(source, off, &name_str, TT_VARIABLE, out);
     }
 }
 
@@ -587,6 +644,55 @@ mod tests {
         assert_eq!(encoded[1].delta_start, 4);
     }
 
+    /// Parse `source` and return the pattern of the first `let` stmt in
+    /// the first fn's body block.
+    fn first_let_pattern(source: &str) -> Pattern {
+        let tokens = crate::lexer::Lexer::new(source).tokenize().expect("lex");
+        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let Some(Decl::Fn(f)) = program.decls.first() else {
+            panic!("fixture must start with a fn decl");
+        };
+        let ExprKind::Block(stmts) = &f.body.kind else {
+            panic!("fn body must be a block");
+        };
+        let Some(Stmt::Let { pattern, .. }) = stmts.first() else {
+            panic!("first stmt must be a let");
+        };
+        pattern.clone()
+    }
+
+    #[test]
+    fn pattern_binding_tokens_cover_list_rest_binder() {
+        // Round-101 GAP lock: `let [h, ..t] = ...` must emit a VARIABLE
+        // token for the rest binder `t`. Pre-fix, the List arm matched
+        // `List(pats, _)` and discarded the rest sub-pattern.
+        let source = "fn main() {\n  let [h, ..t] = [1, 2, 3]\n  t\n}";
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        assert_eq!(
+            out.len(),
+            2,
+            "expected VARIABLE tokens for BOTH `h` and `...t`: {out:?}"
+        );
+    }
+
+    #[test]
+    fn pattern_binding_tokens_cover_anon_record_rest_binder() {
+        // Round-101 GAP lock: `let {x, ...rest} = ...` must emit a
+        // VARIABLE token for the named rest binder `rest`. Pre-fix, the
+        // AnonRecord arm destructured `{ fields, .. }`, dropping it.
+        let source = "fn main() {\n  let {x, ...rest} = p\n  x\n}";
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        assert_eq!(
+            out.len(),
+            2,
+            "expected VARIABLE tokens for BOTH `x` and `...rest`: {out:?}"
+        );
+    }
+
     #[test]
     fn legend_has_expected_entries() {
         let legend = semantic_tokens_legend();
@@ -594,5 +700,86 @@ mod tests {
         assert!(legend.token_types.contains(&SemanticTokenType::FUNCTION));
         assert!(legend.token_types.contains(&SemanticTokenType::INTERFACE));
         assert!(legend.token_modifiers.is_empty());
+    }
+
+    // ── pattern binding tokens: shorthand / rest binder anchoring ──
+
+    /// Round-102 BROKEN lock: anon-record shorthand and rest binders must
+    /// get VARIABLE tokens at the binder idents THEMSELVES, not at the
+    /// pattern head (the `{`). The pre-fix code anchored the `x` token at
+    /// `pattern.span.offset` (the `{`) and emitted nothing for `rest` at
+    /// all — a count-only assertion would not catch the mis-anchoring, so
+    /// this test pins exact (line, col, length) coordinates.
+    #[test]
+    fn pattern_binding_tokens_anchor_anon_record_shorthand_and_rest_binders() {
+        let source = "fn main(p) {\n  let {x, ...rest} = p\n  x\n}";
+        // Line 1 (0-based): `  let {x, ...rest} = p`
+        //   col:             0123456789012345678
+        //   `{` at col 6, `x` at col 7, `rest` at col 13.
+        let pattern = first_let_pattern(source);
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        out.sort_by_key(|t| (t.line, t.col_utf16));
+        assert_eq!(out.len(), 2, "one token for `x`, one for `rest`: {out:?}");
+        assert_eq!(
+            (
+                out[0].line,
+                out[0].col_utf16,
+                out[0].length_utf16,
+                out[0].token_type
+            ),
+            (1, 7, 1, TT_VARIABLE),
+            "`x` binder token must sit on the `x` ident, not the `{{`: {out:?}"
+        );
+        assert_eq!(
+            (
+                out[1].line,
+                out[1].col_utf16,
+                out[1].length_utf16,
+                out[1].token_type
+            ),
+            (1, 13, 4, TT_VARIABLE),
+            "`rest` binder token must sit on the `rest` ident: {out:?}"
+        );
+    }
+
+    /// Same anchoring contract for the nominal record arm: `Pt {x, y}`
+    /// shorthand binder tokens must sit on `x` / `y`, not on `Pt` (the
+    /// pattern head span).
+    #[test]
+    fn pattern_binding_tokens_anchor_nominal_record_shorthand_binders() {
+        let source = "fn main(p) {\n  let Pt {x, y} = p\n  x\n}";
+        // Line 1 (0-based): `  let Pt {x, y} = p`
+        //   `Pt` at col 6, `{` at col 9, `x` at col 10, `y` at col 13.
+        let pattern = first_let_pattern(source);
+        assert!(
+            matches!(&pattern.kind, PatternKind::Record { .. }),
+            "expected a nominal record pattern, got {:?}",
+            pattern.kind
+        );
+        let mut out = Vec::new();
+        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        out.sort_by_key(|t| (t.line, t.col_utf16));
+        assert_eq!(out.len(), 2, "one token for `x`, one for `y`: {out:?}");
+        assert_eq!(
+            (
+                out[0].line,
+                out[0].col_utf16,
+                out[0].length_utf16,
+                out[0].token_type
+            ),
+            (1, 10, 1, TT_VARIABLE),
+            "`x` binder token must sit on the `x` ident, not on `Pt`: {out:?}"
+        );
+        assert_eq!(
+            (
+                out[1].line,
+                out[1].col_utf16,
+                out[1].length_utf16,
+                out[1].token_type
+            ),
+            (1, 13, 1, TT_VARIABLE),
+            "`y` binder token must sit on the `y` ident: {out:?}"
+        );
     }
 }

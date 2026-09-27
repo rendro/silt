@@ -1618,7 +1618,7 @@ impl Parser {
             if self.at(&Token::RBrace) {
                 break;
             }
-            let (name, _) = self.expect_ident()?;
+            let (name, name_span) = self.expect_ident()?;
             let fields = if self.peek() == &Token::LParen {
                 self.advance();
                 let mut fs = Vec::new();
@@ -1632,7 +1632,11 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            variants.push(EnumVariant { name, fields });
+            variants.push(EnumVariant {
+                name,
+                name_span,
+                fields,
+            });
             self.expect_list_sep("enum variant list", '}', &Token::RBrace)?;
         }
         Ok(TypeBody::Enum(variants))
@@ -2033,6 +2037,24 @@ impl Parser {
     // ── Type expressions ─────────────────────────────────────────────
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
+        // Depth guard mirroring parse_expr_bp / parse_pattern: type-expr
+        // recursion (nested generics, Fn types, qualified projections,
+        // anon record types) was the one unguarded sibling — deep
+        // nesting overflowed even the 256MiB silt-main stack.
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            self.depth -= 1;
+            return Err(ParseError {
+                message: "type nesting exceeds maximum depth".into(),
+                span: self.span(),
+            });
+        }
+        let result = self.parse_type_expr_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
         // Round-52 deferred item 2: capture the start-of-type-expr span
         // so every TypeExpr node anchors its own span. Used by trait-
@@ -2760,9 +2782,9 @@ impl Parser {
                     continue;
                 }
                 Token::Plus | Token::Minus if !had_newline => {
-                    // + and - are newline-sensitive: they are ambiguous with
-                    // unary +/- at the start of the next statement, so a
-                    // newline before them terminates the current expression.
+                    // + and - are newline-sensitive: `-` is ambiguous with unary
+                    // negation starting the next statement (`+` is treated the
+                    // same; silt has no unary plus), so a newline terminates it.
                     let op = if self.peek() == &Token::Plus {
                         BinOp::Add
                     } else {
@@ -3706,7 +3728,7 @@ impl Parser {
     /// `..[-]N` exits stay in lock-step.
     ///
     /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
-    /// lex time (see src/lexer.rs:626-627), so `Token::Int(n)` is always
+    /// lex time (see src/lexer.rs:647-648), so `Token::Int(n)` is always
     /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
     /// underflows, and the caller's `-n` for the head is likewise safe.
     /// We still spell the negation as a plain unary minus to match the

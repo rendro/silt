@@ -5,19 +5,29 @@
 //! equal modulo type-var alpha-equivalence. This is the single source
 //! of truth for type identity across the typechecker, compiler, and VM.
 //!
-//! Today the only reduction is `Type::Range(t) -> Type::List(t)`. The
-//! API generalises so future reductions (user `type Foo = Bar` aliases,
-//! ExtFloat-as-Float-with-flag, future shorthand types) plug in here.
+//! The current reduction set is:
 //!
-//! ## Phase A scope
+//! - `Type::Range(t) -> Type::List(t)` (Range is a nominal zero-cost
+//!   alias of List).
+//! - User `type Foo = Bar` alias expansion: a `Type::Generic(name, args)`
+//!   whose `name` is registered in the [`Resolver`] alias registry
+//!   expands to its stored target with `args` substituted (Phase D).
+//! - `Type::AssocProj` reduction: `<T as Trait>::Item` reduces to the
+//!   impl's registered binding when the receiver canonicalises to a
+//!   concrete head (associated-types phase).
 //!
-//! This module is purely additive: it exposes [`canonicalize`],
-//! [`types_equal`], and [`canonical_name`] with thorough unit coverage
-//! but is not yet wired into any caller. Phase B routes the existing
-//! unifier in `src/typechecker/inference.rs` through [`canonicalize`]
-//! at its entry points; phase C points the VM's
-//! `value_type_name_for_dispatch` and the compiler's trait-impl
-//! global-name emission at [`canonical_name`].
+//! ## Phase history (A through D — all live)
+//!
+//! Phase A originally shipped this module standalone — exposing
+//! [`canonicalize`], [`types_equal`], and [`canonical_name`] with unit
+//! coverage but no callers. That is no longer true: phase B routed the
+//! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
+//! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
+//! phase C pointed the VM's runtime dispatch (via
+//! [`dispatch_name_for_value`]) and the compiler's trait-impl
+//! global-name emission (via [`canonicalize_type_name`]) at the
+//! canonical-name oracle; phase D added the alias registry described
+//! below.
 //!
 //! ## Display vs canonical name
 //!
@@ -372,9 +382,14 @@ impl Resolver {
 /// Recursive structural walk. The current reduction set is:
 ///
 /// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
-/// - `Type::Generic(name, args)` or `Type::Record(name, _)` whose
-///   `name` is a registered alias -> the alias's stored target with
-///   `args` substituted into its parameters, then canonicalised.
+/// - `Type::Generic(name, args)` whose `name` is a registered alias ->
+///   the alias's stored target with `args` substituted into its
+///   parameters, then canonicalised. (Only `Generic` heads can be
+///   aliases: a name cannot be declared as both a record and an alias,
+///   so the `Type::Record` arm below is pure structural recursion.)
+/// - `Type::AssocProj` whose receiver canonicalises to a concrete head
+///   with a registered impl binding -> that binding's stored type,
+///   canonicalised.
 ///
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
@@ -608,8 +623,23 @@ pub fn canonical_name(ty: &Type) -> String {
 /// Mirror of [`canonical_name`] for the case where only the head
 /// constructor's surface name is in hand (as a `Symbol`) — typically
 /// because a parser/AST node carries the user-supplied identifier
-/// rather than a fully reconstructed [`Type`]. Today the only collapse
-/// is `Range -> List`, matching [`canonical_name`]'s reduction rule.
+/// rather than a fully reconstructed [`Type`]. The collapse rules,
+/// matching [`canonical_name`]'s reductions:
+///
+/// - `Range` -> `List` (Phase B; `Range` is a nominal alias of
+///   `List`, so Range-targeted impls register under the key both
+///   List and Range receivers reach at dispatch time).
+/// - `Fun`   -> `Fn` (round 71 follow-up; deprecated surface alias
+///   of the function-type name — the VM dispatches closures under
+///   `"Fn"`, so a `trait T for Fun` impl must register there too).
+/// - `()`    -> `Unit` (round 75 TYPE-3; surface alias of the
+///   canonical primitive name, matching
+///   `canonical_name(&Type::Unit) = "Unit"` and
+///   `dispatch_name_for_value(&Value::Unit) = "Unit"`).
+/// - Registered user aliases route to the canonical head of their
+///   target (Phase D): `type Bytes = List(Int)` collapses to
+///   `"List"`; chained aliases collapse fully via recursion.
+///
 /// Other names round-trip unchanged so the function is safe to apply
 /// unconditionally to any target-type symbol.
 ///
@@ -619,11 +649,12 @@ pub fn canonical_name(ty: &Type) -> String {
 /// phase C adds this canonical-module copy so the compiler
 /// (`src/compiler/mod.rs`) can route `trait_impl.target_type` through
 /// the same reduction without depending on the typechecker module.
-/// Both copies share the same single-rule (`Range -> List`)
-/// implementation, so they stay in lock-step by construction; if the
-/// canonicalisation rules ever expand, both must be updated together
-/// (see also: the architectural lock test in
-/// `tests/canonical_type_arch_lock_tests.rs`).
+/// The two copies are hand-maintained duplicates with no automatic
+/// parity guarantee: if the canonicalisation rules ever change, both
+/// MUST be updated together. Doc-comment parity is locked by
+/// `tests/round86_canonicalize_type_name_doc_parity_tests.rs`; see
+/// also the architectural lock test in
+/// `tests/canonical_type_arch_lock_tests.rs`.
 pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     let name_str = resolve(name);
     if name_str.as_str() == "Range" {

@@ -119,11 +119,12 @@ fn silt_io_pool_size_unset_uses_min_cores_4_default() {
         resolved, default,
         "unset env var must resolve to default_io_pool_size()"
     );
-    // Document the default's shape: min(available_parallelism, 4),
-    // floored at 2.
+    // Document the default's shape: min(available_parallelism, 4); the
+    // fallback 2 applies only when available_parallelism() errors, NOT
+    // as a floor — a single-core host legitimately yields 1.
     assert!(
-        (2..=4).contains(&default),
-        "default_io_pool_size() out of expected [2, 4]: {default}"
+        (1..=4).contains(&default),
+        "default_io_pool_size() out of expected [1, 4]: {default}"
     );
 }
 

@@ -585,3 +585,57 @@ fn test_repl_unknown_command_prints_helpful_message() {
         out.stderr
     );
 }
+
+// ── 11. BROKEN: `fn (` anon-fn expressions must not be routed to the
+//        declaration parser ───────────────────────────────────────────
+//
+// Regression lock (round-101): `is_declaration` used the
+// whitespace-sensitive heuristic `starts_with("fn ")`, so a valid
+// anonymous-fn expression written with a space — `fn (x) { x * 2 }(5)`
+// — was routed to `eval_declaration` and rejected with
+// `expected identifier, found (`, even though the identical input runs
+// fine in file mode (`let y = fn (x) { x * 2 }(5)` prints 10 via
+// `silt run`). The parser is token-based and distinguishes `fn IDENT`
+// (declaration) from `fn (` (anon-fn expression) regardless of
+// whitespace (`parser::at_top_level_fn_start`); `is_declaration` now
+// mirrors that rule.
+
+#[test]
+fn test_repl_anon_fn_with_space_is_evaluated_as_expression() {
+    // Immediately-invoked anonymous fn, with a space after `fn`. Before
+    // the fix this printed `expected identifier, found (` on stderr and
+    // nothing on stdout.
+    let out = run_session("fn (x) { x * 2 }(5)\n");
+    assert_has_banner(&out);
+    assert!(
+        out.success,
+        "repl should exit successfully, stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|l| l.trim() == "10"),
+        "expected `10` from `fn (x) {{ x * 2 }}(5)` in stdout, got:\n{}\nstderr:\n{}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("expected identifier"),
+        "anon-fn expression must not hit the declaration parser, got stderr:\n{}",
+        out.stderr
+    );
+
+    // A named declaration with the same leading keyword must still take
+    // the declaration path and stay callable afterwards.
+    let out = run_session("fn triple(x) { x * 3 }\ntriple(4)\n");
+    assert!(
+        out.stdout.lines().any(|l| l.trim() == "12"),
+        "expected `12` from `triple(4)` in stdout, got:\n{}\nstderr:\n{}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        !out.stderr.to_lowercase().contains("error"),
+        "named fn declaration must still route through eval_declaration, got stderr:\n{}",
+        out.stderr
+    );
+}

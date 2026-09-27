@@ -525,6 +525,14 @@ pub enum TypeBody {
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: Symbol,
+    /// Span of the variant-name identifier itself (the `Circle` in
+    /// `Circle(Int)`). Mirrors `FnDecl::name_span` / `TypeDecl::name_span`
+    /// (round-63 B1): LSP rename / references / goto-def need the name
+    /// token's range, not the enclosing decl's `type`-keyword span —
+    /// without it, renaming a variant from a usage site rewrote the
+    /// `type` keyword. `Span::synthetic()` for variants synthesized
+    /// outside the parser (auto-derive's VariantInfo round-trip).
+    pub name_span: Span,
     pub fields: Vec<TypeExpr>,
 }
 

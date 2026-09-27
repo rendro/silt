@@ -166,6 +166,15 @@ fn format_file(path: &str) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| format!("error reading {path}: {e}"))?;
     let formatted =
         silt::formatter::format(&source).map_err(|e| render_fmt_error(&e, &source, path))?;
+    // Skip the write when the file is already formatted. An
+    // unconditional `fs::write` bumps the file's mtime even though the
+    // bytes are identical, which spuriously retriggers `--watch` loops
+    // and mtime-based build tools on every no-op format (e.g. editor
+    // format-on-save alongside `silt run --watch`). rustfmt/gofmt skip
+    // identical writes for exactly this reason.
+    if formatted == source {
+        return Ok(());
+    }
     fs::write(path, formatted).map_err(|e| format!("error writing {path}: {e}"))?;
     Ok(())
 }

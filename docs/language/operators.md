@@ -101,14 +101,21 @@ items
   |> list.map { n -> n * n }
 ```
 
-**`+` and `-` do not cross newlines** (they are ambiguous with unary `-x` / `+x`):
+**`+` and `-` do not cross newlines** (`-` is ambiguous with unary negation
+`-x`; silt has no unary plus, but the newline rule treats `+` and `-`
+symmetrically):
 
 ```silt
 let x = 10 +
   20              -- OK: + at end of line
 
 let y = 10
-  + 20            -- NOT a continuation — `y = 10` then `+20` starts a new expr
+  + 20            -- NOT a continuation — `y = 10`, then the `+ 20` line is a
+                  -- parse error (silt has no unary plus)
+
+let z = 10
+  - 20            -- NOT a continuation — `z = 10`, then `-20` is a new
+                  -- unary-negation expression statement
 ```
 
 **Postfix operators do not cross newlines.** Call, `?`, and trailing closure must appear on the same line as their operand:
@@ -117,7 +124,8 @@ let y = 10
 let n = parse(input)?       -- OK
 
 let n = parse(input)
-  ?                         -- NOT a ?-propagation; parses as two expressions
+  ?                         -- NOT a ?-propagation; the lone `?` line is a
+                            -- parse error
 ```
 
 ```silt

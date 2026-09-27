@@ -83,15 +83,16 @@ verbose, but enables concurrency safety and reasoning guarantees.
 
 Postfix operators (function call, `?`, trailing closure) do **not**
 cross newlines. Infix operators (`|>`, `.`, `==`, `*`, etc.) do. `+` and `-`
-are ambiguous (also unary) so they do not cross newlines -- place them at the
-end of the line to continue:
+do not cross newlines -- `-` is ambiguous with unary negation, and `+` is
+treated symmetrically even though silt has no unary plus -- place them at
+the end of the line to continue:
 
 ```silt
 let x = 10 +
   20            -- OK: + at end of line
 
 let y = 10
-  + 20          -- NOT a continuation
+  + 20          -- NOT a continuation -- parse error (no unary plus)
 ```
 
 (Bracket indexing `xs[i]` is reserved syntax but is not a real postfix

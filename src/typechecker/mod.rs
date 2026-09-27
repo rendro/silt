@@ -481,6 +481,10 @@ pub(super) struct TraitImplExport {
     pub(super) span: Span,
     pub(super) impl_constraints: Vec<(usize, Symbol, Vec<Type>)>,
     pub(super) impl_trait_args: Vec<Type>,
+    /// The impl's full canonicalized self type (see
+    /// `TypeChecker::impl_self_types`). `None` for impls the producer
+    /// never routed through `register_trait_impl`.
+    pub(super) self_type: Option<Type>,
     /// Method entries keyed by method name.
     pub(super) methods: Vec<(Symbol, MethodEntry)>,
 }
@@ -587,6 +591,22 @@ pub struct TypeChecker {
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
     pub(super) impl_trait_args: HashMap<(Symbol, Symbol), Vec<Type>>,
+    /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
+    /// self type as constructed by `register_trait_impl`. Coherence
+    /// guarantees at most one user impl per key. Consulted by
+    /// `verify_trait_obligation` AFTER the head-membership check so that
+    /// an alias-expanded impl with concrete self-type args (e.g.
+    /// `type Bytes2 = List(Int)`; `trait Total for Bytes2` stores
+    /// `List(Int)`) rejects obligations on a mismatched instantiation
+    /// like `List(String)`. Without this, where-bound verification was
+    /// head-keyed only: `(Total, "List")` in `trait_impl_set` satisfied
+    /// ANY `List(T)`, and the Int-assuming method body ran on String
+    /// elements at runtime. Generic impls (`for List(a)`) store `Var`
+    /// args, which the positional comparison treats as wildcards, so
+    /// they keep matching every instantiation. Absent for impls that
+    /// never pass through `register_trait_impl` (builtin pre-stamps,
+    /// auto-derive synthesis) — the check silently skips those.
+    pub(super) impl_self_types: HashMap<(Symbol, Symbol), Type>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -850,6 +870,7 @@ impl TypeChecker {
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
             impl_trait_args: HashMap::new(),
+            impl_self_types: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
@@ -1438,6 +1459,21 @@ impl TypeChecker {
             (Type::Fun(_, _), Type::Generic(name, args))
             | (Type::Generic(name, args), Type::Fun(_, _))
                 if args.is_empty() && resolve(*name) == "Fn" => {}
+
+            // `trait T for Tuple { ... }` likewise registers a self_type
+            // of `Generic("Tuple", [])` — tuples are variadic, so unlike
+            // List/Map/Set/Channel there is no fresh-var element shape
+            // `register_trait_impl` could synthesize for the bare target.
+            // Treat the bare-`Tuple` Generic as a wildcard for any tuple
+            // shape so direct receiver dispatch (`(1, 2).pretty()`)
+            // matches the where-bound path, which already dispatched via
+            // the head-keyed obligation. Bare `Tuple` is rejected as a
+            // type annotation (`resolve_type_expr`'s uppercase fallback
+            // errors "unknown type"), so this arm is reachable only via
+            // trait-impl self-types, mirroring the `Fn` arm above.
+            (Type::Tuple(_), Type::Generic(name, args))
+            | (Type::Generic(name, args), Type::Tuple(_))
+                if args.is_empty() && resolve(*name) == "Tuple" => {}
 
             (Type::List(a), Type::List(b)) => {
                 self.unify(a, b, span);
@@ -2086,7 +2122,8 @@ impl TypeChecker {
     /// the inverse of `register_trait_impl`'s self_type construction:
     /// `Type::Generic(_, args)` yields `args`; the parameterized builtin
     /// containers (List, Set, Channel, Map) yield their element types in
-    /// declaration order. Anything else (Int, String, Record without type
+    /// declaration order; tuples yield their elements and functions their
+    /// params-then-return. Anything else (Int, String, Record without type
     /// params, etc.) has no positional args. Used by `verify_trait_obligation`
     /// to walk into an impl's where-clause obligations.
     ///
@@ -2100,6 +2137,27 @@ impl TypeChecker {
                 vec![(**inner).clone()]
             }
             Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+            // Tuple-/Fn-shaped alias impls (`type P2 = (Int, Int)`;
+            // `type IntOp = Fn(Int) -> Int`) register under the synthetic
+            // heads `"Tuple"`/`"Fn"` with the expanded structural self
+            // type. Their positional args are the element types (params
+            // plus return for `Fn`) so `verify_trait_obligation`'s
+            // self-type-args comparison sees them. Pre-fix both shapes
+            // fell through to `Vec::new()`: obligated-vs-impl args
+            // compared as empty-vs-empty and ANY tuple/function satisfied
+            // a bound whose only impl targeted a concrete alias shape
+            // (round-102 hole, same class as the head-key-only bug it
+            // fixed). Differing arities land on the caller's equal-length
+            // conservative-skip guard, so the bare `trait T for Tuple`
+            // wildcard (`Generic("Tuple", [])`, zero args) keeps matching
+            // every tuple, and mismatched-arity functions defer to the
+            // direct-dispatch unify.
+            Type::Tuple(elems) => elems.clone(),
+            Type::Fun(params, ret) => {
+                let mut args = params.clone();
+                args.push((**ret).clone());
+                args
+            }
             _ => Vec::new(),
         }
     }
@@ -2143,6 +2201,48 @@ impl TypeChecker {
                 span,
             );
             return;
+        }
+        // Head-key membership alone is not enough: an alias-expanded impl
+        // can carry CONCRETE self-type args (`type Bytes2 = List(Int)`;
+        // `trait Total for Bytes2` registers under head "List" with
+        // self_type `List(Int)`), yet the membership check above matches
+        // any `List(T)`. Compare the obligated type's positional args
+        // against the stored impl self type's, with defer-on-Var logic —
+        // generic impls (`for List(a)`) store `Var` args and keep matching
+        // everything; only concrete-vs-concrete mismatches reject. A
+        // length mismatch means the two sides describe differently shaped
+        // representations of the same head (e.g. a `Record` receiver
+        // against a `Generic` impl form); skip conservatively — the
+        // method-entry unify at direct dispatch sites still guards those.
+        // Impls without a stored self type (builtin pre-stamps,
+        // auto-derive synthesis) skip the check, preserving prior
+        // behavior.
+        //
+        // Round 104 BROKEN: the per-slot walk must be consistency-
+        // tracking, not stateless. A NON-LINEAR impl self type repeats
+        // the same binder across slots — `type Pair(a) = (a, a)` expands
+        // to `(Var a', Var a')`, ditto `Square(a) = Map(a, a)` — and the
+        // old independent `zip(..).any(|(ob, im)| !trait_arg_compatible)`
+        // deferred `(Int, Fn)` against `Var a'` slot by slot, losing the
+        // constraint that BOTH slots are the SAME `a'`. The bound
+        // verified, and the Fn in slot 1 died at the runtime Display
+        // gate. `impl_self_args_consistent` threads a binding map across
+        // the slots so a repeated binder must see equal types.
+        if let Some(impl_self) = self.impl_self_types.get(&(trait_name, type_name)).cloned() {
+            let obligated_args = self.type_args_of(&resolved);
+            let impl_args = self.type_args_of(&impl_self);
+            if obligated_args.len() == impl_args.len()
+                && !self.impl_self_args_consistent(&obligated_args, &impl_args)
+            {
+                self.error(
+                    format!(
+                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        resolved, trait_name, impl_self
+                    ),
+                    span,
+                );
+                return;
+            }
         }
         // Parameterized-trait verification: if the bound carries trait
         // args (e.g. `where a: TryInto(Int)`) and the matched impl also
@@ -2200,6 +2300,111 @@ impl TypeChecker {
                     sub_trait_args.iter().map(|t| self.apply(t)).collect();
                 self.verify_trait_obligation(sub_trait, &resolved_sub_args, &arg_ty, span);
             }
+        }
+    }
+
+    /// Consistency-tracking variant of the per-slot compatibility walk
+    /// for `verify_trait_obligation`'s self-type-args check.
+    /// Round 104: the stateless per-pair `trait_arg_compatible` lost the
+    /// cross-slot linkage of NON-LINEAR impl self types — a repeated
+    /// binder, reachable only via alias expansion (the parser rejects
+    /// duplicate binders in direct impl targets): `Pair(a) = (a, a)` →
+    /// `(Var a', Var a')`, ditto `Square(a) = Map(a, a)`. An obligated
+    /// `(Int, Fn)` deferred each slot against `Var a'` alone, satisfied
+    /// the bound, and died at runtime. Here a binding map is
+    /// threaded across ALL slots: the first obligated type an impl-side
+    /// `Var` meets binds it; every re-encounter must be compatible with
+    /// that binding. Obligated-side `Var`s still defer (inference may
+    /// resolve them later), and concrete/concrete pairs walk structurally
+    /// exactly as before.
+    ///
+    /// Enforcing the linkage here also keeps the first-occurrence-only
+    /// where-clause obligation index (the `.position(..)` over
+    /// `expanded_self_args` in `register_trait_impl`) sound: once every
+    /// slot sharing a binder is forced equal, checking the bound at the
+    /// binder's first slot covers all of them.
+    fn impl_self_args_consistent(&self, obligated: &[Type], impl_args: &[Type]) -> bool {
+        let mut bindings: HashMap<TyVar, Type> = HashMap::new();
+        obligated.iter().zip(impl_args.iter()).all(|(ob, im)| {
+            let ob = crate::types::canonical::canonicalize(&self.resolver, ob);
+            let im = crate::types::canonical::canonicalize(&self.resolver, im);
+            Self::impl_arg_matches_canon(&ob, &im, &mut bindings)
+        })
+    }
+
+    /// One-sided structural matcher threading `bindings` for
+    /// `impl_self_args_consistent`. Mirrors `trait_arg_compatible_canon`'s
+    /// recursive arms; both inputs are pre-canonicalised (deep), so the
+    /// recursion never re-canonicalises. Leaf pairs with no impl-side
+    /// binder to thread (scalars, nominal `Record`/`Generic` head-name
+    /// comparisons without args, `Never`, mismatches) delegate to the
+    /// existing stateless walk via the catch-all.
+    fn impl_arg_matches_canon(ob: &Type, im: &Type, bindings: &mut HashMap<TyVar, Type>) -> bool {
+        match (ob, im) {
+            (Type::Error, _) | (_, Type::Error) => true,
+            // Obligated side unresolved: defer, as before. (Deliberately
+            // no binding — a caller-side tyvar may resolve after this
+            // check; rejecting on it would be a false negative.)
+            (Type::Var(_), _) => true,
+            // Impl-side binder: bind on first encounter, require
+            // compatibility with the binding on re-encounter.
+            // `trait_arg_compatible_canon` is the right comparator —
+            // a nested `Var` on either side keeps deferring
+            // conservatively, while concrete mismatches reject.
+            (_, Type::Var(tv)) => match bindings.get(tv) {
+                Some(bound) => Self::trait_arg_compatible_canon(bound, ob),
+                None => {
+                    bindings.insert(*tv, ob.clone());
+                    true
+                }
+            },
+            (Type::List(x), Type::List(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => Self::impl_arg_matches_canon(x, y, bindings),
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                Self::impl_arg_matches_canon(k1, k2, bindings)
+                    && Self::impl_arg_matches_canon(v1, v2, bindings)
+            }
+            (Type::Tuple(xs), Type::Tuple(ys)) => {
+                xs.len() == ys.len()
+                    && xs
+                        .iter()
+                        .zip(ys.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
+                p1.len() == p2.len()
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+                    && Self::impl_arg_matches_canon(r1, r2, bindings)
+            }
+            (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: t1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: t2,
+                },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && Self::impl_arg_matches_canon(v1, v2, bindings)
+                    })
+            }
+            _ => Self::trait_arg_compatible_canon(ob, im),
         }
     }
 
@@ -2452,6 +2657,11 @@ impl TypeChecker {
             for v in free_vars_in_types(&entry.impl_trait_args) {
                 producer_tyvars.insert(v);
             }
+            if let Some(st) = &entry.self_type {
+                for v in free_vars_in(st) {
+                    producer_tyvars.insert(v);
+                }
+            }
             for (_, m) in &entry.methods {
                 for v in free_vars_in(&m.method_type) {
                     producer_tyvars.insert(v);
@@ -2652,6 +2862,10 @@ impl TypeChecker {
                     .collect();
                 self.impl_trait_args.insert(key, remapped);
             }
+            if let Some(st) = &entry.self_type {
+                self.impl_self_types
+                    .insert(key, substitute_vars(st, &ty_remap));
+            }
             for (mname, m) in &entry.methods {
                 let new_method_type = substitute_vars(&m.method_type, &ty_remap);
                 let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = m
@@ -2830,6 +3044,7 @@ impl TypeChecker {
                 span: *span,
                 impl_constraints: self.impl_constraints.get(key).cloned().unwrap_or_default(),
                 impl_trait_args: self.impl_trait_args.get(key).cloned().unwrap_or_default(),
+                self_type: self.impl_self_types.get(key).cloned(),
                 methods,
             };
             exports.trait_impl_entries.push(entry);
@@ -4500,7 +4715,7 @@ impl TypeChecker {
         // value-side types (e.g. the `Range(Int)` from a `1..n`
         // expression) is preserved because expression-level inference
         // (`ExprKind::Range` in `inference.rs`) keeps producing
-        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:594`)
+        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:1492`)
         // therefore still fires for the asymmetric case of a
         // (canonicalised) annotation meeting an internally-inferred
         // Range, but only the value side carries Range past this
@@ -5654,15 +5869,15 @@ impl TypeChecker {
                 TypeBodyKind::Enum(variants) => {
                     // Convert resolved VariantInfo back into AST EnumVariant
                     // shape (the auto_derive helpers operate on AST forms).
-                    // We only need .name and .fields.len() — the field
-                    // TypeExprs are not actually inspected by the
-                    // synthesis (it just emits .compare() / .hash() /
-                    // .display() / .equal() calls on positionally-named
-                    // bound vars).
+                    // Only .name and .fields.len() matter — the synthesis
+                    // just emits .compare() / .hash() / .display() /
+                    // .equal() calls on positionally-named bound vars, so
+                    // name_span and the field TypeExprs are placeholders.
                     let ast_variants: Vec<EnumVariant> = variants
                         .iter()
                         .map(|v| EnumVariant {
                             name: v.name,
+                            name_span: Span::synthetic(),
                             // Synthesize `Wildcard` placeholder TypeExprs;
                             // the auto_derive helpers only count them.
                             fields: v
@@ -6515,17 +6730,45 @@ impl TypeChecker {
                     .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
                     .unwrap_or(0);
                 if user_arity == 0 {
-                    // Use the canonicalised target name so the self_type
-                    // built here matches the `method_table` registration
-                    // key (also canonicalised at line :5386). Without
-                    // this, `trait T for Fun` produces a self_type of
-                    // `Generic("Fun", [])` while the impl_key is
-                    // `("T", "Fn")` — and the dispatch unify of
-                    // `Type::Fun(_, _)` against `Generic("Fun", [])`
-                    // misses the `(Type::Fun, Generic("Fn", []))` arm
-                    // we added in `unify`. Round 71 follow-up TYPE-3
-                    // canonical-name unification.
-                    Self::type_from_name(target_type)
+                    // Bare builtin-container targets (`trait T for List`,
+                    // Map/Set/Channel; a bare `Range` target arrives here
+                    // as `List` via `canonicalize_type_name`) mirror
+                    // `resolve_type_expr`'s bare-name annotation
+                    // semantics: synthesize a fresh var per element slot
+                    // so the self_type unifies with any concrete receiver
+                    // (`List(Int)`, `Map(String, Bool)`, ...). Pre-fix
+                    // these fell through to `type_from_name`'s
+                    // `Generic("List", [])`, which unify's catch-all
+                    // rejected against `Type::List(Int)` with the
+                    // self-contradictory "type mismatch: expected List,
+                    // got List(Int)" — even though the SAME impl
+                    // dispatched fine through a where-bound fn
+                    // (head-keyed obligation + runtime dispatch). The
+                    // fresh vars are per-registration, like the alias /
+                    // user-arity branches: `instantiate_method_entry`
+                    // refreshes them per call site.
+                    //
+                    // Variadic `Tuple` has no fresh-var shape; it keeps
+                    // the `Generic("Tuple", [])` fallback and is matched
+                    // by the bare-`Tuple` wildcard arm in `unify` (same
+                    // strategy as `Fn`).
+                    match resolve(target_type).as_str() {
+                        "List" => Type::List(Box::new(self.fresh_var())),
+                        "Set" => Type::Set(Box::new(self.fresh_var())),
+                        "Channel" => Type::Channel(Box::new(self.fresh_var())),
+                        "Map" => Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var())),
+                        // Use the canonicalised target name so the
+                        // self_type built here matches the `method_table`
+                        // registration key (also canonicalised). Without
+                        // this, `trait T for Fun` produces a self_type of
+                        // `Generic("Fun", [])` while the impl_key is
+                        // `("T", "Fn")` — and the dispatch unify of
+                        // `Type::Fun(_, _)` against `Generic("Fun", [])`
+                        // misses the `(Type::Fun, Generic("Fn", []))` arm
+                        // we added in `unify`. Round 71 follow-up TYPE-3
+                        // canonical-name unification.
+                        _ => Self::type_from_name(target_type),
+                    }
                 } else {
                     let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
                     Type::Generic(target_type, args)
@@ -6641,6 +6884,17 @@ impl TypeChecker {
             }
         };
 
+        // Record the impl's full self type under the canonical head key so
+        // `verify_trait_obligation` can compare an obligated type's
+        // positional args against the impl's — closing the alias-expansion
+        // soundness hole where `trait Total for Bytes2` (with
+        // `type Bytes2 = List(Int)`) satisfied a where-bound for ANY
+        // `List(T)`. Overwrites are fine: coherence rejects duplicate user
+        // impls above, and the one permitted overwrite (user impl
+        // overriding an auto-derived one) should win here too.
+        self.impl_self_types
+            .insert((ti.trait_name, target_type), self_type.clone());
+
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
         // These apply to every method in the impl and are appended to
@@ -6653,10 +6907,31 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = Vec::new();
-        // Parallel structure indexed by target_param_names position, used to
-        // populate self.impl_constraints below so that call-site constraint
-        // resolution can recursively verify the impl's own where clauses
-        // against the actual concrete type arguments at the call site.
+        // Parallel structure used to populate self.impl_constraints below so
+        // that call-site constraint resolution can recursively verify the
+        // impl's own where clauses against the actual concrete type
+        // arguments at the call site.
+        //
+        // Round 101 BROKEN: the stored index MUST live in the index space
+        // the consumer uses. `verify_trait_obligation` resolves an
+        // obligation via `type_args_of(resolved_receiver).get(idx)` — the
+        // positional args of the CANONICAL EXPANDED type. For direct
+        // targets (`Box(a)`, `Map(k, v)`) that space coincides with
+        // `target_param_names` order, but for ALIAS targets it does not:
+        // with `type Named(a) = Map(String, a)`, param `a` is at param
+        // position 0 but EXPANDED slot 1, so indexing by param position
+        // verified the key slot (`String`) instead of `a` — both false
+        // rejects ("'String' does not implement 'Marked'" on a valid
+        // program) and false accepts (a `where a: Display` bound checked
+        // against `String` while the actual value type was `Fn`). Compute
+        // the index as the position of the param's tyvar within the
+        // expanded self_type's positional args so both sides of the table
+        // agree. A param that never surfaces as a top-level positional
+        // slot (Tuple/Fn alias targets, occurrences nested deeper than
+        // one wrapper) gets no entry — the same effective behavior as
+        // before, where `args.get(idx)` returned `None` at verify time
+        // and the obligation was skipped.
+        let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
             let type_param = &wc.type_param;
@@ -6672,6 +6947,15 @@ impl TypeChecker {
                     ),
                     ti.span,
                 );
+                continue;
+            }
+            // Round 101: the bound's arity must match the trait's
+            // declared param count in BOTH directions (see
+            // check_where_bound_arity). Skip registering the malformed
+            // bound — a length-mismatched arg list would sail past
+            // verify_trait_obligation's equal-length zip guard and
+            // degrade to a bare "implements the trait" check.
+            if !self.check_where_bound_arity(*trait_name, trait_args.len(), ti.span) {
                 continue;
             }
             // Resolve the bound's trait args through the impl's
@@ -6698,12 +6982,20 @@ impl TypeChecker {
                             self.trait_arg_bindings
                                 .insert((tv, *trait_name), resolved_bound_args.clone());
                         }
+                        // Round 101 BROKEN: index in the EXPANDED-args
+                        // space (see the `expanded_self_args` comment
+                        // above), NOT the `target_param_names` space —
+                        // the two diverge for alias targets.
+                        if let Some(idx) = expanded_self_args
+                            .iter()
+                            .position(|slot| matches!(slot, Type::Var(v) if *v == tv))
+                        {
+                            impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
+                        }
                     }
                     // If resolved is concrete (shouldn't happen — impl_param_map
-                    // only inserts fresh Var entries) treat it as a tautology.
-                    if let Some(idx) = ti.target_param_names.iter().position(|n| n == type_param) {
-                        impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
-                    }
+                    // only inserts fresh Var entries) treat it as a tautology
+                    // and register no positional obligation.
                 }
                 None => {
                     self.error(
@@ -7074,6 +7366,13 @@ impl TypeChecker {
                     );
                     continue;
                 }
+                // Round 101: bound arity must match the trait's declared
+                // param count (see check_where_bound_arity — it dedupes
+                // against the identical diagnostic the method body's
+                // check_fn_body_with_name pass emits for the same span).
+                if !self.check_where_bound_arity(*trait_name, trait_args.len(), method.span) {
+                    continue;
+                }
                 // Resolve the bound's trait args through the method's
                 // param_map (which sees both the impl-level binders
                 // and any method-local type annos). Empty for
@@ -7100,7 +7399,7 @@ impl TypeChecker {
                     None => {
                         // Give the user the full "declare it in the sig or
                         // target" hint — this is the same spirit as the
-                        // register_fn_decl error at mod.rs:1690.
+                        // register_fn_decl error at mod.rs:5276.
                         self.error(
                             format!(
                                 "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
@@ -7153,6 +7452,58 @@ impl TypeChecker {
             }
             env.define(key, scheme);
         }
+    }
+
+    /// Round 60 G1, extended round 101: a where-clause bound must
+    /// supply exactly the trait's declared number of type arguments.
+    /// Returns `true` when the arity matches (or the trait is unknown
+    /// — the caller has already reported that).
+    ///
+    /// Both directions are soundness-relevant, not just hygiene: the
+    /// parameterized-trait verification in `verify_trait_obligation`
+    /// only runs its round-58 positional arg-compatibility zip when
+    /// `impl_args.len() == bound_trait_args.len()`, so a
+    /// length-mismatched bound like `where a: Cast(Int, String)` on a
+    /// one-param `trait Cast(to)` silently degraded to a bare
+    /// "implements Cast" check — matching (and dispatching through!)
+    /// any `Cast(*)` impl. Zero args on a parameterized trait
+    /// additionally leaves the implied params unresolved (the original
+    /// round-60 direction).
+    ///
+    /// Callers: the fn-level where-clause loop in
+    /// `check_fn_body_with_name`, and the impl-level and method-level
+    /// where-clause loops in `register_trait_impl`. Method-level
+    /// bounds pass through BOTH the registration site and the body
+    /// check, so the emit dedupes on (message, span) to keep the
+    /// diagnostic single.
+    pub(super) fn check_where_bound_arity(
+        &mut self,
+        trait_name: Symbol,
+        got: usize,
+        span: Span,
+    ) -> bool {
+        let Some(info) = self.traits.get(&trait_name) else {
+            return true;
+        };
+        let n = info.params.len();
+        if got == n {
+            return true;
+        }
+        let msg = format!(
+            "trait '{}' expects {} {} in bound, got {}",
+            resolve(trait_name),
+            n,
+            inference::plural(n, "type argument", "type arguments"),
+            got
+        );
+        if !self
+            .errors
+            .iter()
+            .any(|e| e.message == msg && e.span == span)
+        {
+            self.error(msg, span);
+        }
+        false
     }
 }
 
@@ -7212,7 +7563,7 @@ pub(super) fn canonicalize_type_name(
     // typecheck pass but emitted compiler globals under `()` while
     // the VM dispatched under `Unit`, leaving runtime lookups
     // missing. Flipping to `() → Unit` lets the FieldAccess arm
-    // (inference.rs:2582) and auto-derive (`mod.rs:6983`) — both
+    // (inference.rs:3215) and auto-derive (`mod.rs:8173`) — both
     // updated in this round — converge with the runtime side.
     // The typechecker's `register_trait_impl` therefore registers a
     // user `trait T for Unit { ... }` (or `trait T for ()`) impl
@@ -7320,7 +7671,7 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
         // (`{...r}`) or an `AssocProj` would have its where-clause
         // tyvars stranded on the pre-narrowing ids — the call-site
         // pass-3 remap loop at the trait-impl recheck site (around
-        // mod.rs:3217) would then drop those constraints because
+        // mod.rs:3696) would then drop those constraints because
         // `remap.get(old_tv)` returns `None`, silently losing the
         // constraint at the narrowed scheme.
         (
@@ -7809,7 +8160,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
 
     // Primitives + List: all four auto-derived traits.
     // `ExtFloat` is the widened-float result of `Float / Float` (see
-    // `src/typechecker/inference.rs:2326-2333`); it must auto-derive all
+    // `src/typechecker/inference.rs:3435-3451`); it must auto-derive all
     // four built-in traits so that a divided Float can flow through a
     // `Display`/`Equal`/`Compare`/`Hash` trait bound without a spurious
     // "type 'ExtFloat' does not implement trait ..." rejection.
@@ -7894,9 +8245,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // the field-support gate.
 
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
-    // src/vm/dispatch.rs:295 routes `display` to `display_value`, and
+    // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
     // `Value::Bytes` already has a runtime Display impl
-    // (`format_bytes_preview` at src/value.rs:1258 — short hex preview
+    // (`format_bytes_preview` at src/value.rs:1364 — short hex preview
     // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
     // `bytes.eq(a, b)` but is not auto-derived through the trait
     // surface; Compare / Hash are intentionally omitted (Bytes is an

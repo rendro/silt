@@ -209,7 +209,7 @@ pub(super) fn format_undefined_variable_message(
         "break" | "continue" => {
             Some("silt has no 'break'/'continue' — return early or restructure the recursion")
         }
-        // F12 (round 67): mirror parser.rs G1 (parser.rs:2084-2118) for
+        // F12 (round 67): mirror parser.rs G1 (parser.rs:2245-2255) for
         // the expression-position case. The parser only catches these
         // at statement position (and gates on a "looks like a mistake"
         // lookahead); in expression position the parser parses `if` /
@@ -651,30 +651,24 @@ impl TypeChecker {
                 );
                 continue;
             }
-            // G1 (round 60): a parameterized trait must receive its
-            // args in every where-clause mention. Without this check,
-            // `trait Cast(to)` + `where a: Cast` silently typechecks
-            // and the implied `to` stays unresolved, masking real bugs
-            // at call sites. `verify_trait_obligation` fast-paths the
-            // empty-args case (line 1043) because bare-bound supertrait
-            // sub-obligations legitimately pass `&[]`, so the arity
-            // check has to live here at the user-written syntax site.
-            let trait_info = self.traits.get(trait_name);
-            if let Some(info) = trait_info
-                && trait_args.is_empty()
-                && !info.params.is_empty()
-            {
-                let n = info.params.len();
-                self.error(
-                    format!(
-                        "trait '{}' expects {} {} in bound, got 0",
-                        resolve(*trait_name),
-                        n,
-                        plural(n, "type argument", "type arguments")
-                    ),
-                    f.span,
-                );
-            }
+            // G1 (round 60, extended round 101): a where-clause bound
+            // must supply exactly the trait's declared number of type
+            // arguments. Zero args on a parameterized trait
+            // (`trait Cast(to)` + `where a: Cast`) leaves the implied
+            // `to` unresolved; a nonzero length MISMATCH
+            // (`where a: Cast(Int, String)`) is worse — the
+            // parameterized-trait verification in
+            // `verify_trait_obligation` only runs its round-58
+            // positional arg-compatibility zip when the bound's and
+            // the impl's arg lists have equal length, so a mismatched
+            // bound silently degraded to a bare "implements Cast"
+            // check and matched ANY `Cast(*)` impl. The arity check
+            // lives at the user-written syntax sites (here, plus the
+            // impl-level and method-level where-clause loops in
+            // `register_trait_impl`) because bare `&[]` is legitimate
+            // for supertrait sub-obligations inside
+            // `verify_trait_obligation` itself.
+            self.check_where_bound_arity(*trait_name, trait_args.len(), f.span);
         }
 
         // Look up the function's registered type and instantiate it.
@@ -3189,11 +3183,11 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:7925`); Channel and Fn are not
+                    // in `src/typechecker/mod.rs:8276`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
-                    // `type_name_for_impl` (see `src/typechecker/mod.rs:2045`,
-                    // `src/typechecker/mod.rs:2056`), so dispatch must route those
+                    // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
+                    // `src/typechecker/mod.rs:2092`), so dispatch must route those
                     // receivers through the same `method_table` lookup. The
                     // `"Fn"` key matches `canonical_name(Type::Fun)`,
                     // `head_symbol_of_canon`, and `dispatch_name_for_value`
@@ -3463,25 +3457,35 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
-                                // G2 (round 60): snapshot error count so we
-                                // can detect when `unify` emitted a mismatch
-                                // here. If it did, return `Type::Error`
-                                // instead of `lt` so the outer
-                                // ascribed-let (`let n: Int = s + 1`)
-                                // hits the cascade-suppression branch in
-                                // `unify` (`mod.rs:741`) and doesn't
-                                // re-emit the same diagnostic.
-                                let err_count_before = self.errors.len();
-                                self.unify(&lt, &rt, span);
-                                let unify_errored = self.errors.len() > err_count_before;
-                                // F1 (round 67): if `unify` already emitted
-                                // a "type mismatch: expected X, got Y"
-                                // diagnostic, that message already points
-                                // out the misaligned operand. Running the
-                                // operand-domain check below would emit a
-                                // second diagnostic at the same span saying
-                                // "operator '+' requires ..., got 'Bool'"
-                                // — pure noise. Skip it.
+                                // Round 100: `unify_binop_operands` emits at
+                                // most ONE correctly-directed diagnostic —
+                                // the left operand establishes the
+                                // expectation, and a lone out-of-domain
+                                // operand gets the operator-domain message
+                                // instead of a misdirected mismatch (see its
+                                // doc comment). On error it returns `true`
+                                // and we return `Type::Error` instead of
+                                // `lt` so the outer ascribed-let
+                                // (`let n: Int = s + 1`) hits the
+                                // cascade-suppression branch in `unify`
+                                // (`mod.rs:1387`) and doesn't re-emit
+                                // (G2, round 60).
+                                let unify_errored = self.unify_binop_operands(
+                                    &lt,
+                                    &rt,
+                                    lhs_span,
+                                    rhs_span,
+                                    |t| is_valid_arith_operand(t, true),
+                                    |t| {
+                                        format!(
+                                            "operator '+' requires Int, Float, ExtFloat, or String, got '{t}'"
+                                        )
+                                    },
+                                );
+                                // F1 (round 67): if a mismatch was already
+                                // reported, skip the operand-domain check
+                                // below — a second diagnostic at the same
+                                // expression would be pure noise.
                                 if !unify_errored {
                                     // B2: enforce operand domain — Add accepts
                                     // Int/Float/ExtFloat or String (concatenation).
@@ -3534,20 +3538,28 @@ impl TypeChecker {
                                 lt
                             }
                             _ => {
-                                // F1 (round 67): mirror the Add arm.
-                                // Snapshot error count around `unify` so
-                                // we can suppress the operand-domain
-                                // check when `unify` already emitted a
-                                // "type mismatch" diagnostic for the
-                                // misaligned operand — the second
-                                // domain message would be noise. Also
-                                // return `Type::Error` on unify failure
-                                // so an outer ascribed-let (`let n: Int
-                                // = s - 1`) hits the cascade-suppression
-                                // branch in `unify` (`mod.rs:741`).
-                                let err_count_before = self.errors.len();
-                                self.unify(&lt, &rt, span);
-                                let unify_errored = self.errors.len() > err_count_before;
+                                // Round 100 (+ F1 round 67): mirror the Add
+                                // arm — `unify_binop_operands` emits at most
+                                // one correctly-directed diagnostic, so the
+                                // operand-domain check below is skipped when
+                                // it errored (the second domain message
+                                // would be noise). Also return `Type::Error`
+                                // on unify failure so an outer ascribed-let
+                                // (`let n: Int = s - 1`) hits the
+                                // cascade-suppression branch in `unify`
+                                // (`mod.rs:1387`).
+                                let unify_errored = self.unify_binop_operands(
+                                    &lt,
+                                    &rt,
+                                    lhs_span,
+                                    rhs_span,
+                                    |t| is_valid_arith_operand(t, false),
+                                    |t| {
+                                        format!(
+                                            "operator {op_str} requires Int, Float, or ExtFloat, got '{t}'"
+                                        )
+                                    },
+                                );
                                 if !unify_errored {
                                     // B2: enforce numeric-only operand domain.
                                     let resolved = self.apply(&lt);
@@ -3583,19 +3595,29 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
-                                // F1 (round 72): mirror the Add/Sub arms.
-                                // Snapshot error count around `unify` so we
-                                // can suppress the operand-domain check
-                                // when `unify` already emitted a "type
-                                // mismatch" diagnostic (the second message
-                                // would be redundant noise). Also return
-                                // `Type::Error` on unify failure so an
-                                // outer ascribed-let (`let n: Int = b /
-                                // 1`) hits the cascade-suppression branch
-                                // in `unify` (`mod.rs:741`).
-                                let err_count_before = self.errors.len();
-                                self.unify(&lt, &rt, span);
-                                let unify_errored = self.errors.len() > err_count_before;
+                                // Round 100 (+ F1 round 72): mirror the
+                                // Add/Sub arms — `unify_binop_operands`
+                                // emits at most one correctly-directed
+                                // diagnostic, so the operand-domain check
+                                // below is skipped when it errored (the
+                                // second message would be redundant noise).
+                                // Also return `Type::Error` on unify
+                                // failure so an outer ascribed-let
+                                // (`let n: Int = b / 1`) hits the
+                                // cascade-suppression branch in `unify`
+                                // (`mod.rs:1387`).
+                                let unify_errored = self.unify_binop_operands(
+                                    &lt,
+                                    &rt,
+                                    lhs_span,
+                                    rhs_span,
+                                    |t| is_valid_arith_operand(t, false),
+                                    |t| {
+                                        format!(
+                                            "operator '/' requires Int, Float, or ExtFloat, got '{t}'"
+                                        )
+                                    },
+                                );
                                 if !unify_errored {
                                     // B2: enforce numeric-only operand domain.
                                     let resolved = self.apply(&lt);
@@ -3635,26 +3657,36 @@ impl TypeChecker {
                         };
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
-                        // F1 (round 72): snapshot error count around
-                        // `unify` so we can suppress the operand-domain
-                        // check when `unify` already emitted a "type
-                        // mismatch" diagnostic (the second message would
-                        // be redundant noise — mirrors the Add/Sub/Div
-                        // arms). For Eq/Neq this is defensive: today the
-                        // domain check passes for most cases (e.g. Bool
-                        // is a valid equality operand) so the dual
-                        // diagnostic doesn't surface, but apply
-                        // uniformly to close the latent door.
-                        let err_count_before = self.errors.len();
-                        match (&resolved_l, &resolved_r) {
+                        // Round 100 (+ F1 round 72): `unify_binop_operands`
+                        // emits at most one correctly-directed diagnostic,
+                        // so the operand-domain check below is skipped when
+                        // it errored (the second message would be redundant
+                        // noise — mirrors the Add/Sub/Div arms). For Eq/Neq
+                        // this is defensive: today the domain check passes
+                        // for most cases (e.g. Bool is a valid equality
+                        // operand) so the dual diagnostic doesn't surface,
+                        // but apply uniformly to close the latent door.
+                        let unify_errored = match (&resolved_l, &resolved_r) {
                             (Type::Float, Type::ExtFloat) | (Type::ExtFloat, Type::Float) => {
                                 // Accept mixed Float/ExtFloat without unification
+                                false
                             }
-                            _ => {
-                                self.unify(&lt, &rt, span);
-                            }
-                        }
-                        let unify_errored = self.errors.len() > err_count_before;
+                            _ => self.unify_binop_operands(
+                                &lt,
+                                &rt,
+                                lhs_span,
+                                rhs_span,
+                                |t| is_valid_compare_operand(t, is_equality),
+                                |t| {
+                                    let domain = if is_equality {
+                                        "a comparable type"
+                                    } else {
+                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                                    };
+                                    format!("operator {op_str} requires {domain}, got '{t}'")
+                                },
+                            ),
+                        };
                         if !unify_errored {
                             // B3: enforce comparison operand domain. The VM's
                             // compare() (src/vm/arithmetic.rs) only supports
@@ -3781,7 +3813,15 @@ impl TypeChecker {
                         let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                             if let Some(scheme) = env.lookup(name).cloned() {
                                 let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                                (self.apply(&ty), constraints)
+                                let applied = self.apply(&ty);
+                                // Round-101 GAP fix: same stash as the
+                                // `ExprKind::Call` arm's named-callee
+                                // shortcut — without it, LSP hover on the
+                                // callee of a piped call (`add` in
+                                // `1 |> add(2)`) has no type and falls
+                                // back to an enclosing expression's type.
+                                callee.ty = Some(applied.clone());
+                                (applied, constraints)
                             } else {
                                 let ty = self.infer_expr(callee, env);
                                 (self.apply(&ty), vec![])
@@ -4101,7 +4141,20 @@ impl TypeChecker {
                 let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                     if let Some(scheme) = env.lookup(name).cloned() {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                        (self.apply(&ty), constraints)
+                        let applied = self.apply(&ty);
+                        // Round-101 GAP fix: this named-callee shortcut
+                        // bypasses `infer_expr` on the callee Ident, so
+                        // (unlike every other expression) it carried no
+                        // stashed `expr.ty`. LSP hover on the callee then
+                        // fell back to the enclosing Call's RESULT type
+                        // (`add` in `add(1, 2)` hovered as `Int`, `println`
+                        // as `()`), inconsistent with qualified callees
+                        // like `list.sum`. Mirror the qualified-call branch
+                        // below: stash the instantiated fn type on the
+                        // callee; `resolve_all_types` resolves it to the
+                        // call-site instantiation after inference.
+                        callee.ty = Some(applied.clone());
+                        (applied, constraints)
                     } else {
                         let ty = self.infer_expr(callee, env);
                         (self.apply(&ty), vec![])
@@ -5655,6 +5708,73 @@ impl TypeChecker {
             }
         }
     }
+
+    /// Round 100: unify the operand types of a binary operator with a
+    /// correctly-DIRECTED diagnostic.
+    ///
+    /// `unify(t1, t2)` renders "type mismatch: expected {t2}, got {t1}",
+    /// and the old `unify(&lt, &rt, span)` call in the binop arms
+    /// therefore cast the not-yet-read RIGHT operand as the expectation
+    /// whenever the right operand was the offender (`1 + true` said
+    /// "expected Bool, got Int"). The left operand is inferred first
+    /// and establishes the expectation, so this helper passes it as the
+    /// "expected" side and anchors the diagnostic at the right
+    /// operand's span.
+    ///
+    /// Additionally (inverting the round-67 F1 priority): when the
+    /// unification fails AND exactly one resolved operand is outside
+    /// the operator's domain (`in_domain`), the generic mismatch is
+    /// replaced with the operand-domain message (`domain_msg`) aimed at
+    /// the offender's span — that message names the true offender
+    /// regardless of side, where mismatch wording would misfire for a
+    /// left-side offender (`true + 1`). `chain_hint` guidance is
+    /// preserved on the replacement (`opt + 1` still explains `?` /
+    /// `flat_map`). Exactly one diagnostic is emitted either way,
+    /// preserving the round-67 single-diagnostic invariant
+    /// (tests/binop_single_diagnostic_round67_tests.rs).
+    ///
+    /// Returns `true` if a diagnostic was emitted; callers skip their
+    /// follow-up operand-domain check and return `Type::Error` so outer
+    /// ascriptions hit the cascade-suppression branch in `unify` (the
+    /// round-60 G2 contract), exactly as with the old error-count
+    /// snapshot.
+    fn unify_binop_operands(
+        &mut self,
+        lt: &Type,
+        rt: &Type,
+        lhs_span: Span,
+        rhs_span: Span,
+        in_domain: impl Fn(&Type) -> bool,
+        domain_msg: impl Fn(&Type) -> std::string::String,
+    ) -> bool {
+        let err_count_before = self.errors.len();
+        self.unify(rt, lt, rhs_span);
+        if self.errors.len() == err_count_before {
+            return false;
+        }
+        // The domain predicates treat `Var` / `AssocProj` / `Error` as
+        // "maybe valid", so the replacement below only fires when the
+        // offender is a RESOLVED out-of-domain type.
+        let resolved_l = self.apply(lt);
+        let resolved_r = self.apply(rt);
+        let l_bad = !in_domain(&resolved_l);
+        let r_bad = !in_domain(&resolved_r);
+        if l_bad != r_bad {
+            let (offender, other, offender_span) = if l_bad {
+                (&resolved_l, &resolved_r, lhs_span)
+            } else {
+                (&resolved_r, &resolved_l, rhs_span)
+            };
+            let mut msg = domain_msg(offender);
+            if let Some(hint) = Self::chain_hint(offender, other) {
+                msg.push('\n');
+                msg.push_str(&hint);
+            }
+            self.errors.truncate(err_count_before);
+            self.error(msg, offender_span);
+        }
+        true
+    }
 }
 
 /// Resolve a supertrait reference's TypeExpr argument against the
@@ -5663,6 +5783,15 @@ impl TypeChecker {
 /// (the enclosing trait's supplied args at the call site). Nested forms
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
+///
+/// INVARIANT (round 101): the shapes produced here must be
+/// CANONICAL — identical to what `resolve_type_expr` builds for the
+/// same surface syntax on the impl side — because
+/// `trait_arg_compatible_canon` compares them structurally and
+/// `canonicalize()` does not collapse `Generic("List", …)` onto
+/// `Type::List` (etc.). Non-canonical output makes every builtin
+/// container / ExtFloat / Unit supertrait arg spuriously incompatible
+/// with its own impl.
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
     trait_info: &TraitInfo,
@@ -5677,20 +5806,52 @@ pub(super) fn resolve_supertrait_arg(
             }
             // Bare type name that isn't a trait param — interpret as a
             // concrete type reference (Int, String, or user type).
+            // Round 101: mirror `resolve_type_expr` (mod.rs Named arm)
+            // exactly for primitives — ExtFloat and Unit/() previously
+            // fell through to `Type::Generic`, which never compares
+            // equal to the canonical `Type::ExtFloat`/`Type::Unit` the
+            // impl side produces, spuriously failing
+            // `trait_arg_compatible_canon` with identical Display
+            // strings on both sides of the error.
             match resolve(*sym).as_str() {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
+                "ExtFloat" => Type::ExtFloat,
                 "Bool" => Type::Bool,
                 "String" => Type::String,
+                "()" | "Unit" => Type::Unit,
                 _ => Type::Generic(*sym, Vec::new()),
             }
         }
         TypeExprKind::Generic(sym, args) => {
-            let resolved: Vec<Type> = args
+            let mut resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
-            Type::Generic(*sym, resolved)
+            // Round 101: builtin container heads must produce the same
+            // canonical `Type::…` shapes `resolve_type_expr` builds for
+            // the impl side (mod.rs Generic arm). `canonicalize()` does
+            // NOT collapse `Generic("List",[T])` onto `Type::List(T)`,
+            // so leaving these as `Type::Generic` made supertrait args
+            // like `List(b)` incomparable with the registered impl's
+            // `Type::List(Int)`. Wrong-arity forms fall through to
+            // `Type::Generic` (they can't match any canonical impl
+            // shape, and resolve_type_expr diagnoses the arity at the
+            // declaration site).
+            match resolve(*sym).as_str() {
+                "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
+                "Range" if resolved.len() == 1 => Type::Range(Box::new(resolved.pop().unwrap())),
+                "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
+                "Channel" if resolved.len() == 1 => {
+                    Type::Channel(Box::new(resolved.pop().unwrap()))
+                }
+                "Map" if resolved.len() == 2 => {
+                    let v = resolved.pop().unwrap();
+                    let k = resolved.pop().unwrap();
+                    Type::Map(Box::new(k), Box::new(v))
+                }
+                _ => Type::Generic(*sym, resolved),
+            }
         }
         TypeExprKind::Tuple(elems) => Type::Tuple(
             elems
@@ -5838,7 +5999,7 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
 /// let-binding sites (top-level in `mod.rs`, inline in `infer_stmt`)
 /// build their scheme via `generalize` / `Scheme::mono`, both of which
 /// hardcode `effects: EffectSet::TOP` (see the doc-comment on
-/// `generalize` at `mod.rs:1593-1601` warning every caller MUST
+/// `generalize` at `mod.rs:1834-1842` warning every caller MUST
 /// overwrite the field). Neither caller did, so an alias call became
 /// `!*`-equivalent and any caller fn declared with anything narrower
 /// than the full five-effect row started failing the body-subset

@@ -599,7 +599,7 @@ fn test_leq_float() {
 
 /// Round-75 VM-2: Op::And dispatch is now `unreachable!()` — the
 /// compiler always lowers `BinOp::And` to a `JumpIfFalse` short-
-/// circuit (see `compiler/mod.rs:2327`). Hand-emitting Op::And here
+/// circuit (see `compiler/mod.rs:2330`). Hand-emitting Op::And here
 /// must crash the VM with the unreachable! panic, matching the
 /// LoopSetup precedent.
 #[test]
@@ -619,7 +619,7 @@ fn test_and_op_is_unreachable() {
 
 /// Round-75 VM-2: symmetric to `test_and_op_is_unreachable` — the
 /// compiler always lowers `BinOp::Or` to a `JumpIfTrue` short-
-/// circuit at `compiler/mod.rs:2338`, so direct emission of Op::Or
+/// circuit at `compiler/mod.rs:2341`, so direct emission of Op::Or
 /// must crash with the unreachable! panic.
 #[test]
 #[should_panic(

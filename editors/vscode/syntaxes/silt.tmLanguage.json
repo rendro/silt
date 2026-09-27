@@ -63,7 +63,7 @@
           "patterns": [
             {
               "name": "constant.character.escape.silt",
-              "match": "\\\\[nrt\\\\\"{}]"
+              "match": "\\\\[nt\\\\\"{}]"
             },
             {
               "name": "meta.interpolation.silt",
@@ -87,19 +87,19 @@
       "patterns": [
         {
           "name": "constant.numeric.hex.silt",
-          "match": "\\b0x[0-9A-Fa-f_]+\\b"
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
         },
         {
           "name": "constant.numeric.binary.silt",
-          "match": "\\b0b[01_]+\\b"
+          "match": "\\b0[bB][01_]+\\b"
         },
         {
           "name": "constant.numeric.float.silt",
-          "match": "\\b\\d[\\d_]*\\.\\d[\\d_]*(?:[eE][+-]?\\d+)?\\b"
+          "match": "\\b\\d[\\d_]*\\.\\d[\\d_]*(?:[eE][+-]?\\d[\\d_]*)?\\b"
         },
         {
           "name": "constant.numeric.float.silt",
-          "match": "\\b\\d[\\d_]*[eE][+-]?\\d+\\b"
+          "match": "\\b\\d[\\d_]*[eE][+-]?\\d[\\d_]*\\b"
         },
         {
           "name": "constant.numeric.integer.silt",

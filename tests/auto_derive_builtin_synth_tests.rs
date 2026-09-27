@@ -13,10 +13,12 @@
 //!
 //! These tests exercise the synth path end-to-end via the `silt run`
 //! CLI. The companion test file
-//! `tests/auto_derive_dead_arm_proof_tests.rs` flipped its
-//! asymmetry-lock test (`builtin_enums_route_through_synth_global`)
-//! to assert all six dispatch counters stay zero after a built-in
-//! barrage; this file checks the SEMANTIC outputs.
+//! `tests/auto_derive_dead_arm_proof_tests.rs` locks the routing
+//! claim behaviourally: its built-in barrage
+//! (`builtin_types_compile_and_run_through_synth_globals`, plus
+//! `builtin_compare_via_cli_subprocess` for stdout) fails with a
+//! runtime dispatch error if any built-in stops resolving through
+//! its synth global; this file checks the SEMANTIC outputs.
 
 use std::process::Command;
 

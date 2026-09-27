@@ -229,9 +229,9 @@ pub(crate) const IO_POOL_SIZE_CAP: usize = 64;
 
 /// Compute the default I/O pool worker count when `SILT_IO_POOL_SIZE` is
 /// unset or invalid: `min(available_parallelism, 4)`, falling back to 2
-/// if the platform cannot report parallelism. Mirrors the historical
-/// hardcoded sizing inside `Vm::new` so the resolved value is identical
-/// when the knob is absent.
+/// only if the platform cannot report parallelism — a single-core host
+/// gets 1, NOT 2 (unlike the scheduler worker pool's `.max(2)` deadlock
+/// floor; I/O jobs never block on one another, so no minimum is needed).
 pub(crate) fn default_io_pool_size() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get().min(4))
@@ -521,11 +521,22 @@ mod tests {
     }
 
     #[test]
-    fn default_io_pool_size_floor_two() {
-        // Any platform we run on must produce at least 2 (the fallback
-        // when available_parallelism returns Err is 2; otherwise it is
-        // capped at 4). Locks the documented "floor 2" guarantee.
+    fn default_io_pool_size_matches_documented_formula() {
+        // Locks the documented formula: min(available_parallelism, 4),
+        // where the fallback 2 applies ONLY when available_parallelism()
+        // returns Err — NOT as a floor. On a single-core host (e.g. a
+        // cgroup cpu limit of 1) the default is legitimately 1, so the
+        // valid range is [1, 4], not [2, 4]. The I/O pool needs no
+        // deadlock-driven minimum (unlike the scheduler worker pool's
+        // `.max(2)`) because I/O jobs never block on one another.
         let n = default_io_pool_size();
-        assert!((2..=4).contains(&n), "default out of [2,4]: {n}");
+        let expected = std::thread::available_parallelism()
+            .map(|p| p.get().min(4))
+            .unwrap_or(2);
+        assert_eq!(
+            n, expected,
+            "default must be min(available_parallelism, 4) with fallback 2 on Err"
+        );
+        assert!((1..=4).contains(&n), "default out of [1,4]: {n}");
     }
 }

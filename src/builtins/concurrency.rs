@@ -1,7 +1,8 @@
 //! Concurrency builtin functions (`channel.*`, `task.*`).
 
 use parking_lot::{Condvar, Mutex};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
@@ -244,15 +245,49 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 ));
             };
             let ch = ch.clone();
-            let dur_ns = crate::builtins::data::extract_duration(&args[1])?;
-            if dur_ns < 0 {
-                return Err(VmError::new(
-                    "channel.recv_timeout: duration must be non-negative".into(),
-                ));
+
+            // Resume detection. A scheduled task that parks below re-pushes
+            // its args with args[1] swapped for an internal marker record
+            // carrying the ORIGINAL private timer channel (see the park
+            // site). Recovering that channel preserves the original absolute
+            // deadline across parks: the timer thread will close (or has
+            // already closed) that exact channel at the originally scheduled
+            // instant. Re-deriving a fresh timer from the user's Duration on
+            // every re-entry (the pre-round-101 behavior) livelocked — a
+            // wake caused by the timer itself re-armed a brand-new
+            // full-length timer whose closed predecessor was no longer in
+            // the select ops, so a recv_timeout on a quiet channel inside a
+            // spawned task never timed out.
+            let resume_timer: Option<Arc<Channel>> = match &args[1] {
+                Value::Record(name, fields) if name.as_str() == RECV_TIMEOUT_RESUME_MARKER => {
+                    match fields.get(RECV_TIMEOUT_RESUME_TIMER_FIELD) {
+                        Some(Value::Channel(t)) => Some(t.clone()),
+                        _ => {
+                            return Err(VmError::new(
+                                "channel.recv_timeout: malformed internal resume marker".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => None,
+            };
+
+            // Fresh entry: validate the duration up front. Negative duration
+            // is a construction error even when a value is already buffered
+            // (pinned by tests/channel_timeout_tests.rs).
+            let mut fresh_dur_ns: i64 = 0;
+            if resume_timer.is_none() {
+                fresh_dur_ns = crate::builtins::data::extract_duration(&args[1])?;
+                if fresh_dur_ns < 0 {
+                    return Err(VmError::new(
+                        "channel.recv_timeout: duration must be non-negative".into(),
+                    ));
+                }
             }
 
             // Always try non-blocking first — delivery beats timeout even at
-            // zero duration (matches the "ready value wins" corner case).
+            // zero duration and on a resume whose wake was the timer expiring
+            // (matches the "ready value wins" corner case).
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     return Ok(Value::Variant("Ok".into(), vec![val]));
@@ -266,31 +301,38 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 TryReceiveResult::Empty => {}
             }
             // Zero duration on an empty channel = instant timeout.
-            if dur_ns == 0 {
+            if resume_timer.is_none() && fresh_dur_ns == 0 {
                 return Ok(Value::Variant(
                     "Err".into(),
                     vec![Value::Variant("ChannelTimeout".into(), vec![])],
                 ));
             }
 
-            // Ceil the nanosecond duration up to at least 1ms so any positive
-            // sub-ms request still gets a real tick of wait. The timer wheel
-            // is ms-granular.
-            let ms: u64 = {
-                let ns = dur_ns as u64;
-                ns.div_ceil(1_000_000).max(1)
-            };
+            let timer_ch = match resume_timer {
+                Some(t) => t,
+                None => {
+                    // Ceil the nanosecond duration up to at least 1ms so any
+                    // positive sub-ms request still gets a real tick of wait.
+                    // The timer wheel is ms-granular.
+                    let ms: u64 = {
+                        let ns = fresh_dur_ns as u64;
+                        ns.div_ceil(1_000_000).max(1)
+                    };
 
-            // Build the private timer channel. Reuses the shared TimerManager
-            // thread — no per-call OS thread. `channel.timeout` marks the
-            // channel as pending-timer-close so the main-thread deadlock
-            // detector correctly treats a recv-timeout wait as "external
-            // wake pending".
-            let timer_id = vm.next_channel_id();
-            let timer_ch = Arc::new(Channel::new(timer_id, 1));
-            vm.runtime
-                .timer
-                .schedule(Duration::from_millis(ms), timer_ch.clone());
+                    // Build the private timer channel. Reuses the shared
+                    // TimerManager thread — no per-call OS thread.
+                    // `TimerManager::schedule` marks the channel as
+                    // pending-timer-close so the main-thread deadlock
+                    // detector correctly treats a recv-timeout wait as
+                    // "external wake pending".
+                    let timer_id = vm.next_channel_id();
+                    let t = Arc::new(Channel::new(timer_id, 1));
+                    vm.runtime
+                        .timer
+                        .schedule(Duration::from_millis(ms), t.clone());
+                    t
+                }
+            };
 
             // Race ch vs timer_ch via a two-op select. Dropping timer_ch on
             // return deallocates the private channel; any straggling wake
@@ -313,15 +355,29 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
                     })
                     .collect();
-                // Note: we DO re-enter this arm on resume because CallBuiltin
-                // replays its args, and the `try_receive` above will either
-                // deliver a value landed during the park (correct) or fall
-                // through to a FRESH timer + select. A stale timer from this
-                // park would already have closed timer_ch and been dropped
-                // here — it can't keep us alive. So: rely on `try_receive`
-                // post-wake, otherwise re-arm a new timer. Worst-case extra
-                // delay on resume is one timer tick; acceptable.
-                return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
+                // We DO re-enter this arm on resume because CallBuiltin
+                // replays its args — but the replayed args carry the resume
+                // marker (SAME timer channel) instead of the user's
+                // Duration, so the re-entry races the ORIGINAL absolute
+                // deadline rather than arming a fresh full-length timer.
+                // Wake causes and their re-entry outcomes:
+                //   * value landed during the park → `try_receive` at entry
+                //     returns it (delivery beats an expired timer);
+                //   * user channel closed → `try_receive` maps to
+                //     Err(ChannelClosed);
+                //   * timer expired → timer_ch is closed, the
+                //     `try_select_sweep` above sees it and
+                //     `map_recv_timeout_result` yields Err(ChannelTimeout);
+                //   * spurious wake (e.g. a racing sibling consumed the
+                //     value) → nothing ready, re-park on the same pair.
+                // If the timer fires between the sweep and the waker
+                // registration below, `register_recv_waker`'s closed-state
+                // double-check fires the waker inline — no lost wakeup.
+                let resume_args = vec![
+                    Value::Channel(ch.clone()),
+                    make_recv_timeout_resume_marker(&timer_ch),
+                ];
+                return Err(vm.park_with_reason(&resume_args, BlockReason::Select(select_ops)));
             }
             // Main-thread path: drive the same select condvar loop that the
             // `channel.select` builtin uses. Mirrors the structure there;
@@ -452,9 +508,20 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         if vm.is_scheduled_task {
                             return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
                         }
-                        // Main thread: block on condvar until data or close.
-                        match ch.receive_blocking() {
-                            TryReceiveResult::Value(val) => {
+                        // Main thread: wait through the same deadlock-aware
+                        // protocol as `channel.receive` (no-scheduler fast
+                        // path, wake-graph park/unpark, starvation BFS,
+                        // confirm-stable gate). A bare `ch.receive_blocking()`
+                        // here was an infinite condvar wait with no deadlock
+                        // detection: with no counterparty that could ever
+                        // send, the process hung forever where receive/send/
+                        // select/join all report "deadlock on main thread"
+                        // (same class as the round-2 `channel.select` fix —
+                        // `each` was the arm left behind). Locked by
+                        // `tests/main_thread_each_deadlock_tests.rs`.
+                        match main_thread_wait_for_receive(&ch, vm)? {
+                            Value::Variant(tag, mut vals) if tag == "Message" => {
+                                let val = vals.pop().unwrap_or(Value::Unit);
                                 match vm.invoke_callable(&callback, &[val]) {
                                     Ok(_) => {}
                                     Err(e) if e.is_yield => {
@@ -466,10 +533,12 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                                     Err(e) => return Err(e),
                                 }
                             }
-                            TryReceiveResult::Closed => {
+                            Value::Variant(tag, _) if tag == "Closed" => {
                                 return Ok(Value::Unit);
                             }
-                            TryReceiveResult::Empty => unreachable!(),
+                            _ => unreachable!(
+                                "main_thread_wait_for_receive returns Message or Closed"
+                            ),
                         }
                     }
                 }
@@ -711,6 +780,33 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
 // ── Select helpers ────────────────────────────────────────────────
 
+/// Record name of the internal `channel.recv_timeout` resume marker.
+///
+/// When a scheduled task parks inside `recv_timeout`, the re-pushed args
+/// replace the user's `Duration` (args[1]) with a record of this name
+/// wrapping the call's private timer channel, so the re-entry after a wake
+/// races the ORIGINAL absolute deadline instead of arming a fresh
+/// full-length timer (the round-101 livelock: every timer expiry re-armed
+/// the timeout forever). The marker only ever exists on the VM stack
+/// between a park and its CallBuiltin replay — it is never user-visible,
+/// and the double-underscore name cannot collide with a typechecked
+/// `Duration` argument.
+const RECV_TIMEOUT_RESUME_MARKER: &str = "__recv_timeout_resume__";
+
+/// Field of the resume marker record holding the private timer channel.
+const RECV_TIMEOUT_RESUME_TIMER_FIELD: &str = "timer";
+
+/// Build the internal resume marker for `channel.recv_timeout` parks. See
+/// [`RECV_TIMEOUT_RESUME_MARKER`].
+fn make_recv_timeout_resume_marker(timer_ch: &Arc<Channel>) -> Value {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert(
+        RECV_TIMEOUT_RESUME_TIMER_FIELD.to_string(),
+        Value::Channel(timer_ch.clone()),
+    );
+    Value::Record(RECV_TIMEOUT_RESUME_MARKER.to_string(), Arc::new(fields))
+}
+
 /// Translate a `try_select_sweep` result (a `(Channel, Variant)` tuple) into
 /// the `Result(a, ChannelError)` shape expected by `channel.recv_timeout`:
 ///
@@ -903,6 +999,75 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
 // fire latency is one signal hop, target <200ms even on heavily
 // loaded CI.
 
+// ── Stream-fed channels ──────────────────────────────────────────
+//
+// The output channel of a `stream.*` stage is fed by a plain OS thread
+// (`src/builtins/stream.rs`), not by a scheduler task. The wake graph
+// cannot see that thread, and a program that never calls `task.spawn`
+// has no scheduler at all, so the main-thread waits below used to read
+// an empty stream channel as "no counterparty" and reported a deadlock
+// while the stage was about to deliver.
+//
+// `stream.rs` therefore records the output channel of every stage
+// here, and a receive on a recorded channel never gets a deadlock
+// verdict: it waits for a value or for `Closed`. A stage closes its
+// output when it ends, so the wait ends when the stage does.
+//
+// The mark is on the channel, not on the thread. A wait on any other
+// channel gets the same verdict as before, whether or not stream
+// threads are alive. That matters because stage threads commonly
+// outlive their pipeline: a truncating stage such as `stream.take`
+// leaves its upstream stages blocked on a full buffer for the rest of
+// the program, and they must not switch the detection off.
+//
+// Channels are keyed by address, not by `Channel::id`. Ids restart at
+// 0 for every top-level VM, and one process can hold several of those
+// (`silt test` creates one per file). Each entry holds a `Weak` to its
+// channel. That keeps the allocation, not the channel, alive, so the
+// address cannot be reused by another channel while the entry exists.
+//
+// Known limit: a receive on the output of a stage that never delivers
+// and never closes (its own input stays open and silent forever, or
+// its thread died without closing) waits forever instead of being
+// reported.
+
+fn stream_fed_channels() -> &'static Mutex<HashMap<usize, Weak<Channel>>> {
+    static CHANNELS: OnceLock<Mutex<HashMap<usize, Weak<Channel>>>> = OnceLock::new();
+    CHANNELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Record `ch` as the output channel of a stream stage. `stream.rs`
+/// calls this when it creates the stage, before the builtin returns,
+/// so the mark is in place before anyone can wait on the channel.
+pub(crate) fn mark_stream_fed(ch: &Arc<Channel>) {
+    let mut channels = stream_fed_channels().lock();
+    // Forget the channels that no longer exist, so the registry stays
+    // as small as the set of stage outputs that are still in use.
+    channels.retain(|_, fed| fed.strong_count() > 0);
+    channels.insert(Arc::as_ptr(ch) as usize, Arc::downgrade(ch));
+}
+
+/// True iff `ch` is the output channel of a stream stage.
+fn is_stream_fed(ch: &Arc<Channel>) -> bool {
+    let key = Arc::as_ptr(ch) as usize;
+    stream_fed_channels().lock().contains_key(&key)
+}
+
+/// True iff `target` includes a receive on a stream-fed channel: a
+/// plain receive on one, or a select with at least one such receive
+/// arm. Such a wait never gets a deadlock verdict. A send and a join
+/// are never covered.
+fn waits_on_stream_fed_channel(target: &crate::scheduler::MainTarget) -> bool {
+    match target {
+        crate::scheduler::MainTarget::Recv(ch) => is_stream_fed(ch),
+        crate::scheduler::MainTarget::Select(edges) => edges.iter().any(|edge| match edge {
+            crate::scheduler::SelectEdge::Recv(ch) => is_stream_fed(ch),
+            crate::scheduler::SelectEdge::Send(_) => false,
+        }),
+        crate::scheduler::MainTarget::Send(_) | crate::scheduler::MainTarget::Join(_) => false,
+    }
+}
+
 /// Phase 3: register the main thread with the wake graph and install
 /// a callback that pokes `pair`'s condvar on every graph state-change.
 /// Returns the install guard (drop deregisters the callback) so a
@@ -938,7 +1103,15 @@ fn install_main_signal(
 ///
 /// When a scheduler IS attached, defer to `Scheduler::is_main_starved`
 /// — the wake graph is the SOLE deadlock signal.
+///
+/// Before either of those: a receive on a stream-fed channel is never
+/// starved. Its counterparty is a stream thread, which neither the
+/// wake graph nor the no-scheduler reasoning can see. See the
+/// "Stream-fed channels" section above.
 fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> bool {
+    if waits_on_stream_fed_channel(target) {
+        return false;
+    }
     if let Some(sched) = vm.current_scheduler() {
         return sched.is_main_starved(target);
     }
@@ -1222,7 +1395,12 @@ fn main_thread_wait_for_receive(
     // timer IS pending, the recv-waker we register below is woken by
     // the timer thread's `ch.close()` → `wake_all_recv()` chain, so
     // the indefinite `cvar.wait` is finite.)
-    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() {
+    //
+    // A stream-fed channel never takes this path: the stream thread
+    // that feeds it is a counterparty this check cannot see. The
+    // recv-waker we register below is woken by that thread's send or
+    // by its `ch.close()`, neither of which needs a scheduler.
+    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() && !is_stream_fed(ch) {
         match ch.try_receive() {
             TryReceiveResult::Value(val) => {
                 return Ok(Value::Variant("Message".into(), vec![val]));

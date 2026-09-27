@@ -223,27 +223,20 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
             // Lock: tests/cli_test_rendering_tests.rs
             // `test_cross_module_call_stack_uses_consistent_path_style`
             // `test_run_module_error_paths_consistently_normalized`.
+            //
+            // Round-101: the normalization body lives in the shared
+            // `crate::cli::paths::display_path_for` helper — `silt test`
+            // (src/cli/test.rs) builds the same closure from it, so the
+            // two subcommands can never drift. Lock:
+            // tests/round101_display_path_helper_lock_tests.rs.
             let user_path_is_absolute = Path::new(path).is_absolute();
             let cwd = std::env::current_dir().ok();
             let normalize_path = |candidate: &Path| -> String {
-                if user_path_is_absolute {
-                    if candidate.is_absolute() {
-                        candidate.display().to_string()
-                    } else if let Some(ref cwd) = cwd {
-                        cwd.join(candidate).display().to_string()
-                    } else {
-                        candidate.display().to_string()
-                    }
-                } else {
-                    if let Some(ref cwd) = cwd {
-                        match candidate.strip_prefix(cwd) {
-                            Ok(rel) => rel.display().to_string(),
-                            Err(_) => candidate.display().to_string(),
-                        }
-                    } else {
-                        candidate.display().to_string()
-                    }
-                }
+                crate::cli::paths::display_path_for(
+                    user_path_is_absolute,
+                    cwd.as_deref(),
+                    candidate,
+                )
             };
 
             // Determine which source text & file path to render against.
@@ -324,11 +317,15 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
                 SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");
         } else {
-            // Span-less runtime error: `VmError::Display` starts with the
-            // bare "VM error:" prefix, which leaks that internal label to
-            // users. Round-36: funnel through `SourceError::runtime_at`
-            // with a zero span so output renders with the canonical
-            // `error[runtime]:` header and never contains "VM error:".
+            // Span-less runtime error: funnel through
+            // `SourceError::runtime_at` with a zero span so the output
+            // carries the file path and the ANSI color gating every other
+            // diagnostic gets — a bare `VmError` Display is plain text
+            // with no file to point at. (Round-36 originally added this
+            // to route around a legacy internal Display prefix; that
+            // Display has since been canonicalized to the
+            // `error[runtime]:` header itself — see src/vm/error.rs — so
+            // the prefix concern is historical.)
             let source_err =
                 SourceError::runtime_at(&e.message, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");

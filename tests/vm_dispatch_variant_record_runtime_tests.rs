@@ -23,17 +23,22 @@
 //!    `impl Hash for Value` (`src/value.rs:1814`) already hashes records
 //!    structurally. Fix: add `Value::Record(..)` to the allowlist.
 //!
-//! ROUND-62 STATUS: After the auto-derive synthesis pass extension to
-//! generic types, a fully-derivable USER enum/record (every field
-//! supports the trait) routes through the synthesized `<Type>.<method>`
-//! global emitted by the typechecker — `Op::CallMethod`'s qualified-
-//! global lookup resolves the call BEFORE falling through to
-//! `dispatch_trait_method`. The deadness proof
-//! (`tests/auto_derive_dead_arm_proof_tests.rs`) confirms those user-
-//! type counters stay zero through an exhaustive barrage. BUILT-IN
-//! enums (Weekday and friends), however, are registered directly into
-//! `self.enums` without a user `Decl::Type` and so are not processed
-//! by the synth pass; they continue to hit the dispatch arms below.
+//! ROUND-62 STATUS (prose corrected round 100): After the auto-derive
+//! synthesis pass extension to generic types, a fully-derivable USER
+//! enum/record (every field supports the trait) routes through the
+//! synthesized `<Type>.<method>` global emitted by the typechecker —
+//! `Op::CallMethod`'s qualified-global lookup resolves the call
+//! BEFORE falling through to `dispatch_trait_method`. The deadness
+//! proof (`tests/auto_derive_dead_arm_proof_tests.rs`) confirms this
+//! through an exhaustive behavioural barrage. Globals are synthesized
+//! for BUILT-IN enums and records too: `synthesize_auto_derive_impls`
+//! (src/typechecker/mod.rs) walks `self.enums` / `self.records` and
+//! emits `Weekday.compare` and friends, so built-ins ALSO resolve
+//! through their synth global ahead of `dispatch_trait_method`
+//! (locked by `builtin_types_compile_and_run_through_synth_globals`
+//! in the dead-arm proof and by
+//! `tests/auto_derive_builtin_synth_tests.rs`). The Variant/Record
+//! dispatch arms are therefore defensive-dead for every valid program.
 //!
 //! ROUND-89 RETARGET (this finding): the three user-typed cases below
 //! were originally written over fully-derivable types (Color, Point),
@@ -43,9 +48,10 @@
 //! Variant/Record hash allowlist entry would NOT have turned them red.
 //! They were misleading.
 //!
-//! The synth pass at `src/typechecker/mod.rs:5397-5567` gates emission
-//! on per-field trait support (`compare_ok`/`hash_ok`): if ANY field
-//! does not support the trait, NO `<Type>.<method>` global is emitted.
+//! The synth pass (`synthesize_auto_derive_impls` in
+//! src/typechecker/mod.rs) gates emission on per-field trait support
+//! (`compare_ok`/`hash_ok`): if ANY field does not support the trait,
+//! NO `<Type>.<method>` global is emitted.
 //!
 //! ROUND-93 RETARGET: the round-89 form of the two `compare_*` tests
 //! relied on the pre-93 laundering — a user type with a non-derivable
@@ -56,20 +62,24 @@
 //! (`compute_auto_derive_field_negatives` in `src/typechecker/mod.rs`)
 //! now UN-stamps such pairs, so those programs are REJECTED statically
 //! and the user-type path to the dispatch compare arms is dead. The
-//! two tests are retargeted again to lock the static rejection; the
-//! built-in Weekday case remains the runtime variant-dispatch
-//! reachability proof.
+//! two tests are retargeted again to lock the static rejection. The
+//! built-in Weekday case (`compare_runs_on_builtin_weekday`) locks the
+//! builtin synth semantics — declaration-order ordinals through the
+//! synth-emitted `Weekday.compare` global — NOT dispatch-arm
+//! reachability: built-ins are synthesized too, so the compare arm is
+//! never reached.
 //!
 //! The `hash_runs_on_user_record` case is kept as-is over the fully-
 //! derivable `Point`: retargeting it onto a non-derivable field would
-//! exactly duplicate `hash_runs_on_user_record_with_channel_field` /
-//! `hash_runs_on_user_record_with_tuple_field` in the unsupportable
-//! suite. Its comment is corrected to state plainly that it locks the
-//! SYNTH path (not the dispatch arm); the Variant/Record hash dispatch
-//! arms are locked in `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`.
-//!
-//! The Weekday case still serves as the reachability proof for built-in
-//! variant dispatch.
+//! just duplicate the static-rejection locks in the unsupportable
+//! suite (`hash_on_user_record_with_channel_field_rejected_statically`
+//! and friends). Its comment is corrected to state plainly that it
+//! locks the SYNTH path (not the dispatch arm). ROUND-100 CORRECTION:
+//! no test positively locks the Variant/Record hash-allowlist entries
+//! — post round 93 they are a defensive-dead fallback (see the
+//! `"hash"`-arm comment in `src/vm/dispatch.rs`): derivable receivers
+//! resolve via their synth-emitted `<Type>.hash` global first, and
+//! non-derivable ones are rejected statically.
 //!
 //! These tests exercise the runtime end-to-end via the `silt` CLI
 //! (mirroring `tests/vm_trait_dispatch_runtime_tests.rs`) so they fail
@@ -114,8 +124,9 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 /// rejected statically by the `where a: Compare` obligation instead
 /// of laundering into the Value-level fallback. For user types the
 /// dispatch arm is therefore statically unreachable via auto-derive;
-/// built-in variant dispatch reachability is still locked by
-/// `compare_runs_on_builtin_weekday` below.
+/// built-ins bypass it too (their synth-emitted globals resolve
+/// first), so the arm is defensive-dead. `compare_runs_on_builtin_weekday`
+/// below locks the builtin synth semantics.
 #[test]
 fn compare_on_user_variant_with_channel_payload_rejected_statically() {
     let (stdout, stderr, ok) = run_silt_raw(
@@ -137,11 +148,16 @@ fn main() { println(cmp_gen(Red, Green)) }
     );
 }
 
-/// The built-in `Weekday` variant (from `import time`) is a Variant at
-/// runtime. `Value::cmp` consults the global variant-ordinal registry,
-/// which seeds Weekday with Monday=0..Sunday=6, so Monday < Friday and
-/// `cmp_gen(Monday, Friday)` = Less = -1. (Pre-round-61 this used a
-/// hand-rolled `weekday_ordinal` table; the new registry-based path
+/// LOCKS THE BUILTIN SYNTH SEMANTICS, NOT THE DISPATCH ARM. Built-in
+/// enums are synthesized like user types: `synthesize_auto_derive_impls`
+/// (src/typechecker/mod.rs) walks `self.enums` and emits a
+/// `Weekday.compare` global, which `Op::CallMethod` resolves BEFORE
+/// `dispatch_trait_method` — the `(Variant, Variant)` compare arm is
+/// never reached, and deleting it would NOT turn this test red. What
+/// this test locks is the declaration-order ordinal semantics of the
+/// synth path: Weekday seeds Monday=0..Sunday=6, so Monday < Friday
+/// and `cmp_gen(Monday, Friday)` = Less = -1. (Pre-round-61 this used
+/// a hand-rolled `weekday_ordinal` table; the ordinal-based synth path
 /// preserves the same semantics.)
 #[test]
 fn compare_runs_on_builtin_weekday() {
@@ -194,19 +210,25 @@ fn main() {
 // ── Bug 3: Record `.hash()` via `Hash` bound ────────────────────────
 
 /// LOCKS THE SYNTH PATH, NOT THE DISPATCH ARM. `Point` is fully
-/// derivable (both fields are `Int`), so the synth gate at
-/// `src/typechecker/mod.rs:5560` emits a `Point.hash` global and
+/// derivable (both fields are `Int`), so the per-field synth gate
+/// (`compare_ok`/`hash_ok` in `synthesize_auto_derive_impls`,
+/// src/typechecker/mod.rs) emits a `Point.hash` global and
 /// `Op::CallMethod`'s qualified-global lookup resolves the call there —
 /// it never reaches the Variant/Record hash allowlist in
 /// `dispatch_trait_method`. (Deleting that allowlist entry would NOT
 /// turn this red.) This test therefore locks the auto-derive SYNTH
-/// path; the Variant/Record HASH DISPATCH ARM is locked by
-/// `hash_runs_on_user_record_with_channel_field` /
-/// `hash_runs_on_user_record_with_tuple_field` in
-/// `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`, which use
-/// non-derivable fields to force fall-through. (It is kept user-typed
-/// here rather than retargeted onto a non-derivable field precisely to
-/// avoid duplicating those.)
+/// path. ROUND-100 CORRECTION: the Variant/Record HASH DISPATCH ARM
+/// entries have NO positive behavioral lock — they are a
+/// defensive-dead fallback (see the `"hash"`-arm comment in
+/// `src/vm/dispatch.rs`). The unsupportable-field suite does not
+/// reach them either: its channel-field case is rejected statically
+/// by the round-93 gate, and its tuple-field case
+/// (`hash_runs_on_user_record_with_tuple_field`) resolves through its
+/// own synth-emitted `Pair.hash` global, exercising the TUPLE
+/// allowlist entry via the synthesized body's field `.hash()` call —
+/// see the mechanism lock
+/// `synth_pass_emits_pair_hash_trait_impl_for_tuple_field_record` in
+/// `tests/vm_dispatch_unsupportable_field_runtime_tests.rs`.
 ///
 /// The synthesized body combines field hashes with a mod-prime FNV-
 /// style combine to avoid integer-overflow under silt's checked

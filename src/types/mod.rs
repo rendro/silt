@@ -709,7 +709,7 @@ mod tests {
     }
 
     // ── Regression: Type::Fun Display matches parser `Fn(...)` surface ──
-    // The parser at src/parser.rs:838 reads function-type annotations as
+    // The parser at src/parser.rs:2116 reads function-type annotations as
     // `Fn(A, B) -> C`. Without the `Fn` prefix in Display, diagnostics
     // render fn types as `(A, B) -> C`, which visually collides with
     // silt's tuple-type syntax `(A, B)` and doesn't match anything a

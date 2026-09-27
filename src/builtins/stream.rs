@@ -76,9 +76,31 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
+/// Create a channel that no stage feeds: the result of a call that
+/// starts no thread (`stream.take(s, 0)`, a chunk size of 0). For the
+/// output of a stage use `stage_output`.
 fn make_channel(vm: &mut Vm, capacity: usize) -> Arc<Channel> {
     let id = vm.next_channel_id();
     Arc::new(Channel::new(id, capacity))
+}
+
+/// Create the output channel of a stream stage and record it as
+/// stream-fed.
+///
+/// EVERY function that starts a stage thread must get the channel that
+/// thread writes to from this helper, not from `make_channel`. A stage
+/// thread is not a scheduler task, so the main-thread deadlock
+/// detection cannot see it; the record (`mark_stream_fed` in
+/// `concurrency.rs`) is what stops a main-thread `channel.receive`,
+/// `channel.each` or `channel.select` on the stage's output from being
+/// reported as a deadlock while the stage is still about to deliver.
+///
+/// In return the stage must close this channel when it ends: a receive
+/// on it waits for a value or for `Closed`, and gets no verdict.
+fn stage_output(vm: &mut Vm, capacity: usize) -> Arc<Channel> {
+    let out = make_channel(vm, capacity);
+    super::concurrency::mark_stream_fed(&out);
+    out
 }
 
 /// Push a value onto an output channel with backpressure. The Channel
@@ -91,6 +113,35 @@ fn push(out: &Channel, val: &Value) -> bool {
             TrySendResult::Full => std::thread::sleep(SEND_BACKOFF),
         }
     }
+}
+
+/// Marker tag used to carry a pump-thread type error in-band. Stream
+/// transforms run on detached OS threads with no `VmError` path back to
+/// the caller, so a runtime gate that fires there (currently only the
+/// `stream.dedup` Fn gate) pushes this marker onto its output channel
+/// and closes it. `spawn_pump`-based transforms forward the marker
+/// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
+/// `count` / `first` / `last`) translate it into the canonical `VmError`.
+/// Same in-band-marker pattern as `__MapMapTypeError__` in
+/// src/builtins/collections.rs. Locked by
+/// tests/collection_fn_gate_sibling_surfaces_tests.rs.
+const STREAM_TYPE_ERROR_TAG: &str = "__StreamTypeError__";
+
+/// Build the in-band error marker for a pump-thread type error.
+fn stream_type_error(msg: String) -> Value {
+    Value::Variant(STREAM_TYPE_ERROR_TAG.into(), vec![Value::String(msg)])
+}
+
+/// If `v` is the in-band pump-thread error marker, return the `VmError`
+/// it carries.
+fn take_stream_type_error(v: &Value) -> Option<VmError> {
+    if let Value::Variant(tag, fields) = v
+        && tag == STREAM_TYPE_ERROR_TAG
+        && let Some(Value::String(msg)) = fields.first()
+    {
+        return Some(VmError::new(msg.clone()));
+    }
+    None
 }
 
 fn require_channel<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<Channel>, VmError> {
@@ -206,7 +257,7 @@ fn from_list(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let Value::List(xs) = &args[0] else {
         return Err(VmError::new("stream.from_list requires a List".into()));
     };
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let xs = xs.clone();
     let out_clone = out.clone();
     std::thread::spawn(move || {
@@ -226,7 +277,7 @@ fn from_range(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let lo = require_int(&args[0], "stream.from_range")?;
     let hi = require_int(&args[1], "stream.from_range")?;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         for i in lo..=hi {
@@ -244,7 +295,7 @@ fn repeat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.repeat takes 1 argument".into()));
     }
     let v = args[0].clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         loop {
@@ -265,7 +316,7 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let init = args[0].clone();
     let fn_val = require_callable(&args[1], "stream.unfold")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
     std::thread::spawn(move || {
@@ -308,7 +359,7 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Channel(make_channel(vm, 1)));
     }
     let n = n as usize;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         use std::io::Read;
@@ -345,7 +396,7 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.file_lines takes 1 argument".into()));
     }
     let path = require_string(&args[0], "stream.file_lines")?.to_string();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -395,7 +446,7 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Channel(make_channel(vm, 1)));
     }
     let n = n as usize;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         use std::io::Read;
@@ -440,7 +491,7 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Value::TcpStream(s) => s.clone(),
         _ => return Err(VmError::new("stream.tcp_lines requires a TcpStream".into())),
     };
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         // We can't easily wrap the trait-object stream in a BufReader
@@ -510,6 +561,13 @@ where
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
+                    // Forward an in-band pump-thread error marker
+                    // unchanged (never into the user callback) so it
+                    // reaches the sink that translates it to a VmError.
+                    if take_stream_type_error(&v).is_some() {
+                        let _ = push(&out_ch, &v);
+                        break;
+                    }
                     if !each(v, &out_ch) {
                         break;
                     }
@@ -530,7 +588,7 @@ fn map(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.map")?.clone();
     let fn_val = require_callable(&args[1], "stream.map")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
         match child_vm.invoke_callable(&fn_val, &[v]) {
@@ -547,7 +605,7 @@ fn map_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.map_ok")?.clone();
     let fn_val = require_callable(&args[1], "stream.map_ok")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
         Value::Variant(ref name, ref fields) if name == "Ok" && fields.len() == 1 => {
@@ -568,7 +626,7 @@ fn filter(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.filter")?.clone();
     let fn_val = require_callable(&args[1], "stream.filter")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
         match child_vm.invoke_callable(&fn_val, std::slice::from_ref(&v)) {
@@ -586,7 +644,7 @@ fn filter_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.filter_ok")?.clone();
     let fn_val = require_callable(&args[1], "stream.filter_ok")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
         Value::Variant(ref name, ref fields) if name == "Ok" && fields.len() == 1 => {
@@ -608,7 +666,7 @@ fn flat_map(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.flat_map")?.clone();
     let fn_val = require_callable(&args[1], "stream.flat_map")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
         match child_vm.invoke_callable(&fn_val, &[v]) {
@@ -639,7 +697,7 @@ fn take(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Channel(out));
     }
     let n = n as usize;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         let mut emitted = 0;
@@ -667,7 +725,7 @@ fn drop_n(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.drop")?.clone();
     let n = require_int(&args[1], "stream.drop")?;
     let n = n.max(0) as usize;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         let mut dropped = 0;
@@ -701,7 +759,7 @@ fn take_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.take_while")?.clone();
     let fn_val = require_callable(&args[1], "stream.take_while")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
     std::thread::spawn(move || {
@@ -732,7 +790,7 @@ fn drop_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.drop_while")?.clone();
     let fn_val = require_callable(&args[1], "stream.drop_while")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
     std::thread::spawn(move || {
@@ -773,7 +831,7 @@ fn chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.chunks: n must be positive".into()));
     }
     let n = n as usize;
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         let mut buffer: Vec<Value> = Vec::with_capacity(n);
@@ -815,7 +873,7 @@ fn scan(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.scan")?.clone();
     let init = args[1].clone();
     let fn_val = require_callable(&args[2], "stream.scan")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
     std::thread::spawn(move || {
@@ -847,13 +905,30 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.dedup takes 1 argument".into()));
     }
     let in_ch = require_channel(&args[0], "stream.dedup")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         let mut prev: Option<Value> = None;
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
+                    // Runtime Fn gate, same policy as `ensure_no_fn` in
+                    // src/builtins/collections.rs: `stream.dedup` has an
+                    // unbounded signature, so Fn values typecheck and the
+                    // `p != &v` comparison below would silently dedup
+                    // closures by Arc identity — the exact behavior
+                    // `list.unique` rejects. This pump thread has no
+                    // `VmError` path, so surface the canonical error
+                    // in-band (see `STREAM_TYPE_ERROR_TAG`).
+                    if Vm::value_contains_fn(&v) {
+                        let _ = push(
+                            &out_clone,
+                            &stream_type_error(
+                                "stream.dedup: type 'Fn' does not implement Equal".to_string(),
+                            ),
+                        );
+                        break;
+                    }
                     let emit = match &prev {
                         Some(p) => p != &v,
                         None => true,
@@ -881,7 +956,7 @@ fn buffered(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.buffered")?.clone();
     let cap = require_int(&args[1], "stream.buffered")?;
     let cap = cap.max(0) as usize;
-    let out = make_channel(vm, cap);
+    let out = stage_output(vm, cap);
     spawn_pump(in_ch, out.clone(), |v, out_ch| push(out_ch, &v));
     Ok(Value::Channel(out))
 }
@@ -910,7 +985,7 @@ fn merge(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let count = channels.len();
     let remaining = Arc::new(std::sync::atomic::AtomicUsize::new(count));
     for in_ch in channels {
@@ -940,7 +1015,7 @@ fn zip(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let a = require_channel(&args[0], "stream.zip")?.clone();
     let b = require_channel(&args[1], "stream.zip")?.clone();
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         loop {
@@ -983,7 +1058,7 @@ fn concat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    let out = make_channel(vm, DEFAULT_CAPACITY);
+    let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     std::thread::spawn(move || {
         for ch in channels {
@@ -1013,7 +1088,14 @@ fn collect(args: &[Value]) -> Result<Value, VmError> {
     let mut out = Vec::new();
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => out.push(v),
+            TryReceiveResult::Value(v) => {
+                // Translate an in-band pump-thread error marker (see
+                // `STREAM_TYPE_ERROR_TAG`) into the canonical VmError.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                out.push(v)
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }
@@ -1077,6 +1159,10 @@ fn fold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
                 let invoke_result = vm.invoke_callable(&fn_val, &[acc.clone(), v]);
                 match invoke_result {
                     Ok(r) => acc = r,
@@ -1145,6 +1231,10 @@ fn each(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
                 let invoke_result = vm.invoke_callable(&fn_val, &[v]);
                 match invoke_result {
                     Ok(_) => {}
@@ -1179,7 +1269,13 @@ fn count(args: &[Value]) -> Result<Value, VmError> {
     let mut n: i64 = 0;
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(_) => n += 1,
+            TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                n += 1
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }
@@ -1193,7 +1289,13 @@ fn first(args: &[Value]) -> Result<Value, VmError> {
     }
     let ch = require_channel(&args[0], "stream.first")?.clone();
     match ch.receive_blocking() {
-        TryReceiveResult::Value(v) => Ok(Value::Variant("Some".into(), vec![v])),
+        TryReceiveResult::Value(v) => {
+            // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+            if let Some(e) = take_stream_type_error(&v) {
+                return Err(e);
+            }
+            Ok(Value::Variant("Some".into(), vec![v]))
+        }
         TryReceiveResult::Closed => Ok(Value::Variant("None".into(), vec![])),
         _ => Ok(Value::Variant("None".into(), vec![])),
     }
@@ -1207,7 +1309,13 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
     let mut last: Option<Value> = None;
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => last = Some(v),
+            TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                last = Some(v)
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }

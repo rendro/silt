@@ -310,11 +310,60 @@ impl Vm {
                 if !extra_args.is_empty() {
                     return Some(Err(VmError::new("display() takes no arguments".into())));
                 }
+                // Runtime Display gate — the .display() twin of the
+                // round-95 `Op::DisplayValue` gate (src/vm/execute.rs
+                // ~:1457). For a *concrete* receiver the typechecker
+                // already rejects `.display()` on no-Display types
+                // ("unknown method 'display' on type Fn"), but silt
+                // enforces inferred trait bounds at the EXECUTION site
+                // for polymorphic code, so a Var-typed receiver reaches
+                // this arm ungated. Pre-fix, `fn show(x: a) -> String
+                // { x.display() }` over a lambda / channel / task handle
+                // silently rendered `<fn:..>` / `<channel:0>` /
+                // `<handle:0>` — while the equivalent interpolation
+                // `"{x}"` errored at runtime and the sibling `.equal()` /
+                // `.compare()` arms below carry their own runtime gates.
+                // Reject the same set here, sourced from the single
+                // oracle `Vm::value_implements_display` so the two
+                // execution-site gates cannot drift. Records, variants
+                // (incl. stdlib error enums) and every printable
+                // built-in pass the oracle and fall through unchanged.
+                if !Self::value_implements_display(receiver) {
+                    // Same canonical-name reporting as Op::DisplayValue:
+                    // function-shaped values collapse to "Fn" via
+                    // `dispatch_name_for_value`; the descriptor values
+                    // (whose canonical name is the *carried* type name)
+                    // fall back to `type_name` so the diagnostic names
+                    // the descriptor kind, not the reflected type.
+                    let name = match receiver {
+                        Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
+                            self.type_name(receiver).to_string()
+                        }
+                        _ => crate::types::canonical::dispatch_name_for_value(receiver)
+                            .unwrap_or_else(|| self.type_name(receiver).to_string()),
+                    };
+                    return Some(Err(VmError::new(format!(
+                        "type '{name}' does not implement Display"
+                    ))));
+                }
                 Some(Ok(Value::String(self.display_value(receiver))))
             }
             "equal" => {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
+                }
+                // Execution-site backstop mirroring the `Op::Eq` gate
+                // (`equality_operand_violation`, src/vm/execute.rs): an
+                // operand that is, or transitively contains, a
+                // function-shaped leaf has no Equal impl. A polymorphic
+                // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
+                // can launder such values past the typechecker's
+                // concrete-operand gate, and `PartialEq for Value` would
+                // silently answer with `Arc::ptr_eq` identity.
+                if Self::value_contains_fn(receiver) || Self::value_contains_fn(&extra_args[0]) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Equal".into(),
+                    )));
                 }
                 // Defensive fallback. For every valid user/builtin type
                 // that passes the round-93 field-aware auto-derive gate
@@ -339,6 +388,18 @@ impl Vm {
                     return Some(Err(VmError::new("compare() takes 1 argument".into())));
                 }
                 let other = &extra_args[0];
+                // Execution-site backstop mirroring `ordering_with_fn_gate`
+                // (src/vm/arithmetic.rs): reject operands that are, or
+                // transitively contain, a function-shaped leaf before any
+                // arm can defer to `Value::cmp`, which orders closures by
+                // `Arc::as_ptr` — an ASLR-nondeterministic result for a
+                // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
+                // laundering a container of functions past the typechecker.
+                if Self::value_contains_fn(receiver) || Self::value_contains_fn(other) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Compare".into(),
+                    )));
+                }
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
                     // Round-71: collapsed four byte-identical NaN /
@@ -365,11 +426,11 @@ impl Vm {
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: the typechecker auto-derives Compare for
-                    // List (see src/typechecker/mod.rs:7825), so a value of
+                    // List (see src/typechecker/mod.rs:8176), so a value of
                     // `List(T)` flowing through a `Compare` bound must
                     // resolve here. Defer to the existing element-wise
                     // ordering on `Value::cmp`, which already handles
-                    // List/Range pairings (see src/vm/arithmetic.rs:138).
+                    // List/Range pairings (see src/vm/arithmetic.rs:152).
                     (Value::List(_), Value::List(_))
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
@@ -394,7 +455,7 @@ impl Vm {
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
-                    // (src/typechecker/mod.rs:7822). All units are equal.
+                    // (src/typechecker/mod.rs:8173). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     _ => {
                         return Some(Err(VmError::new(format!(
@@ -424,6 +485,25 @@ impl Vm {
                 // matches `HashMap<Value, Value>` keying.
                 if !extra_args.is_empty() {
                     return Some(Err(VmError::new("hash() takes no arguments".into())));
+                }
+                // Execution-site backstop mirroring the `"equal"` /
+                // `"compare"` arms above: a receiver that is, or
+                // transitively contains, a function-shaped leaf has no
+                // Hash impl (`gate_field_supports_trait`,
+                // src/typechecker/mod.rs: "Functions support none of
+                // Equal/Compare/Hash"). The `(Hash, List)` auto-derive
+                // stamp is registered unconditionally
+                // (`register_auto_derived_impls_for`,
+                // src/typechecker/mod.rs) without walking element types,
+                // so `[fn(y) { y }].hash()` reaches this arm — and the
+                // std `Hash` impl on `Value` hashes every closure as a
+                // constant discriminant tag ("not meaningfully
+                // hashable", src/value.rs), so two distinct closures
+                // would hash identically and collide silently.
+                if Self::value_contains_fn(receiver) {
+                    return Some(Err(VmError::new(
+                        "type 'Fn' does not implement Hash".into(),
+                    )));
                 }
                 // Only honour hash() for types the typechecker actually
                 // auto-derives Hash for — emitting a dispatch error for

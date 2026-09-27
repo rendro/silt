@@ -17,7 +17,7 @@
 //!   sites through the same helper.
 //!
 //! - **F3 (ERR-GAP)**: closed-row anon record-update with an unknown
-//!   field (`inference.rs:3819-3823`) emitted
+//!   field (`inference.rs:4600-4609`) emitted
 //!   `"unknown field '<f>' in closed anon record"` without a
 //!   suggestion. Fix: append the helper's hint, mirroring the
 //!   `Type::Record` arm immediately below.

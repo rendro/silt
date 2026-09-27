@@ -64,7 +64,7 @@ fn language_eq(a: &Value, b: &Value) -> bool {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
         }
         (Value::Set(x), Value::Set(y)) => {
-            // Sets are `BTreeSet`s ordered by `Ord` (bitwise on floats), so
+            // Sets are `BTreeSet`s ordered by `Ord` (total_cmp on floats), so
             // a positional zip over the sorted elements is a valid pairing.
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
         }
@@ -120,20 +120,35 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
 /// its `_ => false` arm).
 ///
-/// The rejected set is exactly the function-shaped values, all of which the
-/// typechecker types as `Type::Fun` — the only type its equality gate
-/// rejects. Channel / Handle / TcpListener / TcpStream are deliberately NOT
-/// rejected: they are equatable by identity at runtime and the typechecker
-/// accepts them (`Type::Channel` and `Type::Generic(..)` in
-/// `is_valid_compare_operand`), keeping the runtime and compile-time layers
-/// in parity. Collection keying / dedup uses `PartialEq for Value` directly,
-/// not this operator path, so its function-identity equality is untouched
-/// (see tests/round74_hash_eq_ord_contract_tests.rs). Locked by
-/// tests/round96_eq_fn_runtime_tests.rs.
+/// The rejected set is the values that are, or transitively CONTAIN, a
+/// function-shaped leaf — everything the typechecker's equality gate
+/// rejects for a concrete operand. The bare shapes (round 96) are the
+/// direct `Type::Fun` values; the recursion (via `Vm::value_contains_fn`,
+/// src/vm/mod.rs) mirrors the round-97 container gate, whose
+/// `operand_builtin_trait_violation` walker rejects the concrete forms
+/// (`[fn(x) { x }] == [fn(x) { x }]`, tuples/records/variants wrapping
+/// functions) at compile time. Without the recursion, laundering the same
+/// values through a polymorphic wrapper (`fn eq(a: x, b: x) -> Bool
+/// { a == b }`) silently produced an `Arc::ptr_eq`-based Bool. Channel /
+/// Handle / TcpListener / TcpStream are deliberately NOT rejected: they
+/// are equatable by identity at runtime and the typechecker accepts them
+/// (`Type::Channel` and `Type::Generic(..)` in
+/// `is_valid_compare_operand`), keeping the runtime and compile-time
+/// layers in parity. Rust-level collection keying / dedup uses `PartialEq
+/// for Value` directly, not this operator path (see
+/// tests/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
+/// collection builtins that consume that ordering/equality (list.sort /
+/// unique / contains / index_of, set.from_list / insert / contains /
+/// remove and the set algebra ops) carry their own mirror of this gate:
+/// `ensure_no_fn` in src/builtins/collections.rs, locked by
+/// tests/collection_builtin_fn_gate_tests.rs. Locked by
+/// tests/round96_eq_fn_runtime_tests.rs and
+/// tests/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
-    match val {
-        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Some("Fn"),
-        _ => None,
+    if Vm::value_contains_fn(val) {
+        Some("Fn")
+    } else {
+        None
     }
 }
 
@@ -400,6 +415,21 @@ fn apply_callback_result(
             Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListGroupBy => {
+            // Runtime Fn gate, same policy as `ensure_no_fn` in
+            // src/builtins/collections.rs: the callback-returned key
+            // becomes a `BTreeMap` key, so a Fn-containing key would be
+            // ordered by Arc pointer address — ASLR-nondeterministic
+            // group order across runs. `list.group_by`'s signature is
+            // unbounded (src/typechecker/builtins/list.rs), so the
+            // typechecker never rejects Fn keys; the trait name matches
+            // the static map-key contract (`k: Hash` on `map.get`/`set`).
+            // Locked by tests/collection_fn_gate_sibling_surfaces_tests.rs.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Hash",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Groups(m) = acc {
                 m.entry(result).or_default().push(item);
             }
@@ -430,6 +460,15 @@ fn apply_callback_result(
         },
         BuiltinIterKind::ListMinBy => {
             // `result` is the key returned by the callback for `item`.
+            // Runtime Fn gate mirroring the ListGroupBy gate above: Fn
+            // keys would flow into `partial_cmp` and pick a winner by
+            // Arc pointer address — ASLR-nondeterministic across runs.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Compare",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Best(slot) = acc {
                 let new_pair = match slot.take() {
                     None => (result, item),
@@ -448,6 +487,13 @@ fn apply_callback_result(
             Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListMaxBy => {
+            // Runtime Fn gate — see the ListMinBy arm above.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Compare",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Best(slot) = acc {
                 let new_pair = match slot.take() {
                     None => (result, item),
@@ -1323,10 +1369,14 @@ impl Vm {
                 // Reject function-shaped operands at the execution site: the
                 // typechecker skips this bound on still-polymorphic operands
                 // and relies on the VM to catch it (see
-                // `equality_operand_violation`). `check_same_type` has
-                // already proven `a` and `b` share a discriminant, so gating
-                // on `a` alone covers both.
-                if let Some(name) = equality_operand_violation(&a) {
+                // `equality_operand_violation`). Both operands are checked:
+                // the gate recurses into containers, and a shared
+                // discriminant no longer implies a shared violation (an
+                // empty list and a list of closures both have the List
+                // discriminant).
+                if let Some(name) =
+                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
+                {
                     return Err(VmError::new(format!(
                         "type '{name}' does not implement Equal"
                     )));
@@ -1343,7 +1393,9 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
-                if let Some(name) = equality_operand_violation(&a) {
+                if let Some(name) =
+                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
+                {
                     return Err(VmError::new(format!(
                         "type '{name}' does not implement Equal"
                     )));
@@ -1370,8 +1422,8 @@ impl Vm {
                     Value::ExtFloat(n) => {
                         // Canonicalize -0.0 -> +0.0 to match every other
                         // ExtFloat producer (Div in arithmetic.rs, NarrowFloat,
-                        // the numeric builtins). ExtFloat Eq/Ord/Hash are
-                        // *bitwise* (value.rs), so a stray ExtFloat(-0.0) would
+                        // the numeric builtins). ExtFloat Eq is bitwise and
+                        // Ord is total_cmp (value.rs); a stray ExtFloat(-0.0) would
                         // be a distinct container key from ExtFloat(+0.0) even
                         // though the `==` operator (IEEE) calls them equal —
                         // letting a set/map hold two "equal" elements.
@@ -1401,9 +1453,9 @@ impl Vm {
             Op::And => {
                 // Round-75 VM-2: the compiler always lowers `BinOp::And`
                 // to a `JumpIfFalse` short-circuit (see
-                // `src/compiler/mod.rs:2327`); the
+                // `src/compiler/mod.rs:2330`); the
                 // `BinOp::And | BinOp::Or => unreachable!()` at
-                // `compiler/mod.rs:2359` confirms no other emission
+                // `compiler/mod.rs:2362` confirms no other emission
                 // path exists. Match the LoopSetup precedent
                 // (execute.rs:Op::LoopSetup) and crash loudly on
                 // accidental re-emission rather than silently
@@ -1419,7 +1471,7 @@ impl Vm {
             }
             Op::Or => {
                 // See Op::And above — same rationale. Compiler emits
-                // `JumpIfTrue` short-circuit at compiler/mod.rs:2338;
+                // `JumpIfTrue` short-circuit at compiler/mod.rs:2341;
                 // `Op::Or` is reserved-but-never-emitted.
                 unreachable!(
                     "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \

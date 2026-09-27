@@ -849,7 +849,9 @@ impl Vm {
 
     /// Whether a runtime value's type has a Display impl — the single
     /// runtime-side oracle for the string-interpolation Display gate
-    /// (`Op::DisplayValue`, src/vm/execute.rs).
+    /// (`Op::DisplayValue`, src/vm/execute.rs) and the polymorphic
+    /// `.display()` method gate (`dispatch_trait_method`'s "display"
+    /// arm, src/vm/dispatch.rs).
     ///
     /// This mirrors the typechecker's compile-time gate: the typechecker
     /// reduces a *concrete* operand to its canonical name
@@ -887,6 +889,55 @@ impl Vm {
                 | Value::TypeDescriptor(_)
                 | Value::PrimitiveDescriptor(_)
         )
+    }
+
+    /// Whether a runtime value is, or transitively CONTAINS, a
+    /// function-shaped leaf (`VmClosure` / `BuiltinFn` /
+    /// `VariantConstructor`) — the single runtime-side oracle for the
+    /// execution-site Compare/Equal gates, the sibling of
+    /// `value_implements_display` above.
+    ///
+    /// silt does NOT statically enforce inferred trait bounds on
+    /// polymorphic templates: `pending_numeric_checks`
+    /// (src/typechecker/inference.rs) skips operands whose type is still
+    /// a `Var`, on the documented promise that the VM catches the
+    /// violation at the execution site. Round 97 made the CONCRETE
+    /// container forms (`[fn(x) { x }] < [fn(x) { x }]`) a compile error
+    /// (`operand_builtin_trait_violation` recurses into element types),
+    /// but a polymorphic wrapper (`fn lt(a: x, b: x) -> Bool { a < b }`
+    /// called with lists of lambdas) still launders a container of
+    /// functions past the typechecker. Without a runtime backstop such
+    /// values fell into `Value::cmp` / `PartialEq for Value`, which order
+    /// closures by `Arc::as_ptr` (src/value.rs) — an ASLR-nondeterministic
+    /// Bool for ordering and a silent identity-equality Bool for `==`.
+    ///
+    /// Consulted by the container arms of `compare()`
+    /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
+    /// (`equality_operand_violation`, src/vm/execute.rs), the
+    /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
+    /// `dispatch_trait_method` (src/vm/dispatch.rs), and the collection
+    /// builtin backstop `ensure_no_fn` (src/builtins/collections.rs).
+    /// Locked by tests/container_fn_compare_runtime_gate_tests.rs; this
+    /// being the ONLY definition of the walker is locked by
+    /// tests/value_contains_fn_dedup_lock_tests.rs.
+    ///
+    /// `Range` / `Bytes` and the scalar leaves can never contain a
+    /// function, and Channel / Handle / TcpListener / TcpStream stay
+    /// equatable-by-identity (round-96 parity), so all fall to `false`.
+    pub fn value_contains_fn(val: &Value) -> bool {
+        match val {
+            Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => true,
+            Value::List(items) => items.iter().any(Self::value_contains_fn),
+            Value::Tuple(items) | Value::Variant(_, items) => {
+                items.iter().any(Self::value_contains_fn)
+            }
+            Value::Set(items) => items.iter().any(Self::value_contains_fn),
+            Value::Map(entries) => entries
+                .iter()
+                .any(|(k, v)| Self::value_contains_fn(k) || Self::value_contains_fn(v)),
+            Value::Record(_, fields) => fields.values().any(Self::value_contains_fn),
+            _ => false,
+        }
     }
 
     /// Human-readable type name for error messages. Renders descriptor

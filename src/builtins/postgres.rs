@@ -1615,8 +1615,8 @@ fn notification_to_record(n: &postgres::Notification) -> Value {
 /// Long-lived worker for `listen`. Owns the `PooledConnection` for the
 /// whole listener lifetime — when this function returns, the conn is
 /// dropped back into the pool. LISTEN was already issued before this
-/// function starts (see `do_listen_spawn`); we just pump notifications
-/// until the channel closes or the connection errors out.
+/// function starts (see `listen`'s io-pool closure); we just pump
+/// notifications until the channel closes or the connection errors out.
 fn do_listen_worker(mut conn: PinnedConn, channel_name: String, ch: Arc<Channel>) {
     use std::time::Duration;
 

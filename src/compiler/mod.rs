@@ -439,7 +439,7 @@ pub struct Compiler {
     /// non-curated submodule functions (registered in the typechecker
     /// env / VM dispatcher but absent from `module::builtin_module_functions`)
     /// remain callable through the alias. Mirrors the typechecker's
-    /// round-58 prefix-mirror (see src/typechecker/mod.rs:2941) on the
+    /// round-58 prefix-mirror (see src/typechecker/mod.rs:3156) on the
     /// compiler side; without it `l.sum` failed with
     /// "undefined global: l.sum" at runtime even though `list.sum` worked.
     imported_builtin_module_aliases: HashMap<String, String>,
@@ -1130,8 +1130,11 @@ impl Compiler {
                 // so the emitted global key matches the typechecker's
                 // registration site (`register_trait_impl` in
                 // src/typechecker/mod.rs) and the VM's runtime dispatch
-                // name (`Vm::value_type_name_for_dispatch`). Today the
-                // only collapse is `Range -> List`: a
+                // name (`Vm::value_type_name_for_dispatch`). The
+                // collapse rules — `Range -> List`, `Fun -> Fn`,
+                // `() -> Unit`, and user-alias routing (see
+                // `src/types/canonical.rs::canonicalize_type_name`) —
+                // all apply here. For example, a
                 // `trait Foo for Range(a) { fn bar(self) = ... }` impl
                 // emits `"List.bar"` here, matches the `"List.bar"` key
                 // the typechecker registered, and is found by the VM

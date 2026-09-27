@@ -1570,6 +1570,68 @@ fn test_parse_excessive_nesting() {
     );
 }
 
+#[test]
+fn test_parse_excessive_type_nesting() {
+    // Round-100 lock: parse_type_expr enforces the same MAX_DEPTH guard
+    // as parse_expr_bp / parse_pattern. Before the guard, 200 nested
+    // `List(` levels parsed unbounded (and ~100k levels aborted the
+    // whole process with a Rust stack overflow — no diagnostic at all;
+    // depths below the crash point hung the typechecker for minutes).
+    // Spawn with a bounded stack so the depth guard, not the OS stack
+    // limit, is what stops the recursion.
+    let result = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024) // 16 MB
+        .spawn(|| {
+            let mut input = String::from("fn main() {\n  let x: ");
+            for _ in 0..200 {
+                input.push_str("List(");
+            }
+            input.push_str("Int");
+            for _ in 0..200 {
+                input.push(')');
+            }
+            input.push_str(" = []\n}\n");
+            let tokens = silt::lexer::Lexer::new(&input)
+                .tokenize()
+                .expect("lexer error");
+            silt::parser::Parser::new(tokens).parse_program()
+        })
+        .expect("failed to spawn thread")
+        .join()
+        .expect("thread panicked");
+
+    assert!(
+        result.is_err(),
+        "200-deep type nesting should be a clean parse error"
+    );
+    let err = result.unwrap_err();
+    // Asserts exact parser message from src/parser.rs
+    // ("type nesting exceeds maximum depth").
+    assert!(
+        err.message.contains("type nesting exceeds maximum depth"),
+        "got: {}",
+        err.message
+    );
+
+    // Positive control: nesting comfortably under MAX_DEPTH still parses.
+    let mut ok_input = String::from("fn main() {\n  let x: ");
+    for _ in 0..64 {
+        ok_input.push_str("List(");
+    }
+    ok_input.push_str("Int");
+    for _ in 0..64 {
+        ok_input.push(')');
+    }
+    ok_input.push_str(" = []\n}\n");
+    let tokens = silt::lexer::Lexer::new(&ok_input)
+        .tokenize()
+        .expect("lexer error");
+    assert!(
+        silt::parser::Parser::new(tokens).parse_program().is_ok(),
+        "64-deep type nesting should still parse"
+    );
+}
+
 // ════════════════════════════════════════════════════════════════════
 // PHASE 9: CONCURRENCY RUNTIME ERRORS
 // ════════════════════════════════════════════════════════════════════

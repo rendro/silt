@@ -353,8 +353,15 @@ fn main() {
 }
 
 /// Sibling of the Result test for `Option`. `list.head(xs)` returns
-/// `Option(Int)`; adding to it triggers "expected Int, got Option(Int)"
-/// at the `+` site, and the hint should fire.
+/// `Option(Int)`; adding to it triggers a diagnostic at the `+` site,
+/// and the hint should fire.
+///
+/// Round 100: `Option(Int)` is outside the `+` operand domain while
+/// `Int` is inside it, so the `+` site now reports the operand-domain
+/// message naming the true offender ("operator '+' requires ..., got
+/// 'Option(Int)'") instead of the old mismatch wording — but the
+/// chain-hint guidance is preserved on the replacement (that is what
+/// this test locks).
 #[test]
 fn test_option_in_non_wrapper_slot_emits_chain_hint() {
     let src = r#"
@@ -367,11 +374,11 @@ fn main() {
 }
 "#;
     let errs = type_errors(src);
-    let mismatch =
-        first_error_containing(&errs, "type mismatch").expect("expected a type-mismatch error");
+    let mismatch = first_error_containing(&errs, "operator '+' requires")
+        .expect("expected an operator-domain error at the `+` site");
     assert!(
         mismatch.contains("Option"),
-        "mismatch should mention Option, got: {mismatch}"
+        "diagnostic should mention Option, got: {mismatch}"
     );
     assert!(
         mismatch.contains("help: to chain through an `Option`"),

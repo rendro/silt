@@ -50,15 +50,31 @@ syntax keyword siltTodo TODO FIXME NOTE XXX HACK contained
 " ── Strings ─────────────────────────────────────────────────────────
 " Regular strings with interpolation
 syntax region siltString start='"' skip='\\"' end='"' contains=siltStringInterp,siltStringEscape
-syntax match siltStringEscape '\\[nrt\\"]' contained
+" Escape class sourced from the lexer's escape match arms in
+" src/lexer.rs (`\n \t \\ \" \{ \}` — note: NO `\r`). The `\{` / `\}`
+" entries must be present so an escaped brace is consumed by this
+" match and does not trigger the siltStringInterp region below.
+" Parity lock: tests/editor_grammar_string_escapes_tests.rs.
+syntax match siltStringEscape '\\[nt\\"{}]' contained
 syntax region siltStringInterp start='{' end='}' contained contains=TOP
 
 " Triple-quoted raw strings (no escapes, no interpolation)
 syntax region siltRawString start='"""' end='"""'
 
 " ── Numbers ─────────────────────────────────────────────────────────
-syntax match siltFloat "\<\d\+\.\d\+\>"
-syntax match siltNumber "\<\d\+\>"
+" Mirrors src/lexer.rs number scanning (scan_number / scan_hex_int /
+" scan_binary_int): hex `0x`/`0X` and binary `0b`/`0B` prefixes, `_`
+" digit separators, and e/E exponents with an optional sign and at
+" least one digit immediately after the (optional) sign. Float
+" patterns are defined AFTER the integer patterns: when two matches
+" start at the same column vim prefers the item defined last, so
+" `1.5` highlights as siltFloat instead of stopping at the leading
+" `1`. Parity lock: tests/editor_grammar_number_literals_tests.rs.
+syntax match siltNumber "\<0[xX][0-9a-fA-F_]\+\>"
+syntax match siltNumber "\<0[bB][01_]\+\>"
+syntax match siltNumber "\<\d[0-9_]*\>"
+syntax match siltFloat "\<\d[0-9_]*[eE][+-]\=\d[0-9_]*\>"
+syntax match siltFloat "\<\d[0-9_]*\.\d[0-9_]*\([eE][+-]\=\d[0-9_]*\)\=\>"
 
 " ── Operators ───────────────────────────────────────────────────────
 " Multi-character operators are listed first so vim's longest-match
