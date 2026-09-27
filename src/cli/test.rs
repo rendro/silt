@@ -448,6 +448,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                     failed += 1;
                 }
             }
+            // Failures of tasks this test spawned and never joined are
+            // reported under the test's result line.
+            vm.report_unjoined_task_failures();
         }
     }
 

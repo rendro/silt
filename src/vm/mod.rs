@@ -106,9 +106,13 @@ use runtime::{IoPool, RegexCache, TimerManager};
 /// frames below the first loop and for the native work of the innermost
 /// call.
 ///
-/// Optimised build: an estimate, one eighth of the unoptimised value.
-/// Optimised frames are much smaller, and charging them the unoptimised
-/// cost would turn away recursion that fits the stack many times over.
+/// Optimised build: measured the same way. A level entered through a
+/// method call costs about 3.6 KiB, through `set.map` about 5.8 KiB,
+/// through `list.unfold` about 6.0 KiB, and through `list.fold`,
+/// `list.map` or `list.sort_by` (the most expensive measured) about
+/// 7.1 KiB. The value is 4.4 times the most expensive level. Charging
+/// optimised frames the unoptimised cost would turn away recursion that
+/// fits the stack many times over.
 ///
 /// The build kind is read off `debug_assertions`, which is on in the
 /// `dev` and `test` profiles and off in `release` and `bench`.
@@ -640,6 +644,17 @@ impl Vm {
     /// scheduled task could still make progress.
     pub(crate) fn current_scheduler(&self) -> Option<Arc<Scheduler>> {
         self.runtime.scheduler.lock().clone()
+    }
+
+    /// Report on stderr every task that failed and that no `task.join`
+    /// received, and return how many were reported. Each failure is
+    /// reported once. A caller that ends the process with
+    /// `std::process::exit` calls this first: the scheduler also reports
+    /// when the thread that runs the program ends, but whether that runs
+    /// on `exit` depends on the platform.
+    pub fn report_unjoined_task_failures(&self) -> usize {
+        self.current_scheduler()
+            .map_or(0, |s| s.report_unjoined_failures())
     }
 
     /// Get or create the shared scheduler.

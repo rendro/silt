@@ -215,6 +215,9 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
     // Run via VM
     let mut vm = Vm::new();
     let run_result = vm.run(script);
+    // Every exit path below ends the process with `process::exit`, so the
+    // failures of tasks that nobody joined are reported here.
+    vm.report_unjoined_task_failures();
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
     // `vm.run` (main's return value) was discarded wholesale, so
