@@ -67,7 +67,12 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
 const P2_PRELUDE: &str = r#"
 type P2 = (Int, Int)
 trait Total { fn total(self) -> Int }
-trait Total for P2 { fn total(self) -> Int = self.0 + self.1 }
+trait Total for P2 {
+  fn total(self) -> Int {
+    let (x, y) = self
+    x + y
+  }
+}
 fn sum_it(x: a) -> Int where a: Total { x.total() }
 "#;
 
