@@ -87,6 +87,9 @@ pub enum ManifestError {
     Io(std::io::Error, PathBuf),
     /// TOML syntax error or schema mismatch from serde.
     Parse {
+        /// The TOML parser's message, as [`toml_error_message`] returns
+        /// it: it is shown line by line, so a line break in it must be
+        /// the parser's own, never one from a key or a value.
         message: String,
         path: PathBuf,
         /// Byte-offset span within the file, when the underlying parser
@@ -102,7 +105,8 @@ impl fmt::Display for ManifestError {
     //   - `Io`: the path, when the manifest is a dependency's: it is
     //     made from the `path` value of the manifest that names it.
     //   - `Parse`: the path as above; the message is the TOML parser's
-    //     and quotes keys and values of the file.
+    //     and quotes keys and values of the file. It is the one text
+    //     that is shown on several lines, see `toml_error_message`.
     //   - `Validation`: the path as above; the message quotes names,
     //     versions, keys and values of the file.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -114,7 +118,8 @@ impl fmt::Display for ManifestError {
                 write!(f, "failed to read manifest {}: {}", path.display(), err)
             }
             ManifestError::Parse { message, path, .. } => {
-                write!(f, "invalid manifest {}: {}", path.display(), message)
+                write!(f, "invalid manifest {}: ", path.display())?;
+                f.lines(message)
             }
             ManifestError::Validation { message, path } => {
                 write!(f, "invalid manifest {}: {}", path.display(), message)
@@ -202,7 +207,7 @@ impl Manifest {
             // the input; surface it for downstream diagnostic rendering.
             let span = e.span().map(|r| (r.start, r.end));
             ManifestError::Parse {
-                message: e.message().to_string(),
+                message: toml_error_message(e.message(), &text),
                 path: absolute.clone(),
                 span,
             }
@@ -323,6 +328,33 @@ impl Manifest {
     }
 }
 
+// ── The TOML parser's message ─────────────────────────────────────────
+
+/// The message of a TOML parser error about the file `source`, ready to
+/// be shown line by line.
+///
+/// The parser separates the parts of its message by line breaks, for
+/// example `invalid string`, then `expected ...` on the next line, and
+/// those line breaks are kept. But the message also quotes keys of the
+/// file, decoded: a key written with an escape sequence, `"a\nb"`, puts
+/// a line break of its own into the message, and that one must not
+/// start a line of output. The message does not tell the two kinds
+/// apart. The file does: a key or a value can hold a line break only
+/// if it is written with an escape sequence or as a multi-line string,
+/// so only if the file holds a backslash or three quotation marks in a
+/// row. For such a file the message is returned as one line, with its
+/// line breaks written as `\n`; for every other file it is returned as
+/// the parser wrote it.
+pub fn toml_error_message(message: &str, source: &str) -> String {
+    let value_can_hold_a_line_break =
+        source.contains('\\') || source.contains("\"\"\"") || source.contains("'''");
+    if value_can_hold_a_line_break {
+        escape_for_display(message)
+    } else {
+        message.to_string()
+    }
+}
+
 // ── Validation helpers ────────────────────────────────────────────────
 
 /// Convert an absolute or relative path to its absolute form without
@@ -439,13 +471,22 @@ fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(
 
 /// Lightweight semver shape check: `MAJOR.MINOR.PATCH` where each component
 /// is a non-empty run of ASCII digits with no leading zeros (except `0`
-/// itself), optionally followed by `-PRERELEASE` and/or `+BUILD`.
+/// itself), optionally followed by `-PRERELEASE`, and then optionally by
+/// `+BUILD`. `PRERELEASE` and `BUILD` are each one or more identifiers
+/// separated by `.`, an identifier being a non-empty run of ASCII
+/// letters, digits and `-`.
+///
+/// Every part of the string is checked, the build part included: the
+/// version is written to `silt.lock` and shown in messages.
 ///
 /// We deliberately avoid a `semver` crate dependency for now; v0.7 only
 /// needs to detect obviously-malformed strings. Real precedence rules
 /// arrive with the registry workflow in a later phase.
 fn is_valid_version(version: &str) -> bool {
-    let (core, _suffix) = split_off_build(version);
+    let (core, build) = split_off_build(version);
+    if build.is_some_and(|build| !is_identifier_list(build)) {
+        return false;
+    }
     let (core, pre) = match core.split_once('-') {
         Some((c, p)) => (c, Some(p)),
         None => (core, None),
@@ -459,20 +500,10 @@ fn is_valid_version(version: &str) -> bool {
             return false;
         }
     }
-    if let Some(pre) = pre {
-        if pre.is_empty() {
-            return false;
-        }
-        for ident in pre.split('.') {
-            if ident.is_empty() {
-                return false;
-            }
-            // Pre-release identifiers may be alphanumeric or numeric (no
-            // leading zeros for the latter); we keep the check loose here.
-            if !ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return false;
-            }
-        }
+    // Pre-release identifiers may be alphanumeric or numeric (no leading
+    // zeros for the latter); we keep the check loose here.
+    if pre.is_some_and(|pre| !is_identifier_list(pre)) {
+        return false;
     }
     true
 }
@@ -482,6 +513,17 @@ fn split_off_build(version: &str) -> (&str, Option<&str>) {
         Some((core, build)) => (core, Some(build)),
         None => (version, None),
     }
+}
+
+/// One or more identifiers separated by `.`, each a non-empty run of
+/// ASCII letters, digits and `-`.
+fn is_identifier_list(s: &str) -> bool {
+    s.split('.').all(|identifier| {
+        !identifier.is_empty()
+            && identifier
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    })
 }
 
 fn is_numeric_id(s: &str) -> bool {
@@ -502,7 +544,8 @@ fn validate_version(version: &str, manifest_path: &Path) -> Result<(), ManifestE
     Err(ManifestError::Validation {
         message: format!(
             "invalid package version `{version}`: must be a semver string of the form \
-             `MAJOR.MINOR.PATCH` (e.g. `0.1.0`)"
+             `MAJOR.MINOR.PATCH` (e.g. `0.1.0`); a `-PRERELEASE` and a `+BUILD` part \
+             may follow, each made of ASCII letters, digits, `-` and `.`"
         ),
         path: manifest_path.to_path_buf(),
     })
@@ -711,19 +754,109 @@ mod tests {
         assert!(!is_valid_version("1.0.0-")); // empty pre-release
     }
 
+    #[test]
+    fn version_rules_cover_the_build_part() {
+        for version in [
+            "1.0.0+5",
+            "1.0.0+build",
+            "1.0.0+build.5",
+            "1.0.0+2024-01-31.abc-def",
+            "1.0.0-rc.1+build.7",
+            "1.0.0-rc-1+build-7",
+        ] {
+            assert!(is_valid_version(version), "{version:?} must be accepted");
+        }
+        for version in [
+            "1.0.0+",
+            "1.0.0+.",
+            "1.0.0+a.",
+            "1.0.0+.a",
+            "1.0.0+a..b",
+            "1.0.0+a+b",
+            "1.0.0+a b",
+            "1.0.0+a_b",
+            "1.0.0+a/b",
+            "1.0.0+caf\u{e9}",
+            "1.0.0+a\u{7f}b",
+            "1.0.0+a\nb",
+            "1.0.0+a\u{1b}[2Kb",
+            "1.0.0+a\u{202e}b",
+            "1.0.0-rc.1+",
+            "1.0+build",
+        ] {
+            assert!(!is_valid_version(version), "{version:?} must be rejected");
+        }
+    }
+
     const HOSTILE: &str = "x\nerror: FORGED\u{1b}[2K\u{202e}";
     const HOSTILE_ESCAPED: &str = "x\\nerror: FORGED\\u{1b}[2K\\u{202e}";
 
     #[test]
+    fn toml_error_message_keeps_only_the_line_breaks_of_the_parser() {
+        let message = "invalid string\nexpected `\"`, `'`";
+        // No key and no value of these files can hold a line break.
+        for source in [
+            "",
+            "[package]\nname = oops\n",
+            "[package]\nname = \"app\"\nnote = 'it''s'\n",
+        ] {
+            assert_eq!(toml_error_message(message, source), message, "{source:?}");
+        }
+        // One of these can: an escape sequence, a multi-line string.
+        for source in [
+            "\"a\\nb\" = 1\n",
+            "\"a\\u000Ab\" = 1\n",
+            "# a comment with a \\\nname = oops\n",
+            "a = \"\"\"\nb\"\"\"\n",
+            "a = '''\nb'''\n",
+        ] {
+            assert_eq!(
+                toml_error_message(message, source),
+                "invalid string\\nexpected `\"`, `'`",
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_error_shows_the_lines_of_the_parser_and_no_other() {
+        let path = PathBuf::from("/srv/app/silt.toml");
+        // A file without escape sequences: the parser's two lines.
+        let plain = ManifestError::Parse {
+            message: toml_error_message("invalid string\nexpected `\"`, `'`", "name = oops\n"),
+            path: path.clone(),
+            span: None,
+        };
+        assert_eq!(
+            plain.to_string(),
+            "invalid manifest /srv/app/silt.toml: invalid string\nexpected `\"`, `'`"
+        );
+        // A file with a key that holds a line break: one line.
+        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
+        let quoted = ManifestError::Parse {
+            message: toml_error_message(&format!("unknown field `{HOSTILE}`"), source),
+            path,
+            span: None,
+        };
+        assert_eq!(
+            quoted.to_string(),
+            format!("invalid manifest /srv/app/silt.toml: unknown field `{HOSTILE_ESCAPED}`")
+        );
+    }
+
+    #[test]
     fn every_error_variant_escapes_its_whole_message() {
         let path = PathBuf::from(format!("/srv/{HOSTILE}/silt.toml"));
+        // The file the parser's message is about: it holds the value
+        // as an escape sequence.
+        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
         let errors = [
             ManifestError::Io(
                 std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
                 path.clone(),
             ),
             ManifestError::Parse {
-                message: format!("unknown field `{HOSTILE}`"),
+                message: toml_error_message(&format!("unknown field `{HOSTILE}`"), source),
                 path: path.clone(),
                 span: None,
             },

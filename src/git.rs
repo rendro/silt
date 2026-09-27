@@ -198,24 +198,34 @@ impl std::error::Error for InvalidGitUrl {}
 
 /// Validate a git dependency URL.
 ///
-/// A URL is in a local form if it starts with `file://`, `/`, `./` or
-/// `../`. Every other value is checked as a network form.
-///
 /// Rejects, in this order:
 ///   - the empty string;
 ///   - anything starting with `-` (git would parse it as an option);
-///   - any control character and any whitespace character, in every
-///     form, with one exception: an ordinary space (U+0020) is allowed
-///     in the local forms, because directory names contain spaces;
-///   - any invisible or direction-control character, in every form
-///     (the list is at `is_invisible_format_char`): such a character
-///     makes the value read as something it is not;
-///   - in the network forms, any other character the display rule
-///     ([`needs_escape`]) would escape. What is left for a network
-///     form is printable ASCII without the space, and letters and
-///     digits of any script. The local forms keep accepting non-ASCII
-///     punctuation and symbols, because directory names contain them;
+///   - any character its form does not allow, see the table;
 ///   - anything that is not one of the accepted forms below.
+///
+/// Which characters a URL may hold depends on its form. It is in a
+/// local form if it starts with `file://`, `/`, `./` or `../`. Every
+/// other value is checked as a network form: `https://`, `http://`,
+/// `ssh://`, `git://`, `host:path` and `user@host:path`.
+///
+/// | Character | Network forms | Local forms |
+/// |---|---|---|
+/// | a control character | rejected | rejected |
+/// | U+0020, the ordinary space | rejected | accepted |
+/// | any other whitespace character | rejected | rejected |
+/// | an invisible or direction-control character | rejected | rejected |
+/// | any other character that is not ASCII and not a letter or a digit | rejected | accepted |
+/// | anything else | accepted | accepted |
+///
+/// So a network form holds printable ASCII without the space, and
+/// letters and digits of any script. A local form holds whatever a
+/// directory name holds and a reader can see: spaces, and punctuation,
+/// symbols and combining marks of any script. The invisible and
+/// direction-control characters are listed at
+/// `is_invisible_format_char`; one of them makes a value read as
+/// something it is not. The two rules stand on their own: neither is
+/// derived from the rule for showing text ([`needs_escape`]).
 ///
 /// Accepts:
 ///   - `https://`, `http://`, `ssh://`, `git://` and `file://` URLs with
@@ -241,20 +251,33 @@ impl std::error::Error for InvalidGitUrl {}
 /// path that contains a space is spelled as a `file://` URL.
 pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     let local = url.starts_with("file://") || is_local_path(url);
+    let is_forbidden: fn(char) -> bool = if local {
+        is_forbidden_in_local_form
+    } else {
+        is_forbidden_in_network_form
+    };
     let problem = if url.is_empty() {
         "must not be empty".to_string()
     } else if url.starts_with('-') {
         "must not start with `-`".to_string()
-    } else if url.chars().any(|c| is_forbidden_whitespace(c, local)) {
-        "must not contain whitespace or control characters \
-         (a space is allowed only in a `file://` URL or a local path)"
-            .to_string()
-    } else if url.chars().any(is_invisible_format_char) {
-        "must not contain invisible or bidirectional formatting characters".to_string()
-    } else if !local && url.chars().any(needs_escape) {
-        "must not contain non-ASCII characters other than letters and digits \
-         (they are allowed only in a `file://` URL or a local path)"
-            .to_string()
+    } else if url.chars().any(is_forbidden) {
+        // Which rule to name: whitespace and control characters first,
+        // then the invisible characters, then the rest.
+        let is_space_or_control = |c: char| c.is_control() || c.is_whitespace();
+        if url
+            .chars()
+            .any(|c| is_forbidden(c) && is_space_or_control(c))
+        {
+            "must not contain whitespace or control characters \
+             (a space is allowed only in a `file://` URL or a local path)"
+                .to_string()
+        } else if url.chars().any(is_invisible_format_char) {
+            "must not contain invisible or bidirectional formatting characters".to_string()
+        } else {
+            "must not contain non-ASCII characters other than letters and digits \
+             (they are allowed only in a `file://` URL or a local path)"
+                .to_string()
+        }
     } else if has_accepted_url_form(url) {
         return Ok(());
     } else {
@@ -291,14 +314,25 @@ fn unaccepted_scheme(url: &str) -> Option<&str> {
     (scheme_shaped && !accepted).then_some(scheme)
 }
 
-/// Is `c` a control or whitespace character that a git URL must not
-/// contain? `space_allowed` is true for the two local forms, where an
-/// ordinary space (and only that) is tolerated.
-fn is_forbidden_whitespace(c: char, space_allowed: bool) -> bool {
-    if c == ' ' {
-        return !space_allowed;
-    }
-    c.is_control() || c.is_whitespace()
+/// The character rule of the network forms: is `c` a character that a
+/// git URL of a network form must not hold? That is every control
+/// character, every whitespace character, every invisible or
+/// direction-control character, and every character that is not ASCII
+/// and not a letter or a digit.
+fn is_forbidden_in_network_form(c: char) -> bool {
+    c.is_control()
+        || c.is_whitespace()
+        || is_invisible_format_char(c)
+        || (!c.is_ascii() && !c.is_alphanumeric())
+}
+
+/// The character rule of the local forms: is `c` a character that a git
+/// URL of a local form must not hold? That is every control character,
+/// every whitespace character but the ordinary space (U+0020), and
+/// every invisible or direction-control character. Everything else is
+/// allowed, because directory names hold it.
+fn is_forbidden_in_local_form(c: char) -> bool {
+    c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible_format_char(c)
 }
 
 /// Invisible and direction-control characters: characters that show
@@ -414,20 +448,24 @@ fn check_url(url: &str) -> Result<(), GitError> {
 /// The display rule: is `c` shown as an escape (`\n`, `\u{1b}`,
 /// `\u{202e}`) when silt prints untrusted text?
 ///
-/// Escaped are:
+/// The rule is a deny list. Escaped are exactly:
 ///   - every control character;
-///   - every character that is not ASCII and is not a letter or a digit
-///     ([`char::is_alphanumeric`]): the unusual spaces, the line and
-///     paragraph separators, non-ASCII punctuation and symbols,
-///     combining marks, unassigned and private-use characters;
-///   - every invisible or direction-control character, including the
-///     few that count as letters (the Hangul fillers).
+///   - every whitespace character ([`char::is_whitespace`]) other than
+///     the ordinary space (U+0020): the no-break and the other unusual
+///     spaces, and the line and paragraph separators;
+///   - every invisible or direction-control character (the list is at
+///     `is_invisible_format_char`).
 ///
-/// Printable ASCII, and letters and digits of any script, are shown as
-/// they are. No character of an escape is itself escaped, so escaping
-/// a text twice gives the same result as escaping it once.
+/// Everything else is shown as it is: letters and digits, punctuation,
+/// symbols and combining marks of any script. A directory named
+/// `Projekte – 2024`, or a file name with a decomposed accent, reads as
+/// it does in a file listing.
+///
+/// A backslash is shown as it is, and no character of an escape is
+/// itself escaped, so escaping a text twice gives the same result as
+/// escaping it once.
 pub fn needs_escape(c: char) -> bool {
-    c.is_control() || (!c.is_ascii() && !c.is_alphanumeric()) || is_invisible_format_char(c)
+    c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible_format_char(c)
 }
 
 /// Render an untrusted string for a message, by the display rule
@@ -464,6 +502,20 @@ impl<'a, 'b> EscapingWriter<'a, 'b> {
     /// End the current line of the message and start the next one.
     pub fn line_break(&mut self) -> fmt::Result {
         self.out.write_char('\n')
+    }
+
+    /// Write `text` line by line: each line escaped, its line breaks
+    /// kept. Only for text whose line breaks are known not to come
+    /// from an untrusted value; a line break that does would start a
+    /// line of output of its own.
+    pub fn lines(&mut self, text: &str) -> fmt::Result {
+        for (index, line) in text.lines().enumerate() {
+            if index > 0 {
+                self.line_break()?;
+            }
+            self.write_str(line)?;
+        }
+        Ok(())
     }
 
     /// Write an error that escapes its own message, keeping the line
@@ -1273,25 +1325,39 @@ mod tests {
         let shown_as_escapes = invisible_format_chars()
             .into_iter()
             .chain(ONCE_MISSED_INVISIBLE)
-            .chain(UNUSUAL_SPACES)
-            .chain(NON_ASCII_PUNCTUATION)
-            // A combining mark, a private-use character and the
-            // replacement character.
-            .chain(['\u{301}', '\u{e000}', '\u{fffd}']);
+            .chain(UNUSUAL_SPACES);
         for c in shown_as_escapes {
             assert!(needs_escape(c), "U+{:04X} must be escaped", c as u32);
             let escaped = escape_for_display(&format!("a{c}b"));
             assert_eq!(escaped, format!("a\\u{{{:x}}}b", c as u32));
         }
-        // Printable ASCII, and letters and digits of any script, are
-        // left alone.
+        // Every control character.
+        for c in ('\0'..='\u{1f}').chain('\u{7f}'..='\u{9f}') {
+            assert!(needs_escape(c), "U+{:04X} must be escaped", c as u32);
+        }
+    }
+
+    #[test]
+    fn escape_for_display_leaves_what_a_reader_can_see() {
         for c in ' '..='~' {
             assert!(!needs_escape(c), "{c:?} must not be escaped");
         }
-        let plain = "/srv/my repos/caf\u{e9}/\u{65e5}\u{672c}/\u{43f}\u{440}/v\u{661}.git";
-        assert_eq!(escape_for_display(plain), plain);
-        let windows = "C:\\Users\\me\\my repos\\pkg.git";
-        assert_eq!(escape_for_display(windows), windows);
+        // Punctuation and symbols outside ASCII, a combining mark, a
+        // private-use character and the replacement character.
+        let visible = NON_ASCII_PUNCTUATION
+            .into_iter()
+            .chain(['\u{301}', '\u{e000}', '\u{fffd}']);
+        for c in visible {
+            assert!(!needs_escape(c), "U+{:04X} must not be escaped", c as u32);
+        }
+        for plain in [
+            "/srv/my repos/caf\u{e9}/\u{65e5}\u{672c}/\u{43f}\u{440}/v\u{661}.git",
+            // An en dash, a decomposed accent, Han.
+            "/home/me/Projekte \u{2013} 2024/cafe\u{301}/\u{65e5}\u{672c}/silt.toml",
+            "C:\\Users\\me\\my repos\\pkg.git",
+        ] {
+            assert_eq!(escape_for_display(plain), plain);
+        }
     }
 
     #[test]
@@ -1300,9 +1366,41 @@ mod tests {
         let once = escape_for_display(hostile);
         assert_eq!(
             once,
-            "a\\nb\\u{1b}[2K\\u{202e}\\u{3164}\\u{2003}\\u{2013}c\\n'\""
+            "a\\nb\\u{1b}[2K\\u{202e}\\u{3164}\\u{2003}\u{2013}c\\n'\""
         );
         assert_eq!(escape_for_display(&once), once);
+    }
+
+    #[test]
+    fn a_url_that_passes_holds_nothing_the_display_rule_escapes() {
+        for c in '\0'..=char::MAX {
+            let code = c as u32;
+            // The network rule is the local rule and more.
+            if is_forbidden_in_local_form(c) {
+                assert!(is_forbidden_in_network_form(c), "U+{code:04X}");
+            }
+            // What is shown as an escape is accepted in no form.
+            if needs_escape(c) {
+                assert!(is_forbidden_in_local_form(c), "U+{code:04X}");
+            }
+        }
+        // The two rules differ in the space and in what is visible but
+        // neither ASCII nor a letter or a digit.
+        assert!(is_forbidden_in_network_form(' ') && !is_forbidden_in_local_form(' '));
+        for c in NON_ASCII_PUNCTUATION.into_iter().chain(['\u{301}']) {
+            assert!(is_forbidden_in_network_form(c) && !is_forbidden_in_local_form(c));
+        }
+    }
+
+    #[test]
+    fn url_with_two_kinds_of_forbidden_characters_names_the_first_rule() {
+        // An allowed space does not make the rule for spaces apply.
+        let reason = rejection_reason("/srv/my repos/a\u{202e}b.git");
+        assert!(reason.starts_with(RULE_INVISIBLE), "{reason}");
+        let reason = rejection_reason("https://example.com/a\u{2013}b\u{202e}c.git");
+        assert!(reason.starts_with(RULE_INVISIBLE), "{reason}");
+        let reason = rejection_reason("https://example.com/a\u{2013}b\u{202e}c d.git");
+        assert!(reason.starts_with(RULE_SPACE), "{reason}");
     }
 
     /// An error that writes `text`, a line break of its own, and `text`
@@ -1352,6 +1450,27 @@ mod tests {
             Inline(TwoLines("x")).to_string(),
             "inline: first: x\\nsecond: x"
         );
+    }
+
+    /// An error that writes `text` with [`EscapingWriter::lines`].
+    struct Lines(&'static str);
+
+    impl fmt::Display for Lines {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut f = EscapingWriter::new(f);
+            write!(f, "message: ")?;
+            f.lines(self.0)
+        }
+    }
+
+    #[test]
+    fn escaping_writer_keeps_the_lines_of_a_text_and_escapes_each() {
+        assert_eq!(
+            Lines("one\u{1b}\r\ntwo\u{202e}\n\nfour\n").to_string(),
+            "message: one\\u{1b}\ntwo\\u{202e}\n\nfour"
+        );
+        assert_eq!(Lines("one").to_string(), "message: one");
+        assert_eq!(Lines("").to_string(), "message: ");
     }
 
     /// True if `s` holds a character a terminal would act on or hide.

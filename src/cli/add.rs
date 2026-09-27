@@ -11,7 +11,7 @@ use std::process;
 use silt::git::{EscapedDisplay, EscapingWriter, escape_for_display};
 use silt::intern;
 use silt::lockfile::{Lockfile, normalize_path};
-use silt::manifest::{Manifest, ManifestError};
+use silt::manifest::{Manifest, ManifestError, toml_error_message};
 
 use crate::cli::package::find_project_root;
 use crate::cli::paths::relative_from;
@@ -493,16 +493,15 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     let manifest_path = root.join("silt.toml");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|e| format!("failed to read {}: {e}", manifest_path.display()))?;
-    // Only the parser's message is shown: its own rendering of the
-    // error quotes a line of the file and runs over several lines.
+    // Reported the way loading the manifest reports it. The parser's
+    // own rendering of the error is not used: it quotes a line of the
+    // file.
     let mut doc = manifest_text
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| {
-            format!(
-                "failed to parse {}: {}",
-                manifest_path.display(),
-                e.message()
-            )
+        .map_err(|e| ManifestError::Parse {
+            message: toml_error_message(e.message(), &manifest_text),
+            path: manifest_path.clone(),
+            span: e.span().map(|range| (range.start, range.end)),
         })?;
 
     // Ensure a `[dependencies]` table exists. If it's missing entirely

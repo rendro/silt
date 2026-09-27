@@ -60,7 +60,7 @@ use sha2::{Digest, Sha256};
 
 use crate::git::{self, EscapedDisplay, EscapingWriter, GitError, GitRef};
 use crate::intern::{self, Symbol};
-use crate::manifest::{Dependency, Manifest, ManifestError};
+use crate::manifest::{Dependency, Manifest, ManifestError, toml_error_message};
 
 // ── Public types ───────────────────────────────────────────────────────
 
@@ -120,7 +120,16 @@ pub enum LockedSource {
 pub enum LockfileError {
     /// I/O failure reading or writing the file.
     Io(std::io::Error, PathBuf),
-    /// TOML syntax error or schema mismatch.
+    /// The file is not TOML.
+    Toml {
+        /// The position, then the TOML parser's message as
+        /// [`toml_error_message`] returns it: it is shown line by
+        /// line, so a line break in it must be the parser's own, never
+        /// one from a key or a value.
+        message: String,
+        path: PathBuf,
+    },
+    /// The file is TOML, but not a lockfile: schema mismatch.
     Parse { message: String, path: PathBuf },
     /// A `path = "..."` dep points at a directory that doesn't exist.
     DepNotFound { name: String, path: PathBuf },
@@ -145,6 +154,9 @@ impl fmt::Display for LockfileError {
     // Untrusted text, per variant:
     //   - `Io`: the path is a dependency's directory when its sources
     //     cannot be read, and that comes from a manifest's `path`.
+    //   - `Toml`: the message is the TOML parser's and quotes keys of
+    //     the lockfile. It is the one text that is shown on several
+    //     lines, see `toml_error_message`.
     //   - `Parse`: the message quotes keys and values of the lockfile.
     //   - `DepNotFound`, `DepNotPackage`: both fields are made from a
     //     manifest's `path` value.
@@ -158,6 +170,10 @@ impl fmt::Display for LockfileError {
         match self {
             LockfileError::Io(err, path) => {
                 write!(f, "lockfile I/O error at {}: {}", path.display(), err)
+            }
+            LockfileError::Toml { message, path } => {
+                write!(f, "invalid lockfile {}: ", path.display())?;
+                f.lines(message)
             }
             LockfileError::Parse { message, path } => {
                 write!(f, "invalid lockfile {}: {}", path.display(), message)
@@ -811,9 +827,12 @@ fn render_lockfile(lock: &Lockfile) -> String {
     out
 }
 
-/// Minimal TOML basic-string escape — handles `"` and `\` only, which
-/// is sufficient for the strings we emit (paths, names, versions,
-/// hashes). Backslash is the corner case that bites on Windows paths.
+/// `s` as a TOML basic string. Escaped is what TOML does not allow as
+/// it is in a basic string: the quotation mark, the backslash, and the
+/// control characters U+0000 to U+001F and U+007F (the tab, which TOML
+/// would allow, included). Everything else is written as it is. A
+/// string written here can be read back, whatever it holds; backslash
+/// is the corner case that bites on Windows paths.
 fn toml_escape_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -824,7 +843,7 @@ fn toml_escape_str(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
                 out.push_str(&format!("\\u{:04X}", c as u32));
             }
             c => out.push(c),
@@ -856,8 +875,7 @@ fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
     // error messages.
     let value: toml::Value = toml::from_str(text).map_err(|e: toml::de::Error| {
         // Only the parser's message and the position are kept. Its own
-        // rendering of the error quotes the offending line of the file
-        // and runs over several lines.
+        // rendering of the error quotes the offending line of the file.
         let position = match e.span() {
             Some(span) => {
                 let (line, column) = line_and_column(text, span.start);
@@ -865,8 +883,8 @@ fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
             }
             None => String::new(),
         };
-        LockfileError::Parse {
-            message: format!("{position}{}", e.message()),
+        LockfileError::Toml {
+            message: format!("{position}{}", toml_error_message(e.message(), text)),
             path: path.to_path_buf(),
         }
     })?;
@@ -1153,11 +1171,18 @@ mod tests {
     #[test]
     fn every_error_variant_escapes_its_whole_message() {
         let path = PathBuf::from(format!("/srv/{HOSTILE}"));
+        // The file the parser's message is about: it holds the value
+        // as an escape sequence.
+        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
         let errors = [
             LockfileError::Io(
                 std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
                 path.clone(),
             ),
+            LockfileError::Toml {
+                message: toml_error_message(&format!("duplicate key `{HOSTILE}`"), source),
+                path: path.clone(),
+            },
             LockfileError::Parse {
                 message: format!("[[package]] `{HOSTILE}` missing `version`"),
                 path: path.clone(),
@@ -1212,28 +1237,34 @@ mod tests {
     }
 
     #[test]
-    fn toml_parse_error_is_one_escaped_line_with_a_position() {
+    fn toml_parse_error_has_a_position_and_the_lines_of_the_parser() {
         // The offending line holds an escape character and U+202E; the
-        // parser's own rendering would quote it.
+        // parser's own rendering would quote it. The file holds no
+        // escape sequence, so the parser's two lines are kept.
         let text = "version = 1\n\n[[package]]\nname = oops\u{1b}[2K\u{202e} error: FORGED\n";
-        let rendered = parse_lockfile(text, Path::new("x.lock"))
-            .unwrap_err()
-            .to_string();
+        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
+        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
+        let rendered = err.to_string();
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 2, "{rendered:?}");
         assert!(
-            rendered.starts_with("invalid lockfile x.lock: line 4, column 8: "),
+            lines[0].starts_with("invalid lockfile x.lock: line 4, column 8: invalid "),
             "{rendered}"
         );
+        assert!(lines[1].starts_with("expected "), "{rendered}");
         assert!(
-            !rendered.chars().any(git::needs_escape) && !rendered.contains("FORGED"),
+            !rendered.chars().any(|c| c != '\n' && git::needs_escape(c))
+                && !rendered.contains("FORGED"),
             "{rendered:?}"
         );
 
-        // A key is quoted in the parser's message.
+        // A key is quoted in the parser's message, and the key holds a
+        // line break: one line.
         let text = "version = 1\n\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n\
                     \"x\\nerror: FORGED\\u001b[2K\\u202e\" = 2\n";
-        let rendered = parse_lockfile(text, Path::new("x.lock"))
-            .unwrap_err()
-            .to_string();
+        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
+        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
+        let rendered = err.to_string();
         assert!(
             rendered.starts_with("invalid lockfile x.lock: line 3, column 1: "),
             "{rendered}"
@@ -1242,6 +1273,34 @@ mod tests {
             rendered.contains(HOSTILE_ESCAPED) && !rendered.chars().any(git::needs_escape),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn toml_escape_str_writes_what_the_parser_reads_back() {
+        let mut every_control: String = ('\0'..='\u{1f}').collect();
+        every_control.push('\u{7f}');
+        for s in [
+            every_control.as_str(),
+            "1.0.0+a\u{7f}b",
+            "quote \" backslash \\ C:\\Users\\me",
+            "caf\u{e9} \u{2013} \u{65e5}\u{672c} \u{85}\u{a0}\u{202e}\u{2028}",
+            "",
+        ] {
+            let written = toml_escape_str(s);
+            assert!(
+                !written.chars().any(|c| c.is_ascii_control()),
+                "{s:?} was written with a control character: {written:?}"
+            );
+            let text = format!("v = {written}\n");
+            let value: toml::Value = toml::from_str(&text).unwrap_or_else(|e| {
+                panic!("{s:?} was written as {text:?}, which is not TOML: {e}")
+            });
+            let read = value
+                .as_table()
+                .and_then(|table| table.get("v"))
+                .and_then(|v| v.as_str());
+            assert_eq!(read, Some(s), "{text:?}");
+        }
     }
 
     #[test]

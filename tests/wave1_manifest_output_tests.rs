@@ -8,15 +8,19 @@
 //! drives the terminal. The same goes for what git prints, because a
 //! remote can send text.
 //!
-//! Four groups of tests:
+//! Five groups of tests:
 //!
 //!   1. every manifest and lockfile field that is echoed in an error is
-//!      shown escaped, by one rule;
-//!   2. the git URL rule, as a table of accepted and rejected URLs per
+//!      shown by one rule: control characters, unusual spaces and
+//!      invisible characters as escapes, everything a reader can see
+//!      as it is. The TOML parser's message keeps the parser's own
+//!      line breaks, and no other;
+//!   2. the git URL rules, as tables of accepted and rejected URLs per
 //!      form;
 //!   3. every line of git's own output is marked as git's;
-//!   4. the error for an unaccepted URL scheme names the replacement,
-//!      and the git command is shown as it was run.
+//!   4. a real repository in a directory with an unusual name still
+//!      resolves;
+//!   5. a lockfile silt writes is a lockfile silt reads.
 //!
 //! The tests are behavioural: each one runs the compiled `silt` binary
 //! on a package in a fresh temporary directory and asserts on the exit
@@ -255,15 +259,44 @@ fn write_lib(dir: &Path, name: &str) {
 
 // ── Assertions ────────────────────────────────────────────────────────
 
+/// The invisible and direction-control characters, as ranges of code
+/// points with both ends included: Unicode's default-ignorable code
+/// points, the interlinear annotation characters and the blank Braille
+/// pattern.
+const INVISIBLE: [(u32, u32); 18] = [
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x2800, 0x2800),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFFB),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+];
+
 /// Must silt show `c` as an escape? The display rule, written down
-/// independently of the implementation: a control character, a
-/// character that is neither ASCII nor a letter or digit, or one of the
-/// invisible characters that count as letters (the Hangul fillers).
+/// independently of the implementation. It is a deny list: a control
+/// character, a whitespace character other than the ordinary space, or
+/// an invisible or direction-control character. Everything else is
+/// printed as it is, punctuation and combining marks of any script
+/// included.
 fn must_be_escaped(c: char) -> bool {
+    let code = c as u32;
     c.is_control()
-        || (!c.is_ascii() && !c.is_alphanumeric())
-        || matches!(c, '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}')
-        || ONCE_MISSED_INVISIBLE.contains(&c)
+        || (c.is_whitespace() && c != ' ')
+        || INVISIBLE
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&code))
 }
 
 /// The one scan every test uses: the characters of `output` that are
@@ -734,8 +767,9 @@ fn duplicate_lockfile_key_is_escaped() {
 
 /// A lockfile that is not TOML: the line the parser stops at holds an
 /// escape character and U+202E as they are. The error gives the
-/// position and the parser's message on one line and does not quote the
-/// line. FAILS on the base commit: the line is quoted as it is.
+/// position and the parser's message, on the parser's two lines, and
+/// does not quote the line of the file. FAILS on the base commit: the
+/// line is quoted as it is.
 #[test]
 fn lockfile_syntax_error_does_not_quote_the_file() {
     let ws = fresh_workspace("lock_syntax");
@@ -749,18 +783,166 @@ fn lockfile_syntax_error_does_not_quote_the_file() {
     assert_printable_outcome(&out, 1, "lock_syntax");
     assert_no_forged_line(&out, "lock_syntax");
     assert!(
-        out.stderr.starts_with("error: invalid lockfile ")
-            && out.stderr.contains("silt.lock: line 4, column 8: "),
+        !out.stderr.contains("FORGED"),
+        "the error must not quote the line of the file; {out:?}"
+    );
+    let lines: Vec<&str> = out.stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "expected the parser's two lines; {out:?}");
+    assert!(
+        lines[0].starts_with("error: invalid lockfile ")
+            && lines[0].ends_with("silt.lock: line 4, column 8: invalid string"),
         "expected a lockfile error with the position; {out:?}"
     );
     assert!(
-        !out.stderr.contains("FORGED"),
-        "the error must not quote the line of the file; {out:?}"
+        lines[1].starts_with("expected "),
+        "expected the parser's second line; {out:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(app.join("silt.lock")).unwrap(),
+        lockfile,
+        "a rejected lockfile must not be rewritten"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+// ── 1d. The TOML parser's own line breaks ─────────────────────────────
+
+/// A manifest with a syntax error, which the parser reports on two
+/// lines.
+const SYNTAX_ERROR: &str = "[package]\nname = oops\nversion = \"0.1.0\"\n";
+
+/// The parser separates the parts of its message by line breaks, and
+/// those are kept. GUARD against the base commit, which passes; FAILS
+/// on the first version of this fix, which put the message on one line
+/// with a `\n` in it.
+#[test]
+fn manifest_syntax_error_keeps_the_lines_of_the_parser() {
+    let ws = fresh_workspace("manifest_syntax");
+    let app = ws.join("app");
+    write_app(&app, SYNTAX_ERROR);
+
+    let out = silt(&ws, &app, &["check"]);
+
+    assert_printable_outcome(&out, 1, "manifest_syntax");
+    let lines: Vec<&str> = out.stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "expected the parser's two lines; {out:?}");
+    assert!(
+        lines[0].starts_with("error: invalid manifest ")
+            && lines[0].ends_with("silt.toml: invalid string"),
+        "expected the parser's first line; {out:?}"
+    );
+    assert!(
+        lines[1].starts_with("expected "),
+        "expected the parser's second line; {out:?}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The parser's message also quotes keys of the file, and a key written
+/// with an escape sequence can hold a line break. The message does not
+/// tell such a line break from the parser's own, so for a file that
+/// holds a backslash or a multi-line string the whole message is one
+/// line. Here the backslash is in a comment. FAILS on the base commit,
+/// which prints two lines.
+#[test]
+fn manifest_syntax_error_is_one_line_if_a_value_can_hold_a_line_break() {
+    for (tag, first_line) in [
+        ("backslash", "# a note with a backslash: \\\n"),
+        ("basic", "# a note with three quotation marks: \"\"\"\n"),
+        ("literal", "# a note with three quotation marks: '''\n"),
+    ] {
+        let ws = fresh_workspace(tag);
+        let app = ws.join("app");
+        write_app(&app, &format!("{first_line}{SYNTAX_ERROR}"));
+
+        let out = silt(&ws, &app, &["check"]);
+
+        assert_printable_outcome(&out, 1, tag);
+        assert_eq!(
+            out.stderr.lines().count(),
+            1,
+            "{tag}: the error must be one line; {out:?}"
+        );
+        assert!(
+            out.stderr.starts_with("error: invalid manifest ")
+                && out.stderr.contains("silt.toml: invalid string\\nexpected "),
+            "{tag}: expected the parser's message on one line; {out:?}"
+        );
+        let _ = fs::remove_dir_all(&ws);
+    }
+}
+
+// ── 1e. What a reader can see is printed as it is ─────────────────────
+
+/// Names as directories have them: one with an en dash, one with a
+/// decomposed accent (`e` followed by U+0301, the way macOS stores it),
+/// and one in Han characters.
+const VISIBLE_NAMES: [&str; 3] = ["Projekte \u{2013} 2024", "cafe\u{301}", "\u{65e5}\u{672c}"];
+
+/// GUARD against the base commit, which passes. FAILS on the first
+/// version of this fix, which showed the dash and the accent as
+/// escapes.
+#[test]
+fn visible_characters_in_a_path_value_are_printed_as_they_are() {
+    let ws = fresh_workspace("visible_path_value");
+    let app = ws.join("app");
+    let value = format!("../{}", VISIBLE_NAMES.join("/"));
+    let line = format!("dep = {{ path = {} }}", toml_str(&value));
+    write_app(&app, &manifest("app", &dependencies(&line)));
+
+    let out = silt(&ws, &app, &["check"]);
+
+    assert_printable_outcome(&out, 1, "visible_path_value");
+    assert!(
+        out.stderr
+            .starts_with("error: dependency `\u{65e5}\u{672c}` path does not exist: "),
+        "expected the missing dependency to be reported; {out:?}"
+    );
+    for name in VISIBLE_NAMES {
+        assert!(
+            out.stderr.contains(name),
+            "expected {name:?} as it is on stderr; {out:?}"
+        );
+    }
+    assert!(
+        !out.stderr.contains("\\u{"),
+        "nothing in this path is to be shown as an escape; {out:?}"
     );
     assert_eq!(
         out.stderr.lines().count(),
         1,
         "the error must be one line; {out:?}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The same for the path of the manifest itself: the package lives in
+/// a directory with such a name. GUARD against the base commit, which
+/// passes. FAILS on the first version of this fix.
+#[test]
+fn visible_characters_in_the_path_of_a_manifest_are_printed_as_they_are() {
+    let ws = fresh_workspace("visible_manifest_path");
+    let dir_name = VISIBLE_NAMES.join(" ");
+    let app = ws.join(&dir_name).join("app");
+    write_app(
+        &app,
+        "[package]\nname = \"app\"\nversion = \"not-a-version\"\n",
+    );
+
+    let out = silt(&ws, &app, &["check"]);
+
+    assert_printable_outcome(&out, 1, "visible_manifest_path");
+    assert!(
+        out.stderr.starts_with("error: invalid manifest ")
+            && out.stderr.contains(&dir_name)
+            && out
+                .stderr
+                .contains("silt.toml: invalid package version `not-a-version`: "),
+        "expected the manifest error with the directory name as it is; {out:?}"
+    );
+    assert!(
+        !out.stderr.contains("\\u{"),
+        "nothing in this path is to be shown as an escape; {out:?}"
     );
     let _ = fs::remove_dir_all(&ws);
 }
@@ -831,11 +1013,14 @@ fn silt_add_escapes_its_arguments() {
 }
 
 /// The line `silt add` prints on success quotes the path as it was
-/// given. FAILS on the base commit: the en dash is printed as it is.
+/// given: a letter with a diacritic and an en dash as they are, an em
+/// space and U+202E as escapes. FAILS on the base commit, which prints
+/// the space and U+202E as they are, and on the first version of this
+/// fix, which escaped the dash.
 #[test]
 fn silt_add_escapes_its_summary() {
     let ws = fresh_workspace("add_summary");
-    let dep_dir = "caf\u{e9} \u{2013} dep";
+    let dep_dir = "caf\u{e9} \u{2013} d\u{2003}e\u{202e}p";
     write_lib(&ws.join(dep_dir), "dep");
     let app = ws.join("app");
     write_app(&app, &manifest("app", ""));
@@ -846,8 +1031,11 @@ fn silt_add_escapes_its_summary() {
     assert_printable_outcome(&out, 0, "add_summary");
     assert!(
         out.stdout.starts_with("Added dependency 'dep' (path = \"")
-            && out.stdout.contains("caf\u{e9} \\u{2013} dep\")"),
-        "expected the summary with the letter as it is and the dash escaped; {out:?}"
+            && out
+                .stdout
+                .contains("caf\u{e9} \u{2013} d\\u{2003}e\\u{202e}p\")"),
+        "expected the summary with the visible characters as they are and the others \
+         escaped; {out:?}"
     );
     // The manifest and the lockfile hold the path itself.
     let written = fs::read_to_string(app.join("silt.toml")).unwrap();
@@ -917,27 +1105,32 @@ fn assert_url_accepted(url: &str) {
     );
 }
 
-/// Assert that `url` is rejected by `rule` and that the message shows
-/// `c` as an escape.
-fn assert_url_rejected(url: &str, rule: &str, c: char) {
+/// How silt shows `c`: as an escape if it must be escaped, else as it
+/// is.
+fn shown(c: char) -> String {
+    if must_be_escaped(c) {
+        format!("\\u{{{:x}}}", c as u32)
+    } else {
+        c.to_string()
+    }
+}
+
+/// Assert that `url` is rejected by `rule`, and that the message shows
+/// the URL: a character that must be escaped as an escape, every other
+/// character as it is.
+fn assert_url_rejected(url: &str, rule: &str) {
     let out = validate_url(url);
     let context = format!("git URL {url:?}");
     assert_printable_outcome(&out, 1, &context);
     assert!(
-        out.stderr.starts_with("error: invalid manifest ")
-            && out
-                .stderr
-                .contains("dependency `remote`: invalid git URL `"),
+        out.stderr.starts_with("error: invalid manifest "),
         "{context}: the URL must be rejected; {out:?}"
     );
+    let shown_url: String = url.chars().map(shown).collect();
+    let expected = format!("dependency `remote`: invalid git URL `{shown_url}`: {rule}");
     assert!(
-        out.stderr.contains(rule),
-        "{context}: the error must state the rule `{rule}`; {out:?}"
-    );
-    let escape = format!("\\u{{{:x}}}", c as u32);
-    assert!(
-        out.stderr.contains(&escape),
-        "{context}: the error must show the character as {escape}; {out:?}"
+        out.stderr.contains(&expected),
+        "{context}: expected `{expected}` on stderr; {out:?}"
     );
     assert_eq!(
         out.stderr.lines().count(),
@@ -985,29 +1178,27 @@ fn git_url_table_accepted_in_local_forms() {
 fn git_url_table_rejects_invisible_characters() {
     // Every character, in a network form and in a local form.
     for c in ONCE_MISSED_INVISIBLE {
+        assert!(must_be_escaped(c), "U+{:04X}", c as u32);
         assert_url_rejected(
             &format!("https://example.invalid/a{c}b.git"),
             RULE_INVISIBLE,
-            c,
         );
         assert_url_rejected(
             &format!("file:///silt-test-nonexistent/a{c}b.git"),
             RULE_INVISIBLE,
-            c,
         );
     }
     // Every form; the characters take turns.
     let forms = NETWORK_FORMS.into_iter().chain(LOCAL_FORMS);
     for (i, form) in forms.enumerate() {
         let c = ONCE_MISSED_INVISIBLE[i % ONCE_MISSED_INVISIBLE.len()];
-        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_INVISIBLE, c);
+        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_INVISIBLE);
     }
     // In the host.
     let c = ONCE_MISSED_INVISIBLE[0];
     assert_url_rejected(
         &format!("https://exam{c}ple.invalid/pkg.git"),
         RULE_INVISIBLE,
-        c,
     );
 }
 
@@ -1019,17 +1210,28 @@ fn git_url_table_rejects_unusual_spaces_in_every_form() {
     let forms = NETWORK_FORMS.into_iter().chain(LOCAL_FORMS);
     for (i, form) in forms.enumerate() {
         let c = UNUSUAL_SPACES[i % UNUSUAL_SPACES.len()];
-        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_SPACE, c);
+        assert!(must_be_escaped(c), "U+{:04X}", c as u32);
+        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_SPACE);
     }
 }
 
-/// Punctuation and symbols outside ASCII are rejected in the network
-/// forms. FAILS on the base commit: they were accepted.
+/// Punctuation, symbols and combining marks outside ASCII are rejected
+/// in the network forms, and the message shows them as they are: a
+/// reader can see them. FAILS on the base commit, which accepted them,
+/// and on the first version of this fix, which showed them as escapes.
 #[test]
 fn git_url_table_rejects_non_ascii_punctuation_in_network_forms() {
+    // The punctuation, and a combining acute accent.
+    let chars: Vec<char> = NON_ASCII_PUNCTUATION
+        .into_iter()
+        .chain(['\u{301}'])
+        .collect();
+    for c in &chars {
+        assert!(!must_be_escaped(*c), "U+{:04X}", *c as u32);
+    }
     for (i, form) in NETWORK_FORMS.into_iter().enumerate() {
-        let c = NON_ASCII_PUNCTUATION[i % NON_ASCII_PUNCTUATION.len()];
-        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_NON_ASCII, c);
+        let c = chars[i % chars.len()];
+        assert_url_rejected(&format!("{form}a{c}b.git"), RULE_NON_ASCII);
     }
 }
 
@@ -1250,4 +1452,129 @@ fn repository_in_a_directory_with_punctuation_resolves() {
 
         let _ = fs::remove_dir_all(&ws);
     }
+}
+
+// ── 5. A lockfile silt writes is a lockfile silt reads ────────────────
+
+/// A path dependency whose version has a build part (what follows `+`)
+/// that is not made of ASCII letters, digits, `-` and `.`. The version
+/// is rejected when the dependency's manifest is loaded, with the value
+/// shown escaped, and no lockfile is written; a second run says the
+/// same. FAILS on the base commit and on the first version of this fix:
+/// both ignored what follows `+`, locked the version, and with U+007F
+/// in it wrote a `silt.lock` that the second run could not read.
+#[test]
+fn version_with_a_malformed_build_part_is_rejected() {
+    for (tag, build, shown_build) in [
+        ("build_delete", "a\u{7f}b", "a\\u{7f}b"),
+        ("build_line_break", "a\nerror: FORGED", "a\\nerror: FORGED"),
+        ("build_underscore", "a_b", "a_b"),
+        ("build_empty", "", ""),
+    ] {
+        let ws = fresh_workspace(tag);
+        let version = format!("1.0.0+{build}");
+        let dep_text = format!(
+            "[package]\nname = \"dep\"\nversion = {}\n",
+            toml_str(&version)
+        );
+        write_package(&ws.join("dep"), &dep_text, "lib.silt", "pub fn one() = 1\n");
+        let app = ws.join("app");
+        let deps = dependencies("dep = { path = \"../dep\" }");
+        write_app(&app, &manifest("app", &deps));
+
+        for run in 1..=2 {
+            let out = silt(&ws, &app, &["check"]);
+
+            let context = format!("{tag}, run {run}");
+            assert_printable_outcome(&out, 1, &context);
+            assert_no_forged_line(&out, &context);
+            let expected = format!("silt.toml: invalid package version `1.0.0+{shown_build}`: ");
+            assert!(
+                out.stderr.starts_with("error: invalid manifest ")
+                    && out.stderr.contains(&expected),
+                "{context}: expected `{expected}` on stderr; {out:?}"
+            );
+            assert_eq!(
+                out.stderr.lines().count(),
+                1,
+                "{context}: the error must be one line; {out:?}"
+            );
+            assert!(
+                !app.join("silt.lock").exists(),
+                "{context}: silt must not write a lockfile when it rejects a manifest"
+            );
+        }
+        let _ = fs::remove_dir_all(&ws);
+    }
+}
+
+/// GUARD: passes on the base commit, on the first version of this fix
+/// and with the fix. A version with a pre-release part and a build part
+/// as semver has them is locked, and the lockfile is read back.
+#[test]
+fn version_with_a_build_part_is_locked_and_read_back() {
+    let ws = fresh_workspace("build_accepted");
+    let version = "1.0.0-rc.1+build.5-x";
+    let dep_text = format!("[package]\nname = \"dep\"\nversion = \"{version}\"\n");
+    write_package(&ws.join("dep"), &dep_text, "lib.silt", "pub fn one() = 1\n");
+    let app = ws.join("app");
+    let deps = dependencies("dep = { path = \"../dep\" }");
+    write_app(&app, &manifest("app", &deps));
+
+    for run in 1..=2 {
+        let out = silt(&ws, &app, &["check"]);
+        assert_printable_outcome(&out, 0, &format!("silt check, run {run}"));
+        let lock = fs::read_to_string(app.join("silt.lock")).expect("silt.lock was written");
+        assert!(
+            lock.contains(&format!("version = \"{version}\"")),
+            "run {run}: the lockfile must hold the version:\n{lock}"
+        );
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A value silt cannot reject: a path dependency in a directory whose
+/// name holds U+007F. The lockfile holds the path with the character
+/// escaped, the next run reads it back and leaves it as it is, and the
+/// dependency's code runs. FAILS on the base commit and on the first
+/// version of this fix: both wrote the character as it is, which TOML
+/// does not allow, and the second run ended with `invalid lockfile`.
+///
+/// Unix only: the directory is named by the value.
+#[cfg(unix)]
+#[test]
+fn lockfile_with_a_control_character_in_a_path_is_read_back() {
+    let ws = fresh_workspace("lock_round_trip");
+    let dep_dir = "de\u{7f}p";
+    write_lib(&ws.join(dep_dir), "dep");
+    let app = ws.join("app");
+    let line = format!("dep = {{ path = {} }}", toml_str(&format!("../{dep_dir}")));
+    write_package(
+        &app,
+        &manifest("app", &dependencies(&line)),
+        "main.silt",
+        "import dep\nfn main() { println(dep.one()) }\n",
+    );
+
+    let first = silt(&ws, &app, &["check"]);
+    assert_printable_outcome(&first, 0, "first silt check");
+    let lock = fs::read_to_string(app.join("silt.lock")).expect("silt.lock was written");
+    assert!(
+        lock.contains("de\\u007Fp") && !lock.contains('\u{7f}'),
+        "the lockfile must hold the path with U+007F escaped:\n{lock:?}"
+    );
+
+    let second = silt(&ws, &app, &["check"]);
+    assert_printable_outcome(&second, 0, "second silt check");
+    assert_eq!(
+        fs::read_to_string(app.join("silt.lock")).unwrap(),
+        lock,
+        "the second run must leave the lockfile as it is"
+    );
+
+    let run = silt(&ws, &app, &["run"]);
+    assert_printable_outcome(&run, 0, "silt run");
+    assert_eq!(run.stdout.trim(), "1", "{run:?}");
+
+    let _ = fs::remove_dir_all(&ws);
 }
