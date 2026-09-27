@@ -23,11 +23,44 @@ use silt::parser::Parser;
 use silt::typechecker;
 
 use crate::cli::package::package_setup_for_file;
+use crate::cli::source_scan::main_signature_error;
+
+/// What the compile step of the pipeline emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Emit {
+    /// Nothing: the compile step is skipped.
+    Nothing,
+    /// A script that registers the globals and then calls `main`. What
+    /// `silt run`, `silt check` and `silt disasm` compile.
+    Program,
+    /// A script that registers the globals and calls nothing. What
+    /// `silt test` compiles: it calls the test functions itself.
+    Declarations,
+}
+
+/// The entry file after lexing and parsing: the first stage of the
+/// pipeline. `silt test --filter` decides between the two stages whether
+/// a file is worth analysing at all.
+pub(crate) struct ParsedEntryFile {
+    /// The original source text.
+    pub(crate) source: String,
+    /// The declarations, as far as the parser could recover them. `None`
+    /// when the text does not lex.
+    pub(crate) program: Option<Program>,
+    /// The lex error, or the parse errors.
+    pub(crate) parse_errors: Vec<SourceError>,
+}
 
 /// Result of running the full compilation pipeline (lex → parse → typecheck → compile).
 pub(crate) struct CompilePipelineResult {
     /// The original source text.
     pub(crate) source: String,
+    /// The parsed entry file, as far as the parser could recover it.
+    /// `None` when the text does not lex. Questions about the file's
+    /// declarations (does it define `main`, which functions are tests)
+    /// are answered from here, see `cli::source_scan`; nothing scans
+    /// `source` for them.
+    pub(crate) program: Option<Program>,
     /// Parse errors (may be non-empty even when compilation proceeds).
     pub(crate) parse_errors: Vec<SourceError>,
     /// Type errors and warnings.
@@ -86,30 +119,79 @@ pub(crate) fn run_compile_pipeline_with_options(
             process::exit(1);
         }
     };
+    let emit = if skip_compile {
+        Emit::Nothing
+    } else {
+        Emit::Program
+    };
+    analyse_parsed_entry_file(
+        path,
+        parse_entry_file(path, source),
+        emit,
+        typecheck_on_parse_errors,
+        auto_update_lock,
+        strict_effects,
+    )
+}
 
+/// First stage of the pipeline: lex and parse (recovering) the text of the
+/// entry file `path`. Touches nothing but its arguments.
+pub(crate) fn parse_entry_file(path: &str, source: String) -> ParsedEntryFile {
     let tokens = match Lexer::new(&source).tokenize() {
         Ok(t) => t,
         Err(e) => {
             // Lex errors are fatal for all callers. Return a result with the error
             // so that `check_file` can format it as JSON when needed.
             let source_err = SourceError::from_lex_error(&e, &source, path);
-            return CompilePipelineResult {
+            return ParsedEntryFile {
                 source,
+                program: None,
                 parse_errors: vec![source_err],
-                type_errors: Vec::new(),
-                functions: None,
-                compile_errors: Vec::new(),
-                compile_warnings: Vec::new(),
             };
         }
     };
 
-    let (mut program, raw_parse_errors) = Parser::new(tokens).parse_program_recovering();
+    let (program, raw_parse_errors) = Parser::new(tokens).parse_program_recovering();
 
     let parse_errors: Vec<SourceError> = raw_parse_errors
         .iter()
         .map(|e| SourceError::from_parse_error(e, &source, path))
         .collect();
+    ParsedEntryFile {
+        source,
+        program: Some(program),
+        parse_errors,
+    }
+}
+
+/// Second stage of the pipeline: resolve the package, typecheck, and
+/// compile what `emit` asks for. Every front door that compiles an entry
+/// file goes through here, so they all report the same diagnostics for
+/// it. The parameters are those of [`run_compile_pipeline_with_options`].
+pub(crate) fn analyse_parsed_entry_file(
+    path: &str,
+    parsed: ParsedEntryFile,
+    emit: Emit,
+    typecheck_on_parse_errors: bool,
+    auto_update_lock: bool,
+    strict_effects: bool,
+) -> CompilePipelineResult {
+    let ParsedEntryFile {
+        source,
+        program,
+        parse_errors,
+    } = parsed;
+    let Some(mut program) = program else {
+        return CompilePipelineResult {
+            source,
+            program: None,
+            parse_errors,
+            type_errors: Vec::new(),
+            functions: None,
+            compile_errors: Vec::new(),
+            compile_warnings: Vec::new(),
+        };
+    };
     let has_parse_errors = !parse_errors.is_empty();
 
     // Derive the package_roots map: when `path` is inside a silt
@@ -190,7 +272,7 @@ pub(crate) fn run_compile_pipeline_with_options(
     // Type errors do NOT block compilation — the compiler resolves modules
     // during compilation, which fixes most "undefined" errors from the type
     // checker.  The test suite already relies on this behavior.
-    if has_parse_errors || skip_compile {
+    if has_parse_errors || emit == Emit::Nothing {
         // Round 92: imported user modules' REAL type errors (harvested
         // during `pre_typecheck_imports`, already filtered so the
         // import-resolvable cascade stays suppressed) flow into the
@@ -202,6 +284,7 @@ pub(crate) fn run_compile_pipeline_with_options(
         type_errors.extend(compiler.take_module_type_errors());
         return CompilePipelineResult {
             source,
+            program: Some(program),
             parse_errors,
             type_errors,
             functions: None,
@@ -211,11 +294,20 @@ pub(crate) fn run_compile_pipeline_with_options(
     }
 
     // Compile.
-    let compile_result = compiler.compile_program(&program);
+    let compile_result = if emit == Emit::Declarations {
+        compiler.compile_declarations(&program)
+    } else {
+        compiler.compile_program(&program)
+    };
     // Round 92: merge imported-module type errors (see the comment on
     // the skip-compile arm above). Taken after the compile pass so
     // modules first loaded during compilation are harvested too.
     type_errors.extend(compiler.take_module_type_errors());
+    // A `main` that declares parameters compiles, but the program cannot
+    // start: the entry point is called without arguments. Reported here,
+    // with the compile errors, so that every front door rejects it
+    // before anything runs.
+    let entry_point_error = main_signature_error(&program, &source, path);
     match compile_result {
         Ok(functions) => {
             let compile_warnings: Vec<SourceError> = compiler
@@ -229,17 +321,19 @@ pub(crate) fn run_compile_pipeline_with_options(
             // circuits, so this is defensive — but draining on both
             // arms keeps the "every diagnostic, one run" invariant
             // robust against that evolution.
-            let module_extras: Vec<SourceError> = compiler
+            let mut compile_errors: Vec<SourceError> = compiler
                 .module_parse_errors()
                 .iter()
                 .map(|e| SourceError::from_compile_error(e, &source, path))
                 .collect();
+            compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
+                program: Some(program),
                 parse_errors,
                 type_errors,
                 functions: Some(functions),
-                compile_errors: module_extras,
+                compile_errors,
                 compile_warnings,
             }
         }
@@ -254,8 +348,10 @@ pub(crate) fn run_compile_pipeline_with_options(
                     .iter()
                     .map(|extra| SourceError::from_compile_error(extra, &source, path)),
             );
+            compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
+                program: Some(program),
                 parse_errors,
                 type_errors,
                 functions: None,
@@ -306,10 +402,8 @@ pub(crate) fn run_compile_pipeline_with_options(
 /// pass, mirroring how the pipeline threads it around the entrypoint
 /// check.
 ///
-/// `pub(crate)` rather than private: `src/cli/test.rs` has the same
-/// pre-typecheck + snapshot pattern (round 64) and still carries the
-/// dep-visibility gap this helper closes for run/check — wiring it in
-/// there is the intended follow-up (round-93 residual).
+/// `silt test` gets this too: it compiles through
+/// [`analyse_parsed_entry_file`] like run and check.
 pub(crate) fn register_dep_import_exports(
     compiler: &mut Compiler,
     program: &Program,
@@ -397,10 +491,8 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
         // (sibling modules, declared deps) are pre-typechecked so the
         // warning never fires for them and this filter stays dormant —
         // see `is_user_import_resolvable_error` for why that matters.
-        // `silt test` routes through the SAME
-        // `should_suppress_import_cascade` predicate so the two paths
-        // cannot drift (round 91 GAP: test.rs previously only filtered
-        // the warning, leaking the undefined-name cascade).
+        // `silt test` reports through this same function, so the
+        // front doors cannot drift.
         .filter(|e| !should_suppress_import_cascade(e, has_user_import_warning))
         // B9 (round 60): the typechecker and the compiler both emit
         // "module 'X' is not imported" for the same call site. Without
@@ -416,11 +508,25 @@ pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&Sou
         .collect()
 }
 
+/// Every diagnostic of `result` that is shown to the user, in the order it
+/// is printed: parse errors, type diagnostics (filtered, see
+/// [`reportable_type_errors`]), compile errors, compile warnings. One list
+/// for `silt run`, `silt check`, `silt disasm` and `silt test`.
+pub(crate) fn reportable_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
+    result
+        .parse_errors
+        .iter()
+        .chain(reportable_type_errors(result))
+        .chain(result.compile_errors.iter())
+        .chain(result.compile_warnings.iter())
+        .collect()
+}
+
 /// Single shared predicate deciding whether a typechecker diagnostic for a
-/// user-module import should be suppressed from CLI output. Both the
-/// `silt run`/`silt check` path (`reportable_type_errors`) and the
-/// `silt test` loop route through this so they cannot drift: a file that
-/// imports a sibling user module must behave identically under all three.
+/// user-module import should be suppressed from CLI output. `silt run`,
+/// `silt check` and `silt test` all report through
+/// `reportable_type_errors`, which applies it: a file that imports a
+/// sibling user module must behave identically under all three.
 ///
 /// Suppress when the diagnostic is the "unknown module" warning itself, OR
 /// (when that warning is present) when it is one of the follow-on
@@ -545,13 +651,30 @@ pub(crate) fn compile_file_with_options(
     auto_update_lock: bool,
     strict_effects: bool,
 ) -> (Vec<Function>, String) {
+    let compiled = compile_file(path, auto_update_lock, strict_effects);
+    (compiled.functions, compiled.source)
+}
+
+/// A file that went through the whole pipeline without a hard error.
+pub(crate) struct CompiledFile {
+    /// The compiled functions; the first one is the top-level script.
+    pub(crate) functions: Vec<Function>,
+    /// The original source text.
+    pub(crate) source: String,
+    /// The parsed declarations of the file.
+    pub(crate) program: Program,
+}
+
+/// [`compile_file_with_options`], for callers that also ask questions
+/// about the file's declarations.
+pub(crate) fn compile_file(
+    path: &str,
+    auto_update_lock: bool,
+    strict_effects: bool,
+) -> CompiledFile {
     let result =
         run_compile_pipeline_with_options(path, false, false, auto_update_lock, strict_effects);
 
-    // Filter per-entry: drop the "unknown module" warnings the compiler will
-    // resolve, but keep every other type diagnostic so real errors still
-    // surface. See `reportable_type_errors` for the rationale.
-    let reportable = reportable_type_errors(&result);
     // See `pipeline_has_real_hard_errors` for what counts as "real".
     let has_real_hard_errors = pipeline_has_real_hard_errors(&result);
 
@@ -560,14 +683,7 @@ pub(crate) fn compile_file_with_options(
     // of text. Matches rustc/gcc convention.
     // Lock: tests/cli_test_rendering_tests.rs
     // `test_multiple_errors_render_with_blank_separator`.
-    let all_errs: Vec<&SourceError> = result
-        .parse_errors
-        .iter()
-        .chain(reportable.iter().copied())
-        .chain(result.compile_errors.iter())
-        .chain(result.compile_warnings.iter())
-        .collect();
-    silt::errors::eprintln_errors_with_separator(&all_errs);
+    silt::errors::eprintln_errors_with_separator(&reportable_diagnostics(&result));
 
     // Exit gate: abort iff a real (non-suppressed) hard error exists.
     if has_real_hard_errors {
@@ -584,7 +700,17 @@ pub(crate) fn compile_file_with_options(
         process::exit(1);
     }
 
-    (functions, result.source)
+    // A file that compiled has lexed, so its declarations are there.
+    let Some(program) = result.program else {
+        eprintln!("{path}: internal error: compiled without a parsed program");
+        process::exit(1);
+    };
+
+    CompiledFile {
+        functions,
+        source: result.source,
+        program,
+    }
 }
 
 #[cfg(test)]
@@ -609,6 +735,7 @@ mod tests {
     fn clean_ok_result() -> CompilePipelineResult {
         CompilePipelineResult {
             source: String::new(),
+            program: Some(Program { decls: Vec::new() }),
             parse_errors: Vec::new(),
             type_errors: Vec::new(),
             functions: Some(Vec::new()),

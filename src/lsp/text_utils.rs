@@ -7,6 +7,8 @@
 use crate::ast::*;
 use crate::lexer::Span;
 
+use super::conversions::floor_char_boundary;
+
 /// Convert a byte offset in `source` into a lexer `Span` (1-based line,
 /// 1-based **codepoint** column, byte offset) — the same convention the
 /// lexer stamps on tokens (lexer.rs advances `col` once per `char`).
@@ -20,13 +22,13 @@ use crate::lexer::Span;
 /// units) — a documented trap. Keeping one copy means a future fix to
 /// the line/col semantics lands everywhere at once.
 ///
-/// `off` is clamped to `source.len()` and must lie on a `char` boundary
-/// (offsets produced by `find_ident_in_range` always do).
+/// `off` is clamped to `source.len()` and snapped back to the previous
+/// `char` boundary, so no offset can make the slices below panic.
 ///
 /// Lock: tests/lsp_span_at_offset_dedup_lock_tests.rs + the unit tests
 /// below.
 pub(super) fn span_at_offset(source: &str, off: usize) -> Span {
-    let off = off.min(source.len());
+    let off = floor_char_boundary(source, off);
     let line = source[..off].bytes().filter(|&b| b == b'\n').count() + 1;
     let line_start = source[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let col = source[line_start..off].chars().count() + 1;
@@ -44,6 +46,11 @@ pub(super) fn span_at_offset(source: &str, off: usize) -> Span {
 /// e.g. `fn add(a, b) = a + b` would claim to extend to EOF, dragging the
 /// `fn add` decl into the selection chain of any later cursor in the file.
 /// Round-84 LATENT fix.
+///
+/// The result is always a char boundary of `source`, so callers may slice
+/// with it: the per-kind lengths in `self_extent` are guesses (`()` is
+/// taken to be two bytes, `true` four, ...), and a guess can end inside a
+/// multi-byte character when the expression is a parser recovery stub.
 pub(super) fn expr_extent(expr: &Expr, source: &str) -> usize {
     let start = expr.span.offset;
     if start >= source.len() {
@@ -65,7 +72,7 @@ pub(super) fn expr_extent(expr: &Expr, source: &str) -> usize {
             max_end = child_end;
         }
     });
-    max_end.min(source.len())
+    floor_char_boundary(source, max_end)
 }
 
 /// Tight end-offset for an expression's own token(s), ignoring children.
@@ -394,6 +401,12 @@ pub(super) fn find_shorthand_binder(source: &str, head_offset: usize, name: &str
 /// Scan `source[start..end]` for the LAST occurrence of `name` as a whole
 /// word (not surrounded by identifier characters). Returns the absolute byte
 /// offset in `source`.
+///
+/// `start` and `end` are span offsets and guessed extents, so either may
+/// lie inside a multi-byte character. The scan therefore works on bytes,
+/// never on a `str` slice. A returned offset is a char boundary all the
+/// same: the bytes there equal `name`, which is valid UTF-8, so the offset
+/// holds the first byte of a character.
 pub(super) fn find_ident_in_range(
     source: &str,
     start: usize,
@@ -403,8 +416,7 @@ pub(super) fn find_ident_in_range(
     if name.is_empty() || start >= source.len() || end > source.len() || start >= end {
         return None;
     }
-    let hay = &source[start..end];
-    let bytes = hay.as_bytes();
+    let bytes = &source.as_bytes()[start..end];
     let name_bytes = name.as_bytes();
     let name_len = name_bytes.len();
     if name_len > bytes.len() {
@@ -449,13 +461,15 @@ pub(super) fn qualified_head_name_offset(
     if name.is_empty() || head_offset >= source.len() {
         return None;
     }
-    let dot = source[head_offset..].find('.')? + head_offset;
+    // `get` instead of indexing: a span offset inside a multi-byte
+    // character means "cannot be located", not a panic.
+    let dot = source.get(head_offset..)?.find('.')? + head_offset;
     let bytes = source.as_bytes();
     let mut off = dot + 1;
     while off < bytes.len() && bytes[off].is_ascii_whitespace() {
         off += 1;
     }
-    if !source[off..].starts_with(name) {
+    if !source.get(off..)?.starts_with(name) {
         return None;
     }
     // Whole-token check: the match must not continue as a longer ident.
@@ -618,6 +632,40 @@ mod tests {
         let source = "ab\ncd";
         let span = span_at_offset(source, 999);
         assert_eq!((span.line, span.col, span.offset), (2, 3, 5));
+    }
+
+    // ── offsets inside a multi-byte character ────────────────────
+
+    #[test]
+    fn test_span_at_offset_inside_a_character_snaps_back() {
+        // `“` occupies bytes 1..4.
+        let source = "a“b";
+        let span = span_at_offset(source, 2);
+        assert_eq!((span.line, span.col, span.offset), (1, 2, 1));
+    }
+
+    #[test]
+    fn test_find_ident_in_range_bounds_inside_a_character() {
+        // `é` occupies bytes 0..2 and 5..7; 1 and 6 are inside them.
+        let source = "é x é";
+        assert_eq!(find_ident_in_range(source, 1, 6, "x"), Some(3));
+    }
+
+    #[test]
+    fn test_qualified_head_name_offset_inside_a_character_is_none() {
+        // `é` occupies bytes 0..2.
+        let source = "é.Pt";
+        assert_eq!(qualified_head_name_offset(source, 1, "Pt"), None);
+        assert_eq!(qualified_head_name_offset(source, 0, "Pt"), Some(3));
+    }
+
+    #[test]
+    fn test_expr_extent_guess_inside_a_character_snaps_back() {
+        // A `Unit` is taken to be two bytes wide. Here the second byte is
+        // the first byte of `é`, so the extent must snap back to 1.
+        let source = "}é";
+        let expr = Expr::new(ExprKind::Unit, Span::with_offset(1, 1, 0));
+        assert_eq!(expr_extent(&expr, source), 1);
     }
 
     #[test]

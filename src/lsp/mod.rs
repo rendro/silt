@@ -3,7 +3,9 @@
 //! Provides diagnostics, hover (inferred types), and go-to-definition
 //! over the standard LSP JSON-RPC transport (stdin/stdout).
 
+use std::any::Any;
 use std::collections::HashMap;
+use std::panic::{self, AssertUnwindSafe};
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
@@ -137,13 +139,64 @@ impl Server {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
                         return;
                     }
-                    self.handle_request(req);
+                    self.guard_request(req, Self::handle_request);
                 }
                 Message::Notification(notif) => {
-                    self.handle_notification(notif);
+                    self.guard_notification(notif, Self::handle_notification);
                 }
                 Message::Response(_) => {}
             }
+        }
+    }
+
+    // ── Panic boundary ─────────────────────────────────────────────
+    //
+    // One failing handler must not end the editor session. Every handler
+    // runs inside `catch_unwind`; a panic is logged to stderr (next to the
+    // report the panic hook prints) and the message loop goes on.
+    //
+    // Carrying on is sound: request handlers only read the server state.
+    // Of the notification handlers, `didClose` only removes an entry, and
+    // `update_document` (`didOpen`, `didChange`) catches a panic of the
+    // analysis itself, so that the new text is stored in any case.
+
+    /// Run `handler` on `req`. If it panics, answer the request with an
+    /// `InternalError`, so the client is not left waiting for a response.
+    /// Handlers send their response as their last step, so a handler that
+    /// panicked has not answered yet.
+    fn guard_request(&mut self, req: Request, handler: fn(&mut Self, Request)) {
+        let id = req.id.clone();
+        let method = req.method.clone();
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| handler(self, req)));
+        if let Err(payload) = outcome {
+            eprintln!(
+                "silt-lsp: internal error while handling request '{method}': {}; the request \
+                 was answered with an error and the server keeps running",
+                panic_message(payload)
+            );
+            let resp = Response::new_err(
+                id,
+                ErrorCode::InternalError as i32,
+                format!(
+                    "internal error while handling '{method}'. The server is still running; \
+                     its log (stderr) has the details. Please report this as a bug."
+                ),
+            );
+            self.connection.sender.send(Message::Response(resp)).ok();
+        }
+    }
+
+    /// Run `handler` on `notif`. A notification has no response, so a
+    /// panic is only logged.
+    fn guard_notification(&mut self, notif: Notification, handler: fn(&mut Self, Notification)) {
+        let method = notif.method.clone();
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| handler(self, notif)));
+        if let Err(payload) = outcome {
+            eprintln!(
+                "silt-lsp: internal error while handling notification '{method}': {}; the \
+                 server keeps running",
+                panic_message(payload)
+            );
         }
     }
 
@@ -391,6 +444,18 @@ pub fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/// The message a panic was raised with, for the log. `panic!` with a
+/// literal carries a `&str`, with format arguments a `String`.
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "the panic carried no message".to_string()
+    }
+}
 
 /// Attempt to extract a typed parameter set from `req` for method `R`.
 ///
@@ -742,6 +807,107 @@ mod tests {
         // Simulate DidCloseTextDocument by invoking the removal directly.
         server.documents.remove(&uri);
         assert!(!server.documents.contains_key(&uri));
+    }
+
+    // ── Panic boundary ─────────────────────────────────────────────
+
+    #[test]
+    fn panicking_request_handler_is_answered_with_internal_error() {
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(connection);
+
+        let req = Request::new(
+            RequestId::from(7),
+            HoverRequest::METHOD.to_string(),
+            serde_json::json!({}),
+        );
+        server.guard_request(req, |_, _| panic!("deliberate panic in a test"));
+
+        let Ok(Message::Response(resp)) = client.receiver.try_recv() else {
+            panic!("the failed request must be answered");
+        };
+        assert_eq!(resp.id, RequestId::from(7));
+        assert!(resp.result.is_none());
+        let error = resp.error.expect("the answer must be an error");
+        assert_eq!(error.code, ErrorCode::InternalError as i32);
+        assert!(
+            error.message.contains(HoverRequest::METHOD),
+            "the error must name the method: {}",
+            error.message
+        );
+        assert!(
+            client.receiver.try_recv().is_err(),
+            "exactly one message answers the failed request"
+        );
+
+        // The same server answers the next request.
+        let source = "fn add(a, b) { a + b }\nfn main() { add(1, 2) }";
+        let uri = open_document(&mut server, source);
+        while client.receiver.try_recv().is_ok() {}
+        let params = lsp_types::HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: Position::new(1, 13),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let req = Request::new(RequestId::from(8), HoverRequest::METHOD.to_string(), params);
+        server.guard_request(req, Server::handle_request);
+        let Ok(Message::Response(resp)) = client.receiver.try_recv() else {
+            panic!("the request after the failed one must be answered");
+        };
+        assert_eq!(resp.id, RequestId::from(8));
+        assert!(resp.error.is_none());
+        assert!(resp.result.is_some_and(|value| !value.is_null()));
+    }
+
+    #[test]
+    fn panicking_notification_handler_does_not_escape() {
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(connection);
+
+        let notif = Notification::new(
+            DidChangeTextDocument::METHOD.to_string(),
+            serde_json::json!({}),
+        );
+        server.guard_notification(notif, |_, _| panic!("deliberate panic in a test"));
+        assert!(
+            client.receiver.try_recv().is_err(),
+            "a failed notification sends nothing"
+        );
+
+        // The same server handles the next notification.
+        let params = lsp_types::DidOpenTextDocumentParams {
+            text_document: lsp_types::TextDocumentItem {
+                uri: test_uri(),
+                language_id: "silt".to_string(),
+                version: 1,
+                text: "fn main() { 42 }".to_string(),
+            },
+        };
+        let notif = Notification::new(DidOpenTextDocument::METHOD.to_string(), params);
+        server.guard_notification(notif, Server::handle_notification);
+        let doc = server
+            .documents
+            .get(&test_uri())
+            .expect("the document must be stored");
+        assert_eq!(doc.source, "fn main() { 42 }");
+    }
+
+    #[test]
+    fn panic_message_reads_literal_and_formatted_payloads() {
+        fn caught(raise: fn()) -> Box<dyn Any + Send> {
+            panic::catch_unwind(raise).expect_err("the function must panic")
+        }
+
+        let literal = caught(|| panic!("plain text"));
+        assert_eq!(panic_message(literal), "plain text");
+
+        let formatted = caught(|| panic!("value {}", String::from("three")));
+        assert_eq!(panic_message(formatted), "value three");
+
+        let other = caught(|| panic::panic_any(7_u8));
+        assert_eq!(panic_message(other), "the panic carried no message");
     }
 
     // Phase D: when the server's `strict_effects` flag is on (set

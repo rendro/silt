@@ -12,8 +12,8 @@ use silt::vm::Vm;
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::resolve_package_entry_point;
-use crate::cli::pipeline::{compile_file_with_options, resolve_strict_effects};
-use crate::cli::source_scan::{is_missing_main_error, looks_like_test_file};
+use crate::cli::pipeline::{CompiledFile, compile_file, resolve_strict_effects};
+use crate::cli::source_scan::{missing_main_error, program_has_main};
 
 /// Dispatch `silt run [--disassemble] [--strict-effects] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -160,10 +160,46 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
     }
 }
 
+/// The payload of `value` when it is the `Err(..)` of a `Result`, rendered
+/// for a diagnostic; `None` for every other value.
+///
+/// A `main` or a test function that returns `Err(..)` has failed. This is
+/// the one place that says what "returned `Err`" means, for `silt run`
+/// and `silt test` alike.
+pub(crate) fn returned_err(value: &silt::Value) -> Option<String> {
+    let silt::Value::Variant(tag, fields) = value else {
+        return None;
+    };
+    if tag.as_str() != "Err" {
+        return None;
+    }
+    // Result's Err carries exactly one payload; render it via the VM's
+    // Display machinery (stdlib error variants print their `.message()`,
+    // strings print bare). Fall back to the whole variant for defensive
+    // completeness.
+    Some(match fields.as_slice() {
+        [single] => single.to_string(),
+        _ => value.to_string(),
+    })
+}
+
 /// Run a file using the bytecode VM (default path).
 pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
     silt::intern::reset();
-    let (functions, source) = compile_file_with_options(path, true, strict_effects);
+    let CompiledFile {
+        functions,
+        source,
+        program,
+    } = compile_file(path, true, strict_effects);
+
+    // The script ends with a call of the global `main`. Whether there is
+    // one is known from the declarations, so a program without it is
+    // rejected here, before any of it runs, with the diagnostic
+    // `silt check` gives. A test file gets a pointer to `silt test`.
+    if !program_has_main(&program) {
+        eprintln!("{}", missing_main_error(&program, &source, path, true));
+        process::exit(1);
+    }
 
     // Build a name → (module_file, source) map so runtime errors from
     // imported modules are rendered against the correct file.  See
@@ -189,27 +225,19 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
     // single source location for "main's result was Err") and exit 1,
     // matching the exit code every other runtime error uses.
     // `Ok(..)` and non-Result returns (Unit, Int, ...) are unchanged.
-    // Only the `silt run` surface goes through here — `silt test` and
-    // the REPL have their own `vm.run` handling.
-    if let Ok(silt::Value::Variant(tag, fields)) = &run_result {
-        if tag.as_str() == "Err" {
-            // Result's Err carries exactly one payload; render it via
-            // the VM's Display machinery (stdlib error variants print
-            // their `.message()`, strings print bare). Fall back to
-            // the whole variant for defensive completeness.
-            let payload = match fields.as_slice() {
-                [single] => single.to_string(),
-                _ => silt::Value::Variant(tag.clone(), fields.clone()).to_string(),
-            };
-            let source_err = SourceError::runtime_at(
-                format!("main returned Err: {payload}"),
-                silt::lexer::Span::new(0, 0),
-                &source,
-                path,
-            );
-            eprintln!("{source_err}");
-            process::exit(1);
-        }
+    // `silt test` applies the same rule to a test function, through the
+    // same `returned_err`; the REPL has its own `vm.run` handling.
+    if let Ok(value) = &run_result
+        && let Some(payload) = returned_err(value)
+    {
+        let source_err = SourceError::runtime_at(
+            format!("main returned Err: {payload}"),
+            silt::lexer::Span::new(0, 0),
+            &source,
+            path,
+        );
+        eprintln!("{source_err}");
+        process::exit(1);
     }
     if let Err(e) = run_result {
         if let Some(span) = e.span {
@@ -289,33 +317,6 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
                     eprintln!("{line}");
                 }
             }
-        } else if is_missing_main_error(&e) {
-            // Round-24 B-fix: wrap the missing-main message in a real
-            // SourceError so it renders with the canonical
-            // `error[compile]:` header consistent with every other
-            // file-level diagnostic. Previously this was a plain
-            // `eprintln!` with no header / no `-->` locator — the only
-            // diagnostic in the codebase that broke the rustc-style
-            // shape. Lock: tests/empty_program_diagnostic_tests.rs.
-            //
-            // We use Span::new(0, 0) because there's no source location
-            // for "the file has no main()" — the Display impl omits the
-            // `-->` line when span.line == 0 but still emits the header.
-            //
-            // Detect test-only files so we can nudge the user toward
-            // `silt test` instead of the generic "add a main()" error.
-            // The body line below the header is rendered as a `= note:`
-            // continuation, matching the multi-line message convention.
-            let msg = if looks_like_test_file(&source) {
-                format!(
-                    "program has no main() function\nThis looks like a test file — run it with 'silt test {path}' instead."
-                )
-            } else {
-                "program has no main() function\nadd one as the entry point".to_string()
-            };
-            let source_err =
-                SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
-            eprintln!("{source_err}");
         } else {
             // Span-less runtime error: funnel through
             // `SourceError::runtime_at` with a zero span so the output
