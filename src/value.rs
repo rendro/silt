@@ -887,7 +887,9 @@ impl TaskHandle {
     /// A closure that was registered before is dropped, after the lock
     /// on the cleanup has been released.
     pub fn set_cancel_cleanup(&self, f: Box<dyn FnOnce() + Send>) {
-        let previous = std::mem::replace(&mut *self.cancel_cleanup.lock(), Some(f));
+        // The guard is a temporary of this statement, so the lock is
+        // released before `previous` is dropped.
+        let previous = self.cancel_cleanup.lock().replace(f);
         drop(previous);
     }
 
