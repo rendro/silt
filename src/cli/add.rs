@@ -34,7 +34,7 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("  --git <url>        URL of a git repository hosting a silt package.");
         println!("                     Must be paired with exactly one of");
         println!("                     --rev, --branch, or --tag.");
-        println!("  --rev <sha>        Pin to a specific commit SHA (7-40 hex chars).");
+        println!("  --rev <sha>        Pin to a specific commit SHA (7-64 hex chars).");
         println!("  --branch <name>    Track a branch; resolved to the current HEAD SHA");
         println!("                     and re-resolved on each `silt update`.");
         println!("  --tag <name>       Track a tag; resolved at lock time and");
@@ -349,13 +349,15 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             )
         }
         AddSource::Git { url, ref_spec } => {
-            // Cheap shape check first — this lets us reject obviously
-            // malformed input ("not a url") without paying for an
-            // `ls-remote` roundtrip.
-            if !looks_like_git_url(&url) {
+            // Shape check first, with the same rule `Manifest::load`
+            // applies to every `git = "..."` entry. It rejects malformed
+            // input ("not a url") without paying for an `ls-remote`
+            // roundtrip, and option-shaped input (`--upload-pack=...`)
+            // before it can reach `git` at all.
+            if let Err(e) = silt::git::validate_git_url(&url) {
                 return Err(format!(
-                    "silt add: --git URL `{url}` doesn't look like a git URL \
-                     (expected http(s)://, git://, ssh://, file://, or user@host:path)"
+                    "silt add: --git URL `{}` doesn't look like a git URL: {}",
+                    e.url, e.reason
                 )
                 .into());
             }
@@ -367,11 +369,15 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 && !silt::git::is_valid_sha_shape(sha)
             {
                 return Err(format!(
-                    "silt add: --rev `{sha}` is not a valid commit SHA shape \
-                     (expected 7-40 hexadecimal characters)"
+                    "silt add: --rev `{}` is not a valid commit SHA shape \
+                     (expected 7-64 hexadecimal characters)",
+                    silt::git::escape_for_display(sha)
                 )
                 .into());
             }
+            // The ref is echoed in the messages below; escaped so a
+            // control character in it cannot garble the output.
+            let shown_ref = silt::git::escape_for_display(ref_spec.as_ref_string());
 
             // Reachability ping: catches typos and private-repo-no-auth
             // before we mutate anything. We surface git's stderr in the
@@ -385,9 +391,8 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             // For Rev specs this is a no-op (offline shape check).
             silt::git::resolve_ref(&url, &ref_spec).map_err(|e| {
                 format!(
-                    "silt add: cannot resolve {} `{}` in `{url}`: {e}",
-                    ref_spec.kind(),
-                    ref_spec.as_ref_string()
+                    "silt add: cannot resolve {} `{shown_ref}` in `{url}`: {e}",
+                    ref_spec.kind()
                 )
             })?;
 
@@ -403,9 +408,8 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             );
             (
                 format!(
-                    "Added dependency '{name}' (git = \"{url}\", {} = \"{}\")",
-                    ref_spec.kind(),
-                    ref_value
+                    "Added dependency '{name}' (git = \"{url}\", {} = \"{shown_ref}\")",
+                    ref_spec.kind()
                 ),
                 inline,
             )
@@ -464,48 +468,4 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("failed to write {}: {e}", lock_path.display()))?;
 
     Ok(())
-}
-
-/// Cheap regex-free shape check for git URLs. We deliberately keep the
-/// rule loose — the actual `git ls-remote` will fail with a precise
-/// diagnostic for transport-level errors. This is just here to reject
-/// obvious non-URLs ("not a url", "/usr/local") and surface a friendlier
-/// error than `git`'s "fatal: '/usr/local' does not appear to be a git
-/// repository".
-///
-/// Accepts:
-///   - `http://...`, `https://...`
-///   - `git://...`
-///   - `ssh://...`
-///   - `file://...`
-///   - `user@host:path` (the SCP-style git URL form: an `@` followed by a
-///     `:` somewhere later, with no whitespace anywhere)
-fn looks_like_git_url(s: &str) -> bool {
-    if s.is_empty() || s.contains(char::is_whitespace) {
-        return false;
-    }
-    if s.starts_with("http://")
-        || s.starts_with("https://")
-        || s.starts_with("git://")
-        || s.starts_with("ssh://")
-        // `file://` is the canonical local-bare-repo URL form; git
-        // clone accepts it natively. Used by hermetic test fixtures
-        // and occasionally by users sharing repos via a local mount.
-        || s.starts_with("file://")
-    {
-        // Must have *something* after the scheme.
-        return s.split("://").nth(1).is_some_and(|rest| !rest.is_empty());
-    }
-    // SCP-style: `user@host:path`. Require both `@` and a `:` *after* the
-    // `@` so a stray colon-prefix doesn't pass.
-    if let Some(at_pos) = s.find('@')
-        && let Some(colon_pos) = s[at_pos..].find(':')
-    {
-        // user@host:something
-        let after_colon = &s[at_pos + colon_pos + 1..];
-        if !after_colon.is_empty() {
-            return true;
-        }
-    }
-    false
 }
