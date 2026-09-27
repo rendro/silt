@@ -83,6 +83,7 @@ fn op_name(op: Op) -> &'static str {
         Op::Panic => "Panic",
         Op::CallMethod => "CallMethod",
         Op::NarrowFloat => "NarrowFloat",
+        Op::Slide => "Slide",
     }
 }
 
@@ -251,7 +252,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         }
 
         // ── u16 operand (slot, no constant comment) ───────────
-        Op::GetLocal | Op::SetLocal => {
+        Op::GetLocal | Op::SetLocal | Op::Slide => {
             let slot = read_u16(code, offset + 1);
             (format!("{offset:04}  {name:<20} {slot}"), offset + 3)
         }
@@ -567,6 +568,18 @@ mod tests {
     }
 
     #[test]
+    fn test_slide_operand() {
+        let mut chunk = Chunk::new();
+        let span = dummy_span();
+        chunk.emit_op_u16(Op::Slide, 3, span);
+        chunk.emit_op(Op::Return, span);
+
+        let output = disassemble_chunk(&chunk, "slide");
+        assert!(output.contains("0000  Slide"));
+        assert!(output.contains("0003  Return"));
+    }
+
+    #[test]
     fn test_record_update() {
         let mut chunk = Chunk::new();
         let span = dummy_span();
@@ -661,8 +674,8 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 72 variants.
-        const EXPECTED_OP_COUNT: usize = 72;
+        // tables. Last verified: 73 variants.
+        const EXPECTED_OP_COUNT: usize = 73;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

@@ -95,22 +95,6 @@ fn item1_disassembler_arm_unified() {
     );
 }
 
-#[test]
-fn item1_expected_op_count_decremented() {
-    let src = read(DISASSEMBLE_RS);
-    // Round 83 set the count to 73 (added RecordUpdateAnon); the
-    // follow-up drops it to 72 (removed RecordUpdateAnon).
-    assert!(
-        src.contains("const EXPECTED_OP_COUNT: usize = 72;"),
-        "`EXPECTED_OP_COUNT` must be 72 after the round-85 follow-up \
-         removed `RecordUpdateAnon` (was 73 since round 83). See {DISASSEMBLE_RS}."
-    );
-    assert!(
-        !src.contains("const EXPECTED_OP_COUNT: usize = 73;"),
-        "Stale `EXPECTED_OP_COUNT = 73` must not remain in {DISASSEMBLE_RS}."
-    );
-}
-
 // ── Item 2: format_module_source_error inner-snippet color symmetry ──
 
 /// Build a fixture: a main file that imports a broken module, and a

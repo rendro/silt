@@ -14,6 +14,21 @@ use crate::value::Value;
 use super::{BindDestructKind, CompileError, Compiler};
 
 impl Compiler {
+    /// Emit the shape test of a tuple pattern with `len` elements for the
+    /// value on TOS and return the failure jump. The pattern `()` has no
+    /// elements and matches the unit value, which is not a tuple at run
+    /// time. Shared by both pattern-test compilers below.
+    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, CompileError> {
+        if len == 0 {
+            let unit = self.add_constant(Value::Unit, span)?;
+            self.current_chunk().emit_op_u16(Op::TestEqual, unit, span);
+        } else {
+            self.current_chunk().emit_op(Op::TestTupleLen, span);
+            self.current_chunk().emit_u8(len as u8, span);
+        }
+        Ok(self.current_chunk().emit_jump(Op::JumpIfFalse, span))
+    }
+
     // ── Recursive pattern test ───────────────────────────────────
     //
     // Emit test opcodes for a pattern. The value to test is on TOS
@@ -100,10 +115,8 @@ impl Compiler {
                         span,
                     });
                 }
-                // Test length
-                self.current_chunk().emit_op(Op::TestTupleLen, span);
-                self.current_chunk().emit_u8(pats.len() as u8, span);
-                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                // Test shape
+                let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![len_jump];
 
                 // Test nested element patterns
@@ -548,9 +561,7 @@ impl Compiler {
                         span,
                     });
                 }
-                self.current_chunk().emit_op(Op::TestTupleLen, span);
-                self.current_chunk().emit_u8(pats.len() as u8, span);
-                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in pats.iter().enumerate() {
@@ -776,21 +787,107 @@ impl Compiler {
         }
     }
 
+    // ── Pattern bind in a position without an alternative ───────
+
+    /// Bind `pattern` to the value on TOS where a failed match has
+    /// nowhere to go: `let`, and the parameters of functions, closures
+    /// and trait methods. The typechecker only lets patterns through
+    /// that match every value of their type. Should another pattern
+    /// arrive here, the program stops instead of running with names
+    /// bound to the parts of a value of a different shape: either the
+    /// destructuring itself fails (a list that is too short, a variant
+    /// without the field), or, if it went through, the outcome of the
+    /// pattern's test does.
+    ///
+    /// Same contract as `compile_pattern_bind`.
+    pub(super) fn compile_pattern_bind_checked(
+        &mut self,
+        pattern: &Pattern,
+        span: Span,
+    ) -> Result<(), CompileError> {
+        if !Self::pattern_can_fail(pattern) {
+            return self.compile_pattern_bind(pattern, span);
+        }
+        // The value is the local on top of the frame.
+        let value_slot = super::frame_slot(self.ctx().height.saturating_sub(1), span)?;
+
+        // Test the pattern and keep the outcome as a hidden local.
+        let fail_jumps = self.compile_pattern_test(pattern, span)?;
+        self.current_chunk().emit_op(Op::True, span);
+        let tested = self.current_chunk().emit_jump(Op::Jump, span);
+        for fail_jump in fail_jumps {
+            self.patch_jump(fail_jump, span)?;
+        }
+        // A failed test of a nested pattern leaves the sub-values it was
+        // looking at above the value; drop them.
+        self.current_chunk()
+            .emit_op_u16(Op::GetLocal, value_slot, span);
+        self.current_chunk()
+            .emit_op_u16(Op::Slide, value_slot, span);
+        self.current_chunk().emit_op(Op::False, span);
+        self.patch_jump(tested, span)?;
+        let matched_slot = self.add_local(intern("__bind_matched__"), span)?;
+
+        // Bind from a copy of the value, which is on TOS again.
+        self.current_chunk()
+            .emit_op_u16(Op::GetLocal, value_slot, span);
+        self.add_local(intern("__bind_src__"), span)?;
+        self.compile_pattern_bind(pattern, span)?;
+
+        // The destructuring went through. Stop if the test had failed.
+        self.current_chunk()
+            .emit_op_u16(Op::GetLocal, matched_slot, span);
+        let matched = self.current_chunk().emit_jump(Op::JumpIfTrue, span);
+        let message = self.add_constant(
+            Value::String("the value does not match the pattern it is bound to".into()),
+            span,
+        )?;
+        self.current_chunk()
+            .emit_op_u16(Op::Constant, message, span);
+        self.current_chunk().emit_op(Op::Panic, span);
+        self.patch_jump(matched, span)?;
+        Ok(())
+    }
+
+    /// True if matching `pattern` against a value of the pattern's type
+    /// can fail. A tuple or record pattern cannot fail by itself, the
+    /// type of the value guarantees its shape; it can fail through the
+    /// patterns of its elements.
+    fn pattern_can_fail(pattern: &Pattern) -> bool {
+        match &pattern.kind {
+            PatternKind::Wildcard | PatternKind::Ident(_) => false,
+            PatternKind::Tuple(pats) => pats.iter().any(Self::pattern_can_fail),
+            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
+                .iter()
+                .any(|(_, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
+            PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Constructor { .. }
+            | PatternKind::List(..)
+            | PatternKind::Or(_)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Map(_)
+            | PatternKind::Pin(_) => true,
+        }
+    }
+
     // ── Recursive pattern bind ───────────────────────────────────
     //
     // Emit binding opcodes for a pattern after test has succeeded.
-    // The value to bind FROM is on TOS.
     //
-    // Contract: TOS has the value. After this call, TOS is unchanged
-    // (the value is still there). New locals are pushed ABOVE it on
-    // the stack via GetLocal + Destruct sequences.
+    // Contract: the value to bind from is on TOS and is counted in the
+    // frame height (it is a local, usually a hidden one). After this
+    // call the value is still in its slot, and every value pushed here
+    // is a local above it: the named ones the pattern binds, and hidden
+    // ones for the copies and sub-values the destructuring went through.
     //
-    // Stack layout for compound patterns like (a, b):
+    // Stack layout for a compound pattern like (a, b):
     //   Before: [..., tuple]
-    //   After:  [..., tuple, tuple_copy(hidden), elem0, a_local,
-    //                        tuple_copy2(hidden), elem1, b_local]
-    // Where each GetLocal pushes a copy, Destruct pushes the element,
-    // and the Ident bind dups it as the named local.
+    //   After:  [..., tuple, tuple_copy, tuple_copy, elem0, a,
+    //                                    tuple_copy, elem1, b]
 
     pub(super) fn compile_pattern_bind(
         &mut self,
@@ -808,7 +905,7 @@ impl Compiler {
                 // `(_, Message(result))` rather than on the `match`
                 // scrutinee one line up.
                 self.warn_if_shadows_module(*name, pattern.span);
-                let slot = self.add_local(*name);
+                let slot = self.add_local(*name, span)?;
                 self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
             }
 
@@ -1004,7 +1101,7 @@ impl Compiler {
                 // TOS = scrutinee on entry. Save it to a hidden local so each
                 // alternative can fetch a fresh copy for its test+bind.
                 self.current_chunk().emit_op(Op::Dup, span);
-                let scrut_slot = self.add_local(intern("__or_bind_scrut__"));
+                let scrut_slot = self.add_local(intern("__or_bind_scrut__"), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::SetLocal, scrut_slot, span);
 
@@ -1018,13 +1115,14 @@ impl Compiler {
                 for name in &names {
                     self.current_chunk().emit_op(Op::Unit, span);
                     self.warn_if_shadows_module(*name, pattern.span);
-                    let slot = self.add_local(*name);
+                    let slot = self.add_local(*name, span)?;
                     result_slots.push(slot);
                 }
 
                 // Baseline: everything pushed past this point by an
                 // alternative's test/bind is a temporary to be cleaned up.
                 let baseline_locals = self.ctx().locals.len();
+                let baseline_height = self.ctx().height;
 
                 let mut end_jumps = Vec::new();
                 let last = alternatives.len() - 1;
@@ -1032,7 +1130,7 @@ impl Compiler {
                     // Fetch a fresh scrutinee copy for this alternative.
                     self.current_chunk()
                         .emit_op_u16(Op::GetLocal, scrut_slot, span);
-                    let _src = self.add_local(intern("__or_alt_src__"));
+                    self.add_local(intern("__or_alt_src__"), span)?;
 
                     // Non-last alternatives re-test; the last is the
                     // guaranteed-matching fallthrough.
@@ -1057,10 +1155,10 @@ impl Compiler {
 
                     // Pop every temporary this alternative pushed (the
                     // scrutinee copy plus all bind intermediates), restoring
-                    // the stack to the baseline. `add_local` is emitted once
-                    // per pushed value, so the temp count equals the local
-                    // growth.
-                    let temps = self.ctx().locals.len() - baseline_locals;
+                    // the stack to the baseline. Every value pushed is
+                    // counted in the frame height, so the temp count is
+                    // the growth of the height.
+                    let temps = self.ctx().height - baseline_height;
                     for _ in 0..temps {
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
@@ -1068,6 +1166,7 @@ impl Compiler {
                     // reuses the same slots and the final local state holds
                     // only the result slots.
                     self.ctx_mut().locals.truncate(baseline_locals);
+                    self.ctx_mut().height = baseline_height;
 
                     if i < last {
                         // Success path: skip the remaining alternatives.
@@ -1124,8 +1223,8 @@ impl Compiler {
     /// Compile bindings for a compound pattern (tuple, constructor, list, record, map).
     ///
     /// The parent value is on TOS. For each sub-pattern that has bindings,
-    /// we GetLocal the parent, Destruct the sub-value, register intermediate
-    /// stack values as hidden locals, and recurse.
+    /// we GetLocal the parent, Destruct the sub-value, register both
+    /// values as hidden locals, and recurse.
     ///
     /// This approach "wastes" stack slots for intermediate copies but ensures
     /// local slot numbers always match actual stack positions.
@@ -1138,16 +1237,10 @@ impl Compiler {
             return Ok(());
         }
 
-        // The parent is on TOS. We need it in a known local slot so we
-        // can GetLocal it repeatedly. We know TOS is at the "next" stack
-        // position, so we can register it as a hidden local.
-        // But TOS may not yet be registered. We need to check: is TOS already
-        // at the expected slot position?
-        //
-        // Strategy: just Dup + add_local + SetLocal to get a known slot.
-        // The Dup'd copy becomes a hidden local.
+        // The parent is on TOS. A copy of it becomes a hidden local, read
+        // once for every sub-pattern.
         self.current_chunk().emit_op(Op::Dup, span);
-        let parent_slot = self.add_local(intern("__bind_parent__"));
+        let parent_slot = self.add_local(intern("__bind_parent__"), span)?;
         self.current_chunk()
             .emit_op_u16(Op::SetLocal, parent_slot, span);
 
@@ -1201,9 +1294,10 @@ impl Compiler {
             }
 
             // Stack: [..., parent_copy_from_GetLocal, sub_value]
-            // Register the parent_copy as a hidden local
-            let _copy_slot = self.add_local(intern("__destruct_copy__"));
-            // Now sub_value is at the next stack position, ready for recursion.
+            // Both stay in the frame as hidden locals; the sub-value is
+            // on TOS, as the nested pattern's bind expects.
+            self.add_local(intern("__destruct_copy__"), span)?;
+            self.add_local(intern("__destruct_sub__"), span)?;
 
             // Recurse into the sub-pattern for binding
             self.compile_pattern_bind(sub_pat, span)?;

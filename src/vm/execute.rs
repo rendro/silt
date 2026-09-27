@@ -2628,6 +2628,24 @@ impl Vm {
                     }
                 }
             }
+            Op::Slide => {
+                // Keep the top value, cut the frame back to `slot` values
+                // and put the value on top of them. A frame shorter than
+                // `slot` means the compiler counted a value that was never
+                // pushed.
+                let slot = self.read_u16()? as usize;
+                let base = self.current_frame()?.base_slot;
+                let value = self.pop()?;
+                let target = base + slot;
+                if target > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "internal VM error: scope result slot out of range (slot {slot}, base {base}, stack len {})",
+                        self.stack.len()
+                    )));
+                }
+                self.stack.truncate(target);
+                self.push(value);
+            }
         }
         Ok(DispatchResult::Continue)
     }

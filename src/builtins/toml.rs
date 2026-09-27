@@ -47,7 +47,10 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
-use super::data::{FieldType, load_record_fields, make_date, make_datetime, make_time};
+use super::data::{
+    FieldType, load_record_fields, make_date, make_datetime, make_time,
+    unsupported_field_type_message,
+};
 
 // ── TomlError helpers ────────────────────────────────────────────────
 //
@@ -503,6 +506,33 @@ fn toml_to_typed_value(
             let val = toml_to_typed_value(vm, tv, inner)?;
             Ok(Value::Variant("Some".into(), vec![val]))
         }
+        FieldType::Map(inner) => match tv {
+            ::toml::Value::Table(table) => {
+                let mut map = BTreeMap::new();
+                for (key, item) in table.iter() {
+                    let val = toml_to_typed_value(vm, item, inner)?;
+                    map.insert(Value::String(key.clone()), val);
+                }
+                Ok(Value::Map(Arc::new(map)))
+            }
+            _ => Err(mismatch("Map", toml_type_name(tv))),
+        },
+        FieldType::Tuple(elems) => match tv {
+            ::toml::Value::Array(arr) if arr.len() == elems.len() => {
+                let mut values = Vec::with_capacity(elems.len());
+                for (item, elem) in arr.iter().zip(elems) {
+                    values.push(toml_to_typed_value(vm, item, elem)?);
+                }
+                Ok(Value::Tuple(values))
+            }
+            ::toml::Value::Array(arr) => Err(unknown(format!(
+                "expected an array of {} elements for a tuple, got {}",
+                elems.len(),
+                arr.len()
+            ))),
+            _ => Err(mismatch("Tuple", toml_type_name(tv))),
+        },
+        FieldType::Unsupported(declared) => Err(unknown(unsupported_field_type_message(declared))),
         FieldType::Date => match tv {
             ::toml::Value::Datetime(dt) => {
                 // Preferred path: TOML native date literal.
@@ -559,7 +589,7 @@ fn toml_to_typed_value(
             _ => Err(mismatch("datetime", toml_type_name(tv))),
         },
         FieldType::Record(rec_name) => {
-            let sub_fields = load_record_fields(vm, rec_name)?;
+            let sub_fields = load_record_fields(vm, "toml.parse", rec_name)?;
             let result = toml_to_record(vm, rec_name, &sub_fields, tv)?;
             match result {
                 Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
@@ -602,7 +632,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             };
             let type_name = type_name.clone();
-            let fields = load_record_fields(vm, &type_name)?;
+            let fields = load_record_fields(vm, "toml.parse", &type_name)?;
             match ::toml::from_str::<::toml::Value>(&s) {
                 Ok(tv) => toml_to_record(vm, &type_name, &fields, &tv),
                 Err(e) => Ok(toml_de_result_err(&e)),
@@ -626,7 +656,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             };
             let type_name = type_name.clone();
-            let fields = load_record_fields(vm, &type_name)?;
+            let fields = load_record_fields(vm, "toml.parse_list", &type_name)?;
             match ::toml::from_str::<::toml::Value>(&s) {
                 Ok(tv) => {
                     // TOML's top-level is always a table. For `parse_list`

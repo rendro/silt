@@ -16,8 +16,16 @@ use crate::value::TaskHandle;
 use crate::value::{IoCompletion, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
-// ── Field type for JSON parsing ──────────────────────────────────────
+// ── Field type for JSON / TOML parsing ───────────────────────────────
 
+/// The declared type of a record field, as far as the decoders of
+/// `json.parse` and `toml.parse` are concerned. Built from the field type
+/// descriptors the compiler installs with every record declaration (the
+/// grammar is documented at the top of `src/compiler/mod.rs`).
+///
+/// Both decoders must produce, for every variant, a value of exactly the
+/// described type or an error. `Unsupported` is a type no decoder exists
+/// for: decoding such a field is an error.
 #[derive(Debug, Clone)]
 pub(crate) enum FieldType {
     Int,
@@ -27,20 +35,38 @@ pub(crate) enum FieldType {
     Bool,
     List(Box<FieldType>),
     Option(Box<FieldType>),
+    /// `Map(String, T)`.
+    Map(Box<FieldType>),
+    Tuple(Vec<FieldType>),
     Record(std::string::String),
     Date,
     Time,
     DateTime,
+    /// A type without a decoder; carries the type as written in the
+    /// record declaration.
+    Unsupported(std::string::String),
 }
 
-/// Decode a type encoding string (from compiler metadata) into a FieldType.
+/// Decode a field type descriptor (from compiler metadata) into a FieldType.
+/// A descriptor this function does not know is `Unsupported`.
 pub(crate) fn decode_field_type(s: &str) -> FieldType {
-    if let Some(rest) = s.strip_prefix("List:") {
+    if let Some(rest) = s.strip_prefix("Unsupported:") {
+        FieldType::Unsupported(rest.to_string())
+    } else if let Some(rest) = s.strip_prefix("List:") {
         FieldType::List(Box::new(decode_field_type(rest)))
     } else if let Some(rest) = s.strip_prefix("Option:") {
         FieldType::Option(Box::new(decode_field_type(rest)))
+    } else if let Some(rest) = s.strip_prefix("Map:") {
+        FieldType::Map(Box::new(decode_field_type(rest)))
     } else if let Some(rest) = s.strip_prefix("Record:") {
         FieldType::Record(rest.to_string())
+    } else if let Some(elems) = s.strip_prefix("Tuple(").and_then(|r| r.strip_suffix(')')) {
+        FieldType::Tuple(
+            split_tuple_descriptors(elems)
+                .into_iter()
+                .map(decode_field_type)
+                .collect(),
+        )
     } else {
         match s {
             "Int" => FieldType::Int,
@@ -51,9 +77,36 @@ pub(crate) fn decode_field_type(s: &str) -> FieldType {
             "Date" => FieldType::Date,
             "Time" => FieldType::Time,
             "DateTime" => FieldType::DateTime,
-            other => FieldType::Record(other.to_string()),
+            other => FieldType::Unsupported(other.to_string()),
         }
     }
+}
+
+/// Split the inside of a `Tuple(...)` descriptor at the commas that
+/// separate its elements; commas of nested tuples are left alone.
+fn split_tuple_descriptors(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// The message of the error a decoder returns for a field whose declared
+/// type has no decoder. Shared by the JSON and TOML decoders.
+pub(crate) fn unsupported_field_type_message(declared: &str) -> std::string::String {
+    format!("a value of type {declared} cannot be decoded")
 }
 
 /// Compute (year, month, day) from Unix epoch seconds.
@@ -669,8 +722,11 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
 // ── JSON helpers ────────────────────────────────────────────────────
 
 /// Load record field info from the `__record_fields__<type>` global metadata.
+/// `caller` is the builtin on whose behalf the type is looked up
+/// (`json.parse`, `toml.parse_list`, ...); it starts the error message.
 pub(crate) fn load_record_fields(
     vm: &mut Vm,
+    caller: &str,
     type_name: &str,
 ) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
     // Check cache first
@@ -695,7 +751,7 @@ pub(crate) fn load_record_fields(
             Ok(fields)
         }
         _ => Err(VmError::new(format!(
-            "json.parse: unknown record type '{type_name}'"
+            "{caller}: unknown record type '{type_name}'"
         ))),
     }
 }
@@ -928,6 +984,33 @@ fn json_to_typed_value(
                 Ok(Value::Variant("Some".into(), vec![val]))
             }
         },
+        FieldType::Map(inner) => match json {
+            serde_json::Value::Object(obj) => {
+                let mut map = BTreeMap::new();
+                for (key, item) in obj {
+                    let val = json_to_typed_value(vm, item, inner)?;
+                    map.insert(Value::String(key.clone()), val);
+                }
+                Ok(Value::Map(Arc::new(map)))
+            }
+            _ => Err(mismatch("Map", json_type_name(json))),
+        },
+        FieldType::Tuple(elems) => match json {
+            serde_json::Value::Array(arr) if arr.len() == elems.len() => {
+                let mut values = Vec::with_capacity(elems.len());
+                for (item, elem) in arr.iter().zip(elems) {
+                    values.push(json_to_typed_value(vm, item, elem)?);
+                }
+                Ok(Value::Tuple(values))
+            }
+            serde_json::Value::Array(arr) => Err(unknown(format!(
+                "expected an array of {} elements for a tuple, got {}",
+                elems.len(),
+                arr.len()
+            ))),
+            _ => Err(mismatch("Tuple", json_type_name(json))),
+        },
+        FieldType::Unsupported(declared) => Err(unknown(unsupported_field_type_message(declared))),
         FieldType::Date => match json {
             serde_json::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(make_date)
@@ -962,7 +1045,7 @@ fn json_to_typed_value(
             _ => Err(mismatch("datetime string", json_type_name(json))),
         },
         FieldType::Record(rec_name) => {
-            let fields = load_record_fields(vm, rec_name)?;
+            let fields = load_record_fields(vm, "json.parse", rec_name)?;
             let result = json_to_record(vm, rec_name, &fields, json)?;
             match result {
                 Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
@@ -1261,7 +1344,7 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 }
                 Value::TypeDescriptor(type_name) => {
                     let type_name = type_name.clone();
-                    let fields = load_record_fields(vm, &type_name)?;
+                    let fields = load_record_fields(vm, "json.parse", &type_name)?;
                     match serde_json::from_str::<serde_json::Value>(&s) {
                         Ok(json_val) => json_to_record(vm, &type_name, &fields, &json_val),
                         Err(e) => Ok(json_result_err(&e)),
@@ -1291,7 +1374,7 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             };
             let type_name = type_name.clone();
-            let fields = load_record_fields(vm, &type_name)?;
+            let fields = load_record_fields(vm, "json.parse_list", &type_name)?;
             match serde_json::from_str::<serde_json::Value>(&s) {
                 Ok(json_val) => json_to_record_list(vm, &type_name, &fields, &json_val),
                 Err(e) => Ok(json_result_err(&e)),
@@ -2744,5 +2827,45 @@ mod http_response_tests {
         let result = extract_http_response(&val);
         assert!(result.is_ok(), "status 0 should be accepted");
         assert_eq!(result.unwrap().0, 0);
+    }
+}
+
+#[cfg(test)]
+mod field_type_tests {
+    use super::{FieldType, decode_field_type};
+
+    #[test]
+    fn descriptors_decode_to_their_field_type() {
+        assert!(matches!(decode_field_type("Int"), FieldType::Int));
+        assert!(matches!(decode_field_type("DateTime"), FieldType::DateTime));
+        assert!(matches!(
+            decode_field_type("Map:Int"),
+            FieldType::Map(value) if matches!(*value, FieldType::Int)
+        ));
+        assert!(matches!(
+            decode_field_type("List:Record:P"),
+            FieldType::List(elem) if matches!(&*elem, FieldType::Record(name) if name == "P")
+        ));
+        match decode_field_type("Tuple(Int,Tuple(String,Bool),Option:Int)") {
+            FieldType::Tuple(elems) => {
+                assert_eq!(elems.len(), 3);
+                assert!(matches!(&elems[0], FieldType::Int));
+                assert!(matches!(&elems[1], FieldType::Tuple(inner) if inner.len() == 2));
+                assert!(matches!(&elems[2], FieldType::Option(_)));
+            }
+            other => panic!("expected a tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_type_without_decoder_is_unsupported() {
+        assert!(matches!(
+            decode_field_type("Unsupported:Set(Int)"),
+            FieldType::Unsupported(declared) if declared == "Set(Int)"
+        ));
+        assert!(matches!(
+            decode_field_type("Whatever"),
+            FieldType::Unsupported(declared) if declared == "Whatever"
+        ));
     }
 }
