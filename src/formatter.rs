@@ -2930,16 +2930,35 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
 
 // ── Public entry point ──────────────────────────────────────────────
 
-/// A lex or parse failure surfaced from the formatter. Callers can
-/// downcast via the enum to render a proper source-line snippet through
-/// `SourceError::from_lex_error` / `from_parse_error`. The `Display`
-/// impl preserves the old bare `"lex error: ..."` / `"parse error: ..."`
-/// shape so existing test-helper callers that just format the error
-/// keep working.
+/// A failure surfaced from the formatter: the input does not lex or
+/// parse, or the formatter's own result failed the self-check. Callers
+/// can downcast via the enum to render a proper source-line snippet
+/// through `SourceError::from_lex_error` / `from_parse_error`. The
+/// `Display` impl preserves the bare `"lex error: ..."` /
+/// `"parse error: ..."` shape so test-helper callers that just format
+/// the error keep working.
 #[derive(Debug)]
 pub enum FmtError {
     Lex(LexError),
     Parse(ParseError),
+    /// The input is fine, but the text the formatter produced for it
+    /// would not parse, would be a different program, or would not carry
+    /// the same comments. Nothing is returned for such an input, so the
+    /// caller has nothing to write.
+    Internal(InternalError),
+}
+
+/// Why the formatter refused its own result. See [`FmtError::Internal`].
+#[derive(Debug)]
+pub struct InternalError {
+    /// What would have gone wrong, phrased to follow "formatting
+    /// refused: ", for example "the result would lose the comment
+    /// `-- note`".
+    pub message: String,
+    /// The place in the input that the problem belongs to, when there is
+    /// one: the comment that would be lost, or the declaration that
+    /// would change.
+    pub span: Option<Span>,
 }
 
 impl fmt::Display for FmtError {
@@ -2947,19 +2966,1012 @@ impl fmt::Display for FmtError {
         match self {
             FmtError::Lex(e) => write!(f, "lex error: {e}"),
             FmtError::Parse(e) => write!(f, "parse error: {e}"),
+            FmtError::Internal(e) => match e.span {
+                Some(span) => write!(f, "[{span}] formatting refused: {}", e.message),
+                None => write!(f, "formatting refused: {}", e.message),
+            },
         }
     }
 }
 
 impl std::error::Error for FmtError {}
 
+/// Format `source`.
+///
+/// The result is checked before it is returned: it has to parse, to be
+/// the same program as `source`, and to carry the same comments (see
+/// `self_check`). If it fails the check, the error is
+/// [`FmtError::Internal`] and no text is returned.
 pub fn format(source: &str) -> Result<String, FmtError> {
-    let tokens = Lexer::new(source).tokenize().map_err(FmtError::Lex)?;
+    let (tokens, comments) = Lexer::new(source)
+        .tokenize_with_comments()
+        .map_err(FmtError::Lex)?;
     let program = Parser::new(tokens.clone())
         .parse_program()
         .map_err(FmtError::Parse)?;
     let formatted = with_current_source(source, || format_program_with_comments(&program, source));
-    Ok(splice_inline_block_comments(source, &tokens, formatted))
+    let output = splice_inline_block_comments(source, &tokens, formatted);
+    // Text that is returned unchanged needs no check.
+    if output != source {
+        self_check::verify(&program, &comments, &output).map_err(FmtError::Internal)?;
+    }
+    Ok(output)
+}
+
+/// The check that `format` runs on its own result.
+///
+/// The printer decides the text of a node from the syntax tree, and finds
+/// comments again by source line. Neither step can see whether the text
+/// it produces still means the same. This module looks at the finished
+/// text instead: it parses it and compares it with the input on
+///
+///   1. the syntax tree, written out in a form (`ShapeWriter`) that leaves
+///      out source positions and is the same for every pair of spellings
+///      that the printer turns into one another on purpose;
+///   2. the comments, by their text with runs of white space treated as
+///      one space: every comment of the input has to be in the result,
+///      as often as in the input, and no other (see `compare_comments`
+///      for why their order is not compared).
+///
+/// The spellings that the printer changes on purpose:
+///
+///   * redundant parentheses are dropped, trailing commas are kept or
+///     dropped, number and string literals are respelled (`0xFF` as
+///     `255`, a line break in a string as `\n`): none of these is in the
+///     tree, so they need no rule here;
+///   * a lambda that is the last argument of a call is printed as a
+///     trailing closure, and a closure in any other place as
+///     `fn(...) { ... }`. The two forms differ in the tree only in that
+///     one has the single body expression `e` and the other the block
+///     `{ e }`, and in that a parameter `_` is a wildcard pattern in one
+///     and a name in the other. So a block that holds nothing but one
+///     expression is written as that expression, and a name `_` in a
+///     pattern as a wildcard;
+///   * `where` bounds on the same type variable are gathered into one
+///     clause (`a: X, b: Y, a: Z` becomes `a: X + Z, b: Y`), so bounds
+///     are written grouped by type variable;
+///   * imports are moved to the top and sorted, so imports are compared
+///     as a set, apart from the other declarations;
+///   * a pattern alternative in parentheses inside another one,
+///     `(a | b) | c`, is printed as `a | b | c`, so alternatives are
+///     written flat.
+mod self_check {
+    use std::collections::HashMap;
+    use std::fmt::Write as _;
+
+    use crate::ast::*;
+    use crate::intern::{Symbol, resolve};
+    use crate::lexer::{Lexer, SourceComment, Span};
+    use crate::parser::Parser;
+
+    use super::InternalError;
+
+    /// Check `output`, the text produced for a program whose tree is
+    /// `source_program` and whose comments are `source_comments`.
+    pub(super) fn verify(
+        source_program: &Program,
+        source_comments: &[SourceComment],
+        output: &str,
+    ) -> Result<(), InternalError> {
+        let (tokens, output_comments) = Lexer::new(output)
+            .tokenize_with_comments()
+            .map_err(|e| unparseable(&e.message, e.span, output))?;
+        let output_program = Parser::new(tokens)
+            .parse_program()
+            .map_err(|e| unparseable(&e.message, e.span, output))?;
+
+        compare_programs(&decl_shapes(source_program), &decl_shapes(&output_program))?;
+        compare_comments(source_comments, &output_comments)
+    }
+
+    fn unparseable(message: &str, span: Span, output: &str) -> InternalError {
+        let line = output
+            .lines()
+            .nth(span.line.saturating_sub(1))
+            .unwrap_or("")
+            .trim();
+        InternalError {
+            message: format!(
+                "the result would not parse ({message}, at line {} of the result: `{}`)",
+                span.line,
+                excerpt(line)
+            ),
+            span: None,
+        }
+    }
+
+    /// At most the first 60 characters of `text`.
+    fn excerpt(text: &str) -> String {
+        const LIMIT: usize = 60;
+        if text.chars().count() <= LIMIT {
+            text.to_string()
+        } else {
+            let head: String = text.chars().take(LIMIT).collect();
+            format!("{head}...")
+        }
+    }
+
+    // ── Declarations ────────────────────────────────────────────────
+
+    /// One top-level declaration, reduced to what the comparison needs.
+    struct DeclShape {
+        is_import: bool,
+        /// How to name the declaration in a message: "function `main`".
+        label: String,
+        span: Span,
+        shape: String,
+    }
+
+    fn decl_shapes(program: &Program) -> Vec<DeclShape> {
+        program
+            .decls
+            .iter()
+            .map(|decl| {
+                let mut writer = ShapeWriter::default();
+                writer.decl(decl);
+                let (label, span) = describe(decl);
+                DeclShape {
+                    is_import: matches!(decl, Decl::Import(..)),
+                    label,
+                    span,
+                    shape: writer.out,
+                }
+            })
+            .collect()
+    }
+
+    fn describe(decl: &Decl) -> (String, Span) {
+        match decl {
+            Decl::Fn(f) => (format!("function `{}`", f.name), f.span),
+            Decl::Type(t) => (format!("type `{}`", t.name), t.span),
+            Decl::Trait(t) => (format!("trait `{}`", t.name), t.span),
+            Decl::TraitImpl(t) => (
+                format!(
+                    "the implementation of trait `{}` for `{}`",
+                    t.trait_name, t.target_type
+                ),
+                t.span,
+            ),
+            Decl::Import(target, span) => {
+                let module = match target {
+                    ImportTarget::Module(m)
+                    | ImportTarget::Items(m, _)
+                    | ImportTarget::Alias(m, _) => m,
+                };
+                (format!("the import of `{module}`"), *span)
+            }
+            Decl::Let { pattern, span, .. } => (
+                format!("the top-level binding `{}`", super::format_pattern(pattern)),
+                *span,
+            ),
+        }
+    }
+
+    fn compare_programs(before: &[DeclShape], after: &[DeclShape]) -> Result<(), InternalError> {
+        let mut imports_before: Vec<&DeclShape> = before.iter().filter(|d| d.is_import).collect();
+        let mut imports_after: Vec<&DeclShape> = after.iter().filter(|d| d.is_import).collect();
+        imports_before.sort_by(|a, b| a.shape.cmp(&b.shape));
+        imports_after.sort_by(|a, b| a.shape.cmp(&b.shape));
+        same_declarations(&imports_before, &imports_after)?;
+
+        let rest_before: Vec<&DeclShape> = before.iter().filter(|d| !d.is_import).collect();
+        let rest_after: Vec<&DeclShape> = after.iter().filter(|d| !d.is_import).collect();
+        same_declarations(&rest_before, &rest_after)
+    }
+
+    fn same_declarations(before: &[&DeclShape], after: &[&DeclShape]) -> Result<(), InternalError> {
+        for (index, decl) in before.iter().enumerate() {
+            let same = after
+                .get(index)
+                .is_some_and(|other| other.shape == decl.shape);
+            if !same {
+                return Err(InternalError {
+                    message: format!(
+                        "the result would change the program: {} would not stay as written",
+                        decl.label
+                    ),
+                    span: Some(decl.span),
+                });
+            }
+        }
+        match after.get(before.len()) {
+            None => Ok(()),
+            Some(extra) => Err(InternalError {
+                message: format!(
+                    "the result would change the program: it would hold {}, \
+                     which the input does not hold in that place",
+                    extra.label
+                ),
+                span: None,
+            }),
+        }
+    }
+
+    // ── Comments ────────────────────────────────────────────────────
+
+    /// A comment's text with every run of white space as one space. The
+    /// printer re-indents comments and trims them; it does nothing else
+    /// to their text.
+    fn comment_text(comment: &SourceComment) -> String {
+        comment
+            .text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The result has to hold every comment of the input, as often as the
+    /// input holds it, and no other comment.
+    ///
+    /// The order is not compared. The printer moves comments on purpose:
+    /// a comment goes with the import it stands above when imports are
+    /// sorted; a comment between the lines of a statement is put behind
+    /// the statement, and a comment at the end of the statement's last
+    /// line at the end of its first. Each of these can carry one comment
+    /// past another.
+    fn compare_comments(
+        before: &[SourceComment],
+        after: &[SourceComment],
+    ) -> Result<(), InternalError> {
+        let before_texts: Vec<String> = before.iter().map(comment_text).collect();
+        let after_texts: Vec<String> = after.iter().map(comment_text).collect();
+        if before_texts == after_texts {
+            return Ok(());
+        }
+
+        // Per text: how often it is in the input, minus how often it is
+        // in the result.
+        let mut surplus: HashMap<&str, i64> = HashMap::new();
+        for text in &before_texts {
+            *surplus.entry(text.as_str()).or_insert(0) += 1;
+        }
+        for text in &after_texts {
+            *surplus.entry(text.as_str()).or_insert(0) -= 1;
+        }
+        for (comment, text) in before.iter().zip(&before_texts) {
+            if surplus.get(text.as_str()).copied().unwrap_or(0) > 0 {
+                return Err(InternalError {
+                    message: format!("the result would lose the comment `{}`", excerpt(text)),
+                    span: Some(comment.span),
+                });
+            }
+        }
+        for text in &after_texts {
+            if surplus.get(text.as_str()).copied().unwrap_or(0) < 0 {
+                return Err(InternalError {
+                    message: format!(
+                        "the result would hold the comment `{}`, which the input does not hold",
+                        excerpt(text)
+                    ),
+                    span: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    // ── Syntax tree ─────────────────────────────────────────────────
+
+    /// `{ e }` stands for `e`: the expression inside a block that holds
+    /// one expression statement and nothing else, however often nested.
+    fn unwrap_single_expr_block(mut expr: &Expr) -> &Expr {
+        loop {
+            if let ExprKind::Block(stmts) = &expr.kind
+                && let [Stmt::Expr(inner)] = stmts.as_slice()
+            {
+                expr = inner;
+            } else {
+                return expr;
+            }
+        }
+    }
+
+    /// Writes a tree as text: one parenthesised group per node, the node
+    /// kind first, then its parts in a fixed order. Every part is either
+    /// a group, a single word without white space or parentheses, or text
+    /// in quotes with escapes, so two different trees never give the same
+    /// text. Source positions, doc comments and everything a later pass
+    /// fills in are left out.
+    #[derive(Default)]
+    struct ShapeWriter {
+        out: String,
+    }
+
+    impl ShapeWriter {
+        fn open(&mut self, kind: &str) {
+            self.out.push_str(" (");
+            self.out.push_str(kind);
+        }
+
+        fn close(&mut self) {
+            self.out.push(')');
+        }
+
+        fn word(&mut self, word: &str) {
+            self.out.push(' ');
+            self.out.push_str(word);
+        }
+
+        fn none(&mut self) {
+            self.word("#none");
+        }
+
+        fn flag(&mut self, on: bool) {
+            self.word(if on { "#yes" } else { "#no" });
+        }
+
+        fn sym(&mut self, sym: Symbol) {
+            self.word(&resolve(sym));
+        }
+
+        fn opt_sym(&mut self, sym: Option<Symbol>) {
+            match sym {
+                Some(sym) => self.sym(sym),
+                None => self.none(),
+            }
+        }
+
+        fn text(&mut self, text: &str) {
+            let _ = write!(self.out, " {text:?}");
+        }
+
+        fn int(&mut self, n: i64) {
+            let _ = write!(self.out, " {n}");
+        }
+
+        /// A float by its bits, so that no two values share a spelling.
+        fn float(&mut self, x: f64) {
+            let _ = write!(self.out, " #x{:016x}", x.to_bits());
+        }
+
+        fn decl(&mut self, decl: &Decl) {
+            match decl {
+                Decl::Fn(f) => self.fn_decl(f),
+                Decl::Type(t) => {
+                    self.open("type");
+                    self.flag(t.is_pub);
+                    self.sym(t.name);
+                    self.open("params");
+                    for param in &t.params {
+                        self.sym(*param);
+                    }
+                    self.close();
+                    match &t.body {
+                        TypeBody::Enum(variants) => {
+                            self.open("enum");
+                            for variant in variants {
+                                self.open("variant");
+                                self.sym(variant.name);
+                                for field in &variant.fields {
+                                    self.type_expr(field);
+                                }
+                                self.close();
+                            }
+                            self.close();
+                        }
+                        TypeBody::Record(fields) => {
+                            self.open("record");
+                            for field in fields {
+                                self.open("field");
+                                self.sym(field.name);
+                                self.type_expr(&field.ty);
+                                self.close();
+                            }
+                            self.close();
+                        }
+                        TypeBody::Alias(target) => {
+                            self.open("alias");
+                            self.type_expr(target);
+                            self.close();
+                        }
+                    }
+                    self.close();
+                }
+                Decl::Trait(t) => {
+                    self.open("trait");
+                    self.sym(t.name);
+                    self.open("params");
+                    for param in &t.params {
+                        self.sym(*param);
+                    }
+                    self.close();
+                    self.open("supertraits");
+                    for (name, args, _) in &t.supertraits {
+                        self.bound(*name, args);
+                    }
+                    self.close();
+                    self.where_clauses(&t.param_where_clauses);
+                    self.open("types");
+                    for assoc in &t.assoc_types {
+                        self.open("type");
+                        self.sym(assoc.name);
+                        for (name, args) in &assoc.bounds {
+                            self.bound(*name, args);
+                        }
+                        self.close();
+                    }
+                    self.close();
+                    self.open("methods");
+                    for method in &t.methods {
+                        self.fn_decl(method);
+                    }
+                    self.close();
+                    self.close();
+                }
+                Decl::TraitImpl(t) => {
+                    self.open("impl");
+                    self.bound(t.trait_name, &t.trait_args);
+                    self.open("for");
+                    self.sym(t.target_type);
+                    for arg in &t.target_type_args {
+                        self.type_expr(arg);
+                    }
+                    self.close();
+                    self.where_clauses(&t.where_clauses);
+                    self.open("types");
+                    for binding in &t.assoc_type_bindings {
+                        self.open("type");
+                        self.sym(binding.name);
+                        self.type_expr(&binding.ty);
+                        self.close();
+                    }
+                    self.close();
+                    self.open("methods");
+                    for method in &t.methods {
+                        self.fn_decl(method);
+                    }
+                    self.close();
+                    self.close();
+                }
+                Decl::Import(target, _) => {
+                    match target {
+                        ImportTarget::Module(module) => {
+                            self.open("import");
+                            self.sym(*module);
+                        }
+                        ImportTarget::Items(module, items) => {
+                            self.open("import-items");
+                            self.sym(*module);
+                            for item in items {
+                                self.sym(*item);
+                            }
+                        }
+                        ImportTarget::Alias(module, alias) => {
+                            self.open("import-as");
+                            self.sym(*module);
+                            self.sym(*alias);
+                        }
+                    }
+                    self.close();
+                }
+                Decl::Let {
+                    pattern,
+                    ty,
+                    value,
+                    is_pub,
+                    ..
+                } => {
+                    self.open("let");
+                    self.flag(*is_pub);
+                    self.pattern(pattern);
+                    self.opt_type_expr(ty.as_ref());
+                    self.expr(value);
+                    self.close();
+                }
+            }
+        }
+
+        fn fn_decl(&mut self, f: &FnDecl) {
+            self.open("fn");
+            self.flag(f.is_pub);
+            self.sym(f.name);
+            self.params(&f.params);
+            self.opt_type_expr(f.return_type.as_ref());
+            self.effects(f.is_annotated, f.declared_effects);
+            self.where_clauses(&f.where_clauses);
+            if f.is_signature_only {
+                self.word("#signature");
+            } else {
+                self.expr(&f.body);
+            }
+            self.close();
+        }
+
+        fn params(&mut self, params: &[Param]) {
+            self.open("params");
+            for param in params {
+                self.open(match param.kind {
+                    ParamKind::Data => "param",
+                    ParamKind::Type => "type-param",
+                });
+                self.pattern(&param.pattern);
+                self.opt_type_expr(param.ty.as_ref());
+                self.close();
+            }
+            self.close();
+        }
+
+        /// An effect annotation. Without one the set is the parser's
+        /// default and says nothing about the source.
+        fn effects(&mut self, is_annotated: bool, effects: crate::types::effects::EffectSet) {
+            if is_annotated {
+                self.open("effects");
+                for effect in effects.iter() {
+                    self.word(effect.name());
+                }
+                self.close();
+            } else {
+                self.none();
+            }
+        }
+
+        /// A trait with its arguments: `Display`, `TryInto(Int)`.
+        fn bound(&mut self, name: Symbol, args: &[TypeExpr]) {
+            self.open("bound");
+            self.sym(name);
+            for arg in args {
+                self.type_expr(arg);
+            }
+            self.close();
+        }
+
+        /// `where` bounds, gathered per type variable in the order in
+        /// which the variables first appear.
+        fn where_clauses(&mut self, clauses: &[WhereClause]) {
+            let mut variables: Vec<Symbol> = Vec::new();
+            for clause in clauses {
+                if !variables.contains(&clause.type_param) {
+                    variables.push(clause.type_param);
+                }
+            }
+            self.open("where");
+            for variable in variables {
+                self.open("var");
+                self.sym(variable);
+                for clause in clauses.iter().filter(|c| c.type_param == variable) {
+                    self.bound(clause.trait_name, &clause.trait_args);
+                }
+                self.close();
+            }
+            self.close();
+        }
+
+        fn opt_type_expr(&mut self, ty: Option<&TypeExpr>) {
+            match ty {
+                Some(ty) => self.type_expr(ty),
+                None => self.none(),
+            }
+        }
+
+        fn type_expr(&mut self, ty: &TypeExpr) {
+            match &ty.kind {
+                TypeExprKind::Named(name) => {
+                    self.open("named");
+                    self.sym(*name);
+                }
+                TypeExprKind::Generic(name, args) => {
+                    self.open("generic");
+                    self.sym(*name);
+                    for arg in args {
+                        self.type_expr(arg);
+                    }
+                }
+                TypeExprKind::Tuple(elems) => {
+                    self.open("tuple");
+                    for elem in elems {
+                        self.type_expr(elem);
+                    }
+                }
+                TypeExprKind::Function(params, ret) => {
+                    self.open("fn");
+                    self.open("params");
+                    for param in params {
+                        self.type_expr(param);
+                    }
+                    self.close();
+                    self.type_expr(ret);
+                }
+                TypeExprKind::SelfType => self.open("self"),
+                TypeExprKind::AssocProj {
+                    receiver,
+                    trait_name,
+                    assoc_name,
+                } => {
+                    self.open("projection");
+                    self.type_expr(receiver);
+                    self.sym(*trait_name);
+                    self.sym(*assoc_name);
+                }
+                TypeExprKind::AnonRecord { fields, tail } => {
+                    self.open("record");
+                    self.opt_sym(*tail);
+                    for (name, ty) in fields {
+                        self.open("field");
+                        self.sym(*name);
+                        self.type_expr(ty);
+                        self.close();
+                    }
+                }
+            }
+            self.close();
+        }
+
+        fn opt_pattern(&mut self, pattern: Option<&Pattern>) {
+            match pattern {
+                Some(pattern) => self.pattern(pattern),
+                None => self.none(),
+            }
+        }
+
+        fn field_patterns(&mut self, fields: &[(Symbol, Option<Pattern>)]) {
+            for (name, sub) in fields {
+                self.open("field");
+                self.sym(*name);
+                self.opt_pattern(sub.as_ref());
+                self.close();
+            }
+        }
+
+        /// The alternatives of an or-pattern, flat.
+        fn alternatives(&mut self, alts: &[Pattern]) {
+            for alt in alts {
+                match &alt.kind {
+                    PatternKind::Or(inner) => self.alternatives(inner),
+                    _ => self.pattern(alt),
+                }
+            }
+        }
+
+        fn pattern(&mut self, pattern: &Pattern) {
+            match &pattern.kind {
+                PatternKind::Wildcard => self.open("wildcard"),
+                // A parameter `_` is a wildcard in `{ _ -> ... }` and a
+                // name in `fn(_) { ... }`.
+                PatternKind::Ident(name) if resolve(*name) == "_" => self.open("wildcard"),
+                PatternKind::Ident(name) => {
+                    self.open("bind");
+                    self.sym(*name);
+                }
+                PatternKind::Int(n) => {
+                    self.open("int");
+                    self.int(*n);
+                }
+                PatternKind::Float(x) => {
+                    self.open("float");
+                    self.float(*x);
+                }
+                PatternKind::Bool(b) => {
+                    self.open("bool");
+                    self.flag(*b);
+                }
+                PatternKind::StringLit(s, _) => {
+                    self.open("string");
+                    self.text(s);
+                }
+                PatternKind::Tuple(elems) => {
+                    self.open("tuple");
+                    for elem in elems {
+                        self.pattern(elem);
+                    }
+                }
+                PatternKind::Constructor { module, name, args } => {
+                    self.open("constructor");
+                    self.opt_sym(*module);
+                    self.sym(*name);
+                    for arg in args {
+                        self.pattern(arg);
+                    }
+                }
+                PatternKind::Record {
+                    module,
+                    name,
+                    fields,
+                    has_rest,
+                } => {
+                    self.open("record");
+                    self.opt_sym(*module);
+                    self.opt_sym(*name);
+                    self.flag(*has_rest);
+                    self.field_patterns(fields);
+                }
+                PatternKind::AnonRecord { fields, rest } => {
+                    self.open("anon-record");
+                    self.opt_sym(*rest);
+                    self.field_patterns(fields);
+                }
+                PatternKind::List(elems, rest) => {
+                    self.open("list");
+                    self.open("rest");
+                    if let Some(rest) = rest {
+                        self.pattern(rest);
+                    }
+                    self.close();
+                    for elem in elems {
+                        self.pattern(elem);
+                    }
+                }
+                PatternKind::Or(alts) => {
+                    self.open("or");
+                    self.alternatives(alts);
+                }
+                PatternKind::Range(start, end) => {
+                    self.open("range");
+                    self.int(*start);
+                    self.int(*end);
+                }
+                PatternKind::FloatRange(start, end) => {
+                    self.open("float-range");
+                    self.float(*start);
+                    self.float(*end);
+                }
+                PatternKind::Map(entries) => {
+                    self.open("map");
+                    for (key, value) in entries {
+                        self.open("entry");
+                        self.text(key);
+                        self.pattern(value);
+                        self.close();
+                    }
+                }
+                PatternKind::Pin(name) => {
+                    self.open("pin");
+                    self.sym(*name);
+                }
+            }
+            self.close();
+        }
+
+        fn stmt(&mut self, stmt: &Stmt) {
+            match stmt {
+                Stmt::Let { pattern, ty, value } => {
+                    self.open("let");
+                    self.pattern(pattern);
+                    self.opt_type_expr(ty.as_ref());
+                    self.expr(value);
+                    self.close();
+                }
+                Stmt::When {
+                    pattern,
+                    expr,
+                    else_body,
+                } => {
+                    self.open("when-let");
+                    self.pattern(pattern);
+                    self.expr(expr);
+                    self.expr(else_body);
+                    self.close();
+                }
+                Stmt::WhenBool {
+                    condition,
+                    else_body,
+                } => {
+                    self.open("when");
+                    self.expr(condition);
+                    self.expr(else_body);
+                    self.close();
+                }
+                Stmt::Expr(expr) => self.expr(expr),
+            }
+        }
+
+        fn opt_expr(&mut self, expr: Option<&Expr>) {
+            match expr {
+                Some(expr) => self.expr(expr),
+                None => self.none(),
+            }
+        }
+
+        fn field_values(&mut self, fields: &[(Symbol, Expr)]) {
+            for (name, value) in fields {
+                self.open("field");
+                self.sym(*name);
+                self.expr(value);
+                self.close();
+            }
+        }
+
+        fn expr(&mut self, expr: &Expr) {
+            let expr = unwrap_single_expr_block(expr);
+            match &expr.kind {
+                ExprKind::Int(n) => {
+                    self.open("int");
+                    self.int(*n);
+                }
+                ExprKind::Float(x) => {
+                    self.open("float");
+                    self.float(*x);
+                }
+                ExprKind::Bool(b) => {
+                    self.open("bool");
+                    self.flag(*b);
+                }
+                ExprKind::StringLit(s, _) => {
+                    self.open("string");
+                    self.text(s);
+                }
+                ExprKind::StringInterp(parts) => {
+                    self.open("interpolation");
+                    // Text between two holes is one piece, however the
+                    // parser happened to cut it.
+                    let mut literal = String::new();
+                    for part in parts {
+                        match part {
+                            StringPart::Literal(s) => literal.push_str(s),
+                            StringPart::Expr(hole) => {
+                                if !literal.is_empty() {
+                                    self.text(&literal);
+                                    literal.clear();
+                                }
+                                self.open("hole");
+                                self.expr(hole);
+                                self.close();
+                            }
+                        }
+                    }
+                    if !literal.is_empty() {
+                        self.text(&literal);
+                    }
+                }
+                ExprKind::List(elems) => {
+                    self.open("list");
+                    for elem in elems {
+                        match elem {
+                            ListElem::Single(e) => self.expr(e),
+                            ListElem::Spread(e) => {
+                                self.open("spread");
+                                self.expr(e);
+                                self.close();
+                            }
+                        }
+                    }
+                }
+                ExprKind::Map(pairs) => {
+                    self.open("map");
+                    for (key, value) in pairs {
+                        self.open("entry");
+                        self.expr(key);
+                        self.expr(value);
+                        self.close();
+                    }
+                }
+                ExprKind::SetLit(elems) => {
+                    self.open("set");
+                    for elem in elems {
+                        self.expr(elem);
+                    }
+                }
+                ExprKind::Tuple(elems) => {
+                    self.open("tuple");
+                    for elem in elems {
+                        self.expr(elem);
+                    }
+                }
+                ExprKind::Ident(name) => {
+                    self.open("name");
+                    self.sym(*name);
+                }
+                ExprKind::FieldAccess(target, field) => {
+                    self.open("field-access");
+                    self.expr(target);
+                    self.sym(*field);
+                }
+                ExprKind::Binary(left, op, right) => {
+                    self.open("binary");
+                    self.word(&op.to_string());
+                    self.expr(left);
+                    self.expr(right);
+                }
+                ExprKind::Unary(op, operand) => {
+                    self.open(match op {
+                        UnaryOp::Neg => "negate",
+                        UnaryOp::Not => "not",
+                    });
+                    self.expr(operand);
+                }
+                ExprKind::Pipe(left, right) => {
+                    self.open("pipe");
+                    self.expr(left);
+                    self.expr(right);
+                }
+                ExprKind::Range(start, end) => {
+                    self.open("range");
+                    self.expr(start);
+                    self.expr(end);
+                }
+                ExprKind::QuestionMark(operand) => {
+                    self.open("question");
+                    self.expr(operand);
+                }
+                ExprKind::FloatElse(value, fallback) => {
+                    self.open("float-else");
+                    self.expr(value);
+                    self.expr(fallback);
+                }
+                ExprKind::Ascription(value, ty) => {
+                    self.open("as");
+                    self.expr(value);
+                    self.type_expr(ty);
+                }
+                ExprKind::Call(callee, args) => {
+                    self.open("call");
+                    self.expr(callee);
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                }
+                ExprKind::Lambda {
+                    params,
+                    body,
+                    effects,
+                    is_annotated,
+                } => {
+                    self.open("lambda");
+                    self.params(params);
+                    self.effects(*is_annotated, *effects);
+                    self.expr(body);
+                }
+                ExprKind::RecordCreate {
+                    module,
+                    name,
+                    fields,
+                } => {
+                    self.open("record");
+                    self.opt_sym(*module);
+                    self.sym(*name);
+                    self.field_values(fields);
+                }
+                ExprKind::RecordUpdate { expr, fields } => {
+                    self.open("record-update");
+                    self.expr(expr);
+                    self.field_values(fields);
+                }
+                ExprKind::AnonRecord { spread, fields } => {
+                    self.open("anon-record");
+                    self.opt_expr(spread.as_deref());
+                    self.field_values(fields);
+                }
+                ExprKind::Match { expr, arms } => {
+                    self.open("match");
+                    self.opt_expr(expr.as_deref());
+                    for arm in arms {
+                        self.open("arm");
+                        self.pattern(&arm.pattern);
+                        self.opt_expr(arm.guard.as_deref());
+                        self.expr(&arm.body);
+                        self.close();
+                    }
+                }
+                ExprKind::Return(value) => {
+                    self.open("return");
+                    self.opt_expr(value.as_deref());
+                }
+                ExprKind::Block(stmts) => {
+                    self.open("block");
+                    for stmt in stmts {
+                        self.stmt(stmt);
+                    }
+                }
+                ExprKind::Loop { bindings, body } => {
+                    self.open("loop");
+                    for (name, init) in bindings {
+                        self.open("binding");
+                        self.sym(*name);
+                        self.expr(init);
+                        self.close();
+                    }
+                    self.expr(body);
+                }
+                ExprKind::Recur(args) => {
+                    self.open("recur");
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                }
+                ExprKind::Unit => self.open("unit"),
+            }
+            self.close();
+        }
+    }
 }
 
 /// Post-processing pass that re-inserts any `{- ... -}` block comments
@@ -8460,5 +9472,132 @@ fn f() {
             let got_str = got.as_deref();
             assert_eq!(got_str, want, "F3 mismatch on input {input:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod self_check_tests {
+    use super::*;
+
+    /// The refusal that `format` gives for `src`.
+    fn refusal(src: &str) -> InternalError {
+        match format(src) {
+            Err(FmtError::Internal(e)) => e,
+            other => panic!("expected a refusal for {src:?}, got {other:?}"),
+        }
+    }
+
+    /// The text that `format` gives for `src`, which must be a fixed point.
+    fn formatted(src: &str) -> String {
+        let once = format(src).unwrap_or_else(|e| panic!("format failed for {src:?}: {e}"));
+        let twice =
+            format(&once).unwrap_or_else(|e| panic!("second pass failed for {once:?}: {e}"));
+        assert_eq!(once, twice, "not a fixed point for {src:?}");
+        once
+    }
+
+    #[test]
+    fn a_lost_line_comment_is_refused_and_located() {
+        let e = refusal("fn main() {\n  let x = -- why one\n    1\n  x\n}\n");
+        assert!(
+            e.message.contains("lose the comment `-- why one`"),
+            "{}",
+            e.message
+        );
+        let span = e
+            .span
+            .expect("the refusal must carry the comment's position");
+        assert_eq!((span.line, span.col), (2, 11));
+    }
+
+    #[test]
+    fn a_lost_block_comment_is_refused() {
+        let e = refusal(
+            "fn add(a, b) = a + b\nfn main() {\n  let x = add(1, {- second -} 2)\n  \
+             let y = (x + 1)\n  y\n}\n",
+        );
+        assert!(
+            e.message.contains("lose the comment `{- second -}`"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn a_result_that_does_not_parse_is_refused() {
+        let e = refusal("fn main() {\n  list.map([1, 2], fn(x: Int) { x + 1 })\n}\n");
+        assert!(e.message.contains("would not parse"), "{}", e.message);
+        assert!(e.span.is_none());
+    }
+
+    #[test]
+    fn a_result_with_a_different_tree_is_refused() {
+        let e = refusal("fn main() {\n  match 1.5 {\n    1.0..10.0 -> 1\n    _ -> 2\n  }\n}\n");
+        assert!(
+            e.message
+                .contains("would change the program: function `main`"),
+            "{}",
+            e.message
+        );
+        let span = e
+            .span
+            .expect("the refusal must carry the declaration's position");
+        assert_eq!(span.line, 1);
+
+        let e = refusal("fn run(f) = f()\nfn main() {\n  run(fn() !{io} { 1 })\n}\n");
+        assert!(
+            e.message
+                .contains("would change the program: function `main`"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn spellings_that_the_printer_changes_on_purpose_pass() {
+        // A lambda as last argument becomes a trailing closure.
+        let out = formatted("fn main() {\n  list.map(xs, fn(x) { x * 2 })\n}\n");
+        assert!(out.contains("list.map(xs) { x -> x * 2 }"), "{out}");
+        let out = formatted("fn main() {\n  list.filter(xs, fn(_) { true })\n}\n");
+        assert!(out.contains("list.filter(xs) { _ -> true }"), "{out}");
+        let out = formatted("fn main() {\n  run(fn() { 1 })\n}\n");
+        assert!(out.contains("run {  -> 1 }"), "{out}");
+        // A closure anywhere else becomes a `fn` lambda.
+        let out = formatted("fn main() {\n  apply({ x -> x + 1 }, 1)\n  apply({ _ -> 7 }, 1)\n}\n");
+        assert!(out.contains("apply(fn(x) {"), "{out}");
+        assert!(out.contains("apply(fn(_) {"), "{out}");
+        // Redundant parentheses go; literals are respelled.
+        let out = formatted("fn main() {\n  let c = ((a + b)) * (0xFF)\n  c\n}\n");
+        assert!(out.contains("let c = (a + b) * 255"), "{out}");
+        let out = formatted("fn main() {\n  let s = \"one\ntwo\"\n  let f = 1e3\n  s\n}\n");
+        assert!(out.contains("let s = \"one\\ntwo\""), "{out}");
+        assert!(out.contains("let f = 1000.0"), "{out}");
+        // `where` bounds are gathered per type variable.
+        let out = formatted(
+            "fn f(x: a, y: b) -> String where a: Display, b: Display, a: Compare {\n  \"\"\n}\n",
+        );
+        assert!(
+            out.contains("where a: Display + Compare, b: Display"),
+            "{out}"
+        );
+        // Alternatives in parentheses are written flat.
+        let out = formatted("fn f(n) {\n  match n {\n    (1 | 2) | 3 -> 1\n    _ -> 2\n  }\n}\n");
+        assert!(out.contains("1 | 2 | 3 -> 1"), "{out}");
+    }
+
+    #[test]
+    fn comments_that_travel_with_sorted_imports_pass() {
+        let out = formatted(
+            "-- header\nimport string -- s\n-- about list\nimport list\n\nfn main() {\n  1\n}\n",
+        );
+        assert!(out.contains("import list\nimport string -- s\n"), "{out}");
+        assert!(out.contains("-- header"), "{out}");
+        assert!(out.contains("-- about list"), "{out}");
+    }
+
+    #[test]
+    fn text_that_is_returned_unchanged_is_not_refused() {
+        let src = "fn main() {\n  println(\"hi\") -- greet\n}\n";
+        assert_eq!(format(src).unwrap(), src);
     }
 }

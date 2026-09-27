@@ -455,10 +455,72 @@ enum Segment {
 
 const MAX_DEPTH: usize = 128;
 
+/// Upper bound on the height of one expression tree, counted in nested
+/// sub-expressions plus chained operations (see `Parser::expr_height`).
+///
+/// `MAX_DEPTH` bounds the parser's own recursion. It does not bound the
+/// tree: the operator loop in `parse_expr_bp_inner` builds `a + b + c + ...`,
+/// `x |> f |> g`, `f()()()` and `a.b.c` iteratively, one tree level per
+/// link, and every later pass (typechecker, compiler, formatter) recurses
+/// once per level.
+///
+/// How the value is chosen. All checking and compiling runs on the
+/// `silt-main` thread, which reserves 256 MiB of stack. In a debug build
+/// the most expensive pass spends about 40 KiB of stack per tree level
+/// (operator, pipe, call and field chains all overflow between 6,000 and
+/// 7,000 levels); 80 KiB is the pessimistic figure. Statement blocks,
+/// lambdas and loops add up to three levels per nesting step that this
+/// count does not see, at most 3 * `MAX_DEPTH` = 384. The worst accepted
+/// tree is therefore 2,048 + 384 levels: about 95 MiB at the measured
+/// cost and 190 MiB at the pessimistic one, both inside the reserve.
+const MAX_EXPR_HEIGHT: usize = 2048;
+
+/// The construct whose block follows a header expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeaderKind {
+    /// `match <scrutinee> { arms }`
+    MatchScrutinee,
+    /// `loop name = <initialiser>, ... { body }`
+    LoopInit,
+}
+
+/// Parser context for "an expression that is followed by a block": a
+/// `match` scrutinee or a `loop` binding initialiser. Inside one, a `{`
+/// that directly follows an expression may be the block of the header
+/// rather than a trailing closure or a record literal.
+///
+/// The context only applies to tokens at the header's own delimiter depth
+/// (`depth`). Inside parentheses, brackets, braces or a string
+/// interpolation the `{` cannot be the header's block, so the ordinary
+/// expression rules apply there.
+#[derive(Debug, Clone, Copy)]
+struct BlockHeader {
+    kind: HeaderKind,
+    /// Delimiter depth (see `Parser::delim_depth`) of the first token of
+    /// the header expression.
+    depth: i32,
+    /// True while the right operand of a `|>` in the header is parsed.
+    in_pipe_rhs: bool,
+}
+
 pub struct Parser {
     tokens: Vec<SpannedToken>,
+    /// For each token, the number of delimiters that are open before it:
+    /// `(`, `[`, `{`, `#{`, `#[` and the start of a string interpolation
+    /// open one, their closers close one. A closer has the depth of the
+    /// tokens it encloses. Derived from the token positions alone, so
+    /// backtracking (`restore`) cannot put it out of step.
+    delim_depth: Vec<i32>,
     pos: usize,
-    in_match_scrutinee: bool,
+    /// The innermost "expression followed by a block" header being
+    /// parsed, if any.
+    header: Option<BlockHeader>,
+    /// Height of the tallest operand seen so far in the expression that
+    /// is being parsed, plus one per operation already chained onto it.
+    /// `parse_expr_bp` saves and resets it on entry and folds the
+    /// finished expression's height into the enclosing one on exit.
+    /// Checked against `MAX_EXPR_HEIGHT`.
+    expr_height: usize,
     errors: Vec<ParseError>,
     depth: usize,
     /// Depth guard for recovery-stub generation. When recovery fires inside
@@ -484,12 +546,40 @@ pub struct Parser {
     current_trait_name: Option<Symbol>,
 }
 
+/// Delimiter depth before each token; see `Parser::delim_depth`.
+fn delimiter_depths(tokens: &[SpannedToken]) -> Vec<i32> {
+    let mut depths = Vec::with_capacity(tokens.len());
+    let mut depth: i32 = 0;
+    for (tok, _) in tokens {
+        match tok {
+            Token::LParen
+            | Token::LBracket
+            | Token::LBrace
+            | Token::HashBrace
+            | Token::HashBracket
+            | Token::StringStart(_) => {
+                depths.push(depth);
+                depth += 1;
+            }
+            Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => {
+                depths.push(depth);
+                depth -= 1;
+            }
+            _ => depths.push(depth),
+        }
+    }
+    depths
+}
+
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
+        let delim_depth = delimiter_depths(&tokens);
         Self {
             tokens,
+            delim_depth,
             pos: 0,
-            in_match_scrutinee: false,
+            header: None,
+            expr_height: 0,
             errors: Vec::new(),
             depth: 0,
             in_fn_recovery: false,
@@ -503,16 +593,66 @@ impl Parser {
     /// decls (and trait / impl methods) will have their `doc` field
     /// populated from adjacent `--` / `{- -}` comments.
     pub fn new_with_source(tokens: Vec<SpannedToken>, source: &str) -> Self {
+        let delim_depth = delimiter_depths(&tokens);
         Self {
             tokens,
+            delim_depth,
             pos: 0,
-            in_match_scrutinee: false,
+            header: None,
+            expr_height: 0,
             errors: Vec::new(),
             depth: 0,
             in_fn_recovery: false,
             doc_index: Some(DocIndex::from_source(source)),
             current_trait_name: None,
         }
+    }
+
+    /// Delimiter depth of the token at `index` (see `delim_depth`).
+    fn delim_depth_at(&self, index: usize) -> i32 {
+        self.delim_depth.get(index).copied().unwrap_or(0)
+    }
+
+    /// The header context that governs the current token: the innermost
+    /// header, provided the current token sits at that header's own
+    /// delimiter depth. `None` outside any header and inside any
+    /// delimiters nested in one.
+    fn header_here(&self) -> Option<BlockHeader> {
+        self.header
+            .filter(|h| h.depth == self.delim_depth_at(self.pos))
+    }
+
+    /// Parse one header expression (a `match` scrutinee or a `loop`
+    /// binding initialiser) with the header context set. The previous
+    /// context is put back on success and on failure, so a parse error in
+    /// a header cannot leak the context into the rest of the file.
+    fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
+        self.skip_nl();
+        let depth = self.delim_depth_at(self.pos);
+        let prev = self.header.replace(BlockHeader {
+            kind,
+            depth,
+            in_pipe_rhs: false,
+        });
+        let result = self.parse_expr();
+        self.header = prev;
+        result
+    }
+
+    /// Fail when the expression under construction is taller than
+    /// `MAX_EXPR_HEIGHT`.
+    fn check_expr_height(&self) -> Result<()> {
+        if self.expr_height >= MAX_EXPR_HEIGHT {
+            return Err(ParseError {
+                message: format!(
+                    "expression is too deep: more than {MAX_EXPR_HEIGHT} operations are \
+                     nested or chained (operators, pipes, calls, field accesses); \
+                     split it up with intermediate `let` bindings"
+                ),
+                span: self.span(),
+            });
+        }
+        Ok(())
     }
 
     /// Look up a doc comment for a decl whose first-token span is `span`.
@@ -2477,16 +2617,17 @@ impl Parser {
     ///     the right-hand side at `r_bp`, and return it; the caller
     ///     wraps `left` and the RHS in its own node kind.
     ///
-    /// `clear_scrutinee` temporarily re-enables trailing closures while
-    /// parsing the RHS — used only by `|>`, whose RHS can never contain
-    /// the match-body `{` (it appears after the whole pipe expression).
+    /// `pipe_rhs` marks the RHS as the right operand of `|>`. Inside a
+    /// header (see `BlockHeader`) that is the one place where a trailing
+    /// closure is allowed at the header's own depth:
+    /// `match xs |> list.any { x -> x > 5 } { true -> ... }`.
     fn parse_infix_rhs(
         &mut self,
         saved: usize,
         min_bp: u8,
         l_bp: u8,
         r_bp: u8,
-        clear_scrutinee: bool,
+        pipe_rhs: bool,
     ) -> Result<Option<Expr>> {
         if l_bp < min_bp {
             self.restore(saved);
@@ -2494,12 +2635,14 @@ impl Parser {
         }
         self.advance();
         self.skip_nl();
-        let right = if clear_scrutinee {
-            let prev_match = self.in_match_scrutinee;
-            self.in_match_scrutinee = false;
-            let right = self.parse_expr_bp(r_bp)?;
-            self.in_match_scrutinee = prev_match;
-            right
+        let right = if pipe_rhs {
+            let prev = self.header;
+            if let Some(header) = self.header.as_mut() {
+                header.in_pipe_rhs = true;
+            }
+            let right = self.parse_expr_bp(r_bp);
+            self.header = prev;
+            right?
         } else {
             self.parse_expr_bp(r_bp)?
         };
@@ -2515,7 +2658,17 @@ impl Parser {
                 span: self.span(),
             });
         }
-        let result = self.parse_expr_bp_inner(min_bp);
+        // Height accounting (see `expr_height`): start from zero for this
+        // expression's own operands, then fold the finished height into
+        // the enclosing expression's tally.
+        let enclosing_height = std::mem::replace(&mut self.expr_height, 0);
+        let mut result = self.parse_expr_bp_inner(min_bp);
+        if result.is_ok()
+            && let Err(too_deep) = self.check_expr_height()
+        {
+            result = Err(too_deep);
+        }
+        self.expr_height = enclosing_height.max(self.expr_height + 1);
         self.depth -= 1;
         result
     }
@@ -2523,7 +2676,17 @@ impl Parser {
     fn parse_expr_bp_inner(&mut self, min_bp: u8) -> Result<Expr> {
         let mut left = self.parse_unary()?;
 
+        // Every pass through the loop after the first has wrapped `left`
+        // in one more node (operator, call, field access, ...), so the
+        // tree is one level taller than on the pass before.
+        let mut chained = false;
         loop {
+            if chained {
+                self.expr_height += 1;
+                self.check_expr_height()?;
+            }
+            chained = true;
+
             // First, try postfix operators — newline-sensitive.
             // If a newline precedes the token, don't treat it as postfix.
             if !self.has_newline_before() {
@@ -2646,7 +2809,7 @@ impl Parser {
                             && !self.is_trailing_closure()
                         {
                             if let ExprKind::Ident(module) = &left.kind
-                                && (!self.in_match_scrutinee
+                                && (!self.lbrace_may_be_header_block()
                                     || self.scrutinee_lbrace_is_record_literal())
                             {
                                 let module = *module;
@@ -2703,13 +2866,14 @@ impl Parser {
                 // but looser than range so `1..10 |> f()` parses as `(1..10) |> f()`
                 Token::Pipe => {
                     // Allow trailing closures in the pipe RHS even inside a
-                    // match scrutinee (`clear_scrutinee: true`).  The
-                    // match-body `{` appears *after* the entire pipe
-                    // expression, not inside the RHS, so it is safe to
-                    // re-enable trailing closures here.  Example:
+                    // match scrutinee (`pipe_rhs: true`). Example:
                     //   match items |> list.any { x -> x > 5 } { true -> … }
                     //                           ^^^^^^^^^^^^^^^  <- trailing closure
                     //                                           ^^^^^^^^^^^^^^^^ <- match body
+                    // Braces with nothing after them that could be the
+                    // match body are the match body themselves (see
+                    // `is_trailing_closure`):
+                    //   match items |> list.head { Some(x) -> … }
                     let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, 56, true)? else {
                         break;
                     };
@@ -2914,7 +3078,8 @@ impl Parser {
                     ))
                 } else if !self.has_newline_before()
                     && self.at(&Token::LBrace)
-                    && (!self.in_match_scrutinee || self.scrutinee_lbrace_is_record_literal())
+                    && (!self.lbrace_may_be_header_block()
+                        || self.scrutinee_lbrace_is_record_literal())
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
@@ -3210,11 +3375,100 @@ impl Parser {
     // ── Trailing closures ────────────────────────────────────────────
 
     fn is_trailing_closure(&self) -> bool {
-        // When parsing a match scrutinee, the `{` is always the match body,
-        // never a trailing closure.
-        if self.in_match_scrutinee {
+        if !self.lbrace_starts_closure() {
             return false;
         }
+        match self.header_here() {
+            None => true,
+            Some(header) => match header.kind {
+                // The body of a `loop` is a block, and a block never has
+                // the `params ->` shape, so braces that have it are a
+                // closure.
+                HeaderKind::LoopInit => true,
+                // A match body has exactly the closure shape
+                // (`{ x -> ... }`), so in a scrutinee the braces are the
+                // match body. The one exception is the right operand of
+                // `|>`, where a closure is allowed as long as something
+                // that can be the rest of the scrutinee, or the match
+                // body, comes after it.
+                HeaderKind::MatchScrutinee => {
+                    header.in_pipe_rhs && self.scrutinee_continues_after_braces()
+                }
+            },
+        }
+    }
+
+    /// True when a `{` at the current position could be the block of the
+    /// enclosing header. A constructor in front of such a `{` starts a
+    /// record literal only if the braces hold `field: value` pairs (see
+    /// `scrutinee_lbrace_is_record_literal`).
+    fn lbrace_may_be_header_block(&self) -> bool {
+        self.header_here().is_some()
+    }
+
+    /// For closure-shaped braces at the current position: true when the
+    /// token after the matching `}` can continue the expression the
+    /// braces belong to, or open a further block. False when nothing of
+    /// the kind follows: in a match scrutinee the braces then have to be
+    /// the match body itself, as in
+    /// `match xs |> list.head { Some(x) -> x ... }`.
+    fn scrutinee_continues_after_braces(&self) -> bool {
+        let inside = self.delim_depth_at(self.pos) + 1;
+        let mut close = self.pos + 1;
+        while close < self.tokens.len() {
+            let is_closer = matches!(
+                self.tokens[close].0,
+                Token::RBrace | Token::RParen | Token::RBracket | Token::StringEnd(_)
+            );
+            if is_closer && self.delim_depth_at(close) == inside {
+                break;
+            }
+            close += 1;
+        }
+        if close >= self.tokens.len() {
+            // Unclosed braces: leave the report to the closure parser.
+            return true;
+        }
+        let mut next = close + 1;
+        let mut crossed_newline = false;
+        while matches!(self.tokens.get(next), Some((Token::Newline, _))) {
+            crossed_newline = true;
+            next += 1;
+        }
+        match self.tokens.get(next).map(|t| &t.0) {
+            // A further block: the match body, or another closure.
+            Some(Token::LBrace) => true,
+            // Infix operators continue an expression across a line break.
+            Some(
+                Token::Dot
+                | Token::Pipe
+                | Token::DotDot
+                | Token::OrOr
+                | Token::AndAnd
+                | Token::EqEq
+                | Token::NotEq
+                | Token::Lt
+                | Token::Gt
+                | Token::LtEq
+                | Token::GtEq
+                | Token::Star
+                | Token::Slash
+                | Token::Percent
+                | Token::As
+                | Token::Else,
+            ) => true,
+            // `+`, `-` and the postfix forms continue it on the same
+            // line only.
+            Some(
+                Token::Plus | Token::Minus | Token::Question | Token::LParen | Token::LBracket,
+            ) => !crossed_newline,
+            _ => false,
+        }
+    }
+
+    /// True when the current token is a `{` whose contents start like a
+    /// closure: `params ->`.
+    fn lbrace_starts_closure(&self) -> bool {
         // Check if the current `{` starts a trailing closure by looking for `->`.
         if self.peek() != &Token::LBrace {
             return false;
@@ -3411,15 +3665,10 @@ impl Parser {
         let scrutinee = if guardless {
             None
         } else {
-            // Set flag so is_trailing_closure returns false while parsing the
-            // scrutinee. This allows comparison/equality/boolean operators (which
-            // have lower bp than the old threshold of 116) while still preventing
-            // the match body `{` from being consumed as a trailing closure.
-            // Save and restore the flag to handle nested match expressions.
-            let prev = self.in_match_scrutinee;
-            self.in_match_scrutinee = true;
-            let expr = self.parse_expr()?;
-            self.in_match_scrutinee = prev;
+            // The scrutinee is a header expression (see `BlockHeader`):
+            // the match body `{` that follows it must not be consumed as
+            // a trailing closure or as the braces of a record literal.
+            let expr = self.parse_header_expr(HeaderKind::MatchScrutinee)?;
             Some(Box::new(expr))
         };
 
@@ -3532,7 +3781,10 @@ impl Parser {
             let (name, _) = self.expect_ident()?;
             self.expect(&Token::Eq)?;
             self.skip_nl();
-            let init = self.parse_expr()?;
+            // An initialiser is a header expression (see `BlockHeader`):
+            // in `loop i = n, acc = Nil { ... }` the `{` opens the loop
+            // body, it does not make `Nil { ... }` a record literal.
+            let init = self.parse_header_expr(HeaderKind::LoopInit)?;
             bindings.push((name, init));
             self.skip_nl();
             if self.at(&Token::Comma) {
@@ -5571,5 +5823,131 @@ fn main() {
         assert_eq!(prog.decls.len(), 1);
         let arm = first_match_arm_of_main(&prog);
         assert!(matches!(&arm.pattern.kind, PatternKind::Range(-10, 10)));
+    }
+
+    // ── Headers: an expression that is followed by a block ──────────
+
+    #[test]
+    fn test_loop_initialiser_may_end_in_a_constructor() {
+        let prog = parse(
+            r#"
+            fn build(n) {
+                loop i = n, acc = Nil {
+                    acc
+                }
+            }
+        "#,
+        );
+        match &last_expr_of_main(&prog).kind {
+            ExprKind::Loop { bindings, .. } => {
+                assert_eq!(bindings.len(), 2);
+                assert!(
+                    matches!(&bindings[1].1.kind, ExprKind::Ident(_)),
+                    "expected the constructor name, got {:?}",
+                    bindings[1].1.kind
+                );
+            }
+            other => panic!("expected loop, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_loop_initialiser_may_be_a_record_literal() {
+        let prog = parse(
+            r#"
+            fn build(n) {
+                loop i = n, p = Pt { x: 1 } {
+                    p
+                }
+            }
+        "#,
+        );
+        match &last_expr_of_main(&prog).kind {
+            ExprKind::Loop { bindings, .. } => {
+                assert_eq!(bindings.len(), 2);
+                assert!(
+                    matches!(&bindings[1].1.kind, ExprKind::RecordCreate { .. }),
+                    "expected a record literal, got {:?}",
+                    bindings[1].1.kind
+                );
+            }
+            other => panic!("expected loop, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_trailing_closure_inside_parentheses_in_a_scrutinee() {
+        let prog = parse(
+            r#"
+            fn main() {
+                match (list.filter(xs) { x -> x > 1 }) {
+                    [] -> "none"
+                    _ -> "some"
+                }
+            }
+        "#,
+        );
+        let (scrutinee, arms) = last_match_of_main(&prog);
+        let scrutinee = scrutinee.expect("expected match expression with scrutinee");
+        assert!(
+            matches!(scrutinee.kind, ExprKind::Call(_, _)),
+            "expected Call scrutinee, got {:?}",
+            scrutinee.kind
+        );
+        assert_eq!(arms.len(), 2);
+    }
+
+    #[test]
+    fn test_match_body_directly_after_a_pipe_operand() {
+        let prog = parse(
+            r#"
+            fn main() {
+                match xs |> list.head {
+                    Some(x) -> x
+                    None -> 0
+                }
+            }
+        "#,
+        );
+        let (scrutinee, arms) = last_match_of_main(&prog);
+        let scrutinee = scrutinee.expect("expected match expression with scrutinee");
+        assert!(
+            matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
+            "expected Pipe scrutinee, got {:?}",
+            scrutinee.kind
+        );
+        assert_eq!(arms.len(), 2);
+    }
+
+    #[test]
+    fn test_header_context_does_not_outlive_a_parse_error() {
+        // The first function fails inside a match scrutinee. The second
+        // one must still be allowed its trailing closure.
+        let (prog, errors) = parse_recovering(
+            r#"
+            fn broken() {
+                match ) {
+                    _ -> 1
+                }
+            }
+            fn fine() {
+                list.map(xs) { x -> x + 1 }
+            }
+        "#,
+        );
+        assert!(!errors.is_empty());
+        let fine = prog
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Fn(f) if f.name == intern::intern("fine") && !f.is_recovery_stub => Some(f),
+                _ => None,
+            })
+            .expect("`fine` must parse");
+        assert!(
+            matches!(&fine.body.kind, ExprKind::Block(stmts) if stmts.len() == 1),
+            "expected one statement (a call with a trailing closure), got {:?}",
+            fine.body.kind
+        );
     }
 }

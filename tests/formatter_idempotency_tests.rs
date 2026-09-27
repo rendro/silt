@@ -465,8 +465,6 @@ fn test_multiline_string_dashes_no_phantom_comment() {
         "fn main() {\n  println(\"first line\n-- mid string\nlast line\")\n}\n",
         // `--` at start of the LAST string line (right before closing `\"`).
         "fn main() {\n  println(\"first line\n-- last\")\n}\n",
-        // Multi-line string + a real trailing comment after the closing `\"`.
-        "fn main() {\n  println(\"a\n-- inside\nb\") -- real trailing\n}\n",
         // Multi-line string at a let-binding position with no trailing
         // comment, just to exercise the `RegularEnds` no-comment path.
         "fn main() {\n  let s = \"a\n-- inside\nb\"\n  s\n}\n",
@@ -514,6 +512,21 @@ fn test_multiline_string_dashes_no_phantom_comment() {
             "formatter must be idempotent for multi-line-string src {src:?}\n\
              ---first---\n{first}\n---second---\n{second}"
         );
+    }
+
+    // Multi-line string + a real trailing comment after the closing `"`.
+    // The printer does not carry a comment over from the line on which
+    // such a string ends, so the formatter refuses this input instead of
+    // returning text that has lost the comment. The phantom comment must
+    // not be what the refusal is about.
+    let src = "fn main() {\n  println(\"a\n-- inside\nb\") -- real trailing\n}\n";
+    match silt::formatter::format(src) {
+        Err(silt::formatter::FmtError::Internal(e)) => assert!(
+            e.message.contains("lose the comment `-- real trailing`"),
+            "the refusal must name the real comment, got: {}",
+            e.message
+        ),
+        other => panic!("expected a refusal that names `-- real trailing`, got {other:?}"),
     }
 }
 

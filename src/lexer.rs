@@ -199,6 +199,20 @@ impl fmt::Display for Span {
 
 pub type SpannedToken = (Token, Span);
 
+/// A comment the lexer skipped, as recorded by
+/// [`Lexer::tokenize_with_comments`]. Comments never reach the token
+/// stream; this side table is how a caller that must account for every
+/// comment (the formatter's self-check) sees them through the lexer's own
+/// string / interpolation / nesting rules instead of re-scanning the text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceComment {
+    /// The comment exactly as written, delimiters included: `-- ...` up to
+    /// (not including) the line break, or `{- ... -}` with any nesting.
+    pub text: String,
+    /// Position of the comment's first character.
+    pub span: Span,
+}
+
 #[derive(Debug)]
 pub struct LexError {
     pub message: String,
@@ -248,6 +262,9 @@ pub struct Lexer {
     /// we resume scanning a string instead of emitting RBrace.
     interp_stack: Vec<usize>,
     brace_depth: usize,
+    /// Side table of skipped comments, in source order. `None` (the
+    /// default) records nothing; `tokenize_with_comments` switches it on.
+    comments: Option<Vec<SourceComment>>,
 }
 
 impl Lexer {
@@ -260,6 +277,7 @@ impl Lexer {
             byte_offset: 0,
             interp_stack: Vec::new(),
             brace_depth: 0,
+            comments: None,
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -286,6 +304,28 @@ impl Lexer {
             }
         }
         Ok(tokens)
+    }
+
+    /// Like [`Lexer::tokenize`], and additionally returns every comment
+    /// that was skipped, in source order. The token stream is identical
+    /// to the one `tokenize` produces.
+    pub fn tokenize_with_comments(
+        &mut self,
+    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), LexError> {
+        self.comments = Some(Vec::new());
+        let tokens = self.tokenize()?;
+        let comments = self.comments.take().unwrap_or_default();
+        Ok((tokens, comments))
+    }
+
+    /// Record the comment that spans `self.source[start_pos..self.pos]`
+    /// when comment recording is on. `span` is the position of the
+    /// comment's first character.
+    fn record_comment(&mut self, start_pos: usize, span: Span) {
+        if let Some(comments) = self.comments.as_mut() {
+            let text: String = self.source[start_pos..self.pos].iter().collect();
+            comments.push(SourceComment { text, span });
+        }
     }
 
     fn span(&self) -> Span {
@@ -746,15 +786,20 @@ impl Lexer {
         loop {
             match (self.peek(), self.peek_ahead(1)) {
                 (Some('-'), Some('-')) => {
+                    let comment_pos = self.pos;
+                    let comment_span = self.span();
                     self.skip_line_comment();
+                    self.record_comment(comment_pos, comment_span);
                     had_newline |= self.skip_whitespace();
                     continue;
                 }
                 (Some('{'), Some('-')) => {
-                    let _start = self.span();
+                    let comment_pos = self.pos;
+                    let comment_span = self.span();
                     self.advance_char();
                     self.advance_char();
                     self.skip_block_comment()?;
+                    self.record_comment(comment_pos, comment_span);
                     had_newline |= self.skip_whitespace();
                     continue;
                 }
@@ -856,7 +901,9 @@ impl Lexer {
                 } else if self.peek() == Some('-') {
                     // Line comment — shouldn't happen here since we skip comments above,
                     // but handle it just in case
+                    let comment_pos = self.pos - 1;
                     self.skip_line_comment();
+                    self.record_comment(comment_pos, start);
                     self.next_token()
                 } else {
                     Ok((Token::Minus, start))
