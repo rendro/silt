@@ -913,10 +913,13 @@ impl Vm {
     ///
     /// Consulted by the container arms of `compare()`
     /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
-    /// (`equality_operand_violation`, src/vm/execute.rs), and the
+    /// (`equality_operand_violation`, src/vm/execute.rs), the
     /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
-    /// `dispatch_trait_method` (src/vm/dispatch.rs). Locked by
-    /// tests/container_fn_compare_runtime_gate_tests.rs.
+    /// `dispatch_trait_method` (src/vm/dispatch.rs), and the collection
+    /// builtin backstop `ensure_no_fn` (src/builtins/collections.rs).
+    /// Locked by tests/container_fn_compare_runtime_gate_tests.rs; this
+    /// being the ONLY definition of the walker is locked by
+    /// tests/value_contains_fn_dedup_lock_tests.rs.
     ///
     /// `Range` / `Bytes` and the scalar leaves can never contain a
     /// function, and Channel / Handle / TcpListener / TcpStream stay

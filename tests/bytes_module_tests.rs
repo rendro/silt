@@ -827,7 +827,9 @@ fn main() {
         Ok(Err(m)) => m,
     };
 
-    // Exact phrasing lock — matches src/builtins/bytes.rs:480 today.
+    // Exact phrasing lock — matches src/builtins/bytes.rs:416 today.
+    // (Pinned by tests/source_line_citation_lock_tests.rs — re-aim both
+    // together if bytes.rs shifts.)
     assert!(
         msg.contains("bytes.split") && msg.contains("separator") && msg.contains("non-empty"),
         "expected error matching 'bytes.split: separator must be non-empty', got: {msg}"

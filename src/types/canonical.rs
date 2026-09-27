@@ -5,19 +5,29 @@
 //! equal modulo type-var alpha-equivalence. This is the single source
 //! of truth for type identity across the typechecker, compiler, and VM.
 //!
-//! Today the only reduction is `Type::Range(t) -> Type::List(t)`. The
-//! API generalises so future reductions (user `type Foo = Bar` aliases,
-//! ExtFloat-as-Float-with-flag, future shorthand types) plug in here.
+//! The current reduction set is:
 //!
-//! ## Phase A scope
+//! - `Type::Range(t) -> Type::List(t)` (Range is a nominal zero-cost
+//!   alias of List).
+//! - User `type Foo = Bar` alias expansion: a `Type::Generic(name, args)`
+//!   whose `name` is registered in the [`Resolver`] alias registry
+//!   expands to its stored target with `args` substituted (Phase D).
+//! - `Type::AssocProj` reduction: `<T as Trait>::Item` reduces to the
+//!   impl's registered binding when the receiver canonicalises to a
+//!   concrete head (associated-types phase).
 //!
-//! This module is purely additive: it exposes [`canonicalize`],
-//! [`types_equal`], and [`canonical_name`] with thorough unit coverage
-//! but is not yet wired into any caller. Phase B routes the existing
-//! unifier in `src/typechecker/inference.rs` through [`canonicalize`]
-//! at its entry points; phase C points the VM's
-//! `value_type_name_for_dispatch` and the compiler's trait-impl
-//! global-name emission at [`canonical_name`].
+//! ## Phase history (A through D — all live)
+//!
+//! Phase A originally shipped this module standalone — exposing
+//! [`canonicalize`], [`types_equal`], and [`canonical_name`] with unit
+//! coverage but no callers. That is no longer true: phase B routed the
+//! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
+//! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
+//! phase C pointed the VM's runtime dispatch (via
+//! [`dispatch_name_for_value`]) and the compiler's trait-impl
+//! global-name emission (via [`canonicalize_type_name`]) at the
+//! canonical-name oracle; phase D added the alias registry described
+//! below.
 //!
 //! ## Display vs canonical name
 //!
@@ -372,9 +382,14 @@ impl Resolver {
 /// Recursive structural walk. The current reduction set is:
 ///
 /// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
-/// - `Type::Generic(name, args)` or `Type::Record(name, _)` whose
-///   `name` is a registered alias -> the alias's stored target with
-///   `args` substituted into its parameters, then canonicalised.
+/// - `Type::Generic(name, args)` whose `name` is a registered alias ->
+///   the alias's stored target with `args` substituted into its
+///   parameters, then canonicalised. (Only `Generic` heads can be
+///   aliases: a name cannot be declared as both a record and an alias,
+///   so the `Type::Record` arm below is pure structural recursion.)
+/// - `Type::AssocProj` whose receiver canonicalises to a concrete head
+///   with a registered impl binding -> that binding's stored type,
+///   canonicalised.
 ///
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type

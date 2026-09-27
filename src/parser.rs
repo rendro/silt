@@ -2782,9 +2782,9 @@ impl Parser {
                     continue;
                 }
                 Token::Plus | Token::Minus if !had_newline => {
-                    // + and - are newline-sensitive: they are ambiguous with
-                    // unary +/- at the start of the next statement, so a
-                    // newline before them terminates the current expression.
+                    // + and - are newline-sensitive: `-` is ambiguous with unary
+                    // negation starting the next statement (`+` is treated the
+                    // same; silt has no unary plus), so a newline terminates it.
                     let op = if self.peek() == &Token::Plus {
                         BinOp::Add
                     } else {
@@ -3728,7 +3728,7 @@ impl Parser {
     /// `..[-]N` exits stay in lock-step.
     ///
     /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
-    /// lex time (see src/lexer.rs:631-632), so `Token::Int(n)` is always
+    /// lex time (see src/lexer.rs:647-648), so `Token::Int(n)` is always
     /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
     /// underflows, and the caller's `-n` for the head is likewise safe.
     /// We still spell the negation as a plain unary minus to match the

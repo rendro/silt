@@ -908,7 +908,10 @@ impl TypeChecker {
         // hide the table from `Sent`/`Recv`/`Send` even though they
         // appear in it. Hover on any global surfaces the same prose
         // — the LSP renders the markdown as a single document and
-        // the user scrolls to the relevant section.
+        // the user scrolls to the relevant section. Only the leading
+        // YAML frontmatter (website metadata, not prose) is stripped
+        // — editors would render it as a stray horizontal rule plus
+        // raw `title: "Globals"` text at the top of every hover.
         //
         // Free-function names sourced from
         // `crate::module::builtin_free_function_names()` so adding a
@@ -924,10 +927,11 @@ impl TypeChecker {
             "Ok", "Err", "Some", "None", "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
             "Recv", "Send",
         ]);
+        let globals_doc = docs::strip_frontmatter(docs::GLOBALS_MD);
         for name in &doc_targets {
             let sym = intern(name);
             if env.bindings.contains_key(&sym) {
-                env.builtin_docs.insert(sym, docs::GLOBALS_MD.to_string());
+                env.builtin_docs.insert(sym, globals_doc.to_string());
             }
         }
         docs::attach_module_docs(env, docs::REGEX_MD);

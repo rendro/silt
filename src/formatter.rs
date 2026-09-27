@@ -3165,7 +3165,7 @@ fn splice_inline_block_comments(
         //
         // Special case: `StringMiddle(s)` and `StringEnd(s)` tokens have
         // their span starting AFTER the `}` that closes the preceding
-        // string interpolation (see lexer.rs:829 `cont_start = self.span()`
+        // string interpolation (see lexer.rs:845 `cont_start = self.span()`
         // is captured after `}` is consumed). A block comment that sat
         // inside the interpolation body in source must land INSIDE the
         // interpolation in the output too — i.e., BEFORE that `}`, not

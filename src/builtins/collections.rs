@@ -110,34 +110,6 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
     }
 }
 
-/// Recursive check: is `val` a function-shaped value, or a container
-/// transitively holding one? Function-shaped means exactly the set the
-/// operator-level gate rejects (`equality_operand_violation` in
-/// src/vm/execute.rs): `VmClosure`, `BuiltinFn`, `VariantConstructor`.
-///
-/// Needed because the collection builtins gated below have UNBOUNDED
-/// type-variable signatures (e.g. `set.from_list: (List(a)) -> Set(a)`,
-/// src/typechecker/builtins/set.rs) — the typechecker never demands
-/// `a: Compare`/`Equal`, so `Fn` values flow straight into `Value`'s
-/// bitwise `Ord`/`PartialEq`: `Arc`-pointer-address ordering (ASLR-
-/// nondeterministic set iteration / sort order) and silent identity
-/// equality. Same bug class the round-97 operator gate and the
-/// round-1-nightly `Op::Eq`/`Op::Lt` + dispatch `equal`/`compare` gates
-/// closed — this closes the builtin-function surface.
-fn value_contains_fn(val: &Value) -> bool {
-    match val {
-        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => true,
-        Value::List(xs) => xs.iter().any(value_contains_fn),
-        Value::Tuple(xs) | Value::Variant(_, xs) => xs.iter().any(value_contains_fn),
-        Value::Set(s) => s.iter().any(value_contains_fn),
-        Value::Map(m) => m
-            .iter()
-            .any(|(k, v)| value_contains_fn(k) || value_contains_fn(v)),
-        Value::Record(_, fields) => fields.values().any(value_contains_fn),
-        _ => false,
-    }
-}
-
 /// Runtime backstop for the ordering/equality-consuming collection
 /// builtins: error with the canonical operator-gate wording ("type 'Fn'
 /// does not implement Compare/Equal") if any of `vals` transitively
@@ -146,9 +118,18 @@ fn value_contains_fn(val: &Value) -> bool {
 /// bound on the builtin signatures because that would reject currently
 /// working programs (e.g. sorting tuples or NaN-bearing floats via
 /// `Value::cmp`). Locked by tests/collection_builtin_fn_gate_tests.rs.
+///
+/// The contains-a-fn walk delegates to `Vm::value_contains_fn`
+/// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
+/// execution-site Compare/Equal/Hash gate (operator, dispatch, and
+/// builtin surfaces). Do not re-inline a local copy of the walker
+/// here: a new container `Value` variant added to one copy but not the
+/// other would silently split gate behavior between the operator and
+/// builtin surfaces. Single-definition is pinned by
+/// tests/value_contains_fn_dedup_lock_tests.rs.
 fn ensure_no_fn(fn_name: &str, trait_name: &str, vals: &[&Value]) -> Result<(), VmError> {
     for v in vals {
-        if value_contains_fn(v) {
+        if Vm::value_contains_fn(v) {
             return Err(VmError::new(format!(
                 "{fn_name}: type 'Fn' does not implement {trait_name}"
             )));
@@ -1117,6 +1098,15 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
                 if let Value::Tuple(pair) = item
                     && pair.len() == 2
                 {
+                    // Runtime Fn gate on the KEY only (values are never
+                    // compared): `map.from_entries` has `constraints:
+                    // vec![]` (src/typechecker/builtins/map.rs), unlike
+                    // `map.get`/`set` which carry `k: Hash`, so Fn keys
+                    // typecheck and would be BTreeMap-ordered by Arc
+                    // pointer address — ASLR-nondeterministic entry
+                    // order. The trait name matches the static map-key
+                    // contract.
+                    ensure_no_fn("map.from_entries", "Hash", &[&pair[0]])?;
                     result.insert(pair[0].clone(), pair[1].clone());
                     continue;
                 }
@@ -1189,6 +1179,13 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let key = &args[1];
             let default = &args[2];
             let func = &args[3];
+            // Runtime Fn gate on the KEY only — same rationale as the
+            // `map.from_entries` gate above (`constraints: vec![]`, so a
+            // Fn key typechecks and both the `m.get` probe and the
+            // `insert` below would compare it by Arc pointer address).
+            // The default and the callback result are map VALUES and
+            // stay ungated.
+            ensure_no_fn("map.update", "Hash", &[key])?;
             let current = m.get(key).unwrap_or(default).clone();
             // map.update is a single-callback builtin.  Use the resumable
             // helper so yields inside `func` are handled correctly.

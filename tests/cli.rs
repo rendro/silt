@@ -1014,7 +1014,8 @@ fn test_silt_test_help_mentions_filename_pattern() {
 // AUDIT REGRESSION: `silt test <dir> --filter <needle>` with zero
 // surviving files must exit 0 with a specific "no matching test files
 // found" message, rather than treating the empty filter result as a
-// failure. Locks the fix in src/main.rs:1131-1166.
+// failure. Locks the fix in src/cli/test.rs:171-174 (empty-filter
+// branch; pinned in tests/source_line_citation_lock_tests.rs).
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -1046,7 +1047,8 @@ fn test_silt_test_filter_empty_result_exits_zero_with_message() {
         output.status.success(),
         "expected exit 0 for empty --filter result, stdout: {stdout}, stderr: {stderr}"
     );
-    // Lock the exact "no matching test files found" string from main.rs
+    // Lock the exact "no matching test files found" string from
+    // src/cli/test.rs
     // so a regression that treats an empty filter result as a fatal
     // error — or changes the message beyond recognition — is caught.
     assert!(

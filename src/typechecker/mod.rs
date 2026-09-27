@@ -2217,14 +2217,22 @@ impl TypeChecker {
         // Impls without a stored self type (builtin pre-stamps,
         // auto-derive synthesis) skip the check, preserving prior
         // behavior.
+        //
+        // Round 104 BROKEN: the per-slot walk must be consistency-
+        // tracking, not stateless. A NON-LINEAR impl self type repeats
+        // the same binder across slots — `type Pair(a) = (a, a)` expands
+        // to `(Var a', Var a')`, ditto `Square(a) = Map(a, a)` — and the
+        // old independent `zip(..).any(|(ob, im)| !trait_arg_compatible)`
+        // deferred `(Int, Fn)` against `Var a'` slot by slot, losing the
+        // constraint that BOTH slots are the SAME `a'`. The bound
+        // verified, and the Fn in slot 1 died at the runtime Display
+        // gate. `impl_self_args_consistent` threads a binding map across
+        // the slots so a repeated binder must see equal types.
         if let Some(impl_self) = self.impl_self_types.get(&(trait_name, type_name)).cloned() {
             let obligated_args = self.type_args_of(&resolved);
             let impl_args = self.type_args_of(&impl_self);
             if obligated_args.len() == impl_args.len()
-                && obligated_args
-                    .iter()
-                    .zip(impl_args.iter())
-                    .any(|(ob, im)| !self.trait_arg_compatible(ob, im))
+                && !self.impl_self_args_consistent(&obligated_args, &impl_args)
             {
                 self.error(
                     format!(
@@ -2292,6 +2300,111 @@ impl TypeChecker {
                     sub_trait_args.iter().map(|t| self.apply(t)).collect();
                 self.verify_trait_obligation(sub_trait, &resolved_sub_args, &arg_ty, span);
             }
+        }
+    }
+
+    /// Consistency-tracking variant of the per-slot compatibility walk
+    /// for `verify_trait_obligation`'s self-type-args check.
+    /// Round 104: the stateless per-pair `trait_arg_compatible` lost the
+    /// cross-slot linkage of NON-LINEAR impl self types — a repeated
+    /// binder, reachable only via alias expansion (the parser rejects
+    /// duplicate binders in direct impl targets): `Pair(a) = (a, a)` →
+    /// `(Var a', Var a')`, ditto `Square(a) = Map(a, a)`. An obligated
+    /// `(Int, Fn)` deferred each slot against `Var a'` alone, satisfied
+    /// the bound, and died at runtime. Here a binding map is
+    /// threaded across ALL slots: the first obligated type an impl-side
+    /// `Var` meets binds it; every re-encounter must be compatible with
+    /// that binding. Obligated-side `Var`s still defer (inference may
+    /// resolve them later), and concrete/concrete pairs walk structurally
+    /// exactly as before.
+    ///
+    /// Enforcing the linkage here also keeps the first-occurrence-only
+    /// where-clause obligation index (the `.position(..)` over
+    /// `expanded_self_args` in `register_trait_impl`) sound: once every
+    /// slot sharing a binder is forced equal, checking the bound at the
+    /// binder's first slot covers all of them.
+    fn impl_self_args_consistent(&self, obligated: &[Type], impl_args: &[Type]) -> bool {
+        let mut bindings: HashMap<TyVar, Type> = HashMap::new();
+        obligated.iter().zip(impl_args.iter()).all(|(ob, im)| {
+            let ob = crate::types::canonical::canonicalize(&self.resolver, ob);
+            let im = crate::types::canonical::canonicalize(&self.resolver, im);
+            Self::impl_arg_matches_canon(&ob, &im, &mut bindings)
+        })
+    }
+
+    /// One-sided structural matcher threading `bindings` for
+    /// `impl_self_args_consistent`. Mirrors `trait_arg_compatible_canon`'s
+    /// recursive arms; both inputs are pre-canonicalised (deep), so the
+    /// recursion never re-canonicalises. Leaf pairs with no impl-side
+    /// binder to thread (scalars, nominal `Record`/`Generic` head-name
+    /// comparisons without args, `Never`, mismatches) delegate to the
+    /// existing stateless walk via the catch-all.
+    fn impl_arg_matches_canon(ob: &Type, im: &Type, bindings: &mut HashMap<TyVar, Type>) -> bool {
+        match (ob, im) {
+            (Type::Error, _) | (_, Type::Error) => true,
+            // Obligated side unresolved: defer, as before. (Deliberately
+            // no binding — a caller-side tyvar may resolve after this
+            // check; rejecting on it would be a false negative.)
+            (Type::Var(_), _) => true,
+            // Impl-side binder: bind on first encounter, require
+            // compatibility with the binding on re-encounter.
+            // `trait_arg_compatible_canon` is the right comparator —
+            // a nested `Var` on either side keeps deferring
+            // conservatively, while concrete mismatches reject.
+            (_, Type::Var(tv)) => match bindings.get(tv) {
+                Some(bound) => Self::trait_arg_compatible_canon(bound, ob),
+                None => {
+                    bindings.insert(*tv, ob.clone());
+                    true
+                }
+            },
+            (Type::List(x), Type::List(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => Self::impl_arg_matches_canon(x, y, bindings),
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                Self::impl_arg_matches_canon(k1, k2, bindings)
+                    && Self::impl_arg_matches_canon(v1, v2, bindings)
+            }
+            (Type::Tuple(xs), Type::Tuple(ys)) => {
+                xs.len() == ys.len()
+                    && xs
+                        .iter()
+                        .zip(ys.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
+                p1.len() == p2.len()
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+                    && Self::impl_arg_matches_canon(r1, r2, bindings)
+            }
+            (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: t1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: t2,
+                },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && Self::impl_arg_matches_canon(v1, v2, bindings)
+                    })
+            }
+            _ => Self::trait_arg_compatible_canon(ob, im),
         }
     }
 
@@ -7286,7 +7399,7 @@ impl TypeChecker {
                     None => {
                         // Give the user the full "declare it in the sig or
                         // target" hint — this is the same spirit as the
-                        // register_fn_decl error at mod.rs:5163.
+                        // register_fn_decl error at mod.rs:5276.
                         self.error(
                             format!(
                                 "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
@@ -7450,7 +7563,7 @@ pub(super) fn canonicalize_type_name(
     // typecheck pass but emitted compiler globals under `()` while
     // the VM dispatched under `Unit`, leaving runtime lookups
     // missing. Flipping to `() → Unit` lets the FieldAccess arm
-    // (inference.rs:3215) and auto-derive (`mod.rs:8060`) — both
+    // (inference.rs:3215) and auto-derive (`mod.rs:8173`) — both
     // updated in this round — converge with the runtime side.
     // The typechecker's `register_trait_impl` therefore registers a
     // user `trait T for Unit { ... }` (or `trait T for ()`) impl
@@ -7558,7 +7671,7 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
         // (`{...r}`) or an `AssocProj` would have its where-clause
         // tyvars stranded on the pre-narrowing ids — the call-site
         // pass-3 remap loop at the trait-impl recheck site (around
-        // mod.rs:3583) would then drop those constraints because
+        // mod.rs:3696) would then drop those constraints because
         // `remap.get(old_tv)` returns `None`, silently losing the
         // constraint at the narrowed scheme.
         (

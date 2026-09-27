@@ -93,6 +93,35 @@ fn push(out: &Channel, val: &Value) -> bool {
     }
 }
 
+/// Marker tag used to carry a pump-thread type error in-band. Stream
+/// transforms run on detached OS threads with no `VmError` path back to
+/// the caller, so a runtime gate that fires there (currently only the
+/// `stream.dedup` Fn gate) pushes this marker onto its output channel
+/// and closes it. `spawn_pump`-based transforms forward the marker
+/// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
+/// `count` / `first` / `last`) translate it into the canonical `VmError`.
+/// Same in-band-marker pattern as `__MapMapTypeError__` in
+/// src/builtins/collections.rs. Locked by
+/// tests/collection_fn_gate_sibling_surfaces_tests.rs.
+const STREAM_TYPE_ERROR_TAG: &str = "__StreamTypeError__";
+
+/// Build the in-band error marker for a pump-thread type error.
+fn stream_type_error(msg: String) -> Value {
+    Value::Variant(STREAM_TYPE_ERROR_TAG.into(), vec![Value::String(msg)])
+}
+
+/// If `v` is the in-band pump-thread error marker, return the `VmError`
+/// it carries.
+fn take_stream_type_error(v: &Value) -> Option<VmError> {
+    if let Value::Variant(tag, fields) = v
+        && tag == STREAM_TYPE_ERROR_TAG
+        && let Some(Value::String(msg)) = fields.first()
+    {
+        return Some(VmError::new(msg.clone()));
+    }
+    None
+}
+
 fn require_channel<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<Channel>, VmError> {
     match arg {
         Value::Channel(c) => Ok(c),
@@ -510,6 +539,13 @@ where
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
+                    // Forward an in-band pump-thread error marker
+                    // unchanged (never into the user callback) so it
+                    // reaches the sink that translates it to a VmError.
+                    if take_stream_type_error(&v).is_some() {
+                        let _ = push(&out_ch, &v);
+                        break;
+                    }
                     if !each(v, &out_ch) {
                         break;
                     }
@@ -854,6 +890,23 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
+                    // Runtime Fn gate, same policy as `ensure_no_fn` in
+                    // src/builtins/collections.rs: `stream.dedup` has an
+                    // unbounded signature, so Fn values typecheck and the
+                    // `p != &v` comparison below would silently dedup
+                    // closures by Arc identity — the exact behavior
+                    // `list.unique` rejects. This pump thread has no
+                    // `VmError` path, so surface the canonical error
+                    // in-band (see `STREAM_TYPE_ERROR_TAG`).
+                    if Vm::value_contains_fn(&v) {
+                        let _ = push(
+                            &out_clone,
+                            &stream_type_error(
+                                "stream.dedup: type 'Fn' does not implement Equal".to_string(),
+                            ),
+                        );
+                        break;
+                    }
                     let emit = match &prev {
                         Some(p) => p != &v,
                         None => true,
@@ -1013,7 +1066,14 @@ fn collect(args: &[Value]) -> Result<Value, VmError> {
     let mut out = Vec::new();
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => out.push(v),
+            TryReceiveResult::Value(v) => {
+                // Translate an in-band pump-thread error marker (see
+                // `STREAM_TYPE_ERROR_TAG`) into the canonical VmError.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                out.push(v)
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }
@@ -1077,6 +1137,10 @@ fn fold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
                 let invoke_result = vm.invoke_callable(&fn_val, &[acc.clone(), v]);
                 match invoke_result {
                     Ok(r) => acc = r,
@@ -1145,6 +1209,10 @@ fn each(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
                 let invoke_result = vm.invoke_callable(&fn_val, &[v]);
                 match invoke_result {
                     Ok(_) => {}
@@ -1179,7 +1247,13 @@ fn count(args: &[Value]) -> Result<Value, VmError> {
     let mut n: i64 = 0;
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(_) => n += 1,
+            TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                n += 1
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }
@@ -1193,7 +1267,13 @@ fn first(args: &[Value]) -> Result<Value, VmError> {
     }
     let ch = require_channel(&args[0], "stream.first")?.clone();
     match ch.receive_blocking() {
-        TryReceiveResult::Value(v) => Ok(Value::Variant("Some".into(), vec![v])),
+        TryReceiveResult::Value(v) => {
+            // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+            if let Some(e) = take_stream_type_error(&v) {
+                return Err(e);
+            }
+            Ok(Value::Variant("Some".into(), vec![v]))
+        }
         TryReceiveResult::Closed => Ok(Value::Variant("None".into(), vec![])),
         _ => Ok(Value::Variant("None".into(), vec![])),
     }
@@ -1207,7 +1287,13 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
     let mut last: Option<Value> = None;
     loop {
         match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => last = Some(v),
+            TryReceiveResult::Value(v) => {
+                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                if let Some(e) = take_stream_type_error(&v) {
+                    return Err(e);
+                }
+                last = Some(v)
+            }
             TryReceiveResult::Closed => break,
             _ => {}
         }

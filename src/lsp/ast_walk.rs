@@ -1017,4 +1017,42 @@ mod tests {
         let ty = find_type_at_offset(&program, 27);
         assert_eq!(ty, Some(Type::Int));
     }
+
+    // ── find_type_at_offset: call callee identifiers (round 101) ──
+
+    #[test]
+    fn test_find_type_at_offset_callee_ident_is_fn_signature() {
+        // The cursor on a call's CALLEE identifier must surface the
+        // fn's signature, not the call's RESULT type. The typechecker's
+        // named-callee shortcut in the `ExprKind::Call` arm used to
+        // skip stashing `callee.ty`, so this walk fell back to the
+        // enclosing Call node's result type (`Int` here).
+        let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { add(1, 2) }\n";
+        let program = parse_and_check(source);
+
+        let callee_offset = source.rfind("add(").unwrap();
+        let ty = find_type_at_offset(&program, callee_offset);
+        assert_eq!(
+            ty,
+            Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+            "callee ident must carry the fn signature, not the call result"
+        );
+    }
+
+    #[test]
+    fn test_find_type_at_offset_piped_callee_ident_is_fn_signature() {
+        // Same lock for the Pipe arm's named-callee shortcut:
+        // `1 |> add(2)` desugars to `add(1, 2)` and the callee ident
+        // must carry the fn signature.
+        let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { 1 |> add(2) }\n";
+        let program = parse_and_check(source);
+
+        let callee_offset = source.rfind("add(").unwrap();
+        let ty = find_type_at_offset(&program, callee_offset);
+        assert_eq!(
+            ty,
+            Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+            "piped callee ident must carry the fn signature"
+        );
+    }
 }

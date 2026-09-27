@@ -114,17 +114,17 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
     // purpose — it never existed; the real mapper is `type_name_for_impl`.
     let expectations: &[(usize, &str)] = &[
         // inference.rs primitive-dispatch comment block.
-        (8163, "fn register_auto_derived_impls_for"),
+        (8276, "fn register_auto_derived_impls_for"),
         (2081, r#"Type::Channel(_) => Some(intern("Channel"))"#),
         (2092, r#"Type::Fun(_, _) => Some(intern("Fn"))"#),
         // dispatch.rs compare-arm comment block; the same `"Unit"`
         // registration line is also cited by mod.rs's `() → Unit`
         // canonicalisation comment as its auto-derive counterpart.
         (
-            8063,
+            8176,
             r#"register_auto_derived_impls_for(checker, &["List"]"#,
         ),
-        (8060, r#""Unit""#),
+        (8173, r#""Unit""#),
         // Round-101 re-aimed bare `mod.rs:<N>` cites.
         // inference.rs binary-op arms: "cascade-suppression branch in
         // `unify`" — the Error/Never no-op arm.
@@ -140,11 +140,11 @@ fn mod_rs_citations_in_inference_and_dispatch_resolve() {
         (1834, "IMPORTANT (round 62 B4)"),
         // mod.rs Round-75 TYPE-2 comment: the call-site pass-3 remap
         // loop that drops constraints when `remap.get(old_tv)` is None.
-        (3583, "remap.get(old_tv).map"),
+        (3696, "remap.get(old_tv).map"),
         // mod.rs where-clause-on-impl-method error comment: the sibling
         // register_fn_decl where-clause error message.
         (
-            5163,
+            5276,
             "in where clause is not introduced in the function signature",
         ),
     ];

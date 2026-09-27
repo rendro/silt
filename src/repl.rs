@@ -14,11 +14,27 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `tests/round74_repl_main_no_hang_tests.rs`.
 static REPL_EVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Prefix of the synthetic per-expression wrapper function name. Named
+/// so the error renderer can recognise wrapper frames and relabel them
+/// `<repl>` instead of leaking the internal `__repl_eval_<n>` name into
+/// user-facing call stacks (see `repl_call_stack_lines`).
+const REPL_WRAPPER_PREFIX: &str = "__repl_eval_";
+
 /// Produce the next unique synthetic wrapper name for an expression
 /// being evaluated by the REPL.
 fn next_repl_wrapper_name() -> String {
     let n = REPL_EVAL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("__repl_eval_{n}")
+    format!("{REPL_WRAPPER_PREFIX}{n}")
+}
+
+/// True when `name` is a synthetic REPL wrapper frame — the
+/// `REPL_WRAPPER_PREFIX` followed by a purely numeric counter suffix, as
+/// produced by `next_repl_wrapper_name`. The digit check keeps a
+/// (pathological) user-defined `fn __repl_eval_helper()` from being
+/// relabelled.
+fn is_repl_wrapper_frame(name: &str) -> bool {
+    name.strip_prefix(REPL_WRAPPER_PREFIX)
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
 }
 
 use rustyline::completion::{Completer, Pair};
@@ -445,17 +461,51 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 /// `mod foo { ... }` declaration through `eval_expression`, which wraps
 /// it in `fn main()` and emits a confusing parse error.
 ///
+/// `fn` needs more than a prefix check: `fn NAME(...)` is a declaration,
+/// but `fn (x) { ... }` (and `fn(x) { ... }`) is an anonymous-fn
+/// *expression*. The parser distinguishes the two shapes token-wise,
+/// regardless of whitespace (see `parser::at_top_level_fn_start`), so a
+/// whitespace-sensitive `starts_with("fn ")` here mis-routed
+/// `fn (x) { x * 2 }(5)` to the declaration parser, which rejected a
+/// perfectly valid expression with "expected identifier, found (".
+/// `starts_with_named_fn` mirrors the parser's rule instead.
+///
 /// Exposed at crate-root visibility for the integration test at
 /// `tests/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
 pub fn is_declaration(input: &str) -> bool {
     let trimmed = input.trim();
-    trimmed.starts_with("fn ")
+    starts_with_named_fn(trimmed)
         || trimmed.starts_with("let ")
         || trimmed.starts_with("type ")
         || trimmed.starts_with("trait ")
         || trimmed.starts_with("import ")
         || trimmed.starts_with("mod ")
         || trimmed.starts_with("pub ")
+}
+
+/// True iff `s` begins with the `fn` keyword followed — after optional
+/// whitespace — by an identifier, i.e. the `fn NAME(...)` declaration
+/// shape. Mirrors `parser::at_top_level_fn_start`: when `fn` is followed
+/// by `(` (with or without intervening whitespace) it starts an
+/// anonymous-fn expression, not a declaration.
+fn starts_with_named_fn(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("fn") else {
+        return false;
+    };
+    // Keyword boundary: `fnord` is an identifier, not the `fn` keyword.
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    // Declaration iff the next non-whitespace char starts an identifier
+    // (the lexer's ident-start set: ASCII letter or `_`).
+    rest.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// Evaluate a single REPL input.  Declarations are compiled and loaded into
@@ -687,9 +737,10 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
 ///     in a previous REPL entry), call
 ///     `render_runtime_error_without_source(msg, true)` to get the
 ///     `--> <declaration>` locator shape.
-///   * Then iterate `render_call_stack(...)` printing every frame as
+///   * Then iterate `repl_call_stack_lines(...)` printing every frame at
 ///     `<declaration>` (line numbers from earlier-entry coordinates aren't
-///     meaningful against the current entry's text).
+///     meaningful against the current entry's text), with synthetic
+///     `__repl_eval_<n>` wrapper frames relabelled `<repl>`.
 ///   * If `e.span` is `None`, call
 ///     `render_runtime_error_without_source(msg, false)` — a plain
 ///     `error[runtime]:` header with no locator.
@@ -714,8 +765,10 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
         // Print the call stack for the non-synthetic frames. Frame line
         // numbers come from the original REPL input buffer (or the wrapped
         // input for `eval_expression`) and don't carry usable positions
-        // here, so we label every frame `<declaration>`.
-        for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string()) {
+        // here, so we label every frame `<declaration>`. The synthetic
+        // `__repl_eval_<n>` expression wrapper is relabelled `<repl>` so
+        // the internal name never reaches the user.
+        for line in repl_call_stack_lines(&e.call_stack) {
             eprintln!("{line}");
         }
     } else {
@@ -726,6 +779,37 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
         // plain text — see src/vm/error.rs). Round-59 GAP #4.
         eprintln!("{}", render_runtime_error_without_source(&e.message, false));
     }
+}
+
+/// Render a REPL runtime-error call stack as user-facing lines.
+///
+/// Synthetic per-expression wrapper frames (`__repl_eval_<n>`) are
+/// relabelled `<repl>` before rendering so the internal implementation
+/// name never leaks to users, while the frame itself is kept — it marks
+/// the REPL top-level call site the same way `<module:...>` frames mark
+/// module init, and dropping it would erase real user frames from the
+/// output (`render_call_stack` filters stacks that shrink below two
+/// meaningful frames). `render_call_stack` keeps the `<repl>` label
+/// explicitly (src/vm/error.rs).
+///
+/// Every frame's location is `<declaration>`: frame line numbers come
+/// from the original REPL input buffer (or the wrapped input for
+/// `eval_expression`) and don't carry usable positions here.
+///
+/// `pub` so the regression lock (tests/repl_wrapper_frame_leak_tests.rs)
+/// can exercise the exact production rendering path.
+pub fn repl_call_stack_lines(call_stack: &[(String, Span)]) -> Vec<String> {
+    let display_stack: Vec<(String, Span)> = call_stack
+        .iter()
+        .map(|(name, span)| {
+            if is_repl_wrapper_frame(name) {
+                ("<repl>".to_string(), *span)
+            } else {
+                (name.clone(), *span)
+            }
+        })
+        .collect();
+    render_call_stack(&display_stack, |_name, _span| "<declaration>".to_string())
 }
 
 /// Pop the first function out of a freshly-compiled `Vec<Function>` and
@@ -1383,6 +1467,33 @@ mod tests {
         assert!(is_declaration("pub fn foo() {}"));
     }
 
+    // Regression lock (round-101 BROKEN): `fn (` starts an anonymous-fn
+    // *expression*, not a declaration. The old whitespace-sensitive
+    // `starts_with("fn ")` heuristic routed `fn (x) { x * 2 }(5)` to the
+    // declaration parser, which rejected it with "expected identifier,
+    // found (" even though the identical input runs fine in file mode.
+    #[test]
+    fn is_declaration_rejects_anon_fn_expression() {
+        // Space between `fn` and `(` — the shape the old heuristic broke.
+        assert!(!is_declaration("fn (x) { x * 2 }"));
+        assert!(!is_declaration("fn (x) { x * 2 }(5)"));
+        // No space — must still be an expression (previously worked).
+        assert!(!is_declaration("fn(x) { x * 2 }"));
+        // Extra / exotic whitespace between `fn` and `(`.
+        assert!(!is_declaration("fn\t(x) { x }"));
+        assert!(!is_declaration("  fn   (x) { x }  "));
+        // Named fn with unusual whitespace before the name is still a
+        // declaration (mirrors parser::at_top_level_fn_start).
+        assert!(is_declaration("fn\tfoo() {}"));
+        // Identifier that merely starts with the letters `fn` is not the
+        // keyword.
+        assert!(!is_declaration("fnord"));
+        assert!(!is_declaration("fnord(42)"));
+        // Bare `fn` with nothing after it stays on the expression path
+        // (same routing as before this fix).
+        assert!(!is_declaration("fn"));
+    }
+
     // ── Multi-line input continuation ─────────────────────────────
     //
     // The REPL reads lines until `has_unclosed_delimiters` returns false.
@@ -1441,6 +1552,24 @@ mod tests {
         let mut ctx = ReplTypeContext::new();
         let value = eval_expression_value(&mut vm, &mut ctx, "true").unwrap();
         assert_eq!(format!("{value}"), "true");
+    }
+
+    // Round-101 BROKEN lock, execution half: an immediately-invoked
+    // anonymous fn written with a space after `fn` must evaluate through
+    // the persistent-VM expression path and produce its value. Pairs
+    // with `is_declaration_rejects_anon_fn_expression`, which locks the
+    // routing decision itself.
+    #[test]
+    fn eval_anon_fn_with_space_immediately_invoked() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        let input = "fn (x) { x * 2 }(5)";
+        assert!(
+            !is_declaration(input),
+            "`fn (` must be routed to the expression path"
+        );
+        let value = eval_expression_value(&mut vm, &mut ctx, input).unwrap();
+        assert_eq!(format!("{value}"), "10");
     }
 
     // ── repl_mode field-access lock ───────────────────────────────

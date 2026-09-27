@@ -59,12 +59,32 @@ fn is_declaration_rejects_expressions_and_near_misses() {
     assert!(!is_declaration("\"hello\""));
 
     // Near-miss: identifiers that happen to START with a declaration
-    // keyword but are not followed by a space (`module`, `modular`,
-    // `fnord`, `letter`) must NOT match. The prefix check requires a
-    // trailing space, which guards against these false positives.
+    // keyword (`module`, `modular`, `fnord`, `letter`) must NOT match.
+    // For the word-prefix checks the guard is the required trailing
+    // space; for `fn` the guard is a keyword-boundary check (the next
+    // char must not continue an identifier).
     assert!(!is_declaration("module_path"));
     assert!(!is_declaration("modulo(7, 3)"));
     assert!(!is_declaration("letter = 'a'"));
     assert!(!is_declaration("fnord"));
     assert!(!is_declaration("typed_value"));
+}
+
+#[test]
+fn is_declaration_rejects_anon_fn_expressions() {
+    // Round-101 BROKEN lock: `fn (` (with or without whitespace after
+    // the keyword) starts an anonymous-fn *expression*, never a
+    // declaration. The old whitespace-sensitive `starts_with("fn ")`
+    // heuristic routed `fn (x) { x * 2 }(5)` to the declaration parser,
+    // which rejected the valid expression with
+    // "expected identifier, found (". `is_declaration` must mirror the
+    // token-based rule in `parser::at_top_level_fn_start`: declaration
+    // iff `fn` is followed by an identifier.
+    assert!(!is_declaration("fn (x) { x * 2 }"));
+    assert!(!is_declaration("fn (x) { x * 2 }(5)"));
+    assert!(!is_declaration("fn(x) { x * 2 }"));
+    assert!(!is_declaration("fn\t(x) { x }"));
+    // Named fns remain declarations even with unusual whitespace.
+    assert!(is_declaration("fn\tfoo() {}"));
+    assert!(is_declaration("  fn   spaced() {}"));
 }

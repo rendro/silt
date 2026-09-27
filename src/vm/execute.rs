@@ -415,6 +415,21 @@ fn apply_callback_result(
             Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListGroupBy => {
+            // Runtime Fn gate, same policy as `ensure_no_fn` in
+            // src/builtins/collections.rs: the callback-returned key
+            // becomes a `BTreeMap` key, so a Fn-containing key would be
+            // ordered by Arc pointer address — ASLR-nondeterministic
+            // group order across runs. `list.group_by`'s signature is
+            // unbounded (src/typechecker/builtins/list.rs), so the
+            // typechecker never rejects Fn keys; the trait name matches
+            // the static map-key contract (`k: Hash` on `map.get`/`set`).
+            // Locked by tests/collection_fn_gate_sibling_surfaces_tests.rs.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Hash",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Groups(m) = acc {
                 m.entry(result).or_default().push(item);
             }
@@ -445,6 +460,15 @@ fn apply_callback_result(
         },
         BuiltinIterKind::ListMinBy => {
             // `result` is the key returned by the callback for `item`.
+            // Runtime Fn gate mirroring the ListGroupBy gate above: Fn
+            // keys would flow into `partial_cmp` and pick a winner by
+            // Arc pointer address — ASLR-nondeterministic across runs.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Compare",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Best(slot) = acc {
                 let new_pair = match slot.take() {
                     None => (result, item),
@@ -463,6 +487,13 @@ fn apply_callback_result(
             Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListMaxBy => {
+            // Runtime Fn gate — see the ListMinBy arm above.
+            if Vm::value_contains_fn(&result) {
+                return Err(VmError::new(format!(
+                    "{}: type 'Fn' does not implement Compare",
+                    kind.name()
+                )));
+            }
             if let BuiltinAcc::Best(slot) = acc {
                 let new_pair = match slot.take() {
                     None => (result, item),

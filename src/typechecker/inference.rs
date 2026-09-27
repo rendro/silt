@@ -3183,7 +3183,7 @@ impl TypeChecker {
                     }
                     // Primitive types — check method table for trait methods.
                     // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:8163`); Channel and Fn are not
+                    // in `src/typechecker/mod.rs:8276`); Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
@@ -3813,7 +3813,15 @@ impl TypeChecker {
                         let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                             if let Some(scheme) = env.lookup(name).cloned() {
                                 let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                                (self.apply(&ty), constraints)
+                                let applied = self.apply(&ty);
+                                // Round-101 GAP fix: same stash as the
+                                // `ExprKind::Call` arm's named-callee
+                                // shortcut — without it, LSP hover on the
+                                // callee of a piped call (`add` in
+                                // `1 |> add(2)`) has no type and falls
+                                // back to an enclosing expression's type.
+                                callee.ty = Some(applied.clone());
+                                (applied, constraints)
                             } else {
                                 let ty = self.infer_expr(callee, env);
                                 (self.apply(&ty), vec![])
@@ -4133,7 +4141,20 @@ impl TypeChecker {
                 let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                     if let Some(scheme) = env.lookup(name).cloned() {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                        (self.apply(&ty), constraints)
+                        let applied = self.apply(&ty);
+                        // Round-101 GAP fix: this named-callee shortcut
+                        // bypasses `infer_expr` on the callee Ident, so
+                        // (unlike every other expression) it carried no
+                        // stashed `expr.ty`. LSP hover on the callee then
+                        // fell back to the enclosing Call's RESULT type
+                        // (`add` in `add(1, 2)` hovered as `Int`, `println`
+                        // as `()`), inconsistent with qualified callees
+                        // like `list.sum`. Mirror the qualified-call branch
+                        // below: stash the instantiated fn type on the
+                        // callee; `resolve_all_types` resolves it to the
+                        // call-site instantiation after inference.
+                        callee.ty = Some(applied.clone());
+                        (applied, constraints)
                     } else {
                         let ty = self.infer_expr(callee, env);
                         (self.apply(&ty), vec![])

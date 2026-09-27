@@ -110,10 +110,10 @@ impl fmt::Display for Token {
             Token::Int(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
             Token::Bool(b) => write!(f, "{b}"),
-            Token::StringLit(s, _) => write!(f, "\"{s}\""),
-            Token::StringStart(s) => write!(f, "\"{s}{{"),
-            Token::StringMiddle(s) => write!(f, "}}{s}{{"),
-            Token::StringEnd(s) => write!(f, "}}{s}\""),
+            Token::StringLit(s, _) => write!(f, "\"{}\"", escape_control_chars(s)),
+            Token::StringStart(s) => write!(f, "\"{}{{", escape_control_chars(s)),
+            Token::StringMiddle(s) => write!(f, "}}{}{{", escape_control_chars(s)),
+            Token::StringEnd(s) => write!(f, "}}{}\"", escape_control_chars(s)),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
@@ -399,6 +399,22 @@ impl Lexer {
                         Some('"') => text.push('"'),
                         Some('{') => text.push('{'),
                         Some('}') => text.push('}'),
+                        // Control chars (CR, TAB, U+0001, …) garble or
+                        // vanish when echoed raw — CR returns the terminal
+                        // cursor to column 0 mid-line, U+0001 is invisible
+                        // — so escape them via `escape_default` (`\r`,
+                        // `\u{1}`, …), mirroring the round-100 fix to the
+                        // `unexpected character` catch-all below. Printable
+                        // unknown escapes (`\q`, …) keep their plain form.
+                        Some(c) if c.is_control() => {
+                            return Err(LexError {
+                                message: format!(
+                                    "unknown escape sequence: \\{}",
+                                    c.escape_default()
+                                ),
+                                span: self.span(),
+                            });
+                        }
                         Some(c) => {
                             return Err(LexError {
                                 message: format!("unknown escape sequence: \\{c}"),
@@ -956,6 +972,37 @@ impl Lexer {
             }),
         }
     }
+}
+
+/// Escape control characters in a string-token payload for `Token`'s
+/// `Display` impl (`StringLit`/`StringStart`/`StringMiddle`/`StringEnd`).
+///
+/// `scan_string`/`scan_triple_string` accept raw control bytes and raw
+/// newlines inside string bodies, so without this gate a parser
+/// diagnostic like `expected declaration, found "a\u{1}b"` would embed
+/// the raw byte (an invisible offender in logs/LSP JSON) and a raw
+/// newline would split the quoted found-token across the rendered
+/// header and its `= note:` continuation line. Only control characters
+/// (`char::is_control`: C0 incl. `\n`/`\t`/`\r`, DEL, C1) are escaped
+/// via `escape_default`; printable non-ASCII passes through unchanged.
+/// This mirrors the `unexpected character` control-char escape in
+/// `scan_token` above. Safe to apply here: `Token`'s `Display` is
+/// consumed only by parser diagnostics — the formatter renders from
+/// the AST and pattern-matches token variants, and fuzz invariants use
+/// `Debug`.
+fn escape_control_chars(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.chars().any(char::is_control) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        if ch.is_control() {
+            out.extend(ch.escape_default());
+        } else {
+            out.push(ch);
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 #[cfg(test)]

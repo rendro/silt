@@ -701,11 +701,12 @@ fn main() { println(indirect(5)) }
 
 // ── Type::Fun Display matches parser `Fn(...)` surface ─────────────
 // The parser reads function-type annotations as `Fn(A, B) -> C` at
-// src/parser.rs:836. Display at src/types.rs:59 must emit the same
-// form so diagnostics round-trip against user-written annotations.
-// A mismatch like "expected Fn(Int) -> Int, got (Int) -> Int" was
-// confusing because the `(Int) -> Int` form visually collides with
-// silt's tuple-type syntax.
+// src/parser.rs:2088. Display at src/types/mod.rs:96 must emit the
+// same form so diagnostics round-trip against user-written
+// annotations. A mismatch like "expected Fn(Int) -> Int, got
+// (Int) -> Int" was confusing because the `(Int) -> Int` form
+// visually collides with silt's tuple-type syntax.
+// (Both citations are pinned in tests/source_line_citation_lock_tests.rs.)
 
 #[test]
 fn test_fn_type_annotation_mismatch_renders_fn_prefix() {

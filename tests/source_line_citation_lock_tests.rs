@@ -32,7 +32,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "completion.rs -> builtin_trait_decls def",
         "src/typechecker/mod.rs",
-        7827,
+        7940,
         "fn builtin_trait_decls",
     ),
     // vm/runtime.rs:450 — "Rust 1.80+ thread-local env SAFETY note"
@@ -46,7 +46,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "parser.rs -> lexer i64 literal too large",
         "src/lexer.rs",
-        632,
+        648,
         "number literal too large",
     ),
     // vm/execute.rs:1420 / vm/tests.rs:602 — And short-circuit JumpIfFalse
@@ -107,7 +107,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "compiler/mod.rs -> typechecker round-58 prefix-mirror",
         "src/typechecker/mod.rs",
-        3043,
+        3156,
         "round 58",
     ),
     // Round-101 re-aimed cross-file citations (bare/short-path cites that
@@ -118,7 +118,7 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "formatter.rs -> lexer interp cont_start capture",
         "src/lexer.rs",
-        829,
+        845,
         "let cont_start = self.span()",
     ),
     // typechecker/mod.rs — Float/ExtFloat widening block header
@@ -163,21 +163,21 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
     (
         "typechecker/mod.rs impl where-clause -> register_fn_decl error",
         "src/typechecker/mod.rs",
-        5163,
+        5276,
         "in where clause is not introduced",
     ),
     // typechecker/mod.rs — auto-derive registration under "Unit"
     (
         "typechecker/mod.rs () -> Unit collapse -> auto-derive Unit key",
         "src/typechecker/mod.rs",
-        8060,
+        8173,
         "[\"Int\", \"Float\", \"ExtFloat\", \"Bool\", \"String\", \"Unit\"]",
     ),
     // typechecker/mod.rs — pass-3 remap loop at trait-impl recheck
     (
         "typechecker/mod.rs align_tyvars_into -> trait-impl recheck remap",
         "src/typechecker/mod.rs",
-        3583,
+        3696,
         "remap.get(old_tv).map(|&new_tv|",
     ),
     // typechecker/mod.rs — Float/Float -> ExtFloat widening (Div arm)
@@ -214,6 +214,37 @@ const CITATIONS: &[(&str, &str, usize, &str)] = &[
         "src/vm/arithmetic.rs",
         152,
         "(Value::List(_), Value::List(_))",
+    ),
+    // tests/cli.rs (empty --filter regression header) — "no matching
+    // test files found" branch, which moved from src/main.rs into
+    // src/cli/test.rs when the CLI was split into src/cli/*.
+    (
+        "tests/cli.rs -> empty-filter 'no matching test files found'",
+        "src/cli/test.rs",
+        172,
+        "no matching test files found",
+    ),
+    // type_audit_regressions.rs:704 — parser `Fn(A, B) -> C` type-annotation site
+    (
+        "type_audit_regressions.rs -> parser Fn(...) type-annotation parse",
+        "src/parser.rs",
+        2088,
+        "Function type: Fn(A, B) -> C",
+    ),
+    // type_audit_regressions.rs:704 — `impl Display for Type`
+    (
+        "type_audit_regressions.rs -> Type Display impl",
+        "src/types/mod.rs",
+        96,
+        "impl std::fmt::Display for Type",
+    ),
+    // bytes_module_tests.rs — "Exact phrasing lock — matches
+    // src/builtins/bytes.rs:416 today."
+    (
+        "bytes_module_tests.rs -> bytes.split non-empty separator error",
+        "src/builtins/bytes.rs",
+        416,
+        "separator must be non-empty",
     ),
 ];
 
@@ -323,7 +354,7 @@ fn reaimed_cross_file_citations_do_not_regress() {
         (
             formatter,
             "src/formatter.rs interp block-comment note",
-            "lexer.rs:829 `cont_start = self.span()`",
+            "lexer.rs:845 `cont_start = self.span()`",
             "lexer.rs:748",
         ),
         (
@@ -335,19 +366,19 @@ fn reaimed_cross_file_citations_do_not_regress() {
         (
             tc_mod,
             "src/typechecker/mod.rs impl-where-clause error note",
-            "register_fn_decl error at mod.rs:5163",
+            "register_fn_decl error at mod.rs:5276",
             "mod.rs:1690",
         ),
         (
             tc_mod,
             "src/typechecker/mod.rs `() -> Unit` collapse note",
-            "(inference.rs:3215) and auto-derive (`mod.rs:8060`)",
+            "(inference.rs:3215) and auto-derive (`mod.rs:8173`)",
             "inference.rs:2582",
         ),
         (
             tc_mod,
             "src/typechecker/mod.rs Round-75 TYPE-2 remap-loop note",
-            "mod.rs:3583) would then drop those constraints",
+            "mod.rs:3696) would then drop those constraints",
             "mod.rs:3217",
         ),
         (
@@ -396,5 +427,89 @@ fn reaimed_cross_file_citations_do_not_regress() {
         "{} regressed cross-file citation(s):\n  {}",
         failures.len(),
         failures.join("\n  ")
+    );
+}
+
+/// Regression lock: tests/cli.rs used to cite the empty-`--filter` fix
+/// as living at `src/main.rs:1131-1166`, but the CLI was split into
+/// `src/cli/*` and main.rs shrank to ~241 lines — the citation pointed
+/// past the end of the file. The comment must now cite src/cli/test.rs
+/// (the row above pins the exact line) and must never regress to the
+/// stale main.rs form.
+#[test]
+fn cli_rs_empty_filter_citation_not_stale() {
+    let cli_tests = include_str!("cli.rs");
+    assert!(
+        !cli_tests.contains("src/main.rs:1131"),
+        "tests/cli.rs still carries the stale 'src/main.rs:1131-1166' citation; \
+         the empty-filter branch lives in src/cli/test.rs"
+    );
+    assert!(
+        cli_tests.contains("src/cli/test.rs:171"),
+        "tests/cli.rs empty-filter regression header should cite \
+         src/cli/test.rs:171-174 (and keep the CITATIONS row above in sync)"
+    );
+}
+
+/// Round-100 follow-up: tests/type_audit_regressions.rs cited
+/// `src/types.rs:59` (the file was split into src/types/{mod,canonical,
+/// builtins,effects}.rs) and `src/parser.rs:836` (which drifted onto the
+/// `pub fn` recovery lookahead, unrelated to Fn-type parsing). This grep
+/// lock pins the CITING comment itself: the stale forms must never
+/// reappear, and the re-aimed forms must stay present so the CITATIONS
+/// rows above keep guarding the right targets.
+#[test]
+fn type_audit_regressions_fn_display_citations_are_reaimed() {
+    let citing = include_str!("type_audit_regressions.rs");
+
+    // Stale citations must not resurface. `src/types.rs:` also catches
+    // any other precise line citation into the deleted monolithic file.
+    assert!(
+        !citing.contains("src/types.rs:"),
+        "tests/type_audit_regressions.rs cites a line in src/types.rs, \
+         which no longer exists (split into src/types/*.rs) — re-aim it"
+    );
+    assert!(
+        !citing.contains("src/parser.rs:836"),
+        "tests/type_audit_regressions.rs re-grew the drifted \
+         src/parser.rs:836 citation (that line is `pub fn` recovery, \
+         not Fn-type parsing) — re-aim it"
+    );
+
+    // The corrected citations must match the lock rows above; if either
+    // side is edited, update both together.
+    assert!(
+        citing.contains("src/parser.rs:2088"),
+        "expected re-aimed citation src/parser.rs:2088 in \
+         tests/type_audit_regressions.rs — keep it in sync with the \
+         CITATIONS row in this file"
+    );
+    assert!(
+        citing.contains("src/types/mod.rs:96"),
+        "expected re-aimed citation src/types/mod.rs:96 in \
+         tests/type_audit_regressions.rs — keep it in sync with the \
+         CITATIONS row in this file"
+    );
+}
+
+/// Citing-side lock for the `bytes_module_tests.rs` phrasing comment.
+///
+/// Round-100 fix: the comment cited `src/builtins/bytes.rs:480` while the
+/// file had only 452 lines (the message lives at line 416). The CITATIONS
+/// row above pins the cited line's content; this test pins the citing
+/// comment itself, so the two cannot drift apart independently.
+#[test]
+fn bytes_module_tests_split_citation_is_re_aimed() {
+    let citing = include_str!("bytes_module_tests.rs");
+    assert!(
+        citing.contains("matches src/builtins/bytes.rs:416 today"),
+        "bytes_module_tests.rs no longer cites src/builtins/bytes.rs:416 — \
+         if the error message moved, re-aim both the comment and the \
+         CITATIONS row in this file"
+    );
+    assert!(
+        !citing.contains("src/builtins/bytes.rs:480"),
+        "bytes_module_tests.rs still carries the stale bytes.rs:480 citation \
+         (the file is shorter than 480 lines; the message is at line 416)"
     );
 }

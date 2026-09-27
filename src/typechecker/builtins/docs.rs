@@ -129,7 +129,13 @@ pub(super) fn attach_enum_variant_docs(env: &mut TypeEnv, md: &str, enums: &[(&s
 /// priority because callers should run `attach_module_docs` AFTER
 /// `attach_module_overview` — section-specific bodies overwrite the
 /// blanket overview.
+///
+/// The leading YAML frontmatter (`---\ntitle: …\n---`) every `*_MD`
+/// constant carries is stripped before attaching: it is website
+/// metadata, and editors would render it as a stray horizontal rule
+/// plus raw key/value text at the top of every hover.
 pub(super) fn attach_module_overview(env: &mut TypeEnv, md: &str, prefix: &str) {
+    let md = strip_frontmatter(md);
     let dot = format!("{prefix}.");
     let names: Vec<crate::intern::Symbol> = env
         .bindings
@@ -140,6 +146,33 @@ pub(super) fn attach_module_overview(env: &mut TypeEnv, md: &str, prefix: &str) 
     for sym in names {
         env.attach_doc(sym, md);
     }
+}
+
+/// Strip a leading YAML frontmatter block (`---\n…\n---\n`, plus the
+/// blank lines that follow it) off a markdown blob.
+///
+/// Every `*_MD` constant in this file begins with the verbatim
+/// frontmatter its former `docs/stdlib/*.md` source carried
+/// (`title:` / `section:` / `order:` keys) — metadata for the docs
+/// website, not prose. Per-`##`-section slicing (`iter_sections`)
+/// never sees it because sections start at headings, but the two
+/// whole-document attach paths — `attach_module_overview` here and
+/// the `GLOBALS_MD` globals loop in
+/// `src/typechecker/builtins.rs::register_builtins` — would otherwise
+/// leak it into LSP hover markdown, where editors render it as a
+/// stray horizontal rule followed by raw `title: "…"` text
+/// (regression lock: `tests/builtin_docs_frontmatter_tests.rs`).
+///
+/// Input without a leading `---\n` line (or with an unterminated
+/// block) is returned unchanged.
+pub(super) fn strip_frontmatter(md: &str) -> &str {
+    let Some(rest) = md.strip_prefix("---\n") else {
+        return md;
+    };
+    let Some(close) = rest.find("\n---\n") else {
+        return md;
+    };
+    rest[close + "\n---\n".len()..].trim_start_matches('\n')
 }
 
 /// Iterate `(key, body)` pairs over a markdown string. A "section"
@@ -306,6 +339,22 @@ mod tests {
         let md = "## `x.y`\n\n\nhi\n\n\n## `z.z`\n";
         let sections = iter_sections(md);
         assert_eq!(sections[0].1, "hi");
+    }
+
+    #[test]
+    fn strip_frontmatter_drops_leading_yaml_block() {
+        let md = "---\ntitle: \"bytes\"\norder: 16\n---\n\n# bytes\n\nProse.\n";
+        assert_eq!(strip_frontmatter(md), "# bytes\n\nProse.\n");
+    }
+
+    #[test]
+    fn strip_frontmatter_leaves_plain_markdown_alone() {
+        let md = "# bytes\n\nProse with a --- rule later.\n---\n";
+        assert_eq!(strip_frontmatter(md), md);
+        // Unterminated frontmatter is returned unchanged too.
+        let unterminated = "---\ntitle: \"x\"\nno closing delimiter\n";
+        assert_eq!(strip_frontmatter(unterminated), unterminated);
+        assert_eq!(strip_frontmatter(""), "");
     }
 
     #[test]
