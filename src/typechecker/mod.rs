@@ -5188,7 +5188,7 @@ impl TypeChecker {
             param_map.keys().copied().collect();
         let ret_type = if let Some(te) = &f.return_type {
             let resolved = self.resolve_type_expr(te, &mut param_map);
-            for (name, _) in param_map.iter() {
+            for name in param_map.keys() {
                 if !pre_return_keys.contains(name) {
                     let n = resolve(*name);
                     self.error(

@@ -2433,10 +2433,8 @@ impl Vm {
                     } else {
                         args.clone()
                     };
-                    match self.invoke_callable_resumable(&func, &args, &original_args) {
-                        Ok(result) => self.push(result),
-                        Err(e) => return Err(e),
-                    }
+                    let result = self.invoke_callable_resumable(&func, &args, &original_args)?;
+                    self.push(result);
                 } else {
                     let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
                     // Try built-in trait methods (display, equal, compare)
@@ -2460,14 +2458,12 @@ impl Vm {
                                 Vec::with_capacity(1 + extra_args.len());
                             original_args.push(receiver.clone());
                             original_args.extend(extra_args.iter().cloned());
-                            match self.invoke_callable_resumable(
+                            let result = self.invoke_callable_resumable(
                                 &callable,
                                 &extra_args,
                                 &original_args,
-                            ) {
-                                Ok(result) => self.push(result),
-                                Err(e) => return Err(e),
-                            }
+                            )?;
+                            self.push(result);
                         } else {
                             return Err(VmError::new(format!(
                                 "no method '{method_name}' for type '{type_name}'"

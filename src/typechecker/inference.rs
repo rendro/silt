@@ -671,11 +671,11 @@ impl TypeChecker {
             self.check_where_bound_arity(*trait_name, trait_args.len(), f.span);
         }
 
-        // Look up the function's registered type and instantiate it
-        let fn_scheme = match env.lookup(lookup_name) {
-            Some(s) => s.clone(),
-            None => return None, // already reported
-        };
+        // Look up the function's registered type and instantiate it.
+        // A failed lookup has already been reported by an earlier
+        // pass, so no diagnostic is added here; `?` hands `None`
+        // back to the caller.
+        let fn_scheme = env.lookup(lookup_name)?.clone();
         let (fn_type, constraints) = self.instantiate_with_constraints(&fn_scheme);
         let fn_type = self.apply(&fn_type);
 
