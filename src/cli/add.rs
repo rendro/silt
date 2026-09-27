@@ -3,16 +3,88 @@
 //! append a new dependency entry to the current package's
 //! `silt.toml` and regenerate `silt.lock`.
 
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
 
+use silt::git::{EscapedDisplay, EscapingWriter, escape_for_display};
 use silt::intern;
 use silt::lockfile::{Lockfile, normalize_path};
-use silt::manifest::Manifest;
+use silt::manifest::{Manifest, ManifestError};
 
 use crate::cli::package::find_project_root;
 use crate::cli::paths::relative_from;
+
+/// Why `silt add` failed.
+///
+/// The values in a message come from the command line, from the file
+/// system and from manifests, the package's own and its dependencies'.
+/// None of them is trusted to be printable: `Display` writes the whole
+/// message through an [`EscapingWriter`], so a message added later is
+/// covered without anything being escaped where it is built.
+enum AddError {
+    /// A message of one line.
+    Message(String),
+    /// A usage error: the message, then a line pointing at `--help`.
+    Usage(String),
+    /// A failure reported by the manifest, the lockfile or git: the
+    /// context (empty for none), then that error's own message, which
+    /// can run over several lines.
+    Caused {
+        context: String,
+        cause: Box<dyn EscapedDisplay>,
+    },
+}
+
+impl AddError {
+    fn caused(context: String, cause: impl EscapedDisplay + 'static) -> Self {
+        AddError::Caused {
+            context,
+            cause: Box::new(cause),
+        }
+    }
+}
+
+impl fmt::Display for AddError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Shadows the formatter: nothing below can be written without
+        // going through the display rule.
+        let mut f = EscapingWriter::new(f);
+        match self {
+            AddError::Message(message) => write!(f, "{message}"),
+            AddError::Usage(message) => {
+                write!(f, "{message}")?;
+                f.line_break()?;
+                write!(f, "Run 'silt add --help' for usage.")
+            }
+            AddError::Caused { context, cause } => {
+                if !context.is_empty() {
+                    write!(f, "{context}: ")?;
+                }
+                f.nested(cause.as_ref())
+            }
+        }
+    }
+}
+
+impl From<String> for AddError {
+    fn from(message: String) -> Self {
+        AddError::Message(message)
+    }
+}
+
+impl From<&str> for AddError {
+    fn from(message: &str) -> Self {
+        AddError::Message(message.to_string())
+    }
+}
+
+impl From<ManifestError> for AddError {
+    fn from(err: ManifestError) -> Self {
+        AddError::caused(String::new(), err)
+    }
+}
 
 /// Dispatch `silt add <name> <source-flag> [<ref-flag>]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -81,7 +153,7 @@ enum AddSource {
 ///
 /// Errors are returned rather than printed so the caller can wrap them
 /// in the dispatch's standard "error: ..." prefix and exit code.
-fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // ── Argument parsing ──────────────────────────────────────────────
     //
     // Positional name + one source flag (`--path <p>` OR `--git <url>`
@@ -156,14 +228,10 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             tag_arg = Some(rest.to_string());
             i += 1;
         } else if arg.starts_with('-') {
-            // Round-26 G6: every other subcommand emits a `Run 'silt <sub> --help'
-            // for usage.` nudge on a second stderr line. Match that shape here
-            // by embedding the nudge in the error string (the top-level
-            // dispatch renders `error: {e}` with `\n` passthrough).
-            return Err(format!(
-                "silt add: unknown flag '{arg}'\nRun 'silt add --help' for usage."
-            )
-            .into());
+            // Every other subcommand emits a `Run 'silt <sub> --help'
+            // for usage.` nudge on a second stderr line; `Usage` adds
+            // that line here.
+            return Err(AddError::Usage(format!("silt add: unknown flag '{arg}'")));
         } else if name.is_none() {
             name = Some(arg.clone());
             i += 1;
@@ -369,30 +437,30 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 && !silt::git::is_valid_sha_shape(sha)
             {
                 return Err(format!(
-                    "silt add: --rev `{}` is not a valid commit SHA shape \
-                     (expected 7-64 hexadecimal characters)",
-                    silt::git::escape_for_display(sha)
+                    "silt add: --rev `{sha}` is not a valid commit SHA shape \
+                     (expected 7-64 hexadecimal characters)"
                 )
                 .into());
             }
-            // The ref is echoed in the messages below; escaped so a
-            // control character in it cannot garble the output.
-            let shown_ref = silt::git::escape_for_display(ref_spec.as_ref_string());
 
             // Reachability ping: catches typos and private-repo-no-auth
-            // before we mutate anything. We surface git's stderr in the
-            // error path (via Display on GitError::CommandFailed) so
-            // users see the real diagnostic, e.g. "Repository not
-            // found" or "Permission denied (publickey)".
+            // before we mutate anything. git's own output follows the
+            // message, each line marked as git's, so users see the real
+            // diagnostic, e.g. "Repository not found" or "Permission
+            // denied (publickey)".
             silt::git::verify_reachable(&url)
-                .map_err(|e| format!("silt add: cannot reach `{url}`: {e}"))?;
+                .map_err(|e| AddError::caused(format!("silt add: cannot reach `{url}`"), e))?;
 
             // Ref existence: rejects `--branch nonexistent_xyz` etc.
             // For Rev specs this is a no-op (offline shape check).
             silt::git::resolve_ref(&url, &ref_spec).map_err(|e| {
-                format!(
-                    "silt add: cannot resolve {} `{shown_ref}` in `{url}`: {e}",
-                    ref_spec.kind()
+                AddError::caused(
+                    format!(
+                        "silt add: cannot resolve {} `{}` in `{url}`",
+                        ref_spec.kind(),
+                        ref_spec.as_ref_string()
+                    ),
+                    e,
                 )
             })?;
 
@@ -408,7 +476,7 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             );
             (
                 format!(
-                    "Added dependency '{name}' (git = \"{url}\", {} = \"{shown_ref}\")",
+                    "Added dependency '{name}' (git = \"{url}\", {} = \"{ref_value}\")",
                     ref_spec.kind()
                 ),
                 inline,
@@ -425,9 +493,17 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = root.join("silt.toml");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|e| format!("failed to read {}: {e}", manifest_path.display()))?;
-    let mut doc: toml_edit::DocumentMut = manifest_text
-        .parse()
-        .map_err(|e| format!("failed to parse {}: {e}", manifest_path.display()))?;
+    // Only the parser's message is shown: its own rendering of the
+    // error quotes a line of the file and runs over several lines.
+    let mut doc = manifest_text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| {
+            format!(
+                "failed to parse {}: {}",
+                manifest_path.display(),
+                e.message()
+            )
+        })?;
 
     // Ensure a `[dependencies]` table exists. If it's missing entirely
     // we create one as an explicit table (so it renders as the
@@ -456,16 +532,18 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // tightening should run against the on-disk form, not a stale
     // in-memory copy.
     let updated = Manifest::load(&manifest_path)
-        .map_err(|e| format!("manifest re-validation failed after edit: {e}"))?;
+        .map_err(|e| AddError::caused("manifest re-validation failed after edit".to_string(), e))?;
 
-    println!("{success_summary}");
+    // The summary quotes the path or the URL and the ref as they were
+    // given on the command line.
+    println!("{}", escape_for_display(&success_summary));
 
-    let lockfile =
-        Lockfile::resolve(&updated).map_err(|e| format!("failed to resolve dependencies: {e}"))?;
+    let lockfile = Lockfile::resolve(&updated)
+        .map_err(|e| AddError::caused("failed to resolve dependencies".to_string(), e))?;
     let lock_path = root.join("silt.lock");
     lockfile
         .write(&lock_path)
-        .map_err(|e| format!("failed to write {}: {e}", lock_path.display()))?;
+        .map_err(|e| AddError::caused(format!("failed to write {}", lock_path.display()), e))?;
 
     Ok(())
 }

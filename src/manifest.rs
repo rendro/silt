@@ -10,10 +10,11 @@
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::git::{EscapedDisplay, EscapingWriter, escape_for_display};
 use crate::intern::{self, Symbol};
 use crate::module::{BUILTIN_MODULES, is_builtin_module};
 
@@ -97,7 +98,17 @@ pub enum ManifestError {
 }
 
 impl fmt::Display for ManifestError {
+    // Untrusted text, per variant:
+    //   - `Io`: the path, when the manifest is a dependency's: it is
+    //     made from the `path` value of the manifest that names it.
+    //   - `Parse`: the path as above; the message is the TOML parser's
+    //     and quotes keys and values of the file.
+    //   - `Validation`: the path as above; the message quotes names,
+    //     versions, keys and values of the file.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Shadows the formatter: nothing below can be written without
+        // going through the display rule.
+        let mut f = EscapingWriter::new(f);
         match self {
             ManifestError::Io(err, path) => {
                 write!(f, "failed to read manifest {}: {}", path.display(), err)
@@ -111,6 +122,8 @@ impl fmt::Display for ManifestError {
         }
     }
 }
+
+impl EscapedDisplay for ManifestError {}
 
 impl std::error::Error for ManifestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
@@ -360,9 +373,13 @@ pub fn is_silt_identifier(name: &str) -> bool {
 /// add, and the manifest loader report identical canonical shapes.
 pub fn validate_package_name(name: &str) -> Result<(), String> {
     if !is_silt_identifier(name) {
+        // The message is returned as text, not as an error type that
+        // escapes when shown, so the name is escaped here. In the two
+        // messages below the name is known to be an identifier.
         return Err(format!(
-            "invalid package name `{name}`: \
-             must match silt identifier rules `[a-z_][a-z0-9_]*`"
+            "invalid package name `{}`: \
+             must match silt identifier rules `[a-z_][a-z0-9_]*`",
+            escape_for_display(name)
         ));
     }
     if is_builtin_module(name) {
@@ -692,5 +709,46 @@ mod tests {
         assert!(!is_valid_version("abc"));
         assert!(!is_valid_version("01.0.0")); // leading zero
         assert!(!is_valid_version("1.0.0-")); // empty pre-release
+    }
+
+    const HOSTILE: &str = "x\nerror: FORGED\u{1b}[2K\u{202e}";
+    const HOSTILE_ESCAPED: &str = "x\\nerror: FORGED\\u{1b}[2K\\u{202e}";
+
+    #[test]
+    fn every_error_variant_escapes_its_whole_message() {
+        let path = PathBuf::from(format!("/srv/{HOSTILE}/silt.toml"));
+        let errors = [
+            ManifestError::Io(
+                std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
+                path.clone(),
+            ),
+            ManifestError::Parse {
+                message: format!("unknown field `{HOSTILE}`"),
+                path: path.clone(),
+                span: None,
+            },
+            ManifestError::Validation {
+                message: format!("invalid package name `{HOSTILE}`"),
+                path,
+            },
+        ];
+        for err in errors {
+            let rendered = err.to_string();
+            assert!(
+                !rendered.chars().any(crate::git::needs_escape),
+                "the message must be one printable line: {rendered:?}"
+            );
+            // Once in the path, once in the rest of the message.
+            assert_eq!(rendered.matches(HOSTILE_ESCAPED).count(), 2, "{rendered}");
+        }
+    }
+
+    #[test]
+    fn package_name_rejection_escapes_the_name() {
+        let message = validate_package_name(HOSTILE).unwrap_err();
+        assert!(
+            message.contains(HOSTILE_ESCAPED) && !message.chars().any(crate::git::needs_escape),
+            "{message:?}"
+        );
     }
 }

@@ -19,7 +19,7 @@
 //! hex chars — short enough to keep paths sane, long enough to make
 //! collisions vanishingly unlikely.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -86,13 +86,27 @@ pub enum GitError {
     InvalidInput(String),
 }
 
+/// What every line of git's own output starts with when silt shows it.
+/// A remote can send that text, so no line of it may be taken for one
+/// of silt's.
+const GIT_OUTPUT_PREFIX: &str = "  git: ";
+
 impl fmt::Display for GitError {
-    // The URL, the ref and the command line are untrusted (they come
-    // from a manifest, possibly a transitive dependency's), and git's
-    // stderr can carry text sent by the remote. All of it goes through
-    // `escape_for_display` so none of it can forge a line of output or
-    // drive the terminal.
+    // Untrusted text, per variant:
+    //   - `GitNotInstalled`: none.
+    //   - `CommandFailed`: `command` holds the URL and the ref, which
+    //     come from a manifest; `stderr` is git's output, which can
+    //     carry text sent by the remote.
+    //   - `Io`: none from a manifest. `context` holds a cache path
+    //     built from the environment, `error` is the operating
+    //     system's text.
+    //   - `RefNotFound`: `url` and `ref_spec` come from a manifest.
+    //   - `InvalidInput`: the message quotes a URL from a manifest or a
+    //     commit id from a lockfile.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Shadows the formatter: nothing below can be written without
+        // going through the display rule.
+        let mut f = EscapingWriter::new(f);
         match self {
             GitError::GitNotInstalled => write!(
                 f,
@@ -106,27 +120,30 @@ impl fmt::Display for GitError {
                 let code = exit_code
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "?".into());
-                write!(
-                    f,
-                    "git command failed (exit {code}): `{}`\nstderr: {}",
-                    escape_for_display(command),
-                    escape_lines(stderr.trim_end())
-                )
+                write!(f, "git command failed (exit {code}): `{command}`")?;
+                // Each line git wrote gets a line of its own, marked
+                // as git's.
+                for line in stderr.trim_end().lines() {
+                    f.line_break()?;
+                    write!(f, "{GIT_OUTPUT_PREFIX}{line}")?;
+                }
+                Ok(())
             }
             GitError::Io { context, error } => {
                 write!(f, "git I/O error ({context}): {error}")
             }
             GitError::RefNotFound { url, ref_spec } => write!(
                 f,
-                "git ref not found: {} `{}` in {}",
+                "git ref not found: {} `{}` in {url}",
                 ref_spec.kind(),
-                escape_for_display(ref_spec.as_ref_string()),
-                escape_for_display(url)
+                ref_spec.as_ref_string()
             ),
             GitError::InvalidInput(message) => write!(f, "{message}"),
         }
     }
 }
+
+impl EscapedDisplay for GitError {}
 
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
@@ -167,26 +184,37 @@ pub struct InvalidGitUrl {
 }
 
 impl fmt::Display for InvalidGitUrl {
+    // Both fields quote the URL, which comes from a manifest or from
+    // the command line.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut f = EscapingWriter::new(f);
         write!(f, "invalid git URL `{}`: {}", self.url, self.reason)
     }
 }
+
+impl EscapedDisplay for InvalidGitUrl {}
 
 impl std::error::Error for InvalidGitUrl {}
 
 /// Validate a git dependency URL.
 ///
+/// A URL is in a local form if it starts with `file://`, `/`, `./` or
+/// `../`. Every other value is checked as a network form.
+///
 /// Rejects, in this order:
 ///   - the empty string;
 ///   - anything starting with `-` (git would parse it as an option);
-///   - any control character and any whitespace character, anywhere,
-///     with one exception: an ordinary space (U+0020) is allowed in a
-///     `file://` URL and in a local path, because directory names
-///     contain spaces. A space in any other form is rejected;
-///   - any invisible or bidirectional formatting character, anywhere
-///     (U+00AD, U+200B to U+200F, U+202A to U+202E, U+2060 to U+2064,
-///     U+2066 to U+2069, U+FEFF): such a character makes the value
-///     read as something it is not;
+///   - any control character and any whitespace character, in every
+///     form, with one exception: an ordinary space (U+0020) is allowed
+///     in the local forms, because directory names contain spaces;
+///   - any invisible or direction-control character, in every form
+///     (the list is at `is_invisible_format_char`): such a character
+///     makes the value read as something it is not;
+///   - in the network forms, any other character the display rule
+///     ([`needs_escape`]) would escape. What is left for a network
+///     form is printable ASCII without the space, and letters and
+///     digits of any script. The local forms keep accepting non-ASCII
+///     punctuation and symbols, because directory names contain them;
 ///   - anything that is not one of the accepted forms below.
 ///
 /// Accepts:
@@ -214,18 +242,29 @@ impl std::error::Error for InvalidGitUrl {}
 pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     let local = url.starts_with("file://") || is_local_path(url);
     let problem = if url.is_empty() {
-        "must not be empty"
+        "must not be empty".to_string()
     } else if url.starts_with('-') {
-        "must not start with `-`"
+        "must not start with `-`".to_string()
     } else if url.chars().any(|c| is_forbidden_whitespace(c, local)) {
         "must not contain whitespace or control characters \
          (a space is allowed only in a `file://` URL or a local path)"
+            .to_string()
     } else if url.chars().any(is_invisible_format_char) {
-        "must not contain invisible or bidirectional formatting characters"
+        "must not contain invisible or bidirectional formatting characters".to_string()
+    } else if !local && url.chars().any(needs_escape) {
+        "must not contain non-ASCII characters other than letters and digits \
+         (they are allowed only in a `file://` URL or a local path)"
+            .to_string()
     } else if has_accepted_url_form(url) {
         return Ok(());
     } else {
-        "is not a recognised git URL form"
+        match unaccepted_scheme(url) {
+            Some(scheme) => format!(
+                "is not a recognised git URL form: the scheme `{scheme}://` is not accepted, \
+                 use `ssh://` or `https://` instead"
+            ),
+            None => "is not a recognised git URL form".to_string(),
+        }
     };
     Err(InvalidGitUrl {
         url: escape_for_display(url),
@@ -238,6 +277,20 @@ fn is_local_path(url: &str) -> bool {
     url.starts_with('/') || url.starts_with("./") || url.starts_with("../")
 }
 
+/// The scheme of a URL written as `<scheme>://...` whose scheme is not
+/// one of `GIT_URL_SCHEMES`, such as `git+ssh` or `ftp`.
+fn unaccepted_scheme(url: &str) -> Option<&str> {
+    let (scheme, _) = url.split_once("://")?;
+    let scheme_shaped = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    let accepted = GIT_URL_SCHEMES
+        .iter()
+        .any(|known| known.strip_suffix("://") == Some(scheme));
+    (scheme_shaped && !accepted).then_some(scheme)
+}
+
 /// Is `c` a control or whitespace character that a git URL must not
 /// contain? `space_allowed` is true for the two local forms, where an
 /// ordinary space (and only that) is tolerated.
@@ -248,20 +301,55 @@ fn is_forbidden_whitespace(c: char, space_allowed: bool) -> bool {
     c.is_control() || c.is_whitespace()
 }
 
-/// Invisible and bidirectional formatting characters. The standard
-/// library has no test for this category, so the list is explicit:
-/// soft hyphen, zero-width space and joiners, the directional marks,
-/// embeddings, overrides and isolates, the word joiner and invisible
-/// operators, and the byte-order mark.
+/// Invisible and direction-control characters: characters that show
+/// nothing, or that change how the text around them is shown. The
+/// standard library has no test for this, so the list is explicit. It
+/// is Unicode's `Default_Ignorable_Code_Point` set, plus the
+/// interlinear annotation characters and the blank Braille pattern:
+///
+///   - U+00AD, the soft hyphen;
+///   - U+034F, the combining grapheme joiner;
+///   - U+061C, the Arabic letter mark;
+///   - U+115F, U+1160, U+3164 and U+FFA0, the Hangul fillers (blank,
+///     and letters as far as [`char::is_alphanumeric`] is concerned);
+///   - U+17B4 and U+17B5, the Khmer inherent vowels;
+///   - U+180B to U+180F, the Mongolian variation selectors and vowel
+///     separator;
+///   - U+200B to U+200F, the zero-width space, the joiners and the
+///     directional marks;
+///   - U+202A to U+202E, the directional embeddings and overrides;
+///   - U+2060 to U+206F, the word joiner, the invisible operators, the
+///     directional isolates and the deprecated format characters;
+///   - U+2800, the blank Braille pattern;
+///   - U+FE00 to U+FE0F, the variation selectors;
+///   - U+FEFF, the byte-order mark;
+///   - U+FFF0 to U+FFFB, reserved and the interlinear annotation
+///     characters;
+///   - U+1BCA0 to U+1BCA3, the shorthand format controls;
+///   - U+1D173 to U+1D17A, the musical format controls;
+///   - U+E0000 to U+E0FFF, the tag characters and the variation
+///     selectors supplement.
 fn is_invisible_format_char(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{2800}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
 }
 
@@ -302,20 +390,53 @@ fn has_accepted_url_form(url: &str) -> bool {
         && !path.starts_with("//")
 }
 
-/// Render an untrusted string for an error message. Control characters,
-/// the invisible and bidirectional formatting characters, the no-break
-/// space (U+00A0) and the line and paragraph separators (U+2028,
-/// U+2029) are written as escapes (`\n`, `\t`, `\u{1b}`, `\u{202e}`),
-/// so a hostile value cannot forge extra lines, drive the terminal, or
-/// disguise what it is. Everything else, non-ASCII letters included, is
-/// left as it is.
+/// [`validate_git_url`] as a [`GitError`], for the functions below that
+/// hand the URL to `git`.
+fn check_url(url: &str) -> Result<(), GitError> {
+    validate_git_url(url).map_err(|e| GitError::InvalidInput(e.to_string()))
+}
+
+// ── Printing untrusted text ────────────────────────────────────────────
+//
+// A `silt.toml` can be a dependency's, or a dependency's dependency's,
+// and a `silt.lock` can be edited by hand, so every value read from
+// either is untrusted. So is what `git` prints: a remote can send text.
+// Printed as it is, a line break in such a value starts a line that
+// reads like one of silt's own, and an escape character drives the
+// terminal.
+//
+// One rule, `needs_escape`, says which characters are shown as escapes.
+// The error types of this module, of `manifest` and of `lockfile` apply
+// it to their whole message, not value by value: their `Display` impls
+// write through an `EscapingWriter`, so a variant added later is
+// covered as well.
+
+/// The display rule: is `c` shown as an escape (`\n`, `\u{1b}`,
+/// `\u{202e}`) when silt prints untrusted text?
+///
+/// Escaped are:
+///   - every control character;
+///   - every character that is not ASCII and is not a letter or a digit
+///     ([`char::is_alphanumeric`]): the unusual spaces, the line and
+///     paragraph separators, non-ASCII punctuation and symbols,
+///     combining marks, unassigned and private-use characters;
+///   - every invisible or direction-control character, including the
+///     few that count as letters (the Hangul fillers).
+///
+/// Printable ASCII, and letters and digits of any script, are shown as
+/// they are. No character of an escape is itself escaped, so escaping
+/// a text twice gives the same result as escaping it once.
+pub fn needs_escape(c: char) -> bool {
+    c.is_control() || (!c.is_ascii() && !c.is_alphanumeric()) || is_invisible_format_char(c)
+}
+
+/// Render an untrusted string for a message, by the display rule
+/// ([`needs_escape`]): a hostile value cannot forge extra lines, drive
+/// the terminal, or disguise what it is.
 pub fn escape_for_display(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        let escape = c.is_control()
-            || is_invisible_format_char(c)
-            || matches!(c, '\u{00A0}' | '\u{2028}' | '\u{2029}');
-        if escape {
+        if needs_escape(c) {
             out.extend(c.escape_default());
         } else {
             out.push(c);
@@ -324,18 +445,53 @@ pub fn escape_for_display(s: &str) -> String {
     out
 }
 
-/// [`escape_for_display`] for text that is legitimately several lines
-/// long (git's stderr): each line is escaped, the line breaks are kept.
-fn escape_lines(s: &str) -> String {
-    let lines: Vec<String> = s.lines().map(escape_for_display).collect();
-    lines.join("\n")
+/// What the `Display` impl of an error type writes to, in place of the
+/// formatter. Everything written through it, the fixed words of the
+/// message as much as the values, is escaped by the display rule
+/// ([`needs_escape`]). The message itself decides where a line ends,
+/// with [`EscapingWriter::line_break`]; a line break inside a value is
+/// shown as `\n`.
+pub struct EscapingWriter<'a, 'b> {
+    out: &'a mut fmt::Formatter<'b>,
 }
 
-/// [`validate_git_url`] as a [`GitError`], for the functions below that
-/// hand the URL to `git`.
-fn check_url(url: &str) -> Result<(), GitError> {
-    validate_git_url(url).map_err(|e| GitError::InvalidInput(e.to_string()))
+impl<'a, 'b> EscapingWriter<'a, 'b> {
+    /// Wrap the formatter a `Display` impl was given.
+    pub fn new(out: &'a mut fmt::Formatter<'b>) -> Self {
+        EscapingWriter { out }
+    }
+
+    /// End the current line of the message and start the next one.
+    pub fn line_break(&mut self) -> fmt::Result {
+        self.out.write_char('\n')
+    }
+
+    /// Write an error that escapes its own message, keeping the line
+    /// breaks that message makes.
+    pub fn nested(&mut self, inner: &dyn EscapedDisplay) -> fmt::Result {
+        fmt::Display::fmt(inner, &mut *self.out)
+    }
 }
+
+impl fmt::Write for EscapingWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            if needs_escape(c) {
+                for escaped in c.escape_default() {
+                    self.out.write_char(escaped)?;
+                }
+            } else {
+                self.out.write_char(c)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Marks an error type whose `Display` impl writes its whole message
+/// through an [`EscapingWriter`]. Only such a type can be handed to
+/// [`EscapingWriter::nested`].
+pub trait EscapedDisplay: fmt::Display {}
 
 // ── Cache path resolution ──────────────────────────────────────────────
 
@@ -644,10 +800,14 @@ fn with_tmp_suffix(dest: &Path) -> PathBuf {
 ///     work).
 ///
 /// Callers that pass a URL or a path put `--` in front of it.
+///
+/// On failure the error shows the command as it was run, hardening
+/// arguments included.
 fn run_git(args: &[&str]) -> Result<String, GitError> {
+    let mut full_args = vec!["-c", "protocol.ext.allow=never"];
+    full_args.extend_from_slice(args);
     let output = Command::new("git")
-        .args(["-c", "protocol.ext.allow=never"])
-        .args(args)
+        .args(&full_args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .map_err(|e| {
@@ -662,7 +822,7 @@ fn run_git(args: &[&str]) -> Result<String, GitError> {
         })?;
     if !output.status.success() {
         return Err(GitError::CommandFailed {
-            command: format_command("git", args),
+            command: format_command("git", &full_args),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             exit_code: output.status.code(),
         });
@@ -730,17 +890,31 @@ mod tests {
     const RULE_SPACE: &str = "must not contain whitespace or control characters";
     const RULE_INVISIBLE: &str =
         "must not contain invisible or bidirectional formatting characters";
+    const RULE_NON_ASCII: &str =
+        "must not contain non-ASCII characters other than letters and digits";
     const RULE_FORM: &str = "is not a recognised git URL form";
 
     /// Every character `is_invisible_format_char` lists.
     fn invisible_format_chars() -> Vec<char> {
         let ranges = [
             ('\u{00AD}', '\u{00AD}'),
+            ('\u{034F}', '\u{034F}'),
+            ('\u{061C}', '\u{061C}'),
+            ('\u{115F}', '\u{1160}'),
+            ('\u{17B4}', '\u{17B5}'),
+            ('\u{180B}', '\u{180F}'),
             ('\u{200B}', '\u{200F}'),
             ('\u{202A}', '\u{202E}'),
-            ('\u{2060}', '\u{2064}'),
-            ('\u{2066}', '\u{2069}'),
+            ('\u{2060}', '\u{206F}'),
+            ('\u{2800}', '\u{2800}'),
+            ('\u{3164}', '\u{3164}'),
+            ('\u{FE00}', '\u{FE0F}'),
             ('\u{FEFF}', '\u{FEFF}'),
+            ('\u{FFA0}', '\u{FFA0}'),
+            ('\u{FFF0}', '\u{FFFB}'),
+            ('\u{1BCA0}', '\u{1BCA3}'),
+            ('\u{1D173}', '\u{1D17A}'),
+            ('\u{E0000}', '\u{E0FFF}'),
         ];
         let mut chars = Vec::new();
         for (first, last) in ranges {
@@ -748,6 +922,34 @@ mod tests {
         }
         chars
     }
+
+    /// Characters that passed the explicit list this module used to
+    /// have, although they are invisible or control direction.
+    const ONCE_MISSED_INVISIBLE: [char; 11] = [
+        '\u{061C}',
+        '\u{180E}',
+        '\u{FFF9}',
+        '\u{FFFB}',
+        '\u{E0001}',
+        '\u{E0061}',
+        '\u{1D173}',
+        '\u{034F}',
+        '\u{3164}',
+        '\u{FE0F}',
+        '\u{2065}',
+    ];
+
+    /// Spaces other than U+0020, the line and paragraph separators
+    /// included.
+    const UNUSUAL_SPACES: [char; 7] = [
+        '\u{a0}', '\u{1680}', '\u{2003}', '\u{2028}', '\u{2029}', '\u{202f}', '\u{3000}',
+    ];
+
+    /// Non-ASCII punctuation and symbols that are neither spaces nor
+    /// invisible: an en dash, a copyright sign, an ellipsis, a euro
+    /// sign and a full-width parenthesis.
+    const NON_ASCII_PUNCTUATION: [char; 5] =
+        ['\u{2013}', '\u{a9}', '\u{2026}', '\u{20ac}', '\u{ff08}'];
 
     #[test]
     fn git_url_accepts_network_forms() {
@@ -848,8 +1050,7 @@ mod tests {
     fn git_url_rejects_other_whitespace_and_control_characters_everywhere() {
         // Only U+0020 is tolerated, and only in the local forms.
         let hostile = ['\t', '\n', '\r', '\0', '\u{1b}', '\u{7f}', '\u{85}'];
-        let other_space = ['\u{a0}', '\u{2003}', '\u{2028}', '\u{2029}', '\u{3000}'];
-        for c in hostile.into_iter().chain(other_space) {
+        for c in hostile.into_iter().chain(UNUSUAL_SPACES) {
             for url in [
                 format!("https://example.com/a{c}b.git"),
                 format!("git@example.com:a{c}b.git"),
@@ -869,7 +1070,13 @@ mod tests {
     #[test]
     fn git_url_rejects_invisible_and_bidirectional_characters_everywhere() {
         let chars = invisible_format_chars();
-        assert_eq!(chars.len(), 1 + 5 + 5 + 5 + 4 + 1);
+        assert_eq!(
+            chars.len(),
+            1 + 1 + 1 + 2 + 2 + 5 + 5 + 5 + 16 + 1 + 1 + 16 + 1 + 1 + 12 + 4 + 8 + 4096
+        );
+        for c in ONCE_MISSED_INVISIBLE {
+            assert!(chars.contains(&c), "U+{:04X} is not listed", c as u32);
+        }
         for c in chars {
             for url in [
                 format!("https://example.com/a{c}b.git"),
@@ -886,6 +1093,84 @@ mod tests {
                     "validate_git_url gave the wrong reason for rejecting {url:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn git_url_accepts_non_ascii_punctuation_in_local_forms_only() {
+        for c in NON_ASCII_PUNCTUATION {
+            for url in [
+                format!("file:///srv/a{c}b/pkg.git"),
+                format!("/srv/a{c}b/pkg.git"),
+                format!("./a{c}b/pkg.git"),
+                format!("../a{c}b/pkg.git"),
+            ] {
+                assert_eq!(validate_git_url(&url), Ok(()), "{url:?} must be accepted");
+            }
+            for url in [
+                format!("https://example.com/a{c}b.git"),
+                format!("https://exam{c}ple.com/pkg.git"),
+                format!("http://127.0.0.1:1/a{c}b.git"),
+                format!("ssh://git@example.com/a{c}b.git"),
+                format!("git://example.com/a{c}b.git"),
+                format!("git@example.com:a{c}b.git"),
+                format!("example.com:a{c}b.git"),
+                // Neither local form, so checked as a network form.
+                format!("a{c}b/pkg.git"),
+            ] {
+                assert!(
+                    rejection_reason(&url).starts_with(RULE_NON_ASCII),
+                    "validate_git_url gave the wrong reason for rejecting {url:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn git_url_accepts_letters_and_digits_of_any_script_in_every_form() {
+        // Latin with a diacritic, Cyrillic, Han, and an Arabic-Indic
+        // digit.
+        for name in [
+            "caf\u{e9}",
+            "\u{43f}\u{440}",
+            "\u{65e5}\u{672c}",
+            "v\u{661}",
+        ] {
+            for url in [
+                format!("https://example.com/{name}.git"),
+                format!("https://{name}.example/pkg.git"),
+                format!("ssh://git@example.com/{name}.git"),
+                format!("git@example.com:{name}.git"),
+                format!("example.com:{name}.git"),
+                format!("file:///srv/{name}/pkg.git"),
+                format!("/srv/{name}/pkg.git"),
+                format!("../{name}/pkg.git"),
+            ] {
+                assert_eq!(validate_git_url(&url), Ok(()), "{url:?} must be accepted");
+            }
+        }
+    }
+
+    #[test]
+    fn git_url_rejection_names_the_replacement_for_an_unaccepted_scheme() {
+        for (url, scheme) in [
+            ("git+ssh://example.com/pkg.git", "`git+ssh://`"),
+            ("ftp://example.com/pkg.git", "`ftp://`"),
+            ("HTTPS://example.com/pkg.git", "`HTTPS://`"),
+        ] {
+            let reason = rejection_reason(url);
+            assert!(reason.starts_with(RULE_FORM), "{url:?}: {reason}");
+            assert!(
+                reason.contains(&format!("the scheme {scheme} is not accepted"))
+                    && reason.contains("use `ssh://` or `https://` instead"),
+                "the rejection of {url:?} must name the replacement: {reason}"
+            );
+        }
+        // An accepted scheme, or no scheme at all: nothing to replace.
+        for url in ["https://", "ssh://-oProxyCommand=x/pkg.git", "pkg.git"] {
+            let reason = rejection_reason(url);
+            assert!(reason.starts_with(RULE_FORM), "{url:?}: {reason}");
+            assert!(!reason.contains("the scheme"), "{url:?}: {reason}");
         }
     }
 
@@ -985,13 +1270,88 @@ mod tests {
         assert_eq!(escape_for_display("a\u{a0}b"), "a\\u{a0}b");
         assert_eq!(escape_for_display("a\u{2028}b"), "a\\u{2028}b");
         assert_eq!(escape_for_display("a\u{2029}b"), "a\\u{2029}b");
-        for c in invisible_format_chars() {
+        let shown_as_escapes = invisible_format_chars()
+            .into_iter()
+            .chain(ONCE_MISSED_INVISIBLE)
+            .chain(UNUSUAL_SPACES)
+            .chain(NON_ASCII_PUNCTUATION)
+            // A combining mark, a private-use character and the
+            // replacement character.
+            .chain(['\u{301}', '\u{e000}', '\u{fffd}']);
+        for c in shown_as_escapes {
+            assert!(needs_escape(c), "U+{:04X} must be escaped", c as u32);
             let escaped = escape_for_display(&format!("a{c}b"));
             assert_eq!(escaped, format!("a\\u{{{:x}}}b", c as u32));
         }
-        // Ordinary text, including non-ASCII letters, is left alone.
-        let plain = "/srv/my repos/caf\u{e9}/\u{65e5}\u{672c}.git";
+        // Printable ASCII, and letters and digits of any script, are
+        // left alone.
+        for c in ' '..='~' {
+            assert!(!needs_escape(c), "{c:?} must not be escaped");
+        }
+        let plain = "/srv/my repos/caf\u{e9}/\u{65e5}\u{672c}/\u{43f}\u{440}/v\u{661}.git";
         assert_eq!(escape_for_display(plain), plain);
+        let windows = "C:\\Users\\me\\my repos\\pkg.git";
+        assert_eq!(escape_for_display(windows), windows);
+    }
+
+    #[test]
+    fn escaping_twice_is_escaping_once() {
+        let hostile = "a\nb\u{1b}[2K\u{202e}\u{3164}\u{2003}\u{2013}c\\n'\"";
+        let once = escape_for_display(hostile);
+        assert_eq!(
+            once,
+            "a\\nb\\u{1b}[2K\\u{202e}\\u{3164}\\u{2003}\\u{2013}c\\n'\""
+        );
+        assert_eq!(escape_for_display(&once), once);
+    }
+
+    /// An error that writes `text`, a line break of its own, and `text`
+    /// again, all through an [`EscapingWriter`].
+    struct TwoLines(&'static str);
+
+    impl fmt::Display for TwoLines {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut f = EscapingWriter::new(f);
+            write!(f, "first: {}", self.0)?;
+            f.line_break()?;
+            write!(f, "second: {}", self.0)
+        }
+    }
+
+    impl EscapedDisplay for TwoLines {}
+
+    /// An error that wraps a [`TwoLines`].
+    struct Wrapper(TwoLines);
+
+    impl fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut f = EscapingWriter::new(f);
+            write!(f, "wrapper\u{1b}: ")?;
+            f.nested(&self.0)
+        }
+    }
+
+    #[test]
+    fn escaping_writer_escapes_everything_but_its_own_line_breaks() {
+        let rendered = Wrapper(TwoLines("x\ny\u{202e}")).to_string();
+        assert_eq!(
+            rendered,
+            "wrapper\\u{1b}: first: x\\ny\\u{202e}\nsecond: x\\ny\\u{202e}"
+        );
+        // The same error shown with `{}` inside another message, which
+        // is written through the writer, has its line break escaped
+        // too: only `nested` keeps it.
+        struct Inline(TwoLines);
+        impl fmt::Display for Inline {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut f = EscapingWriter::new(f);
+                write!(f, "inline: {}", self.0)
+            }
+        }
+        assert_eq!(
+            Inline(TwoLines("x")).to_string(),
+            "inline: first: x\\nsecond: x"
+        );
     }
 
     /// True if `s` holds a character a terminal would act on or hide.
@@ -1000,9 +1360,7 @@ mod tests {
             if c == '\n' {
                 return !allow_newline;
             }
-            c.is_control()
-                || is_invisible_format_char(c)
-                || matches!(c, '\u{a0}' | '\u{2028}' | '\u{2029}')
+            needs_escape(c)
         })
     }
 
@@ -1030,19 +1388,53 @@ mod tests {
             exit_code: Some(128),
         }
         .to_string();
-        // The only line breaks left are the one silt writes before
-        // `stderr:` and the ones git itself wrote.
+        // The only line breaks left are the ones git itself wrote, and
+        // each line of git's is marked.
         assert!(!has_unprintable(&rendered, true), "{rendered:?}");
         let lines: Vec<&str> = rendered.lines().collect();
         assert_eq!(
             lines,
             [
                 format!("git command failed (exit 128): `git ls-remote -- u {escaped}`"),
-                "stderr: fatal: first line".to_string(),
-                "remote: main".to_string(),
-                "FORGED\\u{1b}[2K\\u{202e}".to_string(),
+                "  git: fatal: first line".to_string(),
+                "  git: remote: main".to_string(),
+                "  git: FORGED\\u{1b}[2K\\u{202e}".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn every_line_of_git_output_is_marked() {
+        // Blank lines, a carriage return inside a line, Windows line
+        // ends, and lines shaped like silt's own output.
+        let stderr = "remote: one\r\n\nerror: all checks passed\n  = note: fine\rwarning: x\n\n";
+        let rendered = GitError::CommandFailed {
+            command: "git clone".into(),
+            stderr: stderr.into(),
+            exit_code: None,
+        }
+        .to_string();
+        assert!(!has_unprintable(&rendered, true), "{rendered:?}");
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "git command failed (exit ?): `git clone`",
+                "  git: remote: one",
+                "  git: ",
+                "  git: error: all checks passed",
+                "  git:   = note: fine\\rwarning: x",
+            ]
+        );
+
+        // Nothing but the first line when git printed nothing.
+        let rendered = GitError::CommandFailed {
+            command: "git clone".into(),
+            stderr: " \n".into(),
+            exit_code: Some(1),
+        }
+        .to_string();
+        assert_eq!(rendered, "git command failed (exit 1): `git clone`");
     }
 
     #[test]
