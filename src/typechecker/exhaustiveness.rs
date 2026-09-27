@@ -33,6 +33,90 @@ fn synth(kind: PatternKind) -> Pattern {
     Pattern::new(kind, Span::synthetic())
 }
 
+/// The answer of the irrefutability judgement,
+/// `TypeChecker::irrefutability`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Irrefutability {
+    /// The pattern matches every value of its type.
+    Irrefutable,
+    /// Some value of the type does not match the pattern.
+    Refutable,
+    /// The usefulness search gave up at its depth bound, so the pattern
+    /// was not shown to match every value.
+    Unverified,
+}
+
+/// `pattern` with each of its direct sub-patterns replaced by a wildcard:
+/// the pattern's own shape, without what its parts demand. A shape that
+/// does not cover every value (`Some(_)`, `[_, _]`, a literal) can fail
+/// to match whatever its parts are.
+fn pattern_shell(pattern: &Pattern) -> Pattern {
+    let wild = || synth(PatternKind::Wildcard);
+    let kind = match &pattern.kind {
+        PatternKind::Tuple(ps) => PatternKind::Tuple(ps.iter().map(|_| wild()).collect()),
+        PatternKind::Constructor { module, name, args } => PatternKind::Constructor {
+            module: *module,
+            name: *name,
+            args: args.iter().map(|_| wild()).collect(),
+        },
+        PatternKind::Record {
+            module,
+            name,
+            fields,
+            has_rest,
+        } => PatternKind::Record {
+            module: *module,
+            name: *name,
+            fields: fields.iter().map(|(f, _)| (*f, Some(wild()))).collect(),
+            has_rest: *has_rest,
+        },
+        PatternKind::AnonRecord { fields, rest } => PatternKind::AnonRecord {
+            fields: fields.iter().map(|(f, _)| (*f, Some(wild()))).collect(),
+            rest: *rest,
+        },
+        PatternKind::List(elems, rest) => PatternKind::List(
+            elems.iter().map(|_| wild()).collect(),
+            rest.as_ref().map(|_| Box::new(wild())),
+        ),
+        PatternKind::Or(alts) => PatternKind::Or(alts.iter().map(|_| wild()).collect()),
+        PatternKind::Map(entries) => {
+            PatternKind::Map(entries.iter().map(|(k, _)| (k.clone(), wild())).collect())
+        }
+        PatternKind::Wildcard
+        | PatternKind::Ident(_)
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => pattern.kind.clone(),
+    };
+    Pattern::new(kind, pattern.span)
+}
+
+/// The direct sub-patterns of `pattern`, in source order.
+fn sub_patterns(pattern: &Pattern) -> Vec<&Pattern> {
+    match &pattern.kind {
+        PatternKind::Tuple(ps) | PatternKind::Or(ps) => ps.iter().collect(),
+        PatternKind::Constructor { args, .. } => args.iter().collect(),
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            fields.iter().filter_map(|(_, p)| p.as_ref()).collect()
+        }
+        PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).collect(),
+        PatternKind::Map(entries) => entries.iter().map(|(_, p)| p).collect(),
+        PatternKind::Wildcard
+        | PatternKind::Ident(_)
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => Vec::new(),
+    }
+}
+
 impl TypeChecker {
     // ── Exhaustiveness checking (Maranget-style usefulness) ──────────
     //
@@ -152,6 +236,15 @@ impl TypeChecker {
             return true;
         }
 
+        // A row that matches every value of the column leaves no value
+        // for any query to add. Answering here, before constructors are
+        // enumerated, keeps a wide product pattern (a tuple or record of
+        // plain bindings) and a recursive variant type from being expanded
+        // constructor by constructor.
+        if matrix.iter().any(|p| self.is_fully_covering_pattern(p)) {
+            return false;
+        }
+
         // Expand or-patterns in the query, at every nesting level. A
         // query is useful iff any of its or-free expansions is useful, so
         // `(A | B, true)` is split into `(A, true)` / `(B, true)` before
@@ -184,21 +277,87 @@ impl TypeChecker {
         let matrix = &expanded_refs[..];
 
         if matches!(query.kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
-            // Maranget shortcut: a bare wildcard/ident row in the matrix
-            // already covers every value at this column, so no wildcard
-            // query can be useful. Without this, recursive variant types
-            // re-enumerate constructors at every level and blow up
-            // exponentially (e.g. `Add(Expr, Expr)` hits 5^d expansions).
-            if matrix
-                .iter()
-                .any(|p| matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_)))
-            {
-                return false;
-            }
             return self.is_wildcard_useful(matrix, ty, depth);
         }
 
         self.is_constructor_useful(matrix, query, ty, depth)
+    }
+
+    /// The irrefutability judgement: a pattern is irrefutable for a type
+    /// exactly when a `match` with that pattern as its only arm is
+    /// exhaustive for the type, that is, when a wildcard is not useful
+    /// after the pattern.
+    ///
+    /// Every binding site without a failure branch (`let`, function
+    /// parameters, closure parameters) asks this one question through
+    /// `require_irrefutable`. `ty` is the type the pattern is bound
+    /// against, after the pattern has been type checked against it.
+    pub(super) fn irrefutability(&self, pattern: &Pattern, ty: &Type) -> Irrefutability {
+        // The first answer `is_useful` gives, taken before the type is
+        // prepared: almost every binding is a plain name, and a pattern
+        // that covers by its shape needs no type.
+        if self.is_fully_covering_pattern(pattern) {
+            return Irrefutability::Irrefutable;
+        }
+
+        // Same preparation as `check_exhaustiveness`: resolve type
+        // variables, then expand aliases to their head.
+        let ty = self.apply(ty);
+        let ty = crate::types::canonical::canonicalize(&self.resolver, &ty);
+
+        self.exhaustiveness_depth_exceeded.set(false);
+        let wildcard = synth(PatternKind::Wildcard);
+        let refutable = self.is_useful(&[pattern], &wildcard, &ty, 0);
+        let depth_exceeded = self.exhaustiveness_depth_exceeded.get();
+        self.exhaustiveness_depth_exceeded.set(false);
+
+        if refutable {
+            Irrefutability::Refutable
+        } else if depth_exceeded {
+            Irrefutability::Unverified
+        } else {
+            Irrefutability::Irrefutable
+        }
+    }
+
+    /// The part of a refutable `pattern` to name in a diagnostic: the
+    /// first sub-pattern, outermost first and left to right, whose own
+    /// shape can fail to match whatever its parts are. `None` when the
+    /// pattern covers every value.
+    ///
+    /// This only words the diagnostic. Whether a pattern is accepted is
+    /// decided by `irrefutability`.
+    pub(super) fn refutable_part<'p>(&self, pattern: &'p Pattern) -> Option<&'p Pattern> {
+        if self.is_fully_covering_pattern(pattern) {
+            return None;
+        }
+        if !self.is_fully_covering_pattern(&pattern_shell(pattern)) {
+            return Some(pattern);
+        }
+        sub_patterns(pattern)
+            .into_iter()
+            .find_map(|p| self.refutable_part(p))
+    }
+
+    /// The enum that owns the constructor a pattern names, with its name.
+    /// A constructor resolves by its bare name; the module-qualified
+    /// mirror is consulted when the bare name is not registered.
+    pub(super) fn pattern_constructor_enum(
+        &self,
+        module: Option<Symbol>,
+        name: Symbol,
+    ) -> Option<(Symbol, &EnumInfo)> {
+        let enum_name = self.variant_to_enum.get(&name).copied().or_else(|| {
+            let qualifier = module?;
+            let key = intern(&format!("{}.{}", resolve(qualifier), resolve(name)));
+            self.qualified_variant_to_enum.get(&key).copied()
+        })?;
+        let info = self.enums.get(&enum_name).or_else(|| {
+            let qualifier = module?;
+            let key = intern(&format!("{}.{}", resolve(qualifier), resolve(enum_name)));
+            self.qualified_enums.get(&key)
+        })?;
+        Some((enum_name, info))
     }
 
     /// Expand *every* or-pattern in `pat`, at any nesting level, into the
@@ -410,7 +569,20 @@ impl TypeChecker {
                         };
                     self.is_record_useful(matrix, *name, &fields, depth)
                 } else {
-                    false
+                    // Neither an enum nor a record. A column type that
+                    // still names an alias is judged by the alias's
+                    // target.
+                    let canonical = crate::types::canonical::canonicalize(&self.resolver, ty);
+                    if canonical != *ty {
+                        return self.is_wildcard_useful(matrix, &canonical, depth);
+                    }
+                    // An opaque type, whose values no constructor
+                    // enumerates. As for the other such types below, only
+                    // a row that takes any value covers it; a pin
+                    // pattern, which tests for one value, does not.
+                    !matrix
+                        .iter()
+                        .any(|p| matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_)))
                 }
             }
             Type::Tuple(elem_tys) => {
@@ -483,7 +655,7 @@ impl TypeChecker {
             // other anon-record pattern leaves a non-trivial witness.
             Type::AnonRecord { .. } => !matrix.iter().any(|p| {
                 matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))
-                    || Self::is_fully_covering_pattern(p)
+                    || self.is_fully_covering_pattern(p)
             }),
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => !matrix
@@ -862,6 +1034,40 @@ impl TypeChecker {
         let query_first = &sub_pats[0];
         let query_rest = synth(PatternKind::Tuple(sub_pats[1..].to_vec()));
 
+        // A first column that no row refines cannot tell values apart:
+        // when every row covers every value of the column, the rows
+        // differ in the remaining columns only, and the verdict is the
+        // verdict for those. Splitting the column by constructor would ask
+        // that same question once per constructor, which is exponential
+        // in the width of a product pattern; asking it once keeps a wide
+        // tuple or record pattern linear. The search depth is not
+        // consumed, because the arity shrinks with every such step.
+        //
+        // A column of an uninhabited type is left to the constructor
+        // split below, which finds no constructor and so no uncovered
+        // value.
+        let no_row_refines_first_col = matrix.iter().all(|row| match &row.kind {
+            PatternKind::Tuple(ps) => ps.len() == arity && self.is_fully_covering_pattern(&ps[0]),
+            PatternKind::Wildcard | PatternKind::Ident(_) => true,
+            _ => false,
+        });
+        if no_row_refines_first_col && !self.is_uninhabited(&first_ty) {
+            let rest_rows: Vec<Pattern> = matrix
+                .iter()
+                .map(|row| match &row.kind {
+                    PatternKind::Tuple(ps) => synth(PatternKind::Tuple(ps[1..].to_vec())),
+                    _ => {
+                        let wilds: Vec<Pattern> = (0..arity - 1)
+                            .map(|_| synth(PatternKind::Wildcard))
+                            .collect();
+                        synth(PatternKind::Tuple(wilds))
+                    }
+                })
+                .collect();
+            let rest_refs: Vec<&Pattern> = rest_rows.iter().collect();
+            return self.is_useful(&rest_refs, &query_rest, &rest_ty, depth);
+        }
+
         // B3: when `query_first` is a wildcard against an "infinite" scalar
         // column type (Int / Float / ExtFloat / String), the legacy
         // `constructors_for_query` returned just `[Wildcard]`. That
@@ -959,7 +1165,7 @@ impl TypeChecker {
             for pat in matrix {
                 match &pat.kind {
                     PatternKind::Tuple(ps)
-                        if ps.len() == arity && Self::is_fully_covering_pattern(&ps[0]) =>
+                        if ps.len() == arity && self.is_fully_covering_pattern(&ps[0]) =>
                     {
                         witness_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                     }
@@ -1033,7 +1239,7 @@ impl TypeChecker {
                         if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
                     {
                         matches!(&ps[0].kind, PatternKind::Constructor { .. })
-                            && !Self::is_fully_covering_pattern(&ps[0])
+                            && !self.is_fully_covering_pattern(&ps[0])
                     }
                     _ => false,
                 });
@@ -1151,44 +1357,50 @@ impl TypeChecker {
         false
     }
 
-    /// B1 helper: decide whether `pat` covers every value of its column
-    /// type syntactically. Top-level wildcards/idents obviously do; so
-    /// does a record pattern whose every field is a covering pattern,
-    /// and a tuple pattern whose every element is covering (since
-    /// records and tuples are single-constructor product types). This
-    /// is intentionally conservative — it only examines the pattern's
-    /// shape and doesn't try to prove coverage via reasoning about the
-    /// column type. That's fine for Pass 2 of the witness-split, whose
-    /// job is to identify rows that unconditionally cover the synthetic
-    /// "not-in-matrix" first-column value.
-    fn is_fully_covering_pattern(pat: &Pattern) -> bool {
+    /// Decide from the pattern's own shape whether `pat` covers every
+    /// value of its column type. This is the cheap, sufficient half of
+    /// the usefulness question: a pattern it accepts matches every value,
+    /// a pattern it rejects may still do so together with other rows (or
+    /// through or-alternatives that only cover jointly), which the
+    /// constructor analysis in `is_useful` then decides.
+    ///
+    /// Covering shapes are the ones built from single-constructor types
+    /// only: a wildcard or binding; a tuple, record or anonymous-record
+    /// pattern whose parts all cover; a constructor pattern of an enum
+    /// with exactly one variant whose arguments all cover; the list
+    /// pattern `[..rest]`, which takes a list of any length; and an
+    /// or-pattern with a covering alternative.
+    fn is_fully_covering_pattern(&self, pat: &Pattern) -> bool {
         match &pat.kind {
             PatternKind::Wildcard | PatternKind::Ident(_) => true,
-            PatternKind::Record { fields, .. } => fields.iter().all(|(_, sub)| match sub {
-                Some(p) => Self::is_fully_covering_pattern(p),
-                None => true,
-            }),
-            // An anon-record pattern with a `...rest` binding (or an
-            // unrestricted shorthand) covers all records carrying the
-            // listed fields. Without rest, coverage requires every
-            // sub-pattern to itself be fully covering (i.e. wildcards
-            // / idents only).
-            PatternKind::AnonRecord { fields, rest } => {
-                if rest.is_some() {
-                    fields.iter().all(|(_, sub)| match sub {
-                        Some(p) => Self::is_fully_covering_pattern(p),
-                        None => true,
-                    })
-                } else {
-                    fields.iter().all(|(_, sub)| match sub {
-                        Some(p) => Self::is_fully_covering_pattern(p),
-                        None => true,
-                    })
-                }
+            // An anon-record pattern covers all records carrying the
+            // listed fields, with or without a `...rest` binding, when
+            // every sub-pattern covers.
+            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+                fields.iter().all(|(_, sub)| match sub {
+                    Some(p) => self.is_fully_covering_pattern(p),
+                    None => true,
+                })
             }
-            PatternKind::Tuple(ps) => ps.iter().all(Self::is_fully_covering_pattern),
-            PatternKind::Or(alts) => alts.iter().any(Self::is_fully_covering_pattern),
-            _ => false,
+            PatternKind::Tuple(ps) => ps.iter().all(|p| self.is_fully_covering_pattern(p)),
+            PatternKind::Constructor { module, name, args } => {
+                self.pattern_constructor_enum(*module, *name)
+                    .is_some_and(|(_, info)| info.variants.len() == 1)
+                    && args.iter().all(|p| self.is_fully_covering_pattern(p))
+            }
+            PatternKind::List(elems, Some(rest)) if elems.is_empty() => {
+                self.is_fully_covering_pattern(rest)
+            }
+            PatternKind::Or(alts) => alts.iter().any(|p| self.is_fully_covering_pattern(p)),
+            PatternKind::List(..)
+            | PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Map(..)
+            | PatternKind::Pin(_) => false,
         }
     }
 

@@ -3,8 +3,47 @@
 //! This module contains the core inference logic: infer_expr, infer_stmt,
 //! bind_pattern, check_pattern, and check_fn_body.
 
+use super::exhaustiveness::Irrefutability;
 use super::suggest::suggest_similar;
 use super::*;
+
+/// A place that binds a pattern and has no branch to take when the
+/// pattern fails to match. Such a place accepts irrefutable patterns
+/// only; see `TypeChecker::bind_irrefutable_pattern`.
+///
+/// `loop` bindings are not listed: a `loop` binds plain names, never a
+/// pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BindingSite {
+    /// A `let`, as a statement or at the top level.
+    Let,
+    /// A parameter of a named function or of a trait-impl method.
+    FnParam,
+    /// A parameter of a closure, `{ pattern -> body }` or `fn(x) { body }`.
+    ClosureParam,
+}
+
+impl BindingSite {
+    /// The site, as named in a diagnostic.
+    fn place(self) -> &'static str {
+        match self {
+            BindingSite::Let => "`let`",
+            BindingSite::FnParam => "function parameter",
+            BindingSite::ClosureParam => "closure parameter",
+        }
+    }
+
+    /// What to write instead of a refutable pattern at this site.
+    fn advice(self) -> &'static str {
+        match self {
+            BindingSite::Let => "use a `match` or `when let ... else` instead",
+            BindingSite::FnParam | BindingSite::ClosureParam => {
+                "bind the parameter to a name and use a `match` or `when let ... else` \
+                 in the body instead"
+            }
+        }
+    }
+}
 
 /// GAP (round 17 F5): pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
@@ -12,6 +51,32 @@ use super::*;
 /// tooling and users had been complaining about.
 pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &'a str {
     if n == 1 { singular } else { plural_form }
+}
+
+/// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
+/// `a |> f`: a call supplies exactly as many arguments as the callee has
+/// parameters, or one fewer when the callee's signature declares its last
+/// parameter optional (`Scheme::optional_last_param`).
+///
+/// `supplied` counts every argument the callee receives, including a
+/// piped value and the implicit `self` of a method call.
+pub(super) fn call_arity_matches(
+    params: usize,
+    optional_last_param: bool,
+    supplied: usize,
+) -> bool {
+    supplied == params || (optional_last_param && supplied + 1 == params)
+}
+
+/// The argument counts a callee accepts, worded for a diagnostic:
+/// "1 argument", "2 arguments", or "2 or 3 arguments" for a callee whose
+/// last parameter is optional.
+pub(super) fn accepted_arity_text(params: usize, optional_last_param: bool) -> String {
+    if optional_last_param && params > 0 {
+        format!("{} or {} arguments", params - 1, params)
+    } else {
+        format!("{} {}", params, plural(params, "argument", "arguments"))
+    }
 }
 
 /// BROKEN (round 26 B2): render a set of symbols for a user-facing
@@ -778,7 +843,13 @@ impl TypeChecker {
         self.check_fn_params_duplicate_bindings(&f.params);
         for (i, param) in f.params.iter().enumerate() {
             if let Some(ty) = param_types.get(i) {
-                self.bind_pattern(&param.pattern, ty, &mut local_env, f.span);
+                self.bind_irrefutable_pattern(
+                    &param.pattern,
+                    ty,
+                    &mut local_env,
+                    f.span,
+                    BindingSite::FnParam,
+                );
             }
         }
 
@@ -1351,170 +1422,138 @@ impl TypeChecker {
         }
     }
 
-    // ── Let-pattern refutability check ─────────────────────────────
+    // ── Irrefutable binding sites ──────────────────────────────────
     //
-    // B1: a `let` binding must not destructure a variant that is only
-    // one of several enum constructors. `let Square(n) = shape` where
-    // `Shape = Circle(Int) | Square(String)` was previously accepted
-    // by the typechecker and produced silent payload corruption at
-    // runtime — the VM read `Circle(5)`'s Int payload into `n` and
-    // the error cascaded into a misleading `+ Int String` at the
-    // first use of `n`. Walk the pattern and reject any Constructor
-    // pattern whose parent enum has more than one variant. Match arms
-    // do NOT call this check — refutable patterns are legal there.
-    //
-    // Round 36: also reject literal/range/pin patterns in `let`
-    // binding position. Prior to this round the typechecker only
-    // unified their types (so `let 5 = "hello"` became an error, but
-    // `let 5 = 10` silently passed and runtime fell through). These
-    // patterns are inherently refutable — they test a runtime value
-    // — so they're meaningless as bindings. The VM's compile-pattern
-    // code emits a zero check for these kinds which silently skips
-    // subsequent code when the match fails. Reject here so the
-    // user gets a clean "refutable pattern in `let`" error pointing
-    // at the pattern itself.
-    pub(super) fn reject_refutable_constructor_in_let(&mut self, pattern: &Pattern, span: Span) {
-        match &pattern.kind {
-            PatternKind::Constructor {
-                module,
-                name,
-                args: sub_pats,
-            } => {
-                // Round 94: when the bare variant entry was claimed by a
-                // different module's same-named variant (or doesn't exist
-                // at all), the qualified mirror still identifies the
-                // owning enum — `let shapes.Circle(r) = ...` must get the
-                // same refutability error as the bare spelling.
-                let owner = self.variant_to_enum.get(name).cloned().or_else(|| {
-                    module.and_then(|q| {
-                        let key = intern(&format!("{}.{}", resolve(q), resolve(*name)));
-                        self.qualified_variant_to_enum.get(&key).copied()
-                    })
-                });
-                if let Some(enum_name) = owner
-                    && let Some(enum_info) = self.enums.get(&enum_name).cloned().or_else(|| {
-                        module.and_then(|q| {
-                            let key = intern(&format!("{}.{}", resolve(q), resolve(enum_name)));
-                            self.qualified_enums.get(&key).cloned()
-                        })
-                    })
-                    && enum_info.variants.len() > 1
-                {
-                    self.error(
-                        format!(
-                            "refutable pattern in `let`: constructor '{}' is only one of {} variants of enum '{}'; use a `match` or `when let ... else` instead",
-                            name,
-                            enum_info.variants.len(),
-                            enum_name
-                        ),
-                        span,
-                    );
-                }
-                for p in sub_pats {
-                    self.reject_refutable_constructor_in_let(p, span);
+    // A binding site without a failure branch — `let`, a function
+    // parameter, a closure parameter — takes only a pattern that matches
+    // every value of its type. The compiler emits no test for such a
+    // pattern, so a refutable one would read the payload of `Cents` as
+    // that of `Dollars`, or index past the fields of `None`. `match`
+    // arms and `when let ... else` have a failure branch; they bind with
+    // `check_pattern` / `bind_pattern` directly.
+
+    /// Bind `pattern` against `ty` at a binding site that has no failure
+    /// branch, and require the pattern to be irrefutable for `ty`.
+    ///
+    /// The pattern is type checked first, because irrefutability is
+    /// judged against the type the pattern settles: a closure parameter
+    /// starts as a fresh type variable, and it is `bind_pattern` that
+    /// ties it to the enum or tuple the pattern names. A pattern that
+    /// failed to type check already has its diagnostic and is not judged.
+    pub(super) fn bind_irrefutable_pattern(
+        &mut self,
+        pattern: &Pattern,
+        ty: &Type,
+        env: &mut TypeEnv,
+        span: Span,
+        site: BindingSite,
+    ) {
+        let errors_before = self.errors.len();
+        self.bind_pattern(pattern, ty, env, span);
+        let bind_failed = self.errors[errors_before..]
+            .iter()
+            .any(|e| matches!(e.severity, Severity::Error));
+        if !bind_failed {
+            self.require_irrefutable(pattern, ty, span, site);
+        }
+    }
+
+    /// Report `pattern` unless it is irrefutable for `ty`. The verdict is
+    /// the exhaustiveness checker's (`irrefutability`); this function only
+    /// words the diagnostic, naming the part of the pattern that can fail.
+    ///
+    /// `span` is the span of the value being bound. A `let` reports a
+    /// refutable constructor there and any other refutable part at the
+    /// part itself; a parameter always reports at the part.
+    fn require_irrefutable(&mut self, pattern: &Pattern, ty: &Type, span: Span, site: BindingSite) {
+        let verdict = self.irrefutability(pattern, ty);
+        if verdict == Irrefutability::Irrefutable {
+            return;
+        }
+        let part = match verdict {
+            Irrefutability::Refutable => self.refutable_part(pattern),
+            Irrefutability::Irrefutable | Irrefutability::Unverified => None,
+        };
+        let (reason, reason_span) = match part {
+            Some(part) => {
+                let reason_span = match (site, &part.kind) {
+                    (BindingSite::Let, PatternKind::Constructor { .. }) => span,
+                    _ => part.span,
+                };
+                (self.refutable_part_reason(part, ty), reason_span)
+            }
+            None if verdict == Irrefutability::Unverified => (
+                "the pattern is nested too deeply to verify that it matches every value"
+                    .to_string(),
+                pattern.span,
+            ),
+            None => (self.refutable_type_reason(ty), pattern.span),
+        };
+        self.error(
+            format!(
+                "refutable pattern in {}: {reason}; {}",
+                site.place(),
+                site.advice()
+            ),
+            reason_span,
+        );
+    }
+
+    /// Why `part`, the refutable part of a pattern bound against `ty`,
+    /// can fail to match.
+    fn refutable_part_reason(&self, part: &Pattern, ty: &Type) -> String {
+        match &part.kind {
+            PatternKind::Constructor { module, name, .. } => {
+                match self.pattern_constructor_enum(*module, *name) {
+                    Some((enum_name, info)) => format!(
+                        "constructor '{}' is only one of {} variants of enum '{}'",
+                        name,
+                        info.variants.len(),
+                        enum_name
+                    ),
+                    None => self.refutable_type_reason(ty),
                 }
             }
-            PatternKind::Tuple(pats) => {
-                for p in pats {
-                    self.reject_refutable_constructor_in_let(p, span);
-                }
-            }
-            PatternKind::List(elems, rest) => {
-                // A list pattern is refutable unless it's just `[...rest]`
-                // with no fixed elements (which is vacuously true for any
-                // list). Any fixed prefix means it can fail to match when
-                // the input list is shorter.
-                if !elems.is_empty() || rest.is_none() {
-                    self.error(
-                        "refutable pattern in `let`: list patterns can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                        pattern.span,
-                    );
-                }
-                for p in elems {
-                    self.reject_refutable_constructor_in_let(p, span);
-                }
-                if let Some(r) = rest {
-                    self.reject_refutable_constructor_in_let(r, span);
-                }
-            }
-            PatternKind::Record { fields, .. } => {
-                for (_, sub_pat) in fields {
-                    if let Some(p) = sub_pat {
-                        self.reject_refutable_constructor_in_let(p, span);
-                    }
-                }
-            }
-            PatternKind::AnonRecord { fields, .. } => {
-                // An anon record pattern is irrefutable on a record value
-                // with the listed fields. Recurse into sub-patterns so a
-                // nested refutable shape is still caught.
-                for (_, sub_pat) in fields {
-                    if let Some(p) = sub_pat {
-                        self.reject_refutable_constructor_in_let(p, span);
-                    }
-                }
-            }
-            PatternKind::Or(alts) => {
-                for p in alts {
-                    self.reject_refutable_constructor_in_let(p, span);
-                }
-            }
+            PatternKind::List(..) => "list patterns can fail to match".to_string(),
             PatternKind::Int(_) => {
-                self.error(
-                    "refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+                "integer literal patterns test a runtime value and can fail to match".to_string()
             }
             PatternKind::Float(_) => {
-                self.error(
-                    "refutable pattern in `let`: float literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+                "float literal patterns test a runtime value and can fail to match".to_string()
             }
             PatternKind::Bool(_) => {
-                self.error(
-                    "refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+                "boolean literal patterns test a runtime value and can fail to match".to_string()
             }
             PatternKind::StringLit(..) => {
-                self.error(
-                    "refutable pattern in `let`: string literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+                "string literal patterns test a runtime value and can fail to match".to_string()
             }
-            PatternKind::Range(..) => {
-                self.error(
-                    "refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
-            }
-            PatternKind::FloatRange(..) => {
-                self.error(
-                    "refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+            PatternKind::Range(..) | PatternKind::FloatRange(..) => {
+                "range patterns test a runtime value and can fail to match".to_string()
             }
             PatternKind::Pin(_) => {
-                self.error(
-                    "refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
+                "pin patterns test a runtime value and can fail to match".to_string()
             }
-            PatternKind::Map(entries) => {
-                self.error(
-                    "refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
-                    pattern.span,
-                );
-                for (_, p) in entries {
-                    self.reject_refutable_constructor_in_let(p, span);
-                }
+            PatternKind::Map(..) => {
+                "map patterns test a runtime value and can fail to match".to_string()
             }
-            // Wildcard and Ident are irrefutable — they always match and
-            // bind to whatever the scrutinee is. These remain legal in
-            // `let` position.
-            PatternKind::Wildcard | PatternKind::Ident(_) => {}
+            // The own shape of these always matches; only their parts can
+            // fail, and `refutable_part` names the part.
+            PatternKind::Wildcard
+            | PatternKind::Ident(_)
+            | PatternKind::Tuple(_)
+            | PatternKind::Record { .. }
+            | PatternKind::AnonRecord { .. }
+            | PatternKind::Or(_) => self.refutable_type_reason(ty),
         }
+    }
+
+    /// The reason given when no single part of a refutable pattern can be
+    /// named.
+    fn refutable_type_reason(&self, ty: &Type) -> String {
+        format!(
+            "the pattern does not match every value of type '{}'",
+            self.apply(ty)
+        )
     }
 
     // ── Pattern type binding ────────────────────────────────────────
@@ -2622,6 +2661,32 @@ impl TypeChecker {
             return true;
         }
         self.imported_modules.contains(mod_name)
+    }
+
+    /// Whether the function that `callee` names declares its last
+    /// parameter optional (see `Scheme::optional_last_param`).
+    ///
+    /// Only a bare function name or a `module.function` path names a
+    /// signature. Any other callee expression is a function value, and a
+    /// function value is called with its full arity. A `module.function`
+    /// path counts only when it really is a module-qualified name, by
+    /// the same test the Call arm uses to pick the qualified scheme.
+    fn callee_declares_optional_last_param(&self, callee: &Expr, env: &TypeEnv) -> bool {
+        let name = match &callee.kind {
+            ExprKind::Ident(name) => *name,
+            ExprKind::FieldAccess(obj, field) => {
+                let ExprKind::Ident(module) = &obj.kind else {
+                    return false;
+                };
+                if !self.callee_module_is_in_scope(callee, env) {
+                    return false;
+                }
+                intern(&format!("{}.{field}", resolve(*module)))
+            }
+            _ => return false,
+        };
+        env.lookup(name)
+            .is_some_and(|scheme| scheme.optional_last_param)
     }
 
     // ── Expression type inference ───────────────────────────────────
@@ -3808,6 +3873,10 @@ impl TypeChecker {
                         };
                         // Capture arg spans before mutable inference
                         let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
+                        // Same signature fact the Call arm reads: may the
+                        // call leave out the callee's last argument?
+                        let optional_last_param =
+                            self.callee_declares_optional_last_param(callee, env);
 
                         // If callee is a named function, use instantiate_with_constraints
                         let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
@@ -3843,16 +3912,18 @@ impl TypeChecker {
 
                         let result_ty = match &callee_ty {
                             Type::Fun(params, ret) => {
-                                // Arity check — piped-through arg counts as
-                                // the first positional arg. Mirrors the
-                                // non-pipe Call branch below.
-                                if params.len() != all_arg_types.len() {
-                                    let expected = params.len();
+                                // Arity check — the piped value counts as
+                                // the first argument; the rule is the one
+                                // the Call arm applies.
+                                if !call_arity_matches(
+                                    params.len(),
+                                    optional_last_param,
+                                    all_arg_types.len(),
+                                ) {
                                     self.error(
                                         format!(
-                                            "function expects {} {}, got {}",
-                                            expected,
-                                            plural(expected, "argument", "arguments"),
+                                            "function expects {}, got {}",
+                                            accepted_arity_text(params.len(), optional_last_param),
                                             all_arg_types.len()
                                         ),
                                         span,
@@ -3920,15 +3991,18 @@ impl TypeChecker {
                     }
                 } else {
                     // RHS is a plain function/lambda, not a call
+                    let optional_last_param = self.callee_declares_optional_last_param(rhs, env);
                     let fn_type = self.infer_expr(rhs, env);
                     let fn_type = self.apply(&fn_type);
 
                     match &fn_type {
                         Type::Fun(params, ret) => {
-                            // B6: A plain function reference on the RHS of `|>`
-                            // must have arity 1. Piping into a multi-arg function
-                            // without an explicit call forgets the remaining args.
-                            if params.len() != 1 {
+                            // B6: `a |> f` is the call `f(a)`: it supplies
+                            // one argument, under the arity rule of every
+                            // call. Piping into a function that needs more
+                            // without an explicit call forgets the
+                            // remaining args.
+                            if !call_arity_matches(params.len(), optional_last_param, 1) {
                                 let n = params.len();
                                 self.error(
                                     format!(
@@ -4071,27 +4145,11 @@ impl TypeChecker {
                 } else {
                     None
                 };
-                // Detect module-qualified calls (mod.fn(args)) for arity
-                // tolerance: some builtins register an optional trailing
-                // param (e.g. test.assert_eq(a, a, String)), so module
-                // calls allow args == params OR args + 1 == params.
-                let is_module_call = match &callee.kind {
-                    ExprKind::FieldAccess(obj, field) => {
-                        if let ExprKind::Ident(mod_name) = &obj.kind {
-                            // Round 94: a value binding shadowing the
-                            // module name makes this a field call on the
-                            // binding, not a module call — the optional-
-                            // trailing-param arity tolerance must not
-                            // apply.
-                            let qualified = intern(&format!("{}.{field}", resolve(*mod_name)));
-                            !self.value_binding_shadows_module(env, *mod_name)
-                                && env.lookup(qualified).is_some()
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
-                };
+                // Whether the named callee's signature lets the call leave
+                // out the last argument. Read before the callee is
+                // inferred, which needs the callee mutably.
+                let callee_optional_last_param =
+                    self.callee_declares_optional_last_param(callee, env);
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
                 // Option B (parser-recovery cascade fix): if the callee
@@ -4216,30 +4274,26 @@ impl TypeChecker {
                         for i in 0..min_len {
                             self.unify(&arg_types[i], &params[i + param_offset], arg_spans[i]);
                         }
-                        // Check arity:
-                        // - method call (dispatch_method_entry set the flag):
-                        //   args + 1 == params (implicit self)
-                        // - module call: args == params, or args + 1 == params
-                        //   (some builtins have an optional trailing param)
-                        // - field/normal call: args == params
-                        let arity_ok = if is_method_call {
-                            arg_types.len() + 1 == params.len()
-                        } else if is_module_call {
-                            arg_types.len() == params.len() || arg_types.len() + 1 == params.len()
-                        } else {
-                            arg_types.len() == params.len()
-                        };
-                        if !arity_ok {
-                            let expected = params.len();
+                        // Check arity. A method call (the flag is set by
+                        // `dispatch_method_entry`) supplies `self`
+                        // implicitly, and a method has no optional
+                        // parameter; any other call supplies exactly
+                        // its written arguments.
+                        let implicit_self = usize::from(is_method_call);
+                        let optional_last_param = callee_optional_last_param && !is_method_call;
+                        if !call_arity_matches(
+                            params.len(),
+                            optional_last_param,
+                            arg_types.len() + implicit_self,
+                        ) {
                             let what = match callee_fn_name {
                                 Some(name) => format!("`{name}`"),
                                 None => "function".to_string(),
                             };
                             self.error(
                                 format!(
-                                    "{what} expects {} {}, got {}",
-                                    expected,
-                                    plural(expected, "argument", "arguments"),
+                                    "{what} expects {}, got {}",
+                                    accepted_arity_text(params.len(), optional_last_param),
                                     arg_types.len()
                                 ),
                                 span,
@@ -4353,7 +4407,13 @@ impl TypeChecker {
                         } else {
                             self.fresh_var()
                         };
-                        self.bind_pattern(&p.pattern, &ty, &mut local_env, span);
+                        self.bind_irrefutable_pattern(
+                            &p.pattern,
+                            &ty,
+                            &mut local_env,
+                            span,
+                            BindingSite::ClosureParam,
+                        );
                         ty
                     })
                     .collect();
@@ -4908,6 +4968,11 @@ impl TypeChecker {
                             bool,
                         )> = std::collections::HashSet::new();
                         let mut any_pattern_mismatch = false;
+                        // A match diverges when it has arms and every
+                        // arm diverges. `unify` leaves `result_ty`
+                        // unbound against `Never`, so the arms are
+                        // tracked here to type such a match `Never`.
+                        let mut every_arm_diverges = !arms.is_empty();
                         for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
                             // Soundness: `match e { (x, x) -> x }` used to
@@ -4956,6 +5021,7 @@ impl TypeChecker {
 
                             let body_span = arm.body.span;
                             let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            every_arm_diverges &= matches!(arm_ty, Type::Never);
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
 
@@ -4969,11 +5035,18 @@ impl TypeChecker {
                             self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
                         }
 
-                        result_ty
+                        if every_arm_diverges {
+                            Type::Never
+                        } else {
+                            result_ty
+                        }
                     }
                     None => {
                         // Guardless match: each arm's guard is a boolean condition
                         let result_ty = self.fresh_var();
+                        // Same rule as the scrutinee form: arms that all
+                        // diverge make the match diverge.
+                        let mut every_arm_diverges = !arms.is_empty();
 
                         for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
@@ -4986,11 +5059,16 @@ impl TypeChecker {
 
                             let body_span = arm.body.span;
                             let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            every_arm_diverges &= matches!(arm_ty, Type::Never);
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
 
                         // No exhaustiveness checking for guardless match
-                        result_ty
+                        if every_arm_diverges {
+                            Type::Never
+                        } else {
+                            result_ty
+                        }
                     }
                 }
             }
@@ -5129,16 +5207,19 @@ impl TypeChecker {
                         env.define(*name, scheme);
                     }
                     _ => {
-                        // B1: reject refutable Constructor patterns in
-                        // `let` before binding, so we produce a clean
-                        // typecheck error instead of silent runtime
-                        // payload corruption from a tag mismatch.
-                        self.reject_refutable_constructor_in_let(pattern, value_span);
                         // Soundness: reject duplicate binding names within
                         // the let pattern. `let (a, a) = (1, 2)` used to
                         // silently shadow the first `a`.
                         self.check_pattern_duplicate_bindings(pattern);
-                        self.bind_pattern(pattern, &val_ty, env, value_span);
+                        // A `let` has no failure branch: the pattern
+                        // must match every value of the bound type.
+                        self.bind_irrefutable_pattern(
+                            pattern,
+                            &val_ty,
+                            env,
+                            value_span,
+                            BindingSite::Let,
+                        );
                     }
                 }
 

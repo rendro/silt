@@ -220,12 +220,23 @@ impl std::fmt::Display for Type {
 /// Phase A rollout every Scheme literal in the codebase defaults its
 /// `effects` to `EffectSet::TOP` (the gradual-rollout permissive
 /// default), which keeps existing programs typechecking unchanged.
+///
+/// `optional_last_param` is part of a function's signature: when `true`,
+/// a call may leave out the function's last parameter. Only the builtins
+/// whose implementation accepts the shorter call declare it
+/// (`test.assert`, `test.assert_eq`, `test.assert_ne`, `float.to_string`,
+/// `channel.new`); every other function requires exactly as many
+/// arguments as it has parameters. The fact belongs to the named
+/// function, not to its type: a scheme made from a type alone
+/// (`generalize`, `mono`) never declares it, so a function value bound
+/// with `let` or passed as an argument is called with its full arity.
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
     pub constraints: Vec<(TyVar, Symbol)>,
     pub effects: EffectSet,
+    pub optional_last_param: bool,
 }
 
 impl Scheme {
@@ -235,7 +246,15 @@ impl Scheme {
             ty,
             constraints: Vec::new(),
             effects: EffectSet::TOP,
+            optional_last_param: false,
         }
+    }
+
+    /// Declare that a call may leave out this function's last parameter.
+    /// See the `optional_last_param` note on `Scheme`.
+    pub fn with_optional_last_param(mut self) -> Self {
+        self.optional_last_param = true;
+        self
     }
 
     /// Construct a non-polymorphic scheme with an explicit effect set.
@@ -249,6 +268,7 @@ impl Scheme {
             ty,
             constraints: Vec::new(),
             effects,
+            optional_last_param: false,
         }
     }
 

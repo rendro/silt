@@ -404,6 +404,8 @@ pub(super) fn remap_scheme(
         ty: new_ty,
         constraints: new_constraints,
         effects: scheme.effects,
+        // Part of the signature, like the effects: carried as is.
+        optional_last_param: scheme.optional_last_param,
     }
 }
 
@@ -1870,6 +1872,7 @@ impl TypeChecker {
             ty,
             constraints,
             effects: EffectSet::TOP,
+            optional_last_param: false,
         }
     }
 
@@ -2917,6 +2920,7 @@ impl TypeChecker {
             ty: ty.clone(),
             constraints: Vec::new(),
             effects: EffectSet::TOP,
+            optional_last_param: false,
         }
     }
 
@@ -3428,10 +3432,15 @@ impl TypeChecker {
                     self.define_top_level_unique(*name, span);
                     env.define(*name, scheme);
                 } else {
-                    // B1: reject refutable Constructor patterns in
-                    // top-level `let` before binding.
-                    self.reject_refutable_constructor_in_let(pattern, span);
-                    self.bind_pattern(pattern, &val_ty, &mut env, span);
+                    // A top-level `let` has no failure branch either:
+                    // the pattern must be irrefutable.
+                    self.bind_irrefutable_pattern(
+                        pattern,
+                        &val_ty,
+                        &mut env,
+                        span,
+                        inference::BindingSite::Let,
+                    );
                 }
             }
         }
@@ -3447,63 +3456,7 @@ impl TypeChecker {
         let pre_pass3_field_count = self.pending_field_accesses.len();
         let pre_pass3_numeric_count = self.pending_numeric_checks.len();
         let pre_pass3_qmark_count = self.pending_question_marks.len();
-        for i in 0..program.decls.len() {
-            if let Decl::Fn(ref mut f) = program.decls[i]
-                && !f.is_recovery_stub
-            {
-                self.check_fn_body(f, &env);
-            }
-        }
-        for i in 0..program.decls.len() {
-            if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
-                // Phase B: lookup keys for the method table and the
-                // legacy `"<T>.<m>"` TypeEnv binding share the
-                // canonical target-type symbol with the registration
-                // path in `register_trait_impl` — `Range` collapses
-                // to `List`. Without this, a `trait Foo for Range(a)`
-                // impl's body-check pass would store the body-inferred
-                // type under the (uncanonicalised) `"Range"` key,
-                // leaving the canonical `"List"` entry stuck on the
-                // still-polymorphic template and producing a type
-                // cascade at the first call site.
-                let target = canonicalize_type_name(&self.resolver, ti.target_type);
-                for j in 0..ti.methods.len() {
-                    let method_name = ti.methods[j].name;
-                    let key = intern(&format!("{target}.{method_name}"));
-                    let constrained = self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
-                    // Write the body-inferred type back into method_table so
-                    // that downstream call sites see the concrete return
-                    // type instead of the still-polymorphic template.
-                    //
-                    // Remap any impl/method-level where-clause constraints
-                    // from the pre-body-check tyvar space to the new
-                    // body-inferred tyvar space via align_tyvars — same
-                    // structural walk used for scheme narrowing at round 17
-                    // F1. Without this, dispatch_method_entry sees two
-                    // disjoint fresh-var groups (one from free_vars on
-                    // the body-inferred method_type, one from stale
-                    // constraint tyvars) and produces inconsistent
-                    // substitutions at call sites.
-                    if let Some(ty) = constrained
-                        && let Some(entry) = self.method_table.get_mut(&(target, method_name))
-                    {
-                        if !entry.method_constraints.is_empty() {
-                            let remap = align_tyvars(&entry.method_type, &ty);
-                            entry.method_constraints = entry
-                                .method_constraints
-                                .iter()
-                                .filter_map(|(old_tv, trait_name, args)| {
-                                    remap
-                                        .get(old_tv)
-                                        .map(|&new_tv| (new_tv, *trait_name, args.clone()))
-                                })
-                                .collect();
-                        }
-                        entry.method_type = ty;
-                    }
-                }
-            }
-        }
+        self.check_decl_bodies(&mut program.decls, &env);
 
         // Narrow function schemes based on body constraints, then re-check.
         //
@@ -3651,63 +3604,8 @@ impl TypeChecker {
                 // pre-narrowed instantiations.
                 self.pending_where_constraints.clear();
 
-                // Re-check function bodies with narrowed schemes.
-                // Recovery stubs still skipped (same reason as pass 3).
-                for i in 0..program.decls.len() {
-                    if let Decl::Fn(ref mut f) = program.decls[i]
-                        && !f.is_recovery_stub
-                    {
-                        self.check_fn_body(f, &env);
-                    }
-                }
-                for i in 0..program.decls.len() {
-                    if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
-                        let target = ti.target_type;
-                        for j in 0..ti.methods.len() {
-                            let method_name = ti.methods[j].name;
-                            let key = intern(&format!("{target}.{method_name}"));
-                            let constrained =
-                                self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
-                            if let Some(ty) = constrained
-                                && let Some(entry) =
-                                    self.method_table.get_mut(&(target, method_name))
-                            {
-                                if !entry.method_constraints.is_empty() {
-                                    let remap = align_tyvars(&entry.method_type, &ty);
-                                    // Round 75 TYPE-1 LATENT: build a
-                                    // Var-typed mapping so `args` (which
-                                    // may contain tyvar references to
-                                    // the constrained method's old vars)
-                                    // is also substituted, not just the
-                                    // bare `(tv, trait_name)` key. The
-                                    // sibling at `:1773-1776` does the
-                                    // same thing in `instantiate_method`;
-                                    // this loop must too, or trait-arg
-                                    // remapping post-narrowing leaves
-                                    // stale ids in `args`.
-                                    let ty_remap: HashMap<TyVar, Type> = remap
-                                        .iter()
-                                        .map(|(old, new)| (*old, Type::Var(*new)))
-                                        .collect();
-                                    entry.method_constraints = entry
-                                        .method_constraints
-                                        .iter()
-                                        .filter_map(|(old_tv, trait_name, args)| {
-                                            remap.get(old_tv).map(|&new_tv| {
-                                                let new_args: Vec<Type> = args
-                                                    .iter()
-                                                    .map(|t| substitute_vars(t, &ty_remap))
-                                                    .collect();
-                                                (new_tv, *trait_name, new_args)
-                                            })
-                                        })
-                                        .collect();
-                                }
-                                entry.method_type = ty;
-                            }
-                        }
-                    }
-                }
+                // Re-check the bodies with the narrowed schemes.
+                self.check_decl_bodies(&mut program.decls, &env);
             }
         }
 
@@ -3741,6 +3639,78 @@ impl TypeChecker {
         self.resolve_all_types(program);
 
         env
+    }
+
+    // ── Check declaration bodies ──────────────────────────────────────
+
+    /// Type check the body of every function and of every trait-impl
+    /// method in `decls` against `env`.
+    ///
+    /// This is the only body-checking loop. The first body pass of
+    /// `check_program`, its re-check after scheme narrowing and the REPL
+    /// all call it, so the three cannot disagree on which bodies are
+    /// checked or on the key a method is looked up under.
+    ///
+    /// Parser-recovery stubs are skipped: their empty body is not user
+    /// code and must not produce diagnostics.
+    ///
+    /// `register_trait_impl` registers a method under the canonical name
+    /// of the impl's target type (`Range` and a user alias of `List(..)`
+    /// collapse to `List`, `Fun` to `Fn`, `()` to `Unit`), both in
+    /// `method_table` and as the `"<Type>.<method>"` binding in `env`.
+    /// The lookup key is therefore built from the canonical name too; a
+    /// key built from the name as written would miss the binding for an
+    /// impl written against an alias, and the body would go unchecked.
+    ///
+    /// After a method body is checked, its body-constrained type replaces
+    /// the template in `method_table`, so call sites see the concrete
+    /// return type. The method's where-clause constraints are re-keyed
+    /// from the template's type variables to those of the new type, and
+    /// the same mapping is applied to the constraints' trait arguments,
+    /// which may mention those variables.
+    pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &TypeEnv) {
+        for decl in decls.iter_mut() {
+            if let Decl::Fn(f) = decl
+                && !f.is_recovery_stub
+            {
+                self.check_fn_body(f, env);
+            }
+        }
+        for decl in decls.iter_mut() {
+            let Decl::TraitImpl(ti) = decl else {
+                continue;
+            };
+            let target = canonicalize_type_name(&self.resolver, ti.target_type);
+            for method in ti.methods.iter_mut() {
+                let method_name = method.name;
+                let key = intern(&format!("{target}.{method_name}"));
+                let Some(ty) = self.check_fn_body_with_name(method, env, key) else {
+                    continue;
+                };
+                let Some(entry) = self.method_table.get_mut(&(target, method_name)) else {
+                    continue;
+                };
+                if !entry.method_constraints.is_empty() {
+                    let remap = align_tyvars(&entry.method_type, &ty);
+                    let ty_remap: HashMap<TyVar, Type> = remap
+                        .iter()
+                        .map(|(old, new)| (*old, Type::Var(*new)))
+                        .collect();
+                    entry.method_constraints = entry
+                        .method_constraints
+                        .iter()
+                        .filter_map(|(old_tv, trait_name, args)| {
+                            remap.get(old_tv).map(|&new_tv| {
+                                let new_args: Vec<Type> =
+                                    args.iter().map(|t| substitute_vars(t, &ty_remap)).collect();
+                                (new_tv, *trait_name, new_args)
+                            })
+                        })
+                        .collect();
+                }
+                entry.method_type = ty;
+            }
+        }
     }
 
     // ── Validate trait implementations ────────────────────────────────
@@ -4170,6 +4140,7 @@ impl TypeChecker {
                                 ty: result_type,
                                 constraints: vec![],
                                 effects: EffectSet::TOP,
+                                optional_last_param: false,
                             },
                         );
                     } else {
@@ -4181,6 +4152,7 @@ impl TypeChecker {
                                 ty: Type::Fun(field_types, Box::new(result_type)),
                                 constraints: vec![],
                                 effects: EffectSet::TOP,
+                                optional_last_param: false,
                             },
                         );
                     }
@@ -4264,6 +4236,7 @@ impl TypeChecker {
                         ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
                         constraints: vec![],
                         effects: EffectSet::TOP,
+                        optional_last_param: false,
                     };
                     env.define(td.name, scheme);
                 }
@@ -4342,6 +4315,7 @@ impl TypeChecker {
                         ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
                         constraints: vec![],
                         effects: EffectSet::TOP,
+                        optional_last_param: false,
                     }
                 } else {
                     // Re-use the param TyVars that parameterize the
@@ -4363,6 +4337,7 @@ impl TypeChecker {
                         ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
                         constraints: vec![],
                         effects: EffectSet::TOP,
+                        optional_last_param: false,
                     }
                 };
                 env.define(td.name, scheme);
@@ -8673,8 +8648,15 @@ impl ReplTypeContext {
                     self.checker.define_top_level_unique(*name, span);
                     self.env.define(*name, scheme);
                 } else {
-                    self.checker
-                        .bind_pattern(pattern, &val_ty, &mut self.env, span);
+                    // Same rule as `check_program`: a `let` pattern
+                    // must be irrefutable.
+                    self.checker.bind_irrefutable_pattern(
+                        pattern,
+                        &val_ty,
+                        &mut self.env,
+                        span,
+                        inference::BindingSite::Let,
+                    );
                 }
             }
         }
@@ -8682,56 +8664,9 @@ impl ReplTypeContext {
         // Validate trait implementations
         self.checker.validate_trait_impls();
 
-        // Check function bodies (skip recovery stubs per Option B).
-        for i in 0..program.decls.len() {
-            if let Decl::Fn(ref mut f) = program.decls[i]
-                && !f.is_recovery_stub
-            {
-                self.checker.check_fn_body(f, &self.env);
-            }
-        }
-
-        // Check trait impl method bodies
-        for i in 0..program.decls.len() {
-            if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
-                // Phase B: lookup keys for the method table and the
-                // legacy `"<T>.<m>"` TypeEnv binding share the
-                // canonical target-type symbol with the registration
-                // path in `register_trait_impl` — `Range` collapses
-                // to `List`. Without this, a `trait Foo for Range(a)`
-                // impl's body-check pass would store the body-inferred
-                // type under the (uncanonicalised) `"Range"` key,
-                // leaving the canonical `"List"` entry stuck on the
-                // still-polymorphic template and producing a type
-                // cascade at the first call site.
-                let target = canonicalize_type_name(&self.checker.resolver, ti.target_type);
-                for j in 0..ti.methods.len() {
-                    let method_name = ti.methods[j].name;
-                    let key = intern(&format!("{target}.{method_name}"));
-                    let constrained =
-                        self.checker
-                            .check_fn_body_with_name(&mut ti.methods[j], &self.env, key);
-                    if let Some(ty) = constrained
-                        && let Some(entry) =
-                            self.checker.method_table.get_mut(&(target, method_name))
-                    {
-                        if !entry.method_constraints.is_empty() {
-                            let remap = align_tyvars(&entry.method_type, &ty);
-                            entry.method_constraints = entry
-                                .method_constraints
-                                .iter()
-                                .filter_map(|(old_tv, trait_name, args)| {
-                                    remap
-                                        .get(old_tv)
-                                        .map(|&new_tv| (new_tv, *trait_name, args.clone()))
-                                })
-                                .collect();
-                        }
-                        entry.method_type = ty;
-                    }
-                }
-            }
-        }
+        // Check function and trait-impl method bodies.
+        self.checker
+            .check_decl_bodies(&mut program.decls, &self.env);
 
         // Round 94 (REPL cross-turn persistence): re-generalize each
         // top-level fn's scheme from its body-inferred type and re-define
