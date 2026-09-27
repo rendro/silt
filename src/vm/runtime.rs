@@ -30,18 +30,38 @@ pub(crate) const TCO_ELIDED_CAP: usize = 32;
 
 // ── Suspended invocation (for yield inside invoke_callable) ─────
 
-/// Captures the frames and stack portion from an `invoke_callable` that was
-/// interrupted by a yield (e.g. an IO builtin yielding inside a callback
-/// passed to `channel.each`).  Stored on the VM so the caller can resume
-/// the callback instead of re-running it from scratch.
-pub(crate) struct SuspendedInvoke {
-    /// The extra call frames that were pushed by invoke_callable.
-    pub(crate) frames: Vec<CallFrame>,
-    /// The stack values above `func_slot` (includes locals, temporaries, and
-    /// any args re-pushed by the yielding builtin).
-    pub(crate) stack: Vec<Value>,
-    /// The stack index where the callback's "function slot" dummy lives.
-    pub(crate) func_slot: usize,
+/// The state of an `invoke_callable` that was interrupted by a yield (e.g.
+/// an IO builtin yielding inside a callback passed to `channel.each`).
+/// Stored on the VM so the caller can resume the callback instead of
+/// re-running it from scratch.
+///
+/// Every callable that yields inside `invoke_callable` leaves exactly one
+/// of these behind, whatever kind of callable it is. Callers rely on that:
+/// they read `suspended_invoke.is_some()` as "my callback is mid-call" and
+/// hand the state to `resume_suspended_invoke`.
+pub(crate) enum SuspendedInvoke {
+    /// A closure whose body was interrupted.
+    Closure {
+        /// The extra call frames that were pushed by invoke_callable.
+        frames: Vec<CallFrame>,
+        /// The stack values above `func_slot` (includes locals,
+        /// temporaries, and any args re-pushed by the yielding builtin).
+        stack: Vec<Value>,
+        /// The stack index where the callback's "function slot" dummy
+        /// lives.
+        func_slot: usize,
+    },
+    /// A builtin passed as a function value (`list.map(chans,
+    /// channel.receive)`) that yielded. A builtin has no frames to save:
+    /// it is resumed by calling it again.
+    Builtin {
+        /// Qualified name of the builtin (e.g. "channel.receive").
+        name: String,
+        /// The arguments to call it with on resume: the ones the builtin
+        /// re-pushed when it yielded, which it may have rewritten to
+        /// carry its own resume state.
+        args: Vec<Value>,
+    },
 }
 
 // ── Suspended higher-order builtin iteration ────────────────────

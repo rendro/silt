@@ -68,6 +68,7 @@ pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> V
 }
 
 use regex::Regex;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,6 +80,110 @@ use crate::scheduler::Scheduler;
 use crate::types::canonical::dispatch_name_for_value;
 use crate::value::{FromValue, IntoValue, IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
+
+// ── Native stack budget ───────────────────────────────────────────
+//
+// A plain silt call pushes a VM frame and stays in the interpreter loop
+// that is already running. A method call, and a function passed to a
+// builtin (`list.map`, `result.map_ok`, ...), instead run a nested
+// interpreter loop on the host stack (`Vm::invoke_callable`,
+// `Vm::resume_suspended_invoke`). Recursion through either therefore
+// consumes host stack, and running out of host stack aborts the whole
+// process. The VM bounds it by counting the interpreter loops nested on
+// the current thread and refusing to start one more than the thread's
+// stack can hold.
+
+/// Host stack, in bytes, that one nested interpreter loop is assumed to
+/// need, together with the builtin that started it.
+///
+/// Unoptimised build: measured, by recursing until the 256 MiB main
+/// thread overflowed. A level entered through a method call costs about
+/// 95 KiB, a level entered through a `list.*` callback (the most
+/// expensive builtin measured) about 152 KiB; nothing is inlined and
+/// every local of the opcode dispatch gets its own stack slot. The value
+/// is 1.68 times the most expensive level, so at the limit the nested
+/// loops fill at most about 60% of the stack. The rest is left for the
+/// frames below the first loop and for the native work of the innermost
+/// call.
+///
+/// Optimised build: an estimate, one eighth of the unoptimised value.
+/// Optimised frames are much smaller, and charging them the unoptimised
+/// cost would turn away recursion that fits the stack many times over.
+///
+/// The build kind is read off `debug_assertions`, which is on in the
+/// `dev` and `test` profiles and off in `release` and `bench`.
+const NATIVE_STACK_BYTES_PER_LEVEL: usize = if cfg!(debug_assertions) {
+    256 * 1024
+} else {
+    32 * 1024
+};
+
+/// Stack size assumed for a thread that never called
+/// [`set_native_stack_budget`]: 2 MiB, the size Rust gives a spawned
+/// thread by default.
+const DEFAULT_NATIVE_STACK_BUDGET: usize = 2 * 1024 * 1024;
+
+/// How many nested interpreter loops fit into a stack of `bytes` bytes.
+/// Never less than one, so a thread can always run a program.
+const fn native_depth_limit_for(bytes: usize) -> usize {
+    let levels = bytes / NATIVE_STACK_BYTES_PER_LEVEL;
+    if levels == 0 { 1 } else { levels }
+}
+
+thread_local! {
+    /// Most interpreter loops that may be nested on this thread.
+    static NATIVE_DEPTH_LIMIT: Cell<usize> =
+        const { Cell::new(native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET)) };
+    /// Interpreter loops currently nested on this thread.
+    static NATIVE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Tell the VM how large the stack of the CURRENT thread is, in bytes.
+///
+/// Call it once, at the start of every thread that is created with an
+/// explicit stack size and runs silt code. The VM derives from it how
+/// deep method calls and builtin callbacks may nest on this thread before
+/// it reports a stack overflow as a runtime error. A thread that never
+/// calls it is treated as having a 2 MiB stack.
+pub fn set_native_stack_budget(bytes: usize) {
+    NATIVE_DEPTH_LIMIT.with(|limit| limit.set(native_depth_limit_for(bytes)));
+}
+
+/// Most interpreter loops that may be nested on the current thread.
+pub(crate) fn native_depth_limit() -> usize {
+    NATIVE_DEPTH_LIMIT.with(|limit| limit.get())
+}
+
+/// One nested interpreter loop on the current thread. Entering counts the
+/// loop; dropping the guard, on whatever path the loop is left (result,
+/// error, yield or panic), uncounts it.
+#[must_use = "the loop is uncounted as soon as the guard is dropped"]
+pub(crate) struct NativeDepthGuard(());
+
+impl NativeDepthGuard {
+    /// Count one more nested loop, or return `None` if the thread is at
+    /// its limit already.
+    pub(crate) fn enter() -> Option<Self> {
+        let limit = native_depth_limit();
+        NATIVE_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= limit {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(NativeDepthGuard(()))
+            }
+        })
+    }
+}
+
+impl Drop for NativeDepthGuard {
+    fn drop(&mut self) {
+        // `try_with`: a guard may be dropped while the thread is being
+        // torn down, when its thread-locals are no longer accessible.
+        let _ = NATIVE_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
 
 // ── VM ────────────────────────────────────────────────────────────
 
@@ -1041,6 +1146,95 @@ impl Vm {
             // exhaustiveness.
             other => format!("{other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod native_stack_tests {
+    use super::{
+        DEFAULT_NATIVE_STACK_BUDGET, NATIVE_DEPTH, NATIVE_STACK_BYTES_PER_LEVEL, NativeDepthGuard,
+        native_depth_limit, native_depth_limit_for, set_native_stack_budget,
+    };
+
+    /// Run `f` on a thread of its own, so that the thread-locals it reads
+    /// and changes belong to this test alone.
+    fn on_fresh_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::spawn(f).join().expect("test thread panicked")
+    }
+
+    #[test]
+    fn a_thread_without_a_budget_is_treated_as_2_mib() {
+        let limit = on_fresh_thread(native_depth_limit);
+        assert_eq!(limit, native_depth_limit_for(2 * 1024 * 1024));
+        assert_eq!(limit, native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET));
+        assert!(limit >= 1);
+    }
+
+    #[test]
+    fn a_budget_belongs_to_the_thread_that_set_it() {
+        let (inside, outside) = on_fresh_thread(|| {
+            set_native_stack_budget(64 * 1024 * 1024);
+            let inside = native_depth_limit();
+            let outside = on_fresh_thread(native_depth_limit);
+            (inside, outside)
+        });
+        assert_eq!(inside, native_depth_limit_for(64 * 1024 * 1024));
+        assert_eq!(outside, native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET));
+        assert!(inside > outside);
+    }
+
+    #[test]
+    fn a_larger_stack_allows_proportionally_more_levels() {
+        assert_eq!(native_depth_limit_for(NATIVE_STACK_BYTES_PER_LEVEL), 1);
+        assert_eq!(
+            native_depth_limit_for(10 * NATIVE_STACK_BYTES_PER_LEVEL),
+            10
+        );
+        assert_eq!(
+            native_depth_limit_for(10 * NATIVE_STACK_BYTES_PER_LEVEL + 1),
+            10
+        );
+    }
+
+    #[test]
+    fn a_stack_smaller_than_one_level_still_allows_one() {
+        assert_eq!(native_depth_limit_for(0), 1);
+        assert_eq!(native_depth_limit_for(NATIVE_STACK_BYTES_PER_LEVEL - 1), 1);
+    }
+
+    #[test]
+    fn the_guard_refuses_the_level_past_the_limit_and_frees_its_level_on_drop() {
+        on_fresh_thread(|| {
+            set_native_stack_budget(3 * NATIVE_STACK_BYTES_PER_LEVEL);
+            let first = NativeDepthGuard::enter().expect("level 1 fits");
+            let second = NativeDepthGuard::enter().expect("level 2 fits");
+            let third = NativeDepthGuard::enter().expect("level 3 fits");
+            assert!(
+                NativeDepthGuard::enter().is_none(),
+                "a fourth level must be refused"
+            );
+            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 3);
+            drop(third);
+            let again = NativeDepthGuard::enter().expect("the freed level can be taken again");
+            drop(again);
+            drop(second);
+            drop(first);
+            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 0);
+        });
+    }
+
+    #[test]
+    fn a_refused_level_is_not_counted() {
+        on_fresh_thread(|| {
+            set_native_stack_budget(NATIVE_STACK_BYTES_PER_LEVEL);
+            let only = NativeDepthGuard::enter().expect("level 1 fits");
+            for _ in 0..5 {
+                assert!(NativeDepthGuard::enter().is_none());
+            }
+            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 1);
+            drop(only);
+            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 0);
+        });
     }
 }
 

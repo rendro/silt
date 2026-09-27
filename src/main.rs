@@ -69,7 +69,13 @@ fn main() {
     let join = std::thread::Builder::new()
         .name("silt-main".into())
         .stack_size(SILT_STACK_SIZE)
-        .spawn(move || run_main(args))
+        .spawn(move || {
+            // The VM bounds how deep method calls and builtin callbacks
+            // may nest by the stack of the thread it runs on; tell it how
+            // large this one is.
+            silt::vm::set_native_stack_budget(SILT_STACK_SIZE);
+            run_main(args)
+        })
         .expect("spawning silt main worker thread");
     if let Err(payload) = join.join() {
         std::panic::resume_unwind(payload);
