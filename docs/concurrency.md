@@ -597,6 +597,14 @@ the sweep, it returns `(channel, Closed)` for that channel. If no tasks can
 make progress and no channels have data, it detects a deadlock and reports an
 error.
 
+Channels returned by a `stream` function are the exception. A stream stage is
+not a task, so silt cannot tell whether it will still deliver. When the main
+thread waits on such a channel with `channel.receive`, `channel.each`, or a
+`channel.select` that has a receive on it, no deadlock is reported: the wait
+ends when a value arrives or the channel closes. A stream that never delivers
+and never closes therefore hangs. The usual cause is a channel feeding the
+pipeline that was never closed with `channel.close`.
+
 
 ## 5. Patterns
 

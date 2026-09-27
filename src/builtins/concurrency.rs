@@ -1,7 +1,8 @@
 //! Concurrency builtin functions (`channel.*`, `task.*`).
 
 use parking_lot::{Condvar, Mutex};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
@@ -998,6 +999,75 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
 // fire latency is one signal hop, target <200ms even on heavily
 // loaded CI.
 
+// ── Stream-fed channels ──────────────────────────────────────────
+//
+// The output channel of a `stream.*` stage is fed by a plain OS thread
+// (`src/builtins/stream.rs`), not by a scheduler task. The wake graph
+// cannot see that thread, and a program that never calls `task.spawn`
+// has no scheduler at all, so the main-thread waits below used to read
+// an empty stream channel as "no counterparty" and reported a deadlock
+// while the stage was about to deliver.
+//
+// `stream.rs` therefore records the output channel of every stage
+// here, and a receive on a recorded channel never gets a deadlock
+// verdict: it waits for a value or for `Closed`. A stage closes its
+// output when it ends, so the wait ends when the stage does.
+//
+// The mark is on the channel, not on the thread. A wait on any other
+// channel gets the same verdict as before, whether or not stream
+// threads are alive. That matters because stage threads commonly
+// outlive their pipeline: a truncating stage such as `stream.take`
+// leaves its upstream stages blocked on a full buffer for the rest of
+// the program, and they must not switch the detection off.
+//
+// Channels are keyed by address, not by `Channel::id`. Ids restart at
+// 0 for every top-level VM, and one process can hold several of those
+// (`silt test` creates one per file). Each entry holds a `Weak` to its
+// channel. That keeps the allocation, not the channel, alive, so the
+// address cannot be reused by another channel while the entry exists.
+//
+// Known limit: a receive on the output of a stage that never delivers
+// and never closes (its own input stays open and silent forever, or
+// its thread died without closing) waits forever instead of being
+// reported.
+
+fn stream_fed_channels() -> &'static Mutex<HashMap<usize, Weak<Channel>>> {
+    static CHANNELS: OnceLock<Mutex<HashMap<usize, Weak<Channel>>>> = OnceLock::new();
+    CHANNELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Record `ch` as the output channel of a stream stage. `stream.rs`
+/// calls this when it creates the stage, before the builtin returns,
+/// so the mark is in place before anyone can wait on the channel.
+pub(crate) fn mark_stream_fed(ch: &Arc<Channel>) {
+    let mut channels = stream_fed_channels().lock();
+    // Forget the channels that no longer exist, so the registry stays
+    // as small as the set of stage outputs that are still in use.
+    channels.retain(|_, fed| fed.strong_count() > 0);
+    channels.insert(Arc::as_ptr(ch) as usize, Arc::downgrade(ch));
+}
+
+/// True iff `ch` is the output channel of a stream stage.
+fn is_stream_fed(ch: &Arc<Channel>) -> bool {
+    let key = Arc::as_ptr(ch) as usize;
+    stream_fed_channels().lock().contains_key(&key)
+}
+
+/// True iff `target` includes a receive on a stream-fed channel: a
+/// plain receive on one, or a select with at least one such receive
+/// arm. Such a wait never gets a deadlock verdict. A send and a join
+/// are never covered.
+fn waits_on_stream_fed_channel(target: &crate::scheduler::MainTarget) -> bool {
+    match target {
+        crate::scheduler::MainTarget::Recv(ch) => is_stream_fed(ch),
+        crate::scheduler::MainTarget::Select(edges) => edges.iter().any(|edge| match edge {
+            crate::scheduler::SelectEdge::Recv(ch) => is_stream_fed(ch),
+            crate::scheduler::SelectEdge::Send(_) => false,
+        }),
+        crate::scheduler::MainTarget::Send(_) | crate::scheduler::MainTarget::Join(_) => false,
+    }
+}
+
 /// Phase 3: register the main thread with the wake graph and install
 /// a callback that pokes `pair`'s condvar on every graph state-change.
 /// Returns the install guard (drop deregisters the callback) so a
@@ -1033,7 +1103,15 @@ fn install_main_signal(
 ///
 /// When a scheduler IS attached, defer to `Scheduler::is_main_starved`
 /// — the wake graph is the SOLE deadlock signal.
+///
+/// Before either of those: a receive on a stream-fed channel is never
+/// starved. Its counterparty is a stream thread, which neither the
+/// wake graph nor the no-scheduler reasoning can see. See the
+/// "Stream-fed channels" section above.
 fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> bool {
+    if waits_on_stream_fed_channel(target) {
+        return false;
+    }
     if let Some(sched) = vm.current_scheduler() {
         return sched.is_main_starved(target);
     }
@@ -1317,7 +1395,12 @@ fn main_thread_wait_for_receive(
     // timer IS pending, the recv-waker we register below is woken by
     // the timer thread's `ch.close()` → `wake_all_recv()` chain, so
     // the indefinite `cvar.wait` is finite.)
-    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() {
+    //
+    // A stream-fed channel never takes this path: the stream thread
+    // that feeds it is a counterparty this check cannot see. The
+    // recv-waker we register below is woken by that thread's send or
+    // by its `ch.close()`, neither of which needs a scheduler.
+    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() && !is_stream_fed(ch) {
         match ch.try_receive() {
             TryReceiveResult::Value(val) => {
                 return Ok(Value::Variant("Message".into(), vec![val]));
