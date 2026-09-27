@@ -51,7 +51,8 @@ impl Server {
         let (label, params_info, doc_text) = if let Some(def) = doc.definitions.get(&fn_sym) {
             let (label, params_info) = build_signature_from_def(&fn_name, def);
             (label, params_info, def.doc.clone())
-        } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
+        } else {
+            let sig = self.builtin_sigs.get(&fn_name)?;
             // Show builtin type signature with per-parameter info when
             // the registry covers this builtin. Round-71 DX-4 fix: the
             // pre-round implementation always emitted `vec![]` here,
@@ -79,8 +80,6 @@ impl Server {
                 })
                 .unwrap_or_default();
             (format!("{fn_name}: {sig}"), params_info, doc_text)
-        } else {
-            return None;
         };
 
         let documentation = doc_text.map(|d| {
