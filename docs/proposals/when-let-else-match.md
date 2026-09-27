@@ -1,12 +1,39 @@
 ---
 title: "Proposal: `when let ... else match` for exhaustive else branches"
 section: "Proposals"
-status: draft
+status: withdrawn
 ---
 
 # `when let ... else match`
 
-**Status:** proposal, not yet implemented.
+**Status:** withdrawn on 2026-09-27. Not implemented, and not planned.
+
+## Why this was withdrawn
+
+`when let` stays in the language as one small form. This extension is not
+needed, for two reasons.
+
+1. Per-variant early exit is already expressible with a plain `match`, which
+   binds the success value and sees the failure value:
+
+   ```silt
+   let port = match int.parse(s) {
+     Ok(n) -> n
+     Err(e) -> return Err("bad port '{s}': {e}")
+   }
+   ```
+
+2. The shape this proposal set out to replace, a `match` inside the
+   `when let` else body, is rejected only because a `match` whose arms all
+   diverge is not typed `Never`. That is a gap in the typechecker, and the
+   planned fix is to close it there. Once it lands, the natural form
+   type-checks and no new syntax is required.
+
+The rest of this document is kept for the record. Its Problem section
+describes the language as it was when the proposal was written.
+
+## Original proposal
+
 **Scope:** a syntactic extension to `when let` that lets the else
 branch pattern-match on the scrutinee without requiring an
 unreachable arm for the primary pattern. No new type-system
