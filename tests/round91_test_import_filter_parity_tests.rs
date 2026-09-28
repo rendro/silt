@@ -31,24 +31,6 @@ use silt::diagnostic_filters::should_suppress_import_cascade_message;
 /// behavioral (binary-level) lock of the same wiring.
 const CLI_TEST_RS: &str = include_str!("../src/cli/test.rs");
 
-/// The `silt test` type-error loop must route through the shared
-/// predicate, threading the loop-local `source_err` AND the
-/// whole-compile `has_user_import_warning` flag (the flag is what
-/// makes cascade suppression conditional on the warning's presence).
-#[test]
-fn silt_test_loop_calls_shared_predicate_at_the_bug_site() {
-    assert!(
-        CLI_TEST_RS
-            .contains("should_suppress_import_cascade(&source_err, has_user_import_warning)"),
-        "src/cli/test.rs no longer routes its type-error loop through \
-         `should_suppress_import_cascade(&source_err, has_user_import_warning)` — \
-         the round-91 import-cascade parity fix has been unwired. If the call \
-         was legitimately refactored, it must still suppress BOTH the \
-         unknown-module warning and the undefined-name cascade; update this \
-         lock to the new spelling only after confirming that."
-    );
-}
-
 /// The exact pre-round-91 buggy form must never return. The old loop
 /// read `if is_unknown_module_warning(&source_err)` — warning-only,
 /// leaking the cascade. The string is unambiguous: the only legitimate

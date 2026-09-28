@@ -20,6 +20,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -42,6 +43,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -63,6 +65,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -81,6 +84,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -99,6 +103,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -117,6 +122,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -138,6 +144,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -156,6 +163,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -177,6 +185,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -203,6 +212,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -221,6 +231,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -242,6 +253,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -263,6 +275,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -286,6 +299,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }

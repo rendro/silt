@@ -8,7 +8,7 @@ use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
-use super::{Vm, VmError};
+use super::{NativeDepthGuard, Vm, VmError, native_depth_limit};
 
 /// Maximum number of call frames the VM will allocate before reporting a
 /// stack-overflow error (see `stack_overflow_error` for the user-facing
@@ -26,6 +26,41 @@ fn stack_overflow_error() -> VmError {
     VmError::new(format!(
         "stack overflow: recursion depth exceeded {MAX_FRAMES} frames (tip: tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame)"
     ))
+}
+
+/// Build the user-facing stack-overflow error reported when method calls
+/// and builtin callbacks nest deeper than the current thread's stack can
+/// hold. Same error as `stack_overflow_error`, for the second resource a
+/// call can exhaust: these two kinds of call run a nested interpreter loop
+/// on the host stack, so they are limited by the thread's stack size and
+/// reach their limit long before `MAX_FRAMES`.
+fn native_stack_overflow_error() -> VmError {
+    let limit = native_depth_limit();
+    VmError::new(format!(
+        "stack overflow: recursion depth exceeded {limit} nested method or callback calls (tip: a method call, or a function passed to a builtin such as list.map, uses the host stack for every level of nesting; for deep recursion use a plain function call, which is limited to {MAX_FRAMES} frames, or a loop)"
+    ))
+}
+
+/// Count one more interpreter loop nested on this thread's host stack, or
+/// fail with the stack-overflow error if the thread is at its limit. The
+/// loop is uncounted when the returned guard is dropped, so bind the guard
+/// to a local that lives as long as the loop does.
+fn enter_native_level() -> Result<NativeDepthGuard, VmError> {
+    NativeDepthGuard::enter().ok_or_else(native_stack_overflow_error)
+}
+
+/// What became of a builtin that was called as a function value. See
+/// `Vm::call_builtin_value`.
+enum BuiltinValueCall {
+    /// The builtin returned this value.
+    Done(Value),
+    /// The builtin yielded.
+    Yielded {
+        /// The yield, to be passed on to the scheduler.
+        signal: VmError,
+        /// The arguments to call the builtin with on resume.
+        resume_args: Vec<Value>,
+    },
 }
 
 /// Language-level equality for the `==` / `!=` operators.
@@ -673,6 +708,10 @@ impl Vm {
     // ── Main execution loop ───────────────────────────────────────
 
     pub(crate) fn execute(&mut self) -> Result<Value, VmError> {
+        // Usually the outermost loop of its thread, but not always: a
+        // target without threads runs a spawned task's `execute` inside
+        // the `task.spawn` call of its parent.
+        let _native_level = enter_native_level()?;
         loop {
             let op_byte = self.read_byte()?;
             let op = Op::from_byte(op_byte)
@@ -823,20 +862,22 @@ impl Vm {
                 let args: Vec<Value> = self.stack[start..start + argc].to_vec();
                 // Pop everything including the function slot
                 self.stack.truncate(func_slot);
-                match self.dispatch_builtin(&name, &args) {
-                    Ok(result) => {
+                match self.call_builtin_value(&name, &args)? {
+                    BuiltinValueCall::Done(result) => {
                         self.push(result);
                         Ok(())
                     }
-                    Err(e) if e.is_yield => {
-                        // The builtin already re-pushed the args before yielding.
-                        // We must also re-push the function value BEFORE the args
-                        // so that Op::Call finds it at func_slot on resume.
-                        let args_start = self.stack.len() - argc;
-                        self.stack.insert(args_start, Value::BuiltinFn(name));
-                        Err(e)
+                    BuiltinValueCall::Yielded {
+                        signal,
+                        resume_args,
+                    } => {
+                        // `Op::Call` is re-executed on resume: put back
+                        // what it reads, the function value at func_slot
+                        // and the arguments above it.
+                        self.push(Value::BuiltinFn(name));
+                        self.stack.extend(resume_args);
+                        Err(signal)
                     }
-                    Err(e) => Err(e),
                 }
             }
             Value::VariantConstructor(name, arity) => {
@@ -917,12 +958,88 @@ impl Vm {
         head
     }
 
+    // ── Builtins called as function values ───────────────────────
+
+    /// Run a builtin for a caller that holds it as a function VALUE:
+    /// `Op::Call` and `Op::TailCall` on a builtin (`call_value`), and a
+    /// builtin passed as a callback or stored in a record field
+    /// (`invoke_callable`, `resume_suspended_invoke`). Every such caller
+    /// goes through here.
+    ///
+    /// A builtin that yields re-pushes its arguments, because that is
+    /// what `Op::CallBuiltin` pops again when it is re-executed on resume.
+    /// A caller that holds the builtin as a value resumes in its own way,
+    /// so this helper takes the re-pushed arguments back off the stack and
+    /// hands them over with the yield. However the builtin ends, the stack
+    /// has the height it had at entry; the caller then lays out what ITS
+    /// resume reads.
+    fn call_builtin_value(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<BuiltinValueCall, VmError> {
+        let floor = self.stack.len();
+        match self.dispatch_builtin(name, args) {
+            Ok(value) => {
+                self.stack.truncate(floor);
+                Ok(BuiltinValueCall::Done(value))
+            }
+            Err(signal) if signal.is_yield => {
+                let repushed = if self.stack.len() > floor {
+                    self.stack.split_off(floor)
+                } else {
+                    Vec::new()
+                };
+                // A builtin re-pushes as many values as it was called
+                // with. Should one ever not, resume with the original
+                // arguments rather than with a call of the wrong arity.
+                let resume_args = if repushed.len() == args.len() {
+                    repushed
+                } else {
+                    args.to_vec()
+                };
+                Ok(BuiltinValueCall::Yielded {
+                    signal,
+                    resume_args,
+                })
+            }
+            Err(e) => {
+                self.stack.truncate(floor);
+                Err(e)
+            }
+        }
+    }
+
+    /// Call a builtin that `invoke_callable` was given as the callable.
+    /// If it yields, a `SuspendedInvoke::Builtin` is left behind, so that
+    /// the caller finds `suspended_invoke` set exactly as it does after a
+    /// closure yielded, and `resume_suspended_invoke` calls the builtin
+    /// again.
+    fn invoke_builtin_value(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match self.call_builtin_value(name, args)? {
+            BuiltinValueCall::Done(value) => Ok(value),
+            BuiltinValueCall::Yielded {
+                signal,
+                resume_args,
+            } => {
+                self.push_suspended_invoke(SuspendedInvoke::Builtin {
+                    name: name.to_string(),
+                    args: resume_args,
+                });
+                Err(signal)
+            }
+        }
+    }
+
     /// Call a callable Value and return its result. Used for higher-order builtins.
     pub(crate) fn invoke_callable(
         &mut self,
         func: &Value,
         args: &[Value],
     ) -> Result<Value, VmError> {
+        // The closure arm runs a nested interpreter loop, and the builtin
+        // arm may run one through the builtin's own callback.
+        let _native_level = enter_native_level()?;
         match func {
             Value::VmClosure(closure) => {
                 if args.len() != closure.function.arity as usize {
@@ -1015,7 +1132,7 @@ impl Vm {
                             // overwritten.
                             let extra_frames = self.frames.split_off(saved_frame_count);
                             let extra_stack = self.stack.split_off(func_slot);
-                            self.push_suspended_invoke(SuspendedInvoke {
+                            self.push_suspended_invoke(SuspendedInvoke::Closure {
                                 frames: extra_frames,
                                 stack: extra_stack,
                                 func_slot,
@@ -1045,7 +1162,7 @@ impl Vm {
                     }
                 }
             }
-            Value::BuiltinFn(name) => self.dispatch_builtin(name, args),
+            Value::BuiltinFn(name) => self.invoke_builtin_value(name, args),
             Value::VariantConstructor(name, arity) => {
                 if args.len() != *arity {
                     return Err(VmError::new(format!(
@@ -1069,17 +1186,30 @@ impl Vm {
     /// `self.suspended_invoke`.  This method restores them and continues
     /// the execution loop until the callback returns a result.
     pub(crate) fn resume_suspended_invoke(&mut self) -> Result<Value, VmError> {
+        // Resuming nests an interpreter loop exactly as the first call did.
+        let _native_level = enter_native_level()?;
         // Pop via the stack-aware helper so any deeper suspended state
         // (e.g. inner yield from a nested `task.deadline`) is auto-promoted
         // into the top slot for subsequent `.is_some()` checks. (B5.)
         let suspended = self.take_suspended_invoke().ok_or_else(|| {
             VmError::new("internal VM error: missing suspended state during resume".into())
         })?;
+        let (frames, stack, func_slot) = match suspended {
+            SuspendedInvoke::Closure {
+                frames,
+                stack,
+                func_slot,
+            } => (frames, stack, func_slot),
+            // A builtin is resumed by calling it again, with the
+            // arguments it asked for when it yielded.
+            SuspendedInvoke::Builtin { name, args } => {
+                return self.invoke_builtin_value(&name, &args);
+            }
+        };
         let saved_frame_count = self.frames.len();
-        let func_slot = suspended.func_slot;
         // Restore the saved frames and stack.
-        self.frames.extend(suspended.frames);
-        self.stack.extend(suspended.stack);
+        self.frames.extend(frames);
+        self.stack.extend(stack);
         // Continue the execution loop (same as invoke_callable's inner loop).
         loop {
             let saved_ip = self.current_frame()?.ip;
@@ -1135,7 +1265,7 @@ impl Vm {
                     // Push onto the stack; if an even-deeper suspended
                     // state exists (nested-yield case), it's preserved in
                     // `suspended_invoke_outer`. (B5 fix.)
-                    self.push_suspended_invoke(SuspendedInvoke {
+                    self.push_suspended_invoke(SuspendedInvoke::Closure {
                         frames: extra_frames,
                         stack: extra_stack,
                         func_slot,
@@ -2497,6 +2627,24 @@ impl Vm {
                         ));
                     }
                 }
+            }
+            Op::Slide => {
+                // Keep the top value, cut the frame back to `slot` values
+                // and put the value on top of them. A frame shorter than
+                // `slot` means the compiler counted a value that was never
+                // pushed.
+                let slot = self.read_u16()? as usize;
+                let base = self.current_frame()?.base_slot;
+                let value = self.pop()?;
+                let target = base + slot;
+                if target > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "internal VM error: scope result slot out of range (slot {slot}, base {base}, stack len {})",
+                        self.stack.len()
+                    )));
+                }
+                self.stack.truncate(target);
+                self.push(value);
             }
         }
         Ok(DispatchResult::Continue)

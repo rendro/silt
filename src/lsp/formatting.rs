@@ -14,6 +14,10 @@ impl Server {
     ) -> Option<Vec<TextEdit>> {
         let uri = &params.text_document.uri;
         let doc = self.documents.get(uri)?;
+        // No edits for a document that does not parse, and none for one
+        // whose formatted text the formatter refused (it would not parse,
+        // would be a different program, or would lose a comment): the
+        // editor's buffer stays as it is.
         let formatted = crate::formatter::format(&doc.source).ok()?;
 
         if formatted == doc.source {

@@ -74,7 +74,12 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
 const PAIR_PRELUDE: &str = r#"
 type Pair(a) = (a, a)
 trait Show2 { fn show2(self) -> String }
-trait Show2 for Pair(a) where a: Display { fn show2(self) -> String = "{self.0} and {self.1}" }
+trait Show2 for Pair(a) where a: Display {
+  fn show2(self) -> String {
+    let (x, y) = self
+    "{x} and {y}"
+  }
+}
 fn describe(x: p) -> String where p: Show2 { x.show2() }
 "#;
 
@@ -244,7 +249,12 @@ fn linear_two_param_alias_where_bound_still_accepts_mixed_slots() {
     let src = r#"
 type Two(a, b) = (a, b)
 trait First { fn first_str(self) -> String }
-trait First for Two(a, b) where a: Display { fn first_str(self) -> String = "{self.0}" }
+trait First for Two(a, b) where a: Display {
+  fn first_str(self) -> String {
+    let (x, _) = self
+    "{x}"
+  }
+}
 fn head_of(x: p) -> String where p: First { x.first_str() }
 fn main() { println(head_of((7, "seven"))) }
 "#;

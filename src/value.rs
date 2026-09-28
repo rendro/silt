@@ -355,8 +355,9 @@ pub struct Channel {
     /// the channels that did NOT fire, avoiding leaked waker closures
     /// and a permanently-inflated `waiting_receivers` counter.
     recv_wakers: Mutex<VecDeque<(WakerId, Waker)>>,
-    /// Wakers to call when buffer space becomes available
-    /// (wakes tasks blocked on send when buffer was full).
+    /// Wakers to call when buffer space becomes available (wakes tasks
+    /// blocked on send). One is taken out for every value a receiver
+    /// takes out of the channel.
     send_wakers: Mutex<VecDeque<(WakerId, Waker)>>,
     /// Monotonic counter for minting `WakerId`s on this channel. A `u64`
     /// at 1 ns per increment overflows in ~585 years, so overflow is
@@ -456,14 +457,19 @@ impl Channel {
     }
 
     pub fn try_send(&self, val: Value) -> TrySendResult {
-        if self.closed.load(AtomicOrdering::Acquire) {
-            return TrySendResult::Closed;
-        }
+        // `closed` is read under the lock that guards the channel's
+        // values (`handoff` for rendezvous, `buffer` otherwise), and
+        // `close` sets it under the same lock. A send therefore either
+        // stores its value before the close, or is refused: no value is
+        // accepted after a receiver has been told `Closed`.
         if self.is_rendezvous() {
             // Rendezvous: only succeed if a receiver is already waiting AND
             // the handoff slot is empty (no other sender already parked).
             let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
             let mut slot = self.handoff.lock();
+            if self.closed.load(AtomicOrdering::Acquire) {
+                return TrySendResult::Closed;
+            }
             if has_receiver && slot.is_none() {
                 *slot = Some(val);
                 drop(slot);
@@ -476,6 +482,9 @@ impl Channel {
         } else {
             // Buffered: succeed if there's room in the buffer.
             let mut buf = self.buffer.lock();
+            if self.closed.load(AtomicOrdering::Acquire) {
+                return TrySendResult::Closed;
+            }
             if buf.len() < self.capacity {
                 buf.push_back(val);
                 drop(buf);
@@ -506,11 +515,13 @@ impl Channel {
             // Buffered: pop from the buffer.
             let mut buf = self.buffer.lock();
             if let Some(val) = buf.pop_front() {
-                let was_full = buf.len() + 1 >= self.capacity;
                 drop(buf);
-                if was_full {
-                    self.wake_send();
-                }
+                // Every value taken out frees one place, so every one
+                // wakes one parked sender. Waking only when the buffer
+                // had been full leaves senders parked for good: several
+                // receives in a row free several places and wake one
+                // sender.
+                self.wake_send();
                 TryReceiveResult::Value(val)
             } else if self.closed.load(AtomicOrdering::Acquire) {
                 TryReceiveResult::Closed
@@ -545,11 +556,9 @@ impl Channel {
             let mut buf = self.buffer.lock();
             loop {
                 if let Some(val) = buf.pop_front() {
-                    let was_full = buf.len() + 1 >= self.capacity;
                     drop(buf);
-                    if was_full {
-                        self.wake_send();
-                    }
+                    // One freed place, one woken sender: see `try_receive`.
+                    self.wake_send();
                     return TryReceiveResult::Value(val);
                 }
                 if self.closed.load(AtomicOrdering::Acquire) {
@@ -561,31 +570,35 @@ impl Channel {
     }
 
     pub fn close(&self) {
-        // B1 fix: do NOT clear the handoff slot. A rendezvous `try_send`
+        // The handoff slot is NOT cleared. A rendezvous `try_send`
         // succeeds by placing a value in the handoff slot, but the receiver
         // may not have taken it yet. Clearing the slot here silently drops
         // that final message. Instead, leave the slot alone — `try_receive`
         // and `receive_blocking` drain the slot BEFORE checking `closed`,
         // so the last value is still observed after close.
         //
-        // We still acquire + release the handoff lock here to act as a
-        // memory barrier synchronising with the rendezvous `receive_blocking`
-        // loop (which holds that lock while checking `closed`). Without this,
-        // the receiver could see `closed == false` in the loop, enter
-        // `condvar.wait` just after we set `closed = true` and fired
-        // `notify_all`, and then miss the wakeup.
-        self.closed.store(true, AtomicOrdering::Release);
+        // `closed` is set while holding the lock that guards the
+        // channel's values. Two things depend on that:
+        //   * `try_send` reads `closed` under the same lock, so a send
+        //     and a close are ordered: no value is stored after a
+        //     receiver has seen `Closed`.
+        //   * `receive_blocking` checks `closed` and enters
+        //     `condvar.wait` under the same lock, so the `notify_all`
+        //     below cannot fall between its check and its wait.
+        if self.is_rendezvous() {
+            let _slot = self.handoff.lock();
+            self.closed.store(true, AtomicOrdering::Release);
+        } else {
+            let _buf = self.buffer.lock();
+            self.closed.store(true, AtomicOrdering::Release);
+        }
         // Timer-driven close has landed; clear the pending flag so the
-        // main-thread wait loop falls through to its normal path.
+        // main-thread wait loop falls through to its normal path. This
+        // comes after `closed` is set, so a reader that checks the
+        // pending flag first and `closed` second never sees both false
+        // for a channel whose timer was scheduled.
         self.pending_timer_close
             .store(false, AtomicOrdering::Release);
-        drop(self.handoff.lock());
-        // Acquire + release the buffer lock so that any thread in the
-        // buffered receive_blocking path that already checked `closed`
-        // (saw false) but hasn't entered condvar.wait yet will finish
-        // entering the wait before we signal. Without this, notify_all
-        // can fire between the check and the wait — a classic lost-wakeup.
-        drop(self.buffer.lock());
         self.condvar.notify_all();
         // Wake ALL tasks blocked on receive or send — channel is done.
         self.wake_all_recv();
@@ -781,6 +794,48 @@ impl Channel {
             w();
         }
     }
+
+    /// Pass a wake-up on: wake one parked receiver if a receive could
+    /// complete now, and one parked sender if a send could complete now.
+    ///
+    /// A wake-up is a one-shot hint. The channel takes one waker out of
+    /// its queue for each value that arrives and each place that frees
+    /// up, and the woken party retries its operation. A party that was
+    /// chosen and then does not perform the operation has used up a
+    /// hint that another waiter needed: a `select` that completes a
+    /// different arm, or a task that was cancelled after its waker had
+    /// been taken out of the queue. Such a party calls this, so the
+    /// hint reaches the next waiter.
+    ///
+    /// The wake-ups depend on the state of the channel at the time of
+    /// the call, so a call that was not needed wakes nobody, or wakes a
+    /// waiter that retries and parks again. It never loses a value.
+    ///
+    /// Must be called without any lock of this channel held.
+    pub fn rewake_waiters(&self) {
+        let (receive_possible, send_possible) = if self.is_rendezvous() {
+            let slot = self.handoff.lock();
+            let closed = self.closed.load(AtomicOrdering::Acquire);
+            let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
+            (
+                slot.is_some() || closed,
+                (slot.is_none() && has_receiver) || closed,
+            )
+        } else {
+            let buf = self.buffer.lock();
+            let closed = self.closed.load(AtomicOrdering::Acquire);
+            (
+                !buf.is_empty() || closed,
+                buf.len() < self.capacity || closed,
+            )
+        };
+        if receive_possible {
+            self.wake_recv();
+        }
+        if send_possible {
+            self.wake_send();
+        }
+    }
 }
 
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
@@ -799,7 +854,18 @@ pub struct TaskHandle {
     /// Monotonic counter for minting `join_wakers` entry ids.
     next_join_waker_id: AtomicU64,
     /// Cleanup to run when a blocked task is cancelled (removes stale waker state).
+    ///
+    /// Lock order: this mutex is a leaf. It is held only to move a
+    /// closure in or out, never while a closure runs or is dropped, and
+    /// no other lock is acquired while it is held. The scheduler
+    /// acquires it while holding the lock of a parked task's slot; a
+    /// cleanup closure locks that slot. If the closure ran under this
+    /// mutex, the two orders would meet and `task.cancel` would hang.
     cancel_cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// True while the task has ended with an error of its own that no
+    /// join has received and that has not been reported. Set by `fail`,
+    /// cleared by `join`, `mark_joined` and `take_unjoined_failure`.
+    unjoined_failure: AtomicBool,
 }
 
 impl TaskHandle {
@@ -811,35 +877,71 @@ impl TaskHandle {
             join_wakers: Mutex::new(Vec::new()),
             next_join_waker_id: AtomicU64::new(0),
             cancel_cleanup: Mutex::new(None),
+            unjoined_failure: AtomicBool::new(false),
         }
     }
 
     /// Register a cleanup closure to run when the task completes or is cancelled
     /// while blocked. This removes stale waker registrations from channels.
+    ///
+    /// A closure that was registered before is dropped, after the lock
+    /// on the cleanup has been released.
     pub fn set_cancel_cleanup(&self, f: Box<dyn FnOnce() + Send>) {
-        *self.cancel_cleanup.lock() = Some(f);
+        // The guard is a temporary of this statement, so the lock is
+        // released before `previous` is dropped.
+        let previous = self.cancel_cleanup.lock().replace(f);
+        drop(previous);
     }
 
     /// Clear any pending cancel-cleanup closure so it won't fire when
     /// the task completes normally (prevents double-decrement of
     /// `live_tasks` and double-removal of the wake-graph node).
+    ///
+    /// The closure is dropped after the lock on the cleanup has been
+    /// released.
     pub fn clear_cancel_cleanup(&self) {
-        *self.cancel_cleanup.lock() = None;
+        let previous = self.cancel_cleanup.lock().take();
+        drop(previous);
     }
 
     /// Store the task result and notify any joiners.
     /// If the task has already completed, this is a no-op (prevents
     /// cancel from overwriting a finished task's result).
     pub fn complete(&self, result: Result<Value, VmError>) {
+        self.finish(result, false);
+    }
+
+    /// Store the error that the task itself ended with, and notify any
+    /// joiners. Like `complete`, and in addition the error counts as
+    /// not joined until a join receives it.
+    ///
+    /// Returns `true` if this call stored the error, `false` if the
+    /// handle already had a result (the task was cancelled before it
+    /// failed); the error is dropped then.
+    pub fn fail(&self, error: VmError) -> bool {
+        self.finish(Err(error), true)
+    }
+
+    /// Shared body of `complete` and `fail`. Returns `true` if this
+    /// call stored the result.
+    fn finish(&self, result: Result<Value, VmError>, task_failed: bool) -> bool {
         {
             let mut guard = self.result.lock();
             if guard.is_some() {
-                return; // Already completed, don't overwrite
+                return false; // Already completed, don't overwrite
+            }
+            if task_failed {
+                // Set before the result becomes visible: a join that
+                // sees the result clears the flag after this.
+                self.unjoined_failure.store(true, AtomicOrdering::Release);
             }
             *guard = Some(result);
         }
-        // Fire cancel cleanup (removes stale waker state for blocked tasks).
-        if let Some(cleanup) = self.cancel_cleanup.lock().take() {
+        // Fire cancel cleanup (removes stale waker state for blocked
+        // tasks). The closure is taken out first and runs after the
+        // lock on the cleanup has been released: see `cancel_cleanup`.
+        let cleanup = self.cancel_cleanup.lock().take();
+        if let Some(cleanup) = cleanup {
             cleanup();
         }
         self.condvar.notify_all();
@@ -851,6 +953,7 @@ impl TaskHandle {
         for (_, w) in wakers {
             w();
         }
+        true
     }
 
     /// Block until the task produces a result.
@@ -858,6 +961,7 @@ impl TaskHandle {
         let mut guard = self.result.lock();
         loop {
             if let Some(result) = guard.clone() {
+                self.mark_joined();
                 return result;
             }
             self.condvar.wait(&mut guard);
@@ -867,6 +971,30 @@ impl TaskHandle {
     /// Non-blocking poll.
     pub fn try_get(&self) -> Option<Result<Value, VmError>> {
         self.result.lock().clone()
+    }
+
+    /// Note that a join has received the result of the task. A failure
+    /// of the task is the joiner's to handle from here on, and is not
+    /// reported as unjoined.
+    pub fn mark_joined(&self) {
+        self.unjoined_failure.store(false, AtomicOrdering::Release);
+    }
+
+    /// True iff the task failed and no join has received the error.
+    pub fn has_unjoined_failure(&self) -> bool {
+        self.unjoined_failure.load(AtomicOrdering::Acquire)
+    }
+
+    /// The error of a task that failed and that no join has received.
+    /// Returns it once: after this call the failure counts as reported.
+    pub fn take_unjoined_failure(&self) -> Option<VmError> {
+        if !self.unjoined_failure.swap(false, AtomicOrdering::AcqRel) {
+            return None;
+        }
+        match self.result.lock().as_ref() {
+            Some(Err(error)) => Some(error.clone()),
+            _ => None,
+        }
     }
 
     /// Mint a fresh id for a new join-waker registration.

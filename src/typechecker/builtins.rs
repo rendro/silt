@@ -83,6 +83,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
                     effects: EffectSet::io(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -95,6 +96,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
                     constraints: vec![(av, intern("Display"))],
                     effects: EffectSet::io(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -110,6 +112,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![a], Box::new(Type::Never)),
                     constraints: vec![(av, intern("Display"))],
                     effects: EffectSet::io(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -130,6 +133,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -147,6 +151,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -163,6 +168,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -176,6 +182,7 @@ impl TypeChecker {
                     ty: Type::Generic(intern("Option"), vec![a]),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -279,6 +286,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -294,6 +302,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -350,6 +359,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -362,6 +372,7 @@ impl TypeChecker {
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -374,6 +385,7 @@ impl TypeChecker {
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -386,6 +398,7 @@ impl TypeChecker {
                     ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -433,6 +446,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -448,6 +462,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -467,6 +482,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -484,6 +500,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -501,6 +518,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -524,6 +542,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -545,6 +564,7 @@ impl TypeChecker {
                     ),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -681,6 +701,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -700,6 +721,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -722,6 +744,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -736,6 +759,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -750,6 +774,7 @@ impl TypeChecker {
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -785,6 +810,7 @@ impl TypeChecker {
                     ty: Type::Generic(intern("TypeOf"), vec![inner]),
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }
@@ -858,6 +884,7 @@ impl TypeChecker {
                     ty,
                     constraints: vec![],
                     effects: EffectSet::pure(),
+                    optional_last_param: false,
                 },
             );
         }

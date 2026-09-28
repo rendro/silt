@@ -107,6 +107,11 @@ fn finding4_uses_module_qualified_unwrap_or() {
 fn finding4_corrected_snippet_typechecks() {
     // Lift the corrected snippet (cribbed from the doc lines 67-74 / 372-389)
     // through `silt check`.
+    //
+    // One difference from the doc: `toml.parse` takes the text and the
+    // target type. The doc writes `toml.parse(raw)`, which fails at run
+    // time ("toml.parse takes 2 arguments") and is rejected by the
+    // checker; the snippet here passes the type.
     let src = r#"
 import env
 import io
@@ -122,7 +127,7 @@ fn load_defaults() -> Config {
   let home = option.unwrap_or(env.get("HOME"), "/")
   let path = home + "/.config/app.toml"
   let raw = result.unwrap_or(io.read_file(path), "")
-  result.unwrap_or(toml.parse(raw), default_config())
+  result.unwrap_or(toml.parse(raw, Config), default_config())
 }
 
 fn main() { let _ = load_defaults() }

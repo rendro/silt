@@ -52,15 +52,15 @@
 //!     (≤6 fields per package) that the manual writer is trivial.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::git::{self, GitError, GitRef};
+use crate::git::{self, EscapedDisplay, EscapingWriter, GitError, GitRef};
 use crate::intern::{self, Symbol};
-use crate::manifest::{Dependency, Manifest, ManifestError};
+use crate::manifest::{Dependency, Manifest, ManifestError, toml_error_message};
 
 // ── Public types ───────────────────────────────────────────────────────
 
@@ -120,7 +120,16 @@ pub enum LockedSource {
 pub enum LockfileError {
     /// I/O failure reading or writing the file.
     Io(std::io::Error, PathBuf),
-    /// TOML syntax error or schema mismatch.
+    /// The file is not TOML.
+    Toml {
+        /// The position, then the TOML parser's message as
+        /// [`toml_error_message`] returns it: it is shown line by
+        /// line, so a line break in it must be the parser's own, never
+        /// one from a key or a value.
+        message: String,
+        path: PathBuf,
+    },
+    /// The file is TOML, but not a lockfile: schema mismatch.
     Parse { message: String, path: PathBuf },
     /// A `path = "..."` dep points at a directory that doesn't exist.
     DepNotFound { name: String, path: PathBuf },
@@ -142,10 +151,29 @@ pub enum LockfileError {
 }
 
 impl fmt::Display for LockfileError {
+    // Untrusted text, per variant:
+    //   - `Io`: the path is a dependency's directory when its sources
+    //     cannot be read, and that comes from a manifest's `path`.
+    //   - `Toml`: the message is the TOML parser's and quotes keys of
+    //     the lockfile. It is the one text that is shown on several
+    //     lines, see `toml_error_message`.
+    //   - `Parse`: the message quotes keys and values of the lockfile.
+    //   - `DepNotFound`, `DepNotPackage`: both fields are made from a
+    //     manifest's `path` value.
+    //   - `ManifestError`: a dependency's manifest, see that type.
+    //   - `GitOperation`: `url` and `ref_spec` come from a manifest;
+    //     for `source` see `GitError`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Shadows the formatter: nothing below can be written without
+        // going through the display rule.
+        let mut f = EscapingWriter::new(f);
         match self {
             LockfileError::Io(err, path) => {
                 write!(f, "lockfile I/O error at {}: {}", path.display(), err)
+            }
+            LockfileError::Toml { message, path } => {
+                write!(f, "invalid lockfile {}: ", path.display())?;
+                f.lines(message)
             }
             LockfileError::Parse { message, path } => {
                 write!(f, "invalid lockfile {}: {}", path.display(), message)
@@ -160,24 +188,26 @@ impl fmt::Display for LockfileError {
                 "dependency `{name}` at {} is not a silt package (no silt.toml found)",
                 path.display()
             ),
-            LockfileError::ManifestError(err) => write!(f, "{err}"),
-            // The URL and the ref come from a manifest, possibly a
-            // transitive dependency's: escaped so a newline or an
-            // escape character in them cannot forge a line of output.
+            LockfileError::ManifestError(err) => f.nested(err),
             LockfileError::GitOperation {
                 url,
                 ref_spec,
                 source,
-            } => write!(
-                f,
-                "git dependency `{}` ({} = `{}`): {source}",
-                git::escape_for_display(url),
-                ref_spec.kind(),
-                git::escape_for_display(ref_spec.as_ref_string())
-            ),
+            } => {
+                write!(
+                    f,
+                    "git dependency `{url}` ({} = `{}`): ",
+                    ref_spec.kind(),
+                    ref_spec.as_ref_string()
+                )?;
+                // git's own output follows on lines of its own.
+                f.nested(source)
+            }
         }
     }
 }
+
+impl EscapedDisplay for LockfileError {}
 
 impl std::error::Error for LockfileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
@@ -797,9 +827,12 @@ fn render_lockfile(lock: &Lockfile) -> String {
     out
 }
 
-/// Minimal TOML basic-string escape — handles `"` and `\` only, which
-/// is sufficient for the strings we emit (paths, names, versions,
-/// hashes). Backslash is the corner case that bites on Windows paths.
+/// `s` as a TOML basic string. Escaped is what TOML does not allow as
+/// it is in a basic string: the quotation mark, the backslash, and the
+/// control characters U+0000 to U+001F and U+007F (the tab, which TOML
+/// would allow, included). Everything else is written as it is. A
+/// string written here can be read back, whatever it holds; backslash
+/// is the corner case that bites on Windows paths.
 fn toml_escape_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -810,7 +843,7 @@ fn toml_escape_str(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
                 out.push_str(&format!("\\u{:04X}", c as u32));
             }
             c => out.push(c),
@@ -820,15 +853,40 @@ fn toml_escape_str(s: &str) -> String {
     out
 }
 
+/// The line and the column of the byte offset `offset` in `text`, both
+/// counted from 1, the column in characters.
+fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+    let mut end = offset.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let before = &text[..end];
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    let column = before[line_start..].chars().count() + 1;
+    (line, column)
+}
+
 fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
     // We use the toml crate's untyped Value API rather than a typed
     // serde derive because the serde + toml combination requires
     // pulling in additional features. The schema is small enough that
     // the manual extraction below is easy to follow and emits sharper
     // error messages.
-    let value: toml::Value = toml::from_str(text).map_err(|e| LockfileError::Parse {
-        message: e.to_string(),
-        path: path.to_path_buf(),
+    let value: toml::Value = toml::from_str(text).map_err(|e: toml::de::Error| {
+        // Only the parser's message and the position are kept. Its own
+        // rendering of the error quotes the offending line of the file.
+        let position = match e.span() {
+            Some(span) => {
+                let (line, column) = line_and_column(text, span.start);
+                format!("line {line}, column {column}: ")
+            }
+            None => String::new(),
+        };
+        LockfileError::Toml {
+            message: format!("{position}{}", toml_error_message(e.message(), text)),
+            path: path.to_path_buf(),
+        }
     })?;
 
     let table = value.as_table().ok_or_else(|| LockfileError::Parse {
@@ -1105,6 +1163,157 @@ mod tests {
             // Once for the URL, once for the ref, once in the source.
             assert_eq!(rendered.matches(escaped).count(), 3, "{rendered}");
         }
+    }
+
+    const HOSTILE: &str = "x\nerror: FORGED\u{1b}[2K\u{202e}";
+    const HOSTILE_ESCAPED: &str = "x\\nerror: FORGED\\u{1b}[2K\\u{202e}";
+
+    #[test]
+    fn every_error_variant_escapes_its_whole_message() {
+        let path = PathBuf::from(format!("/srv/{HOSTILE}"));
+        // The file the parser's message is about: it holds the value
+        // as an escape sequence.
+        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
+        let errors = [
+            LockfileError::Io(
+                std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
+                path.clone(),
+            ),
+            LockfileError::Toml {
+                message: toml_error_message(&format!("duplicate key `{HOSTILE}`"), source),
+                path: path.clone(),
+            },
+            LockfileError::Parse {
+                message: format!("[[package]] `{HOSTILE}` missing `version`"),
+                path: path.clone(),
+            },
+            LockfileError::DepNotFound {
+                name: HOSTILE.into(),
+                path: path.clone(),
+            },
+            LockfileError::DepNotPackage {
+                name: HOSTILE.into(),
+                path: path.clone(),
+            },
+            LockfileError::ManifestError(ManifestError::Validation {
+                message: format!("invalid package version `{HOSTILE}`"),
+                path,
+            }),
+        ];
+        for err in errors {
+            let rendered = err.to_string();
+            assert!(
+                !rendered.chars().any(git::needs_escape),
+                "the message must be one printable line: {rendered:?}"
+            );
+            // Once in the path, once in the rest of the message.
+            assert_eq!(rendered.matches(HOSTILE_ESCAPED).count(), 2, "{rendered}");
+        }
+    }
+
+    #[test]
+    fn git_operation_error_keeps_the_lines_of_git_output_marked() {
+        let rendered = LockfileError::GitOperation {
+            url: "file:///srv/r.git".into(),
+            ref_spec: GitRef::Branch("main".into()),
+            source: GitError::CommandFailed {
+                command: "git ls-remote".into(),
+                stderr: format!("fatal: no\nremote: {HOSTILE}\n"),
+                exit_code: Some(128),
+            },
+        }
+        .to_string();
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "git dependency `file:///srv/r.git` (branch = `main`): \
+                 git command failed (exit 128): `git ls-remote`",
+                "  git: fatal: no",
+                "  git: remote: x",
+                "  git: error: FORGED\\u{1b}[2K\\u{202e}",
+            ]
+        );
+    }
+
+    #[test]
+    fn toml_parse_error_has_a_position_and_the_lines_of_the_parser() {
+        // The offending line holds an escape character and U+202E; the
+        // parser's own rendering would quote it. The file holds no
+        // escape sequence, so the parser's two lines are kept.
+        let text = "version = 1\n\n[[package]]\nname = oops\u{1b}[2K\u{202e} error: FORGED\n";
+        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
+        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
+        let rendered = err.to_string();
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 2, "{rendered:?}");
+        assert!(
+            lines[0].starts_with("invalid lockfile x.lock: line 4, column 8: invalid "),
+            "{rendered}"
+        );
+        assert!(lines[1].starts_with("expected "), "{rendered}");
+        assert!(
+            !rendered.chars().any(|c| c != '\n' && git::needs_escape(c))
+                && !rendered.contains("FORGED"),
+            "{rendered:?}"
+        );
+
+        // A key is quoted in the parser's message, and the key holds a
+        // line break: one line.
+        let text = "version = 1\n\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n\
+                    \"x\\nerror: FORGED\\u001b[2K\\u202e\" = 2\n";
+        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
+        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
+        let rendered = err.to_string();
+        assert!(
+            rendered.starts_with("invalid lockfile x.lock: line 3, column 1: "),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(HOSTILE_ESCAPED) && !rendered.chars().any(git::needs_escape),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn toml_escape_str_writes_what_the_parser_reads_back() {
+        let mut every_control: String = ('\0'..='\u{1f}').collect();
+        every_control.push('\u{7f}');
+        for s in [
+            every_control.as_str(),
+            "1.0.0+a\u{7f}b",
+            "quote \" backslash \\ C:\\Users\\me",
+            "caf\u{e9} \u{2013} \u{65e5}\u{672c} \u{85}\u{a0}\u{202e}\u{2028}",
+            "",
+        ] {
+            let written = toml_escape_str(s);
+            assert!(
+                !written.chars().any(|c| c.is_ascii_control()),
+                "{s:?} was written with a control character: {written:?}"
+            );
+            let text = format!("v = {written}\n");
+            let value: toml::Value = toml::from_str(&text).unwrap_or_else(|e| {
+                panic!("{s:?} was written as {text:?}, which is not TOML: {e}")
+            });
+            let read = value
+                .as_table()
+                .and_then(|table| table.get("v"))
+                .and_then(|v| v.as_str());
+            assert_eq!(read, Some(s), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn line_and_column_count_from_one_in_characters() {
+        let text = "ab\n\u{e9}\u{65e5}c\n";
+        assert_eq!(line_and_column(text, 0), (1, 1));
+        assert_eq!(line_and_column(text, 2), (1, 3));
+        assert_eq!(line_and_column(text, 3), (2, 1));
+        // `c` follows a two-byte and a three-byte character.
+        assert_eq!(line_and_column(text, 8), (2, 3));
+        // Inside a character, and past the end.
+        assert_eq!(line_and_column(text, 4), (2, 1));
+        assert_eq!(line_and_column(text, 99), (3, 1));
     }
 
     #[test]

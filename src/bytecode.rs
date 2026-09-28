@@ -217,6 +217,14 @@ pub enum Op {
     /// Narrow ExtFloat to Float: if TOS is finite, replace with Float and jump
     /// forward by u16 offset; if non-finite, pop and fall through.
     NarrowFloat, // operand: u16 offset
+
+    /// Move TOS down to `stack[frame_base + u16]` and drop every value that
+    /// was above that slot: pop TOS, cut the frame back to `u16` values,
+    /// push the popped value. The compiler emits it where a scope ends with
+    /// its locals still under the result, and where a failed pattern test
+    /// lands, so that the frame again holds exactly the values the compiler
+    /// has accounted for.
+    Slide, // operand: u16 slot
 }
 
 impl Op {
@@ -297,6 +305,7 @@ impl Op {
             b if b == Op::Panic as u8 => Some(Op::Panic),
             b if b == Op::CallMethod as u8 => Some(Op::CallMethod),
             b if b == Op::NarrowFloat as u8 => Some(Op::NarrowFloat),
+            b if b == Op::Slide as u8 => Some(Op::Slide),
             _ => None,
         }
     }

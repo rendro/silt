@@ -148,10 +148,28 @@ fn round73_nested_list_in_map_byte_exact() {
     // comment consumption races the outer map's pre-comment drain. This
     // input would diverge if the helper ever switched back to eager
     // rendering.
-    let src = "fn main() {\n    let m = #{\n        \"xs\": [\n            1, -- one\n            2,\n        ], -- xs\n        \"y\": 99,\n    }\n}\n";
+    let src = "fn main() {\n    let m = #{\n        \"xs\": [\n            1, -- one\n            2,\n        ],\n        \"y\": 99,\n    }\n}\n";
     let expected =
         "fn main() {\n  let m = #{ \"xs\": [\n    1, -- one\n    2,\n  ], \"y\": 99, }\n}\n";
     assert_byte_exact("nested_list_in_map", src, expected);
+}
+
+#[test]
+fn round73_nested_list_in_map_comment_on_inner_close_line_is_refused() {
+    // The same input with a comment on the line that closes the inner
+    // list. The printer has no place for that comment (its text for this
+    // input is the `expected` string of the test above, without `-- xs`),
+    // so the formatter refuses the input instead of returning text that
+    // has lost the comment.
+    let src = "fn main() {\n    let m = #{\n        \"xs\": [\n            1, -- one\n            2,\n        ], -- xs\n        \"y\": 99,\n    }\n}\n";
+    match formatter::format(src) {
+        Err(formatter::FmtError::Internal(e)) => assert!(
+            e.message.contains("lose the comment `-- xs`"),
+            "the refusal must name the comment, got: {}",
+            e.message
+        ),
+        other => panic!("expected a refusal that names `-- xs`, got {other:?}"),
+    }
 }
 
 // ── Structural lock: helper exists, wrappers are thin ────────────────

@@ -23,6 +23,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -43,6 +44,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -65,6 +67,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -85,6 +88,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -105,6 +109,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -126,6 +131,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -143,6 +149,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -164,6 +171,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -185,6 +193,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -209,6 +218,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -229,6 +239,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -249,6 +260,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -274,6 +286,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -301,6 +314,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -318,6 +332,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -335,6 +350,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -355,6 +371,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -372,6 +389,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -389,6 +407,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -406,6 +425,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -423,6 +443,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -440,6 +461,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -457,6 +479,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -474,6 +497,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -491,6 +515,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -508,6 +533,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -525,6 +551,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -542,6 +569,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -559,6 +587,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -573,6 +602,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ty: Type::Fun(vec![Type::List(Box::new(a))], Box::new(Type::Int)),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -594,6 +624,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -611,6 +642,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -628,6 +660,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -649,6 +682,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -670,6 +704,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -728,6 +763,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }
@@ -745,6 +781,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::pure(),
+                optional_last_param: false,
             },
         );
     }

@@ -97,20 +97,18 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
 
     // float.to_string: (Float, Int) -> String
-    // The second argument (decimal places) is optional at runtime: the
-    // 1-arg form uses a shortest round-trippable representation, and
-    // the 2-arg form formats with a fixed number of decimal places.
-    // Registering the 2-arg form lets the typechecker validate both
-    // arguments; the 1-arg call still passes the arity check because
-    // module-qualified calls go through FieldAccess which permits one
-    // fewer argument (for optional trailing params on test.assert* and
-    // float.to_string), and the runtime honours that tolerance to match.
+    // The second parameter (decimal places) is optional: the 1-arg form
+    // uses a shortest round-trippable representation, and the 2-arg form
+    // formats with a fixed number of decimal places. The signature
+    // carries both parameters, so a `decimals` argument that is passed
+    // is type checked, and declares the last one optional.
     env.define(
         intern("float.to_string"),
         Scheme::pure_mono(Type::Fun(
             vec![Type::Float, Type::Int],
             Box::new(Type::String),
-        )),
+        ))
+        .with_optional_last_param(),
     );
 
     // float.to_int: (Float) -> Int

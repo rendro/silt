@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::{
-    BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, PatternKind, Program, Stmt,
-    StringPart, TypeExpr, TypeExprKind, UnaryOp,
+    BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
+    RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::intern::{Symbol, intern, resolve};
@@ -26,52 +26,141 @@ use crate::value::Value;
 
 mod patterns;
 
-// ── Type encoding for record field metadata ─────────────────────────
+// ── Record field types for the json / toml decoders ─────────────────
+//
+// `json.parse(text, T)` and `toml.parse(text, T)` build a value of the
+// record type `T` at run time. For that, every record declaration
+// installs a list of `(field name, field type descriptor)` pairs, read by
+// the decoders in `src/builtins/data.rs` and `src/builtins/toml.rs`.
+//
+// A descriptor is one of
+//
+//   Int  Float  ExtFloat  String  Bool  Date  Time  DateTime
+//   List:<d>   Option:<d>   Map:<d>   Tuple(<d>,<d>,...)   Record:<name>
+//   Unsupported:<type as written>
+//
+// `Map:<d>` is `Map(String, d)`. Type aliases are replaced by their
+// target before the descriptor is built. A type no decoder exists for
+// gets `Unsupported`, which makes the decoders return `Err`; it is never
+// mapped to some other type. A direct `json.parse` / `toml.parse` call
+// whose type argument names such a record is rejected at compile time
+// (see `Compiler::check_decode_target`).
 
-/// Encode a TypeExpr as a compact string for runtime JSON parsing.
-/// Examples: "String", "Int", "List:String", "Option:Int", "Record:Address"
-fn encode_type_expr(resolver: &crate::types::canonical::Resolver, te: &TypeExpr) -> String {
+/// The builtin functions that decode text into a value of the type named
+/// by their last argument.
+const DECODING_BUILTINS: &[&str] = &[
+    "json.parse",
+    "json.parse_list",
+    "json.parse_map",
+    "toml.parse",
+    "toml.parse_list",
+    "toml.parse_map",
+];
+
+/// The field types the decoders support, as shown in compile errors.
+const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, ExtFloat, String, \
+     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, and \
+     non-generic record types";
+
+/// A record declaration, kept to describe and check its field types.
+struct RecordDecl {
+    params: Vec<Symbol>,
+    fields: Vec<RecordField>,
+}
+
+/// A type alias declaration: `type Name(params) = target`.
+struct AliasDecl {
+    params: Vec<Symbol>,
+    target: TypeExpr,
+}
+
+/// A record field that `json.parse` / `toml.parse` cannot decode.
+struct UndecodableField {
+    /// The record type that declares the field.
+    record: String,
+    field: String,
+    /// The field's type as written in the declaration.
+    field_type: String,
+    /// The part of the field's type that has no decoder, as written.
+    part: String,
+}
+
+/// Render a type expression the way it is written in source.
+fn render_type_expr(te: &TypeExpr) -> String {
+    fn render_list(items: &[TypeExpr]) -> String {
+        items
+            .iter()
+            .map(render_type_expr)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
     match &te.kind {
-        TypeExprKind::Named(n) => {
-            let s = resolve(*n);
-            match s.as_str() {
-                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime" => {
-                    s
-                }
-                _ if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
-                    format!("Record:{s}")
-                }
-                _ => "String".to_string(),
-            }
-        }
+        TypeExprKind::Named(name) => resolve(*name),
         TypeExprKind::Generic(name, args) => {
-            match resolve(canonicalize_type_name(resolver, *name)).as_str() {
-                // Range collapses to List via canonicalize_type_name (see
-                // src/types/canonical.rs), so this arm matches both the
-                // user-typed `List(T)` and `Range(T)` shapes; the runtime
-                // representation is shared, and emitting a `List:<inner>`
-                // descriptor for both keeps record-field metadata in lockstep
-                // with the canonical type name.
-                "List" => {
-                    let inner = args
-                        .first()
-                        .map(|a| encode_type_expr(resolver, a))
-                        .unwrap_or_else(|| "String".into());
-                    format!("List:{inner}")
-                }
-                "Option" => {
-                    let inner = args
-                        .first()
-                        .map(|a| encode_type_expr(resolver, a))
-                        .unwrap_or_else(|| "String".into());
-                    format!("Option:{inner}")
-                }
-                _ => "String".to_string(),
-            }
+            format!("{}({})", resolve(*name), render_list(args))
+        }
+        TypeExprKind::Tuple(elems) => format!("({})", render_list(elems)),
+        TypeExprKind::Function(params, ret) => {
+            format!("Fn({}) -> {}", render_list(params), render_type_expr(ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
-        _ => "String".to_string(),
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => format!(
+            "<{} as {}>::{}",
+            render_type_expr(receiver),
+            resolve(*trait_name),
+            resolve(*assoc_name)
+        ),
+        TypeExprKind::AnonRecord { fields, tail } => {
+            let mut items: Vec<String> = fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
+                .collect();
+            if let Some(row) = tail {
+                items.push(format!("...{}", resolve(*row)));
+            }
+            format!("{{{}}}", items.join(", "))
+        }
     }
+}
+
+/// Replace the type parameters `params` by `args` in `te`. Used to expand
+/// a parametric alias: `Pair(Int)` with `type Pair(a) = (a, a)` becomes
+/// `(Int, Int)`.
+fn substitute_type_params(te: &TypeExpr, params: &[Symbol], args: &[TypeExpr]) -> TypeExpr {
+    let subst = |t: &TypeExpr| substitute_type_params(t, params, args);
+    let kind = match &te.kind {
+        TypeExprKind::Named(name) => match params.iter().position(|p| p == name) {
+            Some(i) => return args[i].clone(),
+            None => TypeExprKind::Named(*name),
+        },
+        TypeExprKind::Generic(name, type_args) => {
+            TypeExprKind::Generic(*name, type_args.iter().map(subst).collect())
+        }
+        TypeExprKind::Tuple(elems) => TypeExprKind::Tuple(elems.iter().map(subst).collect()),
+        TypeExprKind::Function(fn_params, ret) => TypeExprKind::Function(
+            fn_params.iter().map(subst).collect(),
+            Box::new(substitute_type_params(ret, params, args)),
+        ),
+        TypeExprKind::SelfType => TypeExprKind::SelfType,
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => TypeExprKind::AssocProj {
+            receiver: Box::new(substitute_type_params(receiver, params, args)),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
+        },
+        TypeExprKind::AnonRecord { fields, tail } => TypeExprKind::AnonRecord {
+            fields: fields.iter().map(|(n, t)| (*n, subst(t))).collect(),
+            tail: *tail,
+        },
+    };
+    TypeExpr::new(kind, te.span)
 }
 
 // ── Bind destruct kind ───────────────────────────────────────────────
@@ -92,10 +181,33 @@ enum BindDestructKind {
 // ── Compiler context ──────────────────────────────────────────────────
 
 /// Per-function compilation state.
+///
+/// `height` is the compiler's model of the run-time stack: the number of
+/// values the function's frame holds at the current point of the emitted
+/// code. It counts parameters, locals (named and hidden), and operands
+/// that a construct has evaluated and keeps on the stack while it
+/// evaluates the next one (the left side of `+`, a callee, earlier
+/// arguments or elements). The rules:
+///
+/// - Code compiled for an expression at height `h` leaves exactly one
+///   more value in the frame, the expression's value in slot `h`.
+///   `height` is `h` again afterwards; the value is counted only once
+///   its consumer keeps it, as a local (`add_local`) or as a pending
+///   operand (`compile_operands`).
+/// - A local's slot is the height at which it is added, so it is the
+///   local's real position in the frame.
+/// - Where a scope ends or a failed pattern test lands, values the model
+///   no longer counts may be left in the frame. `Op::Slide` removes them
+///   there. The one exception is an expression in tail position: its
+///   value is returned at once and the frame is discarded with it.
 struct CompileContext {
     function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
+    /// Frame height at the start of every open scope, innermost last.
+    scope_starts: Vec<usize>,
+    /// Number of values in the frame. See the type's documentation.
+    height: usize,
     /// Upvalue descriptors for this function/closure.
     upvalues: Vec<UpvalueDesc>,
     /// Loop context stack: (first_loop_slot, loop_start_offset, binding_count)
@@ -114,10 +226,25 @@ impl CompileContext {
             function: Function::new(name, arity),
             locals: Vec::new(),
             scope_depth: 0,
+            scope_starts: Vec::new(),
+            height: 0,
             upvalues: Vec::new(),
             loop_stack: Vec::new(),
         }
     }
+}
+
+/// Convert a frame height to the `u16` slot operand of `GetLocal`,
+/// `SetLocal`, `Recur` and `Slide`.
+fn frame_slot(height: usize, span: Span) -> Result<u16, CompileError> {
+    u16::try_from(height).map_err(|_| CompileError {
+        message: format!(
+            "this function keeps more than {} values on its stack at once; \
+             split the expression into smaller parts",
+            u16::MAX
+        ),
+        span,
+    })
 }
 
 struct Local {
@@ -504,6 +631,13 @@ pub struct Compiler {
     /// `extract_builtin_name`, the Call arm's module-call detection,
     /// and `FieldAccess` codegen.
     top_level_value_globals: HashSet<String>,
+    /// Record declarations of every program compiled so far (the entry
+    /// program and the file modules it imports), by type name. Filled by
+    /// `collect_type_decls` before any code of the program is compiled.
+    /// Read to describe record field types for the json / toml decoders.
+    record_decls: HashMap<String, RecordDecl>,
+    /// Type alias declarations, collected together with `record_decls`.
+    alias_decls: HashMap<String, AliasDecl>,
     /// Round 64 item 6A: producer-side typecheck snapshots for every
     /// user module the compiler has loaded. Keyed by the module name
     /// as it appears in `import` statements. Populated incrementally
@@ -601,6 +735,8 @@ impl Compiler {
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
             top_level_value_globals: HashSet::new(),
+            record_decls: HashMap::new(),
+            alias_decls: HashMap::new(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
@@ -802,8 +938,9 @@ impl Compiler {
         // site is inside a fn that is compiled before the let decl is
         // reached. See `top_level_value_globals`.
         self.collect_top_level_value_globals(program);
+        self.collect_type_decls(program);
 
-        for decl in &program.decls {
+        for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
 
@@ -845,8 +982,9 @@ impl Compiler {
 
         // Round 94: same pre-pass as `compile_program_with_entry`.
         self.collect_top_level_value_globals(program);
+        self.collect_type_decls(program);
 
-        for decl in &program.decls {
+        for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
 
@@ -884,6 +1022,62 @@ impl Compiler {
         }
     }
 
+    /// Pre-pass over a program's type declarations, run before any of its
+    /// code is compiled, so that a use of a type does not depend on where
+    /// in the file the type is declared: a function may name
+    /// `Color.Red`, and a record field may use an alias, ahead of the
+    /// declaration.
+    fn collect_type_decls(&mut self, program: &Program) {
+        for decl in &program.decls {
+            let Decl::Type(type_decl) = decl else {
+                continue;
+            };
+            let type_name = resolve(type_decl.name);
+            match &type_decl.body {
+                TypeBody::Enum(variants) => {
+                    let variant_set = self.known_enum_variants.entry(type_name).or_default();
+                    for variant in variants {
+                        let variant_name = resolve(variant.name);
+                        if variant.fields.is_empty() {
+                            self.known_unit_variants.insert(variant_name.clone());
+                        }
+                        variant_set.insert(variant_name);
+                    }
+                }
+                TypeBody::Record(fields) => {
+                    self.record_decls.insert(
+                        type_name,
+                        RecordDecl {
+                            params: type_decl.params.clone(),
+                            fields: fields.clone(),
+                        },
+                    );
+                }
+                TypeBody::Alias(target) => {
+                    self.alias_decls.insert(
+                        type_name,
+                        AliasDecl {
+                            params: type_decl.params.clone(),
+                            target: target.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// The order in which a program's declarations are installed: first
+    /// everything that only defines something (imports, types, traits,
+    /// trait impls, functions), then the top-level `let`s. Each group
+    /// keeps its source order. A top-level initialiser can therefore use
+    /// every declaration of the program, wherever it is written.
+    fn decls_in_init_order(decls: &[Decl]) -> Vec<&Decl> {
+        let (lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
+            .iter()
+            .partition(|decl| matches!(**decl, Decl::Let { .. }));
+        definitions.into_iter().chain(lets).collect()
+    }
+
     fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
         match decl {
             Decl::Fn(fn_decl) => {
@@ -910,39 +1104,7 @@ impl Compiler {
                 self.contexts
                     .push(CompileContext::new(resolve(fn_decl.name), arity));
 
-                // Add parameters as locals. Each parameter occupies one slot initially.
-                // For non-Ident patterns, we use a hidden name and destructure after.
-                let mut param_slots = Vec::new();
-                for (i, param) in fn_decl.params.iter().enumerate() {
-                    match &param.pattern.kind {
-                        PatternKind::Ident(name) => {
-                            self.warn_if_shadows_module(*name, param.pattern.span);
-                            self.add_local(*name);
-                            param_slots.push((i, None)); // no destructuring needed
-                        }
-                        _ => {
-                            let slot = self.add_local(intern(&format!("__param_{i}__")));
-                            param_slots.push((i, Some((slot, param.pattern.clone()))));
-                        }
-                    }
-                }
-
-                // Emit destructuring for non-Ident parameter patterns.
-                // The parameter value is already on the stack as a local.
-                // compile_pattern_bind expects TOS = value. Since the param
-                // IS at its local slot (which IS a stack position), we just
-                // GetLocal it to put it on TOS, then bind.
-                for (_i, maybe_destruct) in &param_slots {
-                    if let Some((slot, pattern)) = maybe_destruct {
-                        self.current_chunk().emit_op_u16(Op::GetLocal, *slot, span);
-                        // This GetLocal pushes a copy. Register it as a hidden local.
-                        let _hidden = self.add_local(intern("__param_copy__"));
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetLocal, _hidden, span);
-                        // Now TOS = param value copy (as hidden local). Bind sub-patterns.
-                        self.compile_pattern_bind(pattern, span)?;
-                    }
-                }
+                self.compile_params(&fn_decl.params, span)?;
 
                 // Compile the function body in tail position for TCO.
                 self.in_tail_position = true;
@@ -1087,16 +1249,15 @@ impl Compiler {
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
 
-                        // Emit record field metadata as a global list for json module.
-                        // Format: list of alternating [field_name, type_encoding, ...]
+                        // Emit record field metadata as a global list for the
+                        // json and toml decoders.
+                        // Format: list of alternating [field_name, type descriptor, ...]
                         let field_count = fields.len();
                         for f in fields {
                             let fname = self.add_constant(Value::String(resolve(f.name)), span)?;
                             self.current_chunk().emit_op_u16(Op::Constant, fname, span);
-                            let ftype = self.add_constant(
-                                Value::String(encode_type_expr(&self.resolver, &f.ty)),
-                                span,
-                            )?;
+                            let descriptor = self.field_type_descriptor(&f.ty);
+                            let ftype = self.add_constant(Value::String(descriptor), span)?;
                             self.current_chunk().emit_op_u16(Op::Constant, ftype, span);
                         }
                         self.current_chunk().emit_op_u16(
@@ -1195,23 +1356,7 @@ impl Compiler {
                         self.contexts
                             .push(CompileContext::new(qualified_name.clone(), arity));
 
-                        // Add parameters as locals.
-                        for (i, param) in method.params.iter().enumerate() {
-                            match &param.pattern.kind {
-                                PatternKind::Ident(name) => {
-                                    self.warn_if_shadows_module(*name, param.pattern.span);
-                                    self.add_local(*name);
-                                }
-                                _ => {
-                                    let slot = self.add_local(intern(&format!("__param_{i}__")));
-                                    self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
-                                    let _hidden = self.add_local(intern("__param_copy__"));
-                                    self.current_chunk()
-                                        .emit_op_u16(Op::SetLocal, _hidden, span);
-                                    self.compile_pattern_bind(&param.pattern, span)?;
-                                }
-                            }
-                        }
+                        self.compile_params(&method.params, span)?;
 
                         self.compile_expr(&method.body)?;
                         self.current_chunk().emit_op(Op::Return, span);
@@ -1910,12 +2055,14 @@ impl Compiler {
         let init_name = format!("<module:{module_name}>");
         self.contexts.push(CompileContext::new(init_name, 0));
 
+        self.collect_type_decls(&program);
+
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
         // internal helpers that closures might reference). Synthetic emissions
         // below (Op::SetGlobal, constants, etc.) carry the import statement's
         // span so anything that blames them points back to the import site.
-        for decl in &program.decls {
+        for decl in Self::decls_in_init_order(&program.decls) {
             match decl {
                 Decl::Fn(fn_decl) => {
                     let fn_span = fn_decl.span;
@@ -1934,31 +2081,7 @@ impl Compiler {
                     self.contexts
                         .push(CompileContext::new(resolve(fn_decl.name), arity));
 
-                    // Add parameters as locals.
-                    let mut param_slots = Vec::new();
-                    for (i, param) in fn_decl.params.iter().enumerate() {
-                        match &param.pattern.kind {
-                            PatternKind::Ident(name) => {
-                                self.warn_if_shadows_module(*name, param.pattern.span);
-                                self.add_local(*name);
-                                param_slots.push((i, None));
-                            }
-                            _ => {
-                                let slot = self.add_local(intern(&format!("__param_{i}__")));
-                                param_slots.push((i, Some((slot, param.pattern.clone()))));
-                            }
-                        }
-                    }
-                    for (_i, maybe_destruct) in &param_slots {
-                        if let Some((slot, pattern)) = maybe_destruct {
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetLocal, *slot, fn_span);
-                            let _hidden = self.add_local(intern("__param_copy__"));
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetLocal, _hidden, fn_span);
-                            self.compile_pattern_bind(pattern, fn_span)?;
-                        }
-                    }
+                    self.compile_params(&fn_decl.params, fn_span)?;
 
                     // Compile the body in tail position for TCO, mirroring
                     // the top-level `Decl::Fn` path in `compile_decl`.
@@ -2118,8 +2241,9 @@ impl Compiler {
 
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
+                        // The value just pushed becomes the local.
                         self.warn_if_shadows_module(*name, pattern.span);
-                        let slot = self.add_local(*name);
+                        let slot = self.add_local(*name, span)?;
                         self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
                         if is_last {
                             self.current_chunk().emit_op(Op::Unit, span);
@@ -2127,16 +2251,12 @@ impl Compiler {
                     }
                     _ => {
                         // General pattern destructuring for let bindings.
-                        // The value is on TOS. Register it as a hidden local,
-                        // then recursively bind sub-patterns.
-                        let _val_slot = self.add_local(intern("__let_val__"));
+                        // The value stays in the frame as a hidden local and
+                        // the pattern's names are bound from it.
+                        let val_slot = self.add_local(intern("__let_val__"), span)?;
                         self.current_chunk()
-                            .emit_op_u16(Op::SetLocal, _val_slot, span);
-
-                        // The value is now on the stack as a hidden local.
-                        // compile_pattern_bind expects the value on TOS.
-                        // TOS IS the value (it's the hidden local slot).
-                        self.compile_pattern_bind(pattern, span)?;
+                            .emit_op_u16(Op::SetLocal, val_slot, span);
+                        self.compile_pattern_bind_checked(pattern, span)?;
 
                         if is_last {
                             self.current_chunk().emit_op(Op::Unit, span);
@@ -2203,24 +2323,33 @@ impl Compiler {
                 self.compile_expr(expr)?;
                 let span = expr.span;
 
-                // Test pattern
-                self.current_chunk().emit_op(Op::Dup, span);
+                // The value stays in the frame as a hidden local: the test
+                // peeks it and the pattern's names are bound from it.
+                let val_slot = self.add_local(intern("__when_val__"), span)?;
+                self.current_chunk()
+                    .emit_op_u16(Op::SetLocal, val_slot, span);
+
                 let fail_jumps = self.compile_pattern_test(pattern, span)?;
+                let matched_jump = self.current_chunk().emit_jump(Op::Jump, span);
 
-                // Pattern matched — bind variables
-                self.compile_pattern_bind(pattern, span)?;
-                self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
-                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
-
-                // Pattern didn't match
+                // Pattern didn't match. A failed test of a nested pattern
+                // leaves the sub-values it was looking at above the value;
+                // drop them. The else body is compiled before the pattern's
+                // names exist, so a name it uses is the one of the enclosing
+                // scope. The else body diverges (the typechecker requires
+                // it), so control never reaches the bindings from here.
                 for fj in fail_jumps {
                     self.patch_jump(fj, span)?;
                 }
-                self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
+                self.current_chunk()
+                    .emit_op_u16(Op::GetLocal, val_slot, span);
+                self.current_chunk().emit_op_u16(Op::Slide, val_slot, span);
                 self.compile_expr(else_body)?;
                 self.current_chunk().emit_op(Op::Pop, span); // pop else result
 
-                self.patch_jump(end_jump, span)?;
+                // Pattern matched — bind variables
+                self.patch_jump(matched_jump, span)?;
+                self.compile_pattern_bind(pattern, span)?;
 
                 if is_last {
                     self.current_chunk().emit_op(Op::Unit, span);
@@ -2345,8 +2474,7 @@ impl Compiler {
                         self.patch_jump(jump, span)?;
                     }
                     _ => {
-                        self.compile_expr(left)?;
-                        self.compile_expr(right)?;
+                        self.compile_operands([&**left, &**right])?;
                         let opcode = match op {
                             BinOp::Add => Op::Add,
                             BinOp::Sub => Op::Sub,
@@ -2391,7 +2519,7 @@ impl Compiler {
                     }
                 }
 
-                self.end_scope(span);
+                self.end_scope_with_result(tail, span)?;
             }
 
             ExprKind::Ident(name) => {
@@ -2451,10 +2579,9 @@ impl Compiler {
                 }
                 // Check if this is a module-qualified builtin call like list.map(...)
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
+                    self.check_decode_target(&builtin_name, args.last(), span)?;
                     // Emit arguments first
-                    for arg in args {
-                        self.compile_expr(arg)?;
-                    }
+                    self.compile_operands(args)?;
                     let argc = args.len() as u8;
                     let name_idx = self.add_constant(Value::String(builtin_name), span)?;
                     self.current_chunk()
@@ -2493,9 +2620,7 @@ impl Compiler {
                         let name_idx = self.add_constant(Value::String(variant_name), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::GetGlobal, name_idx, span);
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
+                        self.compile_operands_above(1, args)?;
                         let argc = args.len() as u8;
                         self.emit_call(argc, tail, span);
                     } else if let ExprKind::Ident(name) = &receiver.kind
@@ -2523,9 +2648,7 @@ impl Compiler {
                         let var_idx = self.add_constant(Value::String(variant_str), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::GetGlobal, var_idx, span);
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
+                        self.compile_operands_above(1, args)?;
                         let argc = (args.len() + 1) as u8; // receiver + args
                         let method_idx =
                             self.add_constant(Value::String(resolve(*method)), span)?;
@@ -2583,9 +2706,7 @@ impl Compiler {
                             let name_idx = self.add_constant(Value::String(qualified), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            for arg in args {
-                                self.compile_expr(arg)?;
-                            }
+                            self.compile_operands_above(1, args)?;
                             let argc = args.len() as u8;
                             self.emit_call(argc, tail, span);
                         }
@@ -2603,10 +2724,7 @@ impl Compiler {
                                 span,
                             });
                         }
-                        self.compile_expr(receiver)?;
-                        for arg in args {
-                            self.compile_expr(arg)?;
-                        }
+                        self.compile_operands(std::iter::once(&**receiver).chain(args))?;
                         let argc = (args.len() + 1) as u8; // receiver + args
                         let method_idx =
                             self.add_constant(Value::String(resolve(*method)), span)?;
@@ -2616,10 +2734,7 @@ impl Compiler {
                     }
                 } else {
                     // Normal function call
-                    self.compile_expr(callee)?;
-                    for arg in args {
-                        self.compile_expr(arg)?;
-                    }
+                    self.compile_operands(std::iter::once(&**callee).chain(args))?;
                     let argc = args.len() as u8;
                     self.emit_call(argc, tail, span);
                 }
@@ -2730,21 +2845,24 @@ impl Compiler {
                         span,
                     });
                 }
+                // Every part stays on the stack until `StringConcat`.
+                let base = self.ctx().height;
                 let mut count: u8 = 0;
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
                             let idx = self.add_constant(Value::String(s.clone()), span)?;
                             self.current_chunk().emit_op_u16(Op::Constant, idx, span);
-                            count += 1;
                         }
                         StringPart::Expr(e) => {
                             self.compile_expr(e)?;
                             self.current_chunk().emit_op(Op::DisplayValue, span);
-                            count += 1;
                         }
                     }
+                    self.ctx_mut().height += 1;
+                    count += 1;
                 }
+                self.ctx_mut().height = base;
                 self.current_chunk().emit_op(Op::StringConcat, span);
                 self.current_chunk().emit_u8(count, span);
             }
@@ -2780,30 +2898,7 @@ impl Compiler {
                 self.contexts
                     .push(CompileContext::new("<lambda>".into(), arity));
 
-                // Add parameters as locals, with destructuring support.
-                let mut lambda_param_slots = Vec::new();
-                for (i, param) in params.iter().enumerate() {
-                    match &param.pattern.kind {
-                        PatternKind::Ident(name) => {
-                            self.warn_if_shadows_module(*name, param.pattern.span);
-                            self.add_local(*name);
-                            lambda_param_slots.push(None);
-                        }
-                        _ => {
-                            let slot = self.add_local(intern(&format!("__param_{i}__")));
-                            lambda_param_slots.push(Some((slot, param.pattern.clone())));
-                        }
-                    }
-                }
-
-                // Emit destructuring for non-Ident lambda parameter patterns.
-                for (slot, pattern) in lambda_param_slots.iter().flatten() {
-                    self.current_chunk().emit_op_u16(Op::GetLocal, *slot, span);
-                    let _hidden = self.add_local(intern("__param_copy__"));
-                    self.current_chunk()
-                        .emit_op_u16(Op::SetLocal, _hidden, span);
-                    self.compile_pattern_bind(pattern, span)?;
-                }
+                self.compile_params(params, span)?;
 
                 // Compile the lambda body in tail position for TCO.
                 self.in_tail_position = true;
@@ -2848,9 +2943,7 @@ impl Compiler {
                         span,
                     });
                 }
-                for elem in elems {
-                    self.compile_expr(elem)?;
-                }
+                self.compile_operands(elems)?;
                 self.current_chunk().emit_op(Op::MakeTuple, span);
                 self.current_chunk().emit_u8(elems.len() as u8, span);
             }
@@ -2876,11 +2969,10 @@ impl Compiler {
                 let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
                 if !has_spread {
                     // Fast path: no spreads, just compile all singles
-                    for elem in elems {
-                        if let ListElem::Single(e) = elem {
-                            self.compile_expr(e)?;
-                        }
-                    }
+                    self.compile_operands(elems.iter().filter_map(|elem| match elem {
+                        ListElem::Single(e) => Some(e),
+                        ListElem::Spread(_) => None,
+                    }))?;
                     let count = elems.len() as u16;
                     self.current_chunk().emit_op_u16(Op::MakeList, count, span);
                 } else {
@@ -2891,10 +2983,16 @@ impl Compiler {
                     // outer `elems.len()` bound above catches the overall
                     // literal. Use a usize accumulator and check the bound
                     // on every increment.
+                    //
+                    // While an element is compiled the stack holds the list
+                    // accumulated so far (if any) and the singles not yet
+                    // collected; the frame height counts them.
+                    let base = self.ctx().height;
                     let mut have_accumulated = false;
                     let mut single_count: usize = 0;
 
                     for elem in elems {
+                        self.ctx_mut().height = base + usize::from(have_accumulated) + single_count;
                         match elem {
                             ListElem::Single(e) => {
                                 self.compile_expr(e)?;
@@ -2923,6 +3021,7 @@ impl Compiler {
                                     }
                                     have_accumulated = true;
                                     single_count = 0;
+                                    self.ctx_mut().height = base + 1;
                                 }
                                 // Compile the spread expression (should be a list or range)
                                 self.compile_expr(e)?;
@@ -2934,6 +3033,7 @@ impl Compiler {
                             }
                         }
                     }
+                    self.ctx_mut().height = base;
                     // Flush any trailing singles
                     if single_count > 0 {
                         self.current_chunk()
@@ -2962,10 +3062,7 @@ impl Compiler {
                         span,
                     });
                 }
-                for (k, v) in pairs {
-                    self.compile_expr(k)?;
-                    self.compile_expr(v)?;
-                }
+                self.compile_operands(pairs.iter().flat_map(|(k, v)| [k, v]))?;
                 let pair_count = pairs.len() as u16;
                 self.current_chunk()
                     .emit_op_u16(Op::MakeMap, pair_count, span);
@@ -2984,16 +3081,13 @@ impl Compiler {
                         span,
                     });
                 }
-                for elem in elems {
-                    self.compile_expr(elem)?;
-                }
+                self.compile_operands(elems)?;
                 let count = elems.len() as u16;
                 self.current_chunk().emit_op_u16(Op::MakeSet, count, span);
             }
 
             ExprKind::Range(start, end) => {
-                self.compile_expr(start)?;
-                self.compile_expr(end)?;
+                self.compile_operands([&**start, &**end])?;
                 self.current_chunk().emit_op(Op::MakeRange, span);
             }
 
@@ -3034,9 +3128,7 @@ impl Compiler {
                 }
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                for (_, val) in fields {
-                    self.compile_expr(val)?;
-                }
+                self.compile_operands(fields.iter().map(|(_, val)| val))?;
                 let type_name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::MakeRecord, type_name_idx, span);
@@ -3054,11 +3146,10 @@ impl Compiler {
                         span,
                     });
                 }
-                self.compile_expr(expr)?;
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                for (_, val) in fields {
-                    self.compile_expr(val)?;
-                }
+                self.compile_operands(
+                    std::iter::once(&**expr).chain(fields.iter().map(|(_, val)| val)),
+                )?;
                 self.current_chunk().emit_op(Op::RecordUpdate, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
                 for fname in &field_names {
@@ -3090,11 +3181,10 @@ impl Compiler {
                     // rebrand. Locks: tests/round83_anonrec_spread_eq_tests.rs
                     // (PartialEq), tests/round85_anonrec_hash_ord_contract_tests.rs
                     // (Hash + Ord + Set contract).
-                    self.compile_expr(base)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    for (_, val) in fields {
-                        self.compile_expr(val)?;
-                    }
+                    self.compile_operands(
+                        std::iter::once(&**base).chain(fields.iter().map(|(_, val)| val)),
+                    )?;
                     self.current_chunk().emit_op(Op::RecordUpdate, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
                     for fname in &field_names {
@@ -3105,9 +3195,7 @@ impl Compiler {
                     // Closed anon record literal: same encoding as nominal
                     // RecordCreate but with synthetic name "<anon>".
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    for (_, val) in fields {
-                        self.compile_expr(val)?;
-                    }
+                    self.compile_operands(fields.iter().map(|(_, val)| val))?;
                     let type_name_idx =
                         self.add_constant(Value::String("<anon>".to_string()), span)?;
                     self.current_chunk()
@@ -3160,9 +3248,7 @@ impl Compiler {
                     });
                 }
 
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
+                self.compile_operands(args)?;
                 self.current_chunk().emit_op(Op::Recur, span);
                 self.current_chunk().emit_u8(args.len() as u8, span);
                 self.current_chunk().emit_u16(first_slot, span);
@@ -3205,20 +3291,30 @@ impl Compiler {
             return self.compile_guardless_match(arms, span, tail);
         };
 
-        // Compile the scrutinee and save it in a known local slot.
+        // Compile the scrutinee and keep it in the frame as a hidden local.
         // This lets us GetLocal it for each arm's test and binding.
         self.compile_expr(scrutinee)?;
         self.begin_scope();
-        let scrutinee_slot = self.add_local(intern("__scrutinee__"));
+        let scrutinee_slot = self.add_local(intern("__scrutinee__"), span)?;
         self.current_chunk()
             .emit_op_u16(Op::SetLocal, scrutinee_slot, span);
+        // Frame height at the start of every arm: everything up to and
+        // including the scrutinee.
+        let arm_height = self.ctx().height;
 
         let mut end_jumps = Vec::new();
 
-        for arm in arms {
-            // 1. Push scrutinee for testing
+        for (i, arm) in arms.iter().enumerate() {
+            // 1. Push scrutinee for testing. An arm that did not match
+            //    lands here with values still above the scrutinee: the
+            //    copy its test looked at, sub-values of a nested pattern,
+            //    or the names it bound before its guard failed. The slide
+            //    drops them and keeps the fresh copy.
             self.current_chunk()
                 .emit_op_u16(Op::GetLocal, scrutinee_slot, span);
+            if i > 0 {
+                self.emit_slide(arm_height, span)?;
+            }
 
             // 2. Test the pattern (value is on TOS, tests peek it)
             let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
@@ -3233,9 +3329,9 @@ impl Compiler {
             self.current_chunk()
                 .emit_op_u16(Op::GetLocal, scrutinee_slot, span);
             // Register this GetLocal'd copy as a hidden local
-            let _bind_copy = self.add_local(intern("__bind_src__"));
+            let bind_copy = self.add_local(intern("__bind_src__"), span)?;
             self.current_chunk()
-                .emit_op_u16(Op::SetLocal, _bind_copy, span);
+                .emit_op_u16(Op::SetLocal, bind_copy, span);
             self.compile_pattern_bind(&arm.pattern, span)?;
 
             // 6. Guard (if present)
@@ -3251,7 +3347,9 @@ impl Compiler {
             self.in_tail_position = tail;
             self.compile_expr(&arm.body)?;
 
-            self.end_scope(span);
+            // The arm's bindings stay under its result until the end of
+            // the match, where one slide serves every arm.
+            self.end_scope();
 
             // 8. Jump to end of match
             let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
@@ -3275,11 +3373,18 @@ impl Compiler {
             .emit_op_u16(Op::Constant, msg_idx, span);
         self.current_chunk().emit_op(Op::Panic, span);
 
-        self.end_scope(span);
+        let result_height = self.end_scope();
 
         // Patch all end jumps to here
         for ej in end_jumps {
             self.patch_jump(ej, span)?;
+        }
+
+        // Every arm arrives with its result on top of the scrutinee and of
+        // whatever the arm left in the frame. Move the result to where the
+        // scrutinee was.
+        if !tail {
+            self.emit_slide(result_height, span)?;
         }
 
         Ok(())
@@ -3364,11 +3469,11 @@ impl Compiler {
                     });
                 }
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
+                    // With a piped value the type argument of a decoding
+                    // builtin is still the last explicit argument.
+                    self.check_decode_target(&builtin_name, args.last(), span)?;
                     // Builtins: val on stack first, then args
-                    self.compile_expr(left)?;
-                    for arg in args {
-                        self.compile_expr(arg)?;
-                    }
+                    self.compile_operands(std::iter::once(left).chain(args))?;
                     let argc = (args.len() + 1) as u8;
                     let name_idx = self.add_constant(Value::String(builtin_name), span)?;
                     self.current_chunk()
@@ -3376,19 +3481,14 @@ impl Compiler {
                     self.current_chunk().emit_u8(argc, span);
                 } else {
                     // Non-builtin: callee first, then val, then args
-                    self.compile_expr(callee)?;
-                    self.compile_expr(left)?;
-                    for arg in args {
-                        self.compile_expr(arg)?;
-                    }
+                    self.compile_operands([&**callee, left].into_iter().chain(args))?;
                     let argc = (args.len() + 1) as u8;
                     self.emit_call(argc, tail, span);
                 }
             }
             _ => {
                 // val |> f: callee first, then val
-                self.compile_expr(right)?;
-                self.compile_expr(left)?;
+                self.compile_operands([right, left])?;
                 self.emit_call(1, tail, span);
             }
         }
@@ -3418,17 +3518,17 @@ impl Compiler {
 
         self.begin_scope();
 
-        // Compile initial values and store in locals.
-        // Record the first slot so Recur knows where to write.
-        // Note: do NOT pop after SetLocal — the value stays on the stack as the local's slot.
-        let mut first_slot = 0u16;
-        for (i, (name, init)) in bindings.iter().enumerate() {
+        // The bindings occupy the slots from the current frame height on;
+        // `Recur` writes the new values there and cuts the frame back to
+        // just above them. With no bindings that is the frame as it is
+        // now, with every enclosing local still in place.
+        let first_slot = frame_slot(self.ctx().height, span)?;
+
+        // Compile initial values; each stays on the stack as its binding.
+        for (name, init) in bindings {
             self.compile_expr(init)?;
             self.warn_if_shadows_module(*name, span);
-            let slot = self.add_local(*name);
-            if i == 0 {
-                first_slot = slot;
-            }
+            let slot = self.add_local(*name, span)?;
             self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
         }
 
@@ -3449,11 +3549,9 @@ impl Compiler {
         self.ctx_mut().loop_stack.pop();
 
         // The body either used `recur` (which updates locals and jumps back)
-        // or fell through with the final value on the stack.
-
-        self.end_scope(span);
-
-        Ok(())
+        // or fell through with the final value on the stack, above the
+        // bindings.
+        self.end_scope_with_result(false, span)
     }
 
     // ── Helper: extract builtin name ─────────────────────────────
@@ -3500,6 +3598,212 @@ impl Compiler {
             }
         }
         Ok(None)
+    }
+
+    // ── Record field types for the json / toml decoders ──────────
+
+    /// The descriptor installed for a record field of type `te`; see the
+    /// descriptor grammar at the top of this file.
+    fn field_type_descriptor(&self, te: &TypeExpr) -> String {
+        match self.describe_field_type(te, &mut Vec::new(), &mut Vec::new()) {
+            Ok(descriptor) => descriptor,
+            Err(_) => format!("Unsupported:{}", render_type_expr(te)),
+        }
+    }
+
+    /// Build the descriptor of the field type `te`.
+    ///
+    /// `Err` carries the part of `te` no decoder exists for, as written.
+    /// `open_aliases` holds the aliases being expanded (an alias that
+    /// leads back to itself has no descriptor). The names of the record
+    /// types the descriptor refers to are added to `records`.
+    fn describe_field_type(
+        &self,
+        te: &TypeExpr,
+        open_aliases: &mut Vec<String>,
+        records: &mut Vec<String>,
+    ) -> Result<String, String> {
+        const NO_ARGS: &[TypeExpr] = &[];
+        let (name, args): (Symbol, &[TypeExpr]) = match &te.kind {
+            TypeExprKind::Named(name) => (*name, NO_ARGS),
+            TypeExprKind::Generic(name, args) => (*name, args.as_slice()),
+            TypeExprKind::Tuple(elems) if !elems.is_empty() => {
+                let mut parts = Vec::with_capacity(elems.len());
+                for elem in elems {
+                    parts.push(self.describe_field_type(elem, open_aliases, records)?);
+                }
+                return Ok(format!("Tuple({})", parts.join(",")));
+            }
+            _ => return Err(render_type_expr(te)),
+        };
+        let name_str = resolve(name);
+
+        if let Some(alias) = self.alias_decls.get(&name_str) {
+            if alias.params.len() != args.len() || open_aliases.contains(&name_str) {
+                return Err(render_type_expr(te));
+            }
+            let target = substitute_type_params(&alias.target, &alias.params, args);
+            open_aliases.push(name_str);
+            let described = self.describe_field_type(&target, open_aliases, records);
+            open_aliases.pop();
+            return described;
+        }
+
+        // Builtin types are matched by their canonical name: a range type
+        // is described like the list type it is the same type as.
+        let canonical = resolve(canonicalize_type_name(&self.resolver, name));
+        match (canonical.as_str(), args) {
+            (
+                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime",
+                [],
+            ) => Ok(canonical.clone()),
+            ("List", [elem]) => Ok(format!(
+                "List:{}",
+                self.describe_field_type(elem, open_aliases, records)?
+            )),
+            ("Option", [inner]) => Ok(format!(
+                "Option:{}",
+                self.describe_field_type(inner, open_aliases, records)?
+            )),
+            ("Map", [key, value]) => {
+                // The keys of a JSON object or a TOML table are strings.
+                let key_descriptor = self.describe_field_type(key, open_aliases, &mut Vec::new());
+                if key_descriptor.as_deref() != Ok("String") {
+                    return Err(render_type_expr(te));
+                }
+                Ok(format!(
+                    "Map:{}",
+                    self.describe_field_type(value, open_aliases, records)?
+                ))
+            }
+            // A non-generic record type. A name the compiler has no
+            // declaration for is taken to be one as well; the decoders
+            // return `Err` if no record of that name exists at run time.
+            (_, [])
+                if name_str.starts_with(|c: char| c.is_uppercase())
+                    && !self.known_enum_variants.contains_key(&name_str)
+                    && crate::types::builtins::lookup(&name_str).is_none()
+                    && self
+                        .record_decls
+                        .get(&name_str)
+                        .is_none_or(|decl| decl.params.is_empty()) =>
+            {
+                records.push(name_str.clone());
+                Ok(format!("Record:{name_str}"))
+            }
+            // Everything else: type parameters, enums, generic records,
+            // Set, Channel, functions, Map with a non-String key, ...
+            _ => Err(render_type_expr(te)),
+        }
+    }
+
+    /// The first field that cannot be decoded, in the record type
+    /// `record` or in a record type nested in it. `None` if there is none
+    /// or if the compiler has no declaration of `record`.
+    fn undecodable_field(
+        &self,
+        record: &str,
+        seen: &mut HashSet<String>,
+    ) -> Option<UndecodableField> {
+        if !seen.insert(record.to_string()) {
+            return None;
+        }
+        let decl = self.record_decls.get(record)?;
+        for field in &decl.fields {
+            let mut nested = Vec::new();
+            match self.describe_field_type(&field.ty, &mut Vec::new(), &mut nested) {
+                Err(part) => {
+                    return Some(UndecodableField {
+                        record: record.to_string(),
+                        field: resolve(field.name),
+                        field_type: render_type_expr(&field.ty),
+                        part,
+                    });
+                }
+                Ok(_) => {
+                    for nested_record in nested {
+                        if let Some(found) = self.undecodable_field(&nested_record, seen) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check the type argument of a call of a decoding builtin
+    /// (`json.parse(text, T)`, `toml.parse(text, T)` and their `_list` /
+    /// `_map` forms). If `T` names a type declared in the program, every
+    /// field the decoder would have to fill must have a decoder;
+    /// otherwise the call is a compile error that names the field and its
+    /// type. When the type argument is a variable (a `type a` parameter)
+    /// the type is only known at run time, where the decoders return
+    /// `Err` for such a field.
+    fn check_decode_target(
+        &self,
+        builtin_name: &str,
+        type_arg: Option<&Expr>,
+        span: Span,
+    ) -> Result<(), CompileError> {
+        if !DECODING_BUILTINS.contains(&builtin_name) {
+            return Ok(());
+        }
+        let Some(type_arg) = type_arg else {
+            return Ok(());
+        };
+        // `binder` is the identifier that makes the argument a variable
+        // if it is bound to one.
+        let (binder, type_name) = match &type_arg.kind {
+            ExprKind::Ident(name) => (*name, *name),
+            // `module.Type`: types live in one namespace at run time.
+            ExprKind::FieldAccess(receiver, name) => match &receiver.kind {
+                ExprKind::Ident(module) => (*module, *name),
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if self.resolve_local(binder).is_some()
+            || self.resolve_upvalue_peek(binder).is_some()
+            || self.top_level_value_globals.contains(&resolve(binder))
+        {
+            return Ok(());
+        }
+
+        let type_name = resolve(type_name);
+        if self.record_decls.contains_key(&type_name) {
+            let Some(found) = self.undecodable_field(&type_name, &mut HashSet::new()) else {
+                return Ok(());
+            };
+            let owner = if found.record == type_name {
+                String::new()
+            } else {
+                format!(" of `{}`, a record type nested in it,", found.record)
+            };
+            let part = if found.part == found.field_type {
+                "which has no decoder".to_string()
+            } else {
+                format!("and `{}` has no decoder", found.part)
+            };
+            return Err(CompileError {
+                message: format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}\n\
+                     help: {DECODABLE_TYPES_HELP}",
+                    found.field, found.field_type
+                ),
+                span,
+            });
+        }
+        if self.known_enum_variants.contains_key(&type_name) {
+            return Err(CompileError {
+                message: format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder\n\
+                     help: decode into a record type"
+                ),
+                span,
+            });
+        }
+        Ok(())
     }
 
     // ── Context & scope helpers ───────────────────────────────────
@@ -3551,29 +3855,122 @@ impl Compiler {
     }
 
     fn begin_scope(&mut self) {
-        self.ctx_mut().scope_depth += 1;
+        let ctx = self.ctx_mut();
+        ctx.scope_depth += 1;
+        ctx.scope_starts.push(ctx.height);
     }
 
-    fn end_scope(&mut self, span: Span) {
-        let depth = self.ctx().scope_depth;
+    /// Leave the innermost scope: forget its locals and set the frame
+    /// height back to what it was when the scope began. Returns that
+    /// height. Emits nothing; the values of the scope's locals are still
+    /// in the frame, and the caller decides where they are dropped (see
+    /// `end_scope_with_result` and `emit_slide`).
+    fn end_scope(&mut self) -> usize {
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
         // Pop locals belonging to the scope we are leaving.
-        while self.ctx().locals.last().is_some_and(|l| l.depth >= depth) {
-            self.ctx_mut().locals.pop();
+        while ctx.locals.last().is_some_and(|l| l.depth >= depth) {
+            ctx.locals.pop();
         }
-        // The block's result is on TOS. The locals sit below it in the stack.
-        // With a stack VM, we can't pop them from under TOS without a Swap op.
-        // For now, the VM's frame mechanism reclaims them on function return.
-        // This is correct as long as we don't reuse local slots across scopes.
-        let _ = span;
-
-        self.ctx_mut().scope_depth -= 1;
+        ctx.scope_depth -= 1;
+        let start = ctx
+            .scope_starts
+            .pop()
+            .expect("internal compiler error: end_scope without begin_scope");
+        ctx.height = start;
+        start
     }
 
-    fn add_local(&mut self, name: Symbol) -> u16 {
-        let depth = self.ctx().scope_depth;
-        let slot = self.ctx().locals.len() as u16;
-        self.ctx_mut().locals.push(Local { name, depth, slot });
-        slot
+    /// Leave the innermost scope when its result is on top of the stack,
+    /// above the scope's locals, and drop the locals from under it. In
+    /// tail position (`tail`) the result is returned at once and the
+    /// frame goes with it, so nothing is emitted.
+    fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), CompileError> {
+        let end = self.ctx().height;
+        let start = self.end_scope();
+        if end > start && !tail {
+            self.emit_slide(start, span)?;
+        }
+        Ok(())
+    }
+
+    /// Emit `Slide`: the value on top of the stack becomes the value in
+    /// slot `height`, and everything that was above that slot is dropped.
+    /// Afterwards the frame holds `height` values plus that one.
+    fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), CompileError> {
+        let slot = frame_slot(height, span)?;
+        self.current_chunk().emit_op_u16(Op::Slide, slot, span);
+        Ok(())
+    }
+
+    /// Make the value on top of the stack a local named `name`. Its slot
+    /// is the current frame height, which is where that value is.
+    /// (For a parameter the value is the argument the caller pushed.)
+    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, CompileError> {
+        let slot = frame_slot(self.ctx().height, span)?;
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
+        ctx.locals.push(Local { name, depth, slot });
+        ctx.height += 1;
+        Ok(slot)
+    }
+
+    /// Compile `operands` left to right so that their values are on the
+    /// stack, in order, for the instruction the caller emits next. While
+    /// an operand is compiled, the ones before it are counted in the
+    /// frame height, so a local introduced by the operand (by a `match`,
+    /// a block with `let`, a `loop`) gets a slot above them.
+    fn compile_operands<'a>(
+        &mut self,
+        operands: impl IntoIterator<Item = &'a Expr>,
+    ) -> Result<(), CompileError> {
+        self.compile_operands_above(0, operands)
+    }
+
+    /// `compile_operands` for a construct that has just pushed `pending`
+    /// values of its own, which stay on the stack below the operands (a
+    /// callee or a receiver loaded from a global).
+    fn compile_operands_above<'a>(
+        &mut self,
+        pending: usize,
+        operands: impl IntoIterator<Item = &'a Expr>,
+    ) -> Result<(), CompileError> {
+        let base = self.ctx().height;
+        self.ctx_mut().height = base + pending;
+        for operand in operands {
+            self.compile_expr(operand)?;
+            self.ctx_mut().height += 1;
+        }
+        self.ctx_mut().height = base;
+        Ok(())
+    }
+
+    /// Register a function's parameters as locals and destructure those
+    /// written as patterns. The arguments are already in the frame, in
+    /// slots `0..params.len()`.
+    fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), CompileError> {
+        let mut destructured = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            match &param.pattern.kind {
+                PatternKind::Ident(name) => {
+                    self.warn_if_shadows_module(*name, param.pattern.span);
+                    self.add_local(*name, span)?;
+                }
+                _ => {
+                    let slot = self.add_local(intern(&format!("__param_{i}__")), span)?;
+                    destructured.push((slot, &param.pattern));
+                }
+            }
+        }
+        for (slot, pattern) in destructured {
+            // Bind the pattern's names from a copy of the argument above
+            // the parameters.
+            self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+            let copy = self.add_local(intern("__param_copy__"), span)?;
+            self.current_chunk().emit_op_u16(Op::SetLocal, copy, span);
+            self.compile_pattern_bind_checked(pattern, span)?;
+        }
+        Ok(())
     }
 
     /// Emit a warning if `name` shadows a builtin module like `json`, `int`, etc.
@@ -4713,6 +5110,57 @@ fn f(x) {
         let script = &fns[0];
         // Record field metadata is stored as __record_fields__User
         assert!(has_string_constant(&script.chunk, "__record_fields__User"));
+    }
+
+    #[test]
+    fn test_compile_record_field_descriptors() {
+        let fns = compile(
+            r#"
+type R {
+    a: Ids,
+    m: Map(String, Int),
+    t: (Int, String),
+    p: Pair(Bool),
+    s: Set(Int),
+    inner: Inner,
+}
+type Inner { x: Int }
+type Ids = List(Int)
+type Pair(a) = (a, a)
+"#,
+        );
+        let script = &fns[0];
+        for descriptor in [
+            "List:Int",
+            "Map:Int",
+            "Tuple(Int,String)",
+            "Tuple(Bool,Bool)",
+            "Unsupported:Set(Int)",
+            "Record:Inner",
+        ] {
+            assert!(
+                has_string_constant(&script.chunk, descriptor),
+                "missing field type descriptor {descriptor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_target_with_undecodable_field_is_rejected() {
+        let err = compile_err(
+            r#"
+import json
+type Bag { items: Set(Int) }
+fn main() { json.parse("x", Bag) }
+"#,
+        );
+        assert!(
+            err.message.contains("json.parse")
+                && err.message.contains("`items`")
+                && err.message.contains("Set(Int)"),
+            "expected the error to name the call, the field and its type, got: {}",
+            err.message
+        );
     }
 
     // ── Or-pattern in match ────────────────────────────────────────

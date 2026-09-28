@@ -37,7 +37,29 @@ pub(super) fn utf16_len(s: &str) -> usize {
     s.chars().map(|c| c.len_utf16()).sum()
 }
 
+/// Largest char boundary of `source` that is `<= offset`. Offsets past the
+/// end clamp to `source.len()`.
+///
+/// Every `&source[a..b]` whose bounds come from a span offset, or from a
+/// span offset plus a guessed length, must pass both bounds through here
+/// (or through a check with `str::is_char_boundary` / `str::get`) first:
+/// a lexer error can point at any character, including a multi-byte one,
+/// and slicing inside it panics.
+pub(super) fn floor_char_boundary(source: &str, offset: usize) -> usize {
+    let mut offset = offset.min(source.len());
+    // `is_char_boundary(0)` is true, so this always terminates.
+    while !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
 /// Compute the byte length of the token that begins at `offset` in `source`.
+///
+/// When `offset` is a char boundary, `offset + token_len_at(source, offset)`
+/// is a char boundary too (or lies past the end of `source`): every scan
+/// below ends next to an ASCII byte or at the end of the source, and the
+/// fallback measures a whole character.
 pub(super) fn token_len_at(source: &str, offset: usize) -> usize {
     let bytes = source.as_bytes();
     if offset >= bytes.len() {
@@ -120,7 +142,14 @@ pub(super) fn token_len_at(source: &str, offset: usize) -> usize {
             return 2;
         }
     }
-    1
+    // Any other character is a token of its own. Its length is the
+    // character's UTF-8 width (1 to 4 bytes), not 1: the lexer reports
+    // characters it rejects (`“`, `λ`, U+00A0, ...) at their first byte.
+    // `get` yields `None` when `offset` is not a char boundary.
+    source
+        .get(offset..)
+        .and_then(|rest| rest.chars().next())
+        .map_or(1, char::len_utf8)
 }
 
 /// Convert a span to an LSP range, using the source text to determine the
@@ -128,15 +157,25 @@ pub(super) fn token_len_at(source: &str, offset: usize) -> usize {
 /// computed end byte offsets to line/column via the same logic, rather than
 /// hard-coding `end = start + 1`, so multi-character identifiers produce a
 /// correctly-sized range.
+///
+/// Both slice bounds are snapped to char boundaries, so a span that points
+/// at (or into) a multi-byte character yields a range over that whole
+/// character instead of a panic.
 pub(super) fn span_to_range(span: &Span, source: &str) -> Range {
     let start = span_to_position(span, source);
-    let len = token_len_at(source, span.offset);
-    let bytes = source.as_bytes();
-    let end_col = if span.offset >= bytes.len() {
+    let end_col = if span.offset >= source.len() {
         start.character + 1
     } else {
-        let slice_end = (span.offset + len).min(bytes.len());
-        let slice = &source[span.offset..slice_end];
+        // `span_to_position` applies the same snap to the start.
+        let slice_start = floor_char_boundary(source, span.offset);
+        let len = token_len_at(source, slice_start);
+        let mut slice_end = (slice_start + len).min(source.len());
+        // Snap the end forward, so the range never becomes empty;
+        // `is_char_boundary(source.len())` is true, so this terminates.
+        while !source.is_char_boundary(slice_end) {
+            slice_end += 1;
+        }
+        let slice = &source[slice_start..slice_end];
         if let Some(nl) = slice.find('\n') {
             let first_line = &slice[..nl];
             start.character + utf16_len(first_line) as u32
@@ -162,13 +201,9 @@ pub(super) fn span_to_range(span: &Span, source: &str) -> Range {
 /// land mid-character are clamped to the previous char boundary so this
 /// function never panics on malformed input.
 pub(crate) fn offset_to_position(source: &str, offset: usize) -> Position {
-    let mut offset = offset.min(source.len());
     // Snap a mid-character offset back to the previous char boundary so
-    // the slices below cannot panic (`is_char_boundary(0)` is true, so
-    // this always terminates).
-    while !source.is_char_boundary(offset) {
-        offset -= 1;
-    }
+    // the slices below cannot panic.
+    let offset = floor_char_boundary(source, offset);
     let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line = source[..line_start].bytes().filter(|&b| b == b'\n').count() as u32;
     let mut character: u32 = 0;
@@ -187,6 +222,11 @@ pub(crate) fn offset_to_position(source: &str, offset: usize) -> Position {
 }
 
 /// Convert an LSP 0-based line/character to a byte offset into the source.
+///
+/// The result is always a char boundary and never exceeds `source.len()`,
+/// so callers may slice `source` with it. A position past the last line
+/// maps to the end of the source; a character past the end of its line
+/// maps to the end of that line.
 pub(super) fn position_to_offset(source: &str, pos: &Position) -> usize {
     let mut offset = 0;
     for (i, line) in source.lines().enumerate() {
@@ -211,7 +251,9 @@ pub(super) fn position_to_offset(source: &str, pos: &Position) -> usize {
         };
         offset += line.len() + newline_len;
     }
-    offset
+    // The loop adds one byte for the line break after every line, also
+    // after a last line that has none; clamp that overshoot away.
+    offset.min(source.len())
 }
 
 /// Build an LSP range for a binding at `(offset, len)` using the source text.
@@ -534,6 +576,108 @@ mod tests {
         // Out-of-bounds offset must not panic.
         assert_eq!(token_len_at("x", 99), 1);
         assert_eq!(token_len_at("", 0), 1);
+    }
+
+    // ── char boundaries ──────────────────────────────────────────
+
+    #[test]
+    fn test_floor_char_boundary() {
+        // `“` occupies bytes 1..4.
+        let source = "a“b";
+        assert_eq!(floor_char_boundary(source, 0), 0);
+        assert_eq!(floor_char_boundary(source, 1), 1);
+        assert_eq!(floor_char_boundary(source, 2), 1);
+        assert_eq!(floor_char_boundary(source, 3), 1);
+        assert_eq!(floor_char_boundary(source, 4), 4);
+        assert_eq!(floor_char_boundary(source, 5), 5);
+        assert_eq!(floor_char_boundary(source, 99), 5);
+    }
+
+    #[test]
+    fn test_token_len_at_non_ascii_is_whole_character() {
+        // `“` is 3 bytes, `λ` 2, U+00A0 2, `😀` 4.
+        assert_eq!(token_len_at("“x", 0), 3);
+        assert_eq!(token_len_at("λx", 0), 2);
+        assert_eq!(token_len_at("\u{a0}1", 0), 2);
+        assert_eq!(token_len_at("😀", 0), 4);
+        // An offset inside a character must not panic.
+        assert_eq!(token_len_at("“x", 1), 1);
+    }
+
+    #[test]
+    fn test_span_to_range_on_rejected_non_ascii_character() {
+        // The lexer reports `“` at its first byte.
+        let source = "fn main() {\n  println(“hello”)\n}\n";
+        let offset = source.find('“').unwrap();
+        let span = Span {
+            line: 2,
+            col: 11,
+            offset,
+        };
+        let range = span_to_range(&span, source);
+        assert_eq!(range.start, Position::new(1, 10));
+        // `“` is one UTF-16 code unit wide.
+        assert_eq!(range.end, Position::new(1, 11));
+    }
+
+    #[test]
+    fn test_span_to_range_astral_character_is_two_units_wide() {
+        let source = "let x = 😀";
+        let offset = source.find('😀').unwrap();
+        let span = Span {
+            line: 1,
+            col: 9,
+            offset,
+        };
+        let range = span_to_range(&span, source);
+        assert_eq!(range.start, Position::new(0, 8));
+        assert_eq!(range.end, Position::new(0, 10));
+    }
+
+    /// No byte offset, on or off a char boundary, in or past the source,
+    /// may make `span_to_range` panic.
+    #[test]
+    fn test_span_to_range_never_panics_for_any_offset() {
+        let source = "ab é “q” 😀!\n\u{a0}x𝕊y λ";
+        for offset in 0..=source.len() + 3 {
+            let span = Span {
+                line: 1,
+                col: 1,
+                offset,
+            };
+            let range = span_to_range(&span, source);
+            assert_eq!(range.start.line, range.end.line);
+            assert!(
+                range.end.character >= range.start.character,
+                "range runs backwards at byte offset {offset}: {range:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_position_to_offset_line_past_end_clamps_to_source_len() {
+        // No trailing newline: the byte counted for the line break after
+        // the last line must not push the result past the end.
+        assert_eq!(position_to_offset("ab", &Position::new(5, 0)), 2);
+        assert_eq!(position_to_offset("ab\ncd", &Position::new(9, 3)), 5);
+        // With a trailing newline the answer is the end of the source too.
+        assert_eq!(position_to_offset("ab\n", &Position::new(5, 0)), 3);
+    }
+
+    /// Every position maps to an offset that `source` can be sliced at.
+    #[test]
+    fn test_position_to_offset_result_is_always_sliceable() {
+        for source in ["", "ab", "ab\n", "é“\r\n😀x", "x\r\ny\r\n", "λ\n\n𝕊"] {
+            for line in 0..6 {
+                for character in 0..8 {
+                    let offset = position_to_offset(source, &Position::new(line, character));
+                    assert!(
+                        source.get(..offset).is_some(),
+                        "{source:?} cannot be sliced at {offset} (position {line}:{character})"
+                    );
+                }
+            }
+        }
     }
 
     // ── offset_to_position (round 84 dedup) ──────────────────────

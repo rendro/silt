@@ -1,95 +1,279 @@
-//! Light-weight textual scans over silt source that drive diagnostic
-//! routing decisions in the CLI: "does this file define main()?",
-//! "does it look like a test file?", etc. These are intentionally
-//! line-based and conservative — a false negative here just means a
-//! slightly less helpful diagnostic, whereas a false positive could
-//! suppress a needed error.
+//! Questions about a source file that decide how the CLI treats it: "does
+//! it define `main`?", "is it a test file?", "which functions are tests?".
+//!
+//! Every answer is read from the parsed declarations, the same ones the
+//! typechecker and the compiler work on, so `silt check`, `silt run` and
+//! `silt test` cannot disagree with the parser or with each other. Nothing
+//! here looks at source text: a text scan cannot tell a declaration from
+//! the same words inside a comment or a string, and it breaks on spacing
+//! the parser accepts.
 
-/// Return true if `e` is the "program has no main function" runtime error.
-///
-/// AUDIT-NOTE: this hint is keyed on a stringly-typed error; a proper fix
-/// would introduce a typed error variant. Tests pinning this live in
-/// tests/cli.rs. The matcher is intentionally more permissive than a single
-/// exact-string compare so a future cosmetic tweak to the producing
-/// `format!` in src/vm/execute.rs doesn't silently break the "silt test"
-/// nudge.
-pub(crate) fn is_missing_main_error(e: &silt::vm::VmError) -> bool {
-    let msg = &e.message;
-    msg.starts_with("undefined global: ") && msg.contains("main")
+use silt::ast::{Decl, ExprKind, ImportTarget, PatternKind, Program};
+use silt::errors::SourceError;
+use silt::intern::resolve;
+use silt::lexer::Span;
+
+/// Name of the global that a compiled program calls as its entry point
+/// (see `Compiler::compile_program`).
+const ENTRY_POINT: &str = "main";
+
+/// The builtin module that holds the assertions.
+const TEST_MODULE: &str = "test";
+
+/// How `silt test` treats a top-level function, going by its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestKind {
+    /// `test_*`: the function is called; it fails when it raises an error
+    /// or returns `Err(..)`.
+    Run,
+    /// `skip_test_*`: the function is reported as skipped, not called.
+    Skip,
 }
 
-/// Strip a single leading UTF-8 BOM (U+FEFF) before line scanning.
-///
-/// The lexer skips a leading BOM (see `Lexer::new`), so these textual
-/// heuristics must too — otherwise the first line of a BOM-prefixed
-/// file (the Windows Notepad / PowerShell `>` default) never matches
-/// its `fn ` / `pub fn ` / `test.` prefix and e.g. `silt check` would
-/// report "program has no main() function" for a file that has one.
-fn skip_bom(source: &str) -> &str {
-    source.strip_prefix('\u{FEFF}').unwrap_or(source)
-}
-
-/// Heuristic: does this source look like a test-only file?
-///
-/// Returns true if the source defines any `fn test_...` function OR contains
-/// a top-level `test.` call (e.g. `test.assert_eq(...)`). Used by `silt run`
-/// to suggest `silt test` when there's no `main()`.
-///
-/// Conservative: we scan whole lines that start (after trimming whitespace)
-/// with `fn test_`, `fn skip_test_`, or `test.` so commented-out code and
-/// string literals containing those substrings don't trigger a false positive.
-pub(crate) fn looks_like_test_file(source: &str) -> bool {
-    for line in skip_bom(source).lines() {
-        let t = line.trim_start();
-        if t.starts_with("fn test_")
-            || t.starts_with("fn skip_test_")
-            || t.starts_with("pub fn test_")
-            || t.starts_with("pub fn skip_test_")
-            || t.starts_with("test.")
-        {
-            return true;
-        }
+/// Classify a top-level function name. `None`: not a test.
+pub(crate) fn test_kind(name: &str) -> Option<TestKind> {
+    if name.starts_with("skip_test_") {
+        Some(TestKind::Skip)
+    } else if name.starts_with("test_") {
+        Some(TestKind::Run)
+    } else {
+        None
     }
-    false
 }
 
-/// Conservative text scan: does `source` look like a library module
-/// (has at least one `pub fn ...` definition)?  Used by `silt check` to
-/// suppress the missing-main diagnostic on files that are intended to
-/// be imported rather than run directly.
-pub(crate) fn looks_like_library_module(source: &str) -> bool {
-    for line in skip_bom(source).lines() {
-        let t = line.trim_start();
-        if t.starts_with("pub fn ") {
-            return true;
-        }
-    }
-    false
-}
-
-/// Conservative text scan for whether `source` defines a top-level `main`
-/// function. We match lines whose trimmed prefix is `fn main(` / `fn main `
-/// / `fn main{` or the `pub fn` variants. Must be conservative — a false
-/// positive here would suppress the missing-main diagnostic for a program
-/// that actually needs it.
-pub(crate) fn program_has_main(source: &str) -> bool {
-    for line in skip_bom(source).lines() {
-        let t = line.trim_start();
-        let rest = if let Some(r) = t.strip_prefix("pub fn ") {
-            r
-        } else if let Some(r) = t.strip_prefix("fn ") {
-            r
-        } else {
-            continue;
-        };
-        // Match `main` followed by a non-identifier character.
-        if let Some(after) = rest.strip_prefix("main") {
-            match after.chars().next() {
-                Some(c) if !(c.is_alphanumeric() || c == '_') => return true,
-                None => return true,
-                _ => {}
+/// The test functions that `program` declares, in source order.
+pub(crate) fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
+    program
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Fn(f) => {
+                let name = resolve(f.name);
+                let kind = test_kind(&name)?;
+                Some((name, kind))
             }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Does `program` bind the top-level name `main`?
+///
+/// The entry point is looked up by name when the program starts, so every
+/// declaration that puts `main` into the global scope counts: `fn main`,
+/// `let main = ...` and `import m.{ main }`.
+pub(crate) fn program_has_main(program: &Program) -> bool {
+    program.decls.iter().any(|decl| match decl {
+        Decl::Fn(f) => resolve(f.name) == ENTRY_POINT,
+        Decl::Let { pattern, .. } => {
+            matches!(&pattern.kind, PatternKind::Ident(name) if resolve(*name) == ENTRY_POINT)
+        }
+        Decl::Import(ImportTarget::Items(_, items), _) => {
+            items.iter().any(|item| resolve(*item) == ENTRY_POINT)
+        }
+        _ => false,
+    })
+}
+
+/// Is `program` a test file: does it declare a test function, or import
+/// the `test` module? Such a file has no `main` on purpose; it is run
+/// with `silt test`.
+pub(crate) fn looks_like_test_file(program: &Program) -> bool {
+    !test_functions(program).is_empty()
+        || program.decls.iter().any(|decl| match decl {
+            Decl::Import(
+                ImportTarget::Module(module)
+                | ImportTarget::Items(module, _)
+                | ImportTarget::Alias(module, _),
+                _,
+            ) => resolve(*module) == TEST_MODULE,
+            _ => false,
+        })
+}
+
+/// Is `program` a library module: does it declare a `pub fn`? Such a file
+/// has no `main` on purpose; it is imported, not run.
+pub(crate) fn looks_like_library_module(program: &Program) -> bool {
+    program
+        .decls
+        .iter()
+        .any(|decl| matches!(decl, Decl::Fn(f) if f.is_pub))
+}
+
+/// The diagnostic for a `main` that declares parameters, if `program` has
+/// one. The entry point is called without arguments, so such a program
+/// can never start.
+///
+/// Library modules and test files are not entry points: they are
+/// imported or run by `silt test`, never started through their `main`.
+/// They are exempt here as they are from the missing-`main` error.
+pub(crate) fn main_signature_error(
+    program: &Program,
+    source: &str,
+    path: &str,
+) -> Option<SourceError> {
+    if looks_like_library_module(program) || looks_like_test_file(program) {
+        return None;
+    }
+    let (count, span) = program.decls.iter().find_map(|decl| {
+        let (name, params) = match decl {
+            Decl::Fn(f) => (f.name, &f.params),
+            Decl::Let { pattern, value, .. } => match (&pattern.kind, &value.kind) {
+                (PatternKind::Ident(name), ExprKind::Lambda { params, .. }) => (*name, params),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if resolve(name) != ENTRY_POINT {
+            return None;
+        }
+        let first = params.first()?;
+        Some((params.len(), first.pattern.span))
+    })?;
+    let (these, them) = if count == 1 {
+        ("1 parameter".to_string(), "it")
+    } else {
+        (format!("{count} parameters"), "them")
+    };
+    Some(SourceError::compile_error_at(
+        format!(
+            "the entry point 'main' must take no parameters, but it declares {these}\n\
+             help: remove {them}; the command-line arguments are available from io.args()"
+        ),
+        span,
+        source,
+        path,
+    ))
+}
+
+/// The diagnostic for a program that binds no `main`. With
+/// `suggest_silt_test`, a test file gets a pointer to `silt test` instead
+/// of the advice to add a `main`.
+pub(crate) fn missing_main_error(
+    program: &Program,
+    source: &str,
+    path: &str,
+    suggest_silt_test: bool,
+) -> SourceError {
+    let message = if suggest_silt_test && looks_like_test_file(program) {
+        format!(
+            "program has no main() function\nThis looks like a test file — run it with 'silt test {path}' instead."
+        )
+    } else {
+        "program has no main() function\nadd one as the entry point".to_string()
+    };
+    // There is no source location for "the file has no main": with a zero
+    // span the renderer prints the header and the note, and no locator.
+    SourceError::compile_error_at(message, Span::new(0, 0), source, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use silt::lexer::Lexer;
+    use silt::parser::Parser;
+
+    fn parse(source: &str) -> Program {
+        let tokens = Lexer::new(source).tokenize().expect("the text must lex");
+        let (program, errors) = Parser::new(tokens).parse_program_recovering();
+        assert!(errors.is_empty(), "the text must parse");
+        program
+    }
+
+    #[test]
+    fn main_is_found_whatever_the_spacing() {
+        assert!(program_has_main(&parse("fn main() { 1 }")));
+        assert!(program_has_main(&parse("fn  main() { 1 }")));
+        assert!(program_has_main(&parse("fn\nmain\n() { 1 }")));
+        assert!(program_has_main(&parse("pub  fn   main() { 1 }")));
+    }
+
+    #[test]
+    fn main_in_a_comment_or_a_string_is_not_a_main() {
+        assert!(!program_has_main(&parse(
+            "{-\nfn main() {}\n-}\nfn helper() { 1 }"
+        )));
+        assert!(!program_has_main(&parse(
+            "-- fn main() {}\nfn helper() { 1 }"
+        )));
+        assert!(!program_has_main(&parse(
+            "let s = \"\"\"\nfn main() {}\n\"\"\"\nfn helper() { s }"
+        )));
+        assert!(!program_has_main(&parse("fn main_helper() { 1 }")));
+        assert!(!program_has_main(&parse("")));
+    }
+
+    #[test]
+    fn main_bound_by_let_or_import_is_a_main() {
+        assert!(program_has_main(&parse("let main = fn() { 1 }")));
+        assert!(program_has_main(&parse("import helper.{ main }")));
+        assert!(!program_has_main(&parse("import main")));
+    }
+
+    #[test]
+    fn test_functions_are_found_whatever_the_spacing() {
+        let program = parse(
+            "fn  test_spaced() { 1 }\nfn skip_test_later() { 2 }\nfn helper() { 3 }\npub fn test_pub() { 4 }",
+        );
+        assert_eq!(
+            test_functions(&program),
+            vec![
+                ("test_spaced".to_string(), TestKind::Run),
+                ("skip_test_later".to_string(), TestKind::Skip),
+                ("test_pub".to_string(), TestKind::Run),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_file_and_library_module() {
+        assert!(looks_like_test_file(&parse("fn test_a() { 1 }")));
+        assert!(looks_like_test_file(&parse(
+            "import test\nfn helper() { 1 }"
+        )));
+        assert!(!looks_like_test_file(&parse(
+            "-- fn test_a() { 1 }\nfn helper() { 1 }"
+        )));
+        assert!(looks_like_library_module(&parse(
+            "pub fn double(x) { x * 2 }"
+        )));
+        assert!(!looks_like_library_module(&parse(
+            "-- pub fn double(x) { x * 2 }\nfn helper() { 1 }"
+        )));
+    }
+
+    #[test]
+    fn main_with_parameters_is_an_error() {
+        let source = "fn main(x: Int) { x }";
+        let error = main_signature_error(&parse(source), source, "main.silt")
+            .expect("a main with a parameter is an error");
+        assert!(
+            error.message.contains("declares 1 parameter\n"),
+            "{}",
+            error.message
+        );
+        assert_eq!((error.span.line, error.span.col), (1, 9));
+
+        let source = "let main = { a, b -> a + b }";
+        let error = main_signature_error(&parse(source), source, "main.silt")
+            .expect("a closure main with parameters is an error");
+        assert!(
+            error.message.contains("declares 2 parameters\n"),
+            "{}",
+            error.message
+        );
+
+        for source in ["fn main() { 1 }", "fn helper(x) { x }", "let main = 3", ""] {
+            assert!(main_signature_error(&parse(source), source, "main.silt").is_none());
+        }
+
+        // Library modules and test files are not entry points.
+        for source in [
+            "pub fn greet() { 1 }\npub fn main(x: Int) { x }",
+            "fn main(args: List(String)) { () }\nfn test_a() { 1 }",
+            "import test\nfn main(x: Int) { x }",
+        ] {
+            assert!(main_signature_error(&parse(source), source, "lib.silt").is_none());
         }
     }
-    false
 }

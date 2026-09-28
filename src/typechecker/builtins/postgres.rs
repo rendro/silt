@@ -86,6 +86,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }
@@ -103,6 +104,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }
@@ -128,6 +130,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }
@@ -176,6 +179,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }
@@ -266,6 +270,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }
@@ -285,6 +290,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ty: Type::Fun(vec![t, Type::String, Type::String], Box::new(result_unit)),
                 constraints: vec![],
                 effects: EffectSet::io_net(),
+                optional_last_param: false,
             },
         );
     }

@@ -128,7 +128,8 @@ pub(crate) fn dispatch(args: &[String]) {
         //   0 — every file is already formatted.
         //   1 — at least one file would be reformatted (the intended
         //       `--check` signal CI tooling keys off of).
-        //   2 — at least one file failed to read or parse (infra failure);
+        //   2 — at least one file failed to read or parse, or the
+        //       formatter refused its own result for it (infra failure);
         //       CI should distinguish this from "diff would be produced".
         // An infra failure on any file is the dominant outcome — if we
         // hit a parse error we can't *know* whether the file is
@@ -184,6 +185,10 @@ fn format_file(path: &str) -> Result<(), String> {
 /// surface the bare `ParseError::Display` string (just `[line:col] msg`)
 /// and users would lose the context they get from `silt run` /
 /// `silt check` on the same file.
+///
+/// A refusal (`FmtError::Internal`) is not an error in the user's file,
+/// so it is rendered under its own `error[fmt]` header, names the file,
+/// and says that the file was not touched.
 fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -> String {
     match err {
         silt::formatter::FmtError::Lex(e) => {
@@ -191,6 +196,19 @@ fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -
         }
         silt::formatter::FmtError::Parse(e) => {
             format!("{}", SourceError::from_parse_error(e, source, path))
+        }
+        silt::formatter::FmtError::Internal(e) => {
+            let mut out = format!("error[fmt]: {path}: formatting refused: {}", e.message);
+            if let Some(span) = e.span {
+                out.push_str(&format!("\n --> {path}:{}:{}", span.line, span.col));
+            }
+            out.push_str("\n  = note: the file was left unchanged");
+            out.push_str(
+                "\n  = note: this is a defect in `silt fmt`, not in your program; \
+                 until it is fixed, moving the comment onto a line of its own or \
+                 simplifying the expression usually lets the file format",
+            );
+            out
         }
     }
 }
@@ -208,9 +226,10 @@ enum CheckOutcome {
     Formatted,
     /// File exists and parsed cleanly, but formatting would change it.
     Unformatted,
-    /// File could not be read, or the formatter rejected the source
-    /// (lex/parse error). The check is inconclusive — we cannot assert
-    /// the file is formatted, so this must not be mistaken for drift.
+    /// File could not be read, the formatter rejected the source
+    /// (lex/parse error), or the formatter refused its own result. The
+    /// check is inconclusive — we cannot assert the file is formatted,
+    /// so this must not be mistaken for drift.
     InfraError,
 }
 

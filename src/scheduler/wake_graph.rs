@@ -23,7 +23,12 @@
 //!
 //!   1. If any live task is queued / running (i.e. has no parked edge),
 //!      it is "fuel" for ANY target — we can't predict what an
-//!      unparked task will do, so we must not declare deadlock.
+//!      unparked task will do, so we must not declare deadlock. The
+//!      same holds for a task that is parked on something that fires
+//!      without the help of another task: I/O, `time.sleep`, or a
+//!      channel that a pending timer is going to close
+//!      (`channel.timeout`, `channel.recv_timeout`). Such a task runs
+//!      again, and what it does then cannot be predicted either.
 //!   2. If `target` is a channel and the channel has a pending timer
 //!      close (`Channel::has_pending_timer_close`), an external timer
 //!      thread will fire `ch.close()` → drains wakers → wakes main.
@@ -274,21 +279,24 @@ impl WakeGraph {
         }
 
         // Rule 1: any "non-stuck" live task is universal fuel — we
-        // can't predict what queued / running / I/O-parked tasks will
-        // do. This subsumes the legacy `Scheduler::can_make_progress`
-        // check that the polling watchdog used to call separately.
+        // can't predict what a task will do once it runs.
         //
-        // "Stuck" here means a task that is parked on an internal
-        // graph edge (Recv / Send / Select / Join). A task absent
-        // from `edges` is queued / running / between-slices; a task
-        // with `ParkEdge::Io` has an external waker that will fire
-        // independently. Either way, it's fuel for ANY target.
-        let internally_parked_task_count = g
+        // "Stuck" here means a task that is parked on an edge that
+        // only another task can fire. Not stuck, and so fuel for ANY
+        // target, is:
+        //   * a task absent from `edges`: queued, running or between
+        //     slices;
+        //   * a task parked on an edge that something outside the
+        //     graph will fire (`edge_has_external_wake`): I/O, or a
+        //     channel that a pending timer is going to close. A task
+        //     that waits on `channel.timeout(..)` and sends to main
+        //     afterwards is the plain case.
+        let stuck_task_count = g
             .edges
             .iter()
-            .filter(|(node, edge)| matches!(node, NodeId::Task(_)) && !matches!(edge, ParkEdge::Io))
+            .filter(|(node, edge)| matches!(node, NodeId::Task(_)) && !edge_has_external_wake(edge))
             .count();
-        if g.live_tasks.len() > internally_parked_task_count {
+        if g.live_tasks.len() > stuck_task_count {
             return false;
         }
 
@@ -301,7 +309,7 @@ impl WakeGraph {
                 // A closed channel returns Closed to a parked recv —
                 // fuel. See bfs_join_starved::Recv arm for the same
                 // case (CI run 24634464196 / fanout test).
-                if ch.is_closed() || ch.has_pending_timer_close() {
+                if has_external_wake(ch) {
                     return false;
                 }
                 if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -310,7 +318,7 @@ impl WakeGraph {
                 true
             }
             MainTarget::Send(ch) => {
-                if ch.is_closed() || ch.has_pending_timer_close() {
+                if has_external_wake(ch) {
                     return false;
                 }
                 if has_listeners(&g.ch_recv_listeners, ch.id) {
@@ -324,7 +332,7 @@ impl WakeGraph {
                         SelectEdge::Recv(ch) => (ch, &g.ch_send_listeners),
                         SelectEdge::Send(ch) => (ch, &g.ch_recv_listeners),
                     };
-                    if ch.is_closed() || ch.has_pending_timer_close() {
+                    if has_external_wake(ch) {
                         return false;
                     }
                     if has_listeners(listeners, ch.id) {
@@ -380,7 +388,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                 // park time but the wake hasn't propagated yet —
                 // CI run 24634464196 hit the last case on Windows
                 // test_fanout_round_robin_channel_each).
-                if ch.is_closed() || ch.has_pending_timer_close() {
+                if has_external_wake(ch) {
                     return false;
                 }
                 if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -388,7 +396,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                 }
             }
             Some(ParkEdge::Send(ch)) => {
-                if ch.is_closed() || ch.has_pending_timer_close() {
+                if has_external_wake(ch) {
                     return false;
                 }
                 if has_listeners(&g.ch_recv_listeners, ch.id) {
@@ -399,7 +407,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                 for e in edges {
                     match e {
                         SelectEdge::Recv(ch) => {
-                            if ch.is_closed() || ch.has_pending_timer_close() {
+                            if has_external_wake(ch) {
                                 return false;
                             }
                             if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -407,7 +415,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                             }
                         }
                         SelectEdge::Send(ch) => {
-                            if ch.is_closed() || ch.has_pending_timer_close() {
+                            if has_external_wake(ch) {
                                 return false;
                             }
                             if has_listeners(&g.ch_recv_listeners, ch.id) {
@@ -431,6 +439,38 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
 /// `true` iff `map[ch_id]` exists and is non-empty.
 fn has_listeners(map: &BTreeMap<usize, BTreeSet<NodeId>>, ch_id: usize) -> bool {
     map.get(&ch_id).is_some_and(|s| !s.is_empty())
+}
+
+/// `true` iff something outside the wake graph wakes whoever is parked
+/// on `ch`: a timer that is going to close the channel, or a close
+/// that has happened and whose wake-ups are on their way.
+///
+/// This is the one place that decides it; every rule that looks at a
+/// channel goes through here.
+///
+/// The pending flag is read first. `Channel::close` sets `closed`
+/// before it clears the flag, so from the moment a timer is scheduled
+/// at least one of the two reads is true.
+fn has_external_wake(ch: &Channel) -> bool {
+    ch.has_pending_timer_close() || ch.is_closed()
+}
+
+/// `true` iff a node parked on `edge` is woken by something outside
+/// the wake graph, without any other task having to run: an I/O
+/// completion (which includes `time.sleep`), or a channel with
+/// `has_external_wake`. For a select one such arm is enough.
+///
+/// A `Join` edge has no wake source of its own; the joinee's edge
+/// decides.
+fn edge_has_external_wake(edge: &ParkEdge) -> bool {
+    match edge {
+        ParkEdge::Io => true,
+        ParkEdge::Recv(ch) | ParkEdge::Send(ch) => has_external_wake(ch),
+        ParkEdge::Select(edges) => edges.iter().any(|e| match e {
+            SelectEdge::Recv(ch) | SelectEdge::Send(ch) => has_external_wake(ch),
+        }),
+        ParkEdge::Join(_) => false,
+    }
 }
 
 /// What the main thread is currently parked on. Channel variants
@@ -656,6 +696,67 @@ mod tests {
         let c = ch(0);
         c.mark_pending_timer_close();
         assert!(!g.is_main_starved(&MainTarget::Recv(c)));
+    }
+
+    /// A task that waits for a timer is fuel for ANY target: the timer
+    /// closes the channel, the task runs again, and it may then send
+    /// to the channel main waits on. Main waits on another channel
+    /// here, with no sender parked on it.
+    #[test]
+    fn task_parked_on_pending_timer_is_fuel_for_any_target() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        let timer = ch(7);
+        timer.mark_pending_timer_close();
+        g.on_park(NodeId::Task(1), ParkEdge::Recv(timer.clone()));
+        assert!(!g.is_main_starved(&MainTarget::Recv(rdv(0))));
+        assert!(!g.is_main_starved(&MainTarget::Send(rdv(0))));
+        assert!(!g.is_main_starved(&MainTarget::Select(vec![
+            SelectEdge::Recv(rdv(0)),
+            SelectEdge::Send(rdv(1)),
+        ])));
+        // The timer has fired: the channel is closed and the wake-up
+        // of the task is on its way. Still fuel.
+        timer.close();
+        assert!(!g.is_main_starved(&MainTarget::Recv(rdv(0))));
+    }
+
+    /// The same for a select with a timer arm, which is how
+    /// `channel.recv_timeout` parks a task.
+    #[test]
+    fn task_parked_on_select_with_timer_arm_is_fuel_for_any_target() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        let timer = ch(7);
+        timer.mark_pending_timer_close();
+        g.on_park(
+            NodeId::Task(1),
+            ParkEdge::Select(vec![SelectEdge::Recv(rdv(5)), SelectEdge::Recv(timer)]),
+        );
+        assert!(!g.is_main_starved(&MainTarget::Recv(rdv(0))));
+    }
+
+    /// Guard: a task parked on a channel with no timer and no
+    /// counterparty is stuck, so main is starved. A task that joins a
+    /// task waiting for a timer does not change that the timer task is
+    /// fuel.
+    #[test]
+    fn task_parked_without_timer_is_not_fuel() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        g.on_park(NodeId::Task(1), ParkEdge::Recv(rdv(5)));
+        assert!(g.is_main_starved(&MainTarget::Recv(rdv(0))));
+
+        g.on_spawn(2);
+        g.on_spawn(3);
+        let timer = ch(7);
+        timer.mark_pending_timer_close();
+        g.on_park(NodeId::Task(2), ParkEdge::Recv(timer));
+        g.on_park(NodeId::Task(3), ParkEdge::Join(2));
+        assert!(!g.is_main_starved(&MainTarget::Recv(rdv(0))));
     }
 
     /// A select that includes a recv on a channel with a parked

@@ -6,20 +6,18 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 
-use silt::compiler::Compiler;
-use silt::errors::SourceError;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
+use silt::errors::{ErrorKind, SourceError};
 use silt::vm::Vm;
 
 use crate::cli::help::test_usage_banner;
 use crate::cli::module_sources::collect_module_function_sources;
-use crate::cli::package::package_setup_for_file;
 use crate::cli::paths::find_silt_files;
 use crate::cli::pipeline::{
-    is_unknown_module_warning, resolve_strict_effects, should_suppress_import_cascade,
+    CompilePipelineResult, Emit, analyse_parsed_entry_file, parse_entry_file,
+    pipeline_has_real_hard_errors, reportable_diagnostics, resolve_strict_effects,
 };
+use crate::cli::run::returned_err;
+use crate::cli::source_scan::{TestKind, test_functions};
 
 /// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -109,6 +107,38 @@ fn find_test_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Print what the pipeline found in `path`, in the order and the form
+/// `silt check` prints it, warnings included. Returns `true` when the
+/// file failed to compile; a line that says so is printed last.
+fn report_diagnostics(path: &str, result: &CompilePipelineResult) -> bool {
+    let diagnostics = reportable_diagnostics(result);
+    silt::errors::eprintln_errors_with_separator(&diagnostics);
+    if !pipeline_has_real_hard_errors(result) && result.functions.is_some() {
+        return false;
+    }
+    let mut kinds: Vec<&str> = Vec::new();
+    for diagnostic in diagnostics.iter().filter(|d| !d.is_warning) {
+        let kind = match diagnostic.kind {
+            ErrorKind::Lex => "lex errors",
+            ErrorKind::Parse => "parse errors",
+            ErrorKind::Type => "type errors",
+            ErrorKind::Compile => "compile errors",
+            ErrorKind::Runtime => "runtime errors",
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    if kinds.is_empty() {
+        kinds.push("errors");
+    }
+    eprintln!(
+        "{path}: failed to compile — {} (see above)",
+        kinds.join(" and ")
+    );
+    true
+}
+
 fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Option<bool>) {
     silt::intern::reset();
     let paths: Vec<String> = if let Some(f) = file {
@@ -130,49 +160,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         return;
     }
 
-    // When a filter is provided, skip files that can't possibly contain matching tests.
-    // We do a quick text scan for `fn test_` / `fn skip_test_` names rather than a full parse.
-    let paths: Vec<String> = if let Some(ref filter) = filter {
-        paths
-            .into_iter()
-            .filter(|path| {
-                let source = match fs::read_to_string(path) {
-                    Ok(s) => s,
-                    Err(_) => return true, // keep the file so the error is reported later
-                };
-                // Scan for function names like `fn test_...` or `fn skip_test_...`
-                // (including `pub fn` variants).
-                for line in source.lines() {
-                    let trimmed = line.trim_start();
-                    let rest = if let Some(r) = trimmed.strip_prefix("pub fn ") {
-                        Some(r)
-                    } else {
-                        trimmed.strip_prefix("fn ")
-                    };
-                    if let Some(rest) = rest {
-                        let name: String = rest
-                            .chars()
-                            .take_while(|c| c.is_alphanumeric() || *c == '_')
-                            .collect();
-                        if (name.starts_with("test_") || name.starts_with("skip_test_"))
-                            && name.contains(filter.as_str())
-                        {
-                            return true;
-                        }
-                    }
-                }
-                false
-            })
-            .collect()
-    } else {
-        paths
-    };
-
-    if paths.is_empty() {
-        println!("no matching test files found");
-        return;
-    }
-
+    // Files that `--filter` did not rule out. Without a filter, all of them.
+    let mut files_considered: usize = 0;
     let mut total = 0;
     let mut passed = 0;
     let mut failed = 0;
@@ -189,123 +178,67 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         let source = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
+                // An unreadable file cannot be asked for its tests, so
+                // `--filter` does not rule it out: the error is reported.
+                files_considered += 1;
                 eprintln!("{path}: failed to read — {e}");
                 file_errors += 1;
                 continue;
             }
         };
 
-        let tokens = match Lexer::new(&source).tokenize() {
-            Ok(t) => t,
-            Err(e) => {
-                let source_err = SourceError::from_lex_error(&e, &source, path.as_str());
-                eprintln!("{path}: failed to compile — {source_err}");
-                file_errors += 1;
-                continue;
-            }
-        };
+        let parsed = parse_entry_file(path.as_str(), source);
 
-        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-        if !parse_errors.is_empty() {
-            eprintln!("{path}: failed to compile — parse errors:");
-            for (i, e) in parse_errors.iter().enumerate() {
-                if i > 0 {
-                    eprintln!();
-                }
-                let source_err = SourceError::from_parse_error(e, &source, path.as_str());
-                eprintln!("{source_err}");
-            }
-            file_errors += 1;
+        // The tests of this file that `--filter` selects, in source
+        // order. They are read from the parsed declarations, the same
+        // ones that are compiled and run below, so what is selected and
+        // what is run cannot differ.
+        let tests: Vec<(String, TestKind)> = match &parsed.program {
+            Some(program) => test_functions(program)
+                .into_iter()
+                .filter(|(name, _)| {
+                    filter
+                        .as_deref()
+                        .is_none_or(|pattern| name.contains(pattern))
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        // With a filter, a file without a selected test is left alone: it
+        // is not compiled, and nothing is reported for it. A file that
+        // does not lex cannot be asked for its tests either, so it is
+        // kept and its error reported.
+        if filter.is_some() && parsed.program.is_some() && tests.is_empty() {
             continue;
         }
+        files_considered += 1;
 
-        // Type-check before compiling so type errors fail the test.
-        // Drop "unknown module" warnings for imports the compiler resolves
-        // later (see `reportable_type_errors` / `is_unknown_module_warning`):
-        // every test file that imports a sibling module would otherwise
-        // flood test output with a spurious warning even on clean runs.
-        // Matches `silt run`'s behavior exactly. Real missing modules are
-        // still caught by the compiler's own "cannot load module" error
-        // in the block below.
-        //
-        // Resolve the local package up front so the typechecker can
-        // enforce the trait-orphan rule for `silt test` (round 63 item
-        // 5). The compile path below reuses the same setup.
-        let (local_pkg, package_roots) = package_setup_for_file(path.as_str(), true);
-        // Round 64 item 6A: pre-compile-typecheck imports through the
-        // compiler so the entrypoint typecheck can see sibling
-        // modules' exports (cross-module let-generalization). The
-        // compiler is reused below for `compile_declarations` so the
-        // pre-typecheck typecheck doubles as the import-load
-        // (compile_file_module's caching avoids re-reading sources).
-        let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
-        compiler.pre_typecheck_imports(&program);
-        let exports = compiler.module_exports_snapshot();
         // Phase D: each test file may live in a different package
         // (autodiscovery walks the cwd recursively); resolve the
         // strict-effects flag per-file so a per-package
         // `[lints] strict-effects = true` honours its own boundary.
         // CLI flag (Some) wins over per-file manifest discovery.
         let strict_effects = resolve_strict_effects(path.as_str(), strict_effects_cli);
-        let (type_errors, _entry_exports) = typechecker::check_with_package_and_imports_options(
-            &mut program,
-            Some(local_pkg),
-            exports,
+
+        // Typecheck and compile through the pipeline that `silt check`
+        // and `silt run` use, with the options of `silt check`, so a test
+        // file gets the diagnostics `silt check` gives it: the type
+        // errors of the modules it imports, the compiler's warnings, the
+        // static checks against declared dependencies. The one
+        // difference is what is emitted: the declarations, without a
+        // call of `main`.
+        let result = analyse_parsed_entry_file(
+            path.as_str(),
+            parsed,
+            Emit::Declarations,
+            true,
+            true,
             strict_effects,
         );
-        let mut has_type_error = false;
-        let mut printed_type_errors: usize = 0;
-        // Mirror the `silt run`/`silt check` path exactly: when this file
-        // imports a sibling user module the typechecker can't see into, it
-        // emits an "unknown module" warning plus a cascade of undefined-name
-        // / trait errors the compiler resolves at link time. Suppress BOTH
-        // via the shared `should_suppress_import_cascade` predicate so
-        // `silt test` reaches parity with `silt run` (round 91 GAP: the
-        // cascade was previously leaked, failing tests `silt run` accepts).
-        let has_user_import_warning = type_errors
-            .iter()
-            .any(|te| is_unknown_module_warning(&SourceError::from_type_error(te, &source, path)));
-        for te in &type_errors {
-            let source_err = SourceError::from_type_error(te, &source, path);
-            if should_suppress_import_cascade(&source_err, has_user_import_warning) {
-                continue;
-            }
-            if printed_type_errors > 0 {
-                eprintln!();
-            }
-            eprintln!("{source_err}");
-            printed_type_errors += 1;
-            if te.severity == typechecker::Severity::Error {
-                has_type_error = true;
-            }
-        }
-        if has_type_error {
-            eprintln!("{path}: failed to compile — type errors (see above)");
-            file_errors += 1;
-            continue;
-        }
-
-        // Compile all declarations (without calling main).  Package
-        // setup mirrors `silt run`: prefer the nearest enclosing
-        // `silt.toml` so cross-file `import foo` resolves consistently
-        // regardless of which file `silt test` was pointed at, and
-        // auto-update the lockfile when the manifest has new deps.
-        // (The compiler instance is the one constructed above —
-        // pre_typecheck_imports populated its module_exports cache
-        // already; the compile pass below reuses that work.)
-        let functions = match compiler.compile_declarations(&program) {
-            Ok(f) => f,
-            Err(e) => {
-                let source_err = SourceError::from_compile_error(&e, &source, path);
-                eprintln!("{path}: failed to compile — {source_err}");
-                // Round-52: when the primary error originated from a
-                // broken imported module, the recovery parser will have
-                // collected additional module parse errors that the CLI
-                // should surface too so users can fix them all in one go.
-                for extra in compiler.module_parse_errors() {
-                    let extra_err = SourceError::from_compile_error(extra, &source, path);
-                    eprintln!("{path}: failed to compile — {extra_err}");
-                }
+        let failed_to_compile = report_diagnostics(path.as_str(), &result);
+        let (source, functions) = match (failed_to_compile, result.functions) {
+            (false, Some(functions)) => (result.source, functions),
+            _ => {
                 file_errors += 1;
                 continue;
             }
@@ -400,120 +333,132 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
             continue;
         }
 
-        // Run each test function
-        for decl in &program.decls {
-            if let silt::ast::Decl::Fn(f) = decl {
-                let name = silt::intern::resolve(f.name);
-                if name.starts_with("skip_test_") {
-                    if let Some(ref filter) = filter
-                        && !name.contains(filter.as_str())
-                    {
-                        continue;
+        // Run each selected test function
+        for (name, kind) in &tests {
+            total += 1;
+            if *kind == TestKind::Skip {
+                eprintln!("  SKIP {path}::{name}");
+                skipped += 1;
+                continue;
+            }
+            let caller = silt::bytecode::call_global_script(name);
+            match vm.run(Arc::new(caller)) {
+                Ok(value) => match returned_err(&value) {
+                    // `Ok(..)`, Unit and every other value: the test ran
+                    // to its end.
+                    None => {
+                        eprintln!("  PASS {path}::{name}");
+                        passed += 1;
                     }
-                    total += 1;
-                    eprintln!("  SKIP {path}::{name}");
-                    skipped += 1;
-                    continue;
-                }
-                if name.starts_with("test_") {
-                    if let Some(ref filter) = filter
-                        && !name.contains(filter.as_str())
-                    {
-                        continue;
-                    }
-                    total += 1;
-                    let caller = silt::bytecode::call_global_script(&name);
-                    match vm.run(Arc::new(caller)) {
-                        Ok(_) => {
-                            eprintln!("  PASS {path}::{name}");
-                            passed += 1;
+                    // `Err(..)`: the test gave up, typically at a `?`, and
+                    // the assertions after that point never ran. Same
+                    // rule as for `main` under `silt run`. There is no
+                    // single source location for "the result was Err",
+                    // hence the zero span.
+                    Some(payload) => {
+                        eprintln!("  FAIL {path}::{name}");
+                        let source_err = SourceError::runtime_at(
+                            format!("{name} returned Err: {payload}"),
+                            silt::lexer::Span::new(0, 0),
+                            &source,
+                            path.as_str(),
+                        );
+                        let formatted = format!("{source_err}");
+                        for line in formatted.lines() {
+                            eprintln!("    {line}");
                         }
-                        Err(e) => {
-                            eprintln!("  FAIL {path}::{name}");
-                            if let Some(span) = e.span {
-                                // Determine which source text & file path
-                                // to render against, mirroring `silt run`.
-                                let innermost_fn_name: Option<&str> = e
-                                    .call_stack
-                                    .iter()
-                                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
-                                    .map(|(n, _)| n.as_str());
-                                let (err_source, err_path): (&str, String) =
-                                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                                        Some((module_path, module_source)) => {
-                                            (module_source.as_str(), normalize_path(module_path))
-                                        }
-                                        None => (source.as_str(), path.to_string()),
-                                    };
-                                let source_err = SourceError::runtime_at(
-                                    &e.message, span, err_source, &err_path,
-                                );
-                                // Indent every line of the formatted error
-                                // so multi-line SourceErrors stay aligned
-                                // with the FAIL header.
-                                let formatted = format!("{source_err}");
-                                for line in formatted.lines() {
-                                    eprintln!("    {line}");
+                        failed += 1;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("  FAIL {path}::{name}");
+                    if let Some(span) = e.span {
+                        // Determine which source text & file path
+                        // to render against, mirroring `silt run`.
+                        let innermost_fn_name: Option<&str> = e
+                            .call_stack
+                            .iter()
+                            .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
+                            .map(|(n, _)| n.as_str());
+                        let (err_source, err_path): (&str, String) =
+                            match innermost_fn_name.and_then(|n| module_sources.get(n)) {
+                                Some((module_path, module_source)) => {
+                                    (module_source.as_str(), normalize_path(module_path))
                                 }
-                                // Mirror `silt run`: render a call stack
-                                // when the error crosses ≥2 meaningful
-                                // frames. Without this, a test that fails
-                                // deep inside a helper chain only prints
-                                // the innermost site, leaving the user
-                                // without any trail back to the test
-                                // function that invoked it.
-                                let stack_lines = silt::vm::error::render_call_stack(
-                                    &e.call_stack,
-                                    |frame_name, frame_span| {
-                                        // Use module path if the frame
-                                        // belongs to an imported module,
-                                        // then normalize to match user's
-                                        // path style (relative/absolute).
-                                        let frame_path: String =
-                                            match module_sources.get(frame_name) {
-                                                Some((p, _)) => normalize_path(p),
-                                                None => path.to_string(),
-                                            };
-                                        if frame_span.line > 0 {
-                                            format!(
-                                                "{}:{}:{}",
-                                                frame_path, frame_span.line, frame_span.col
-                                            )
-                                        } else {
-                                            format!("{frame_path}:<unknown location>")
-                                        }
-                                    },
-                                );
-                                if !stack_lines.is_empty() {
-                                    eprintln!("\n    call stack:");
-                                    for line in stack_lines {
-                                        eprintln!("    {line}");
-                                    }
+                                None => (source.as_str(), path.to_string()),
+                            };
+                        let source_err =
+                            SourceError::runtime_at(&e.message, span, err_source, &err_path);
+                        // Indent every line of the formatted error
+                        // so multi-line SourceErrors stay aligned
+                        // with the FAIL header.
+                        let formatted = format!("{source_err}");
+                        for line in formatted.lines() {
+                            eprintln!("    {line}");
+                        }
+                        // Mirror `silt run`: render a call stack
+                        // when the error crosses ≥2 meaningful
+                        // frames. Without this, a test that fails
+                        // deep inside a helper chain only prints
+                        // the innermost site, leaving the user
+                        // without any trail back to the test
+                        // function that invoked it.
+                        let stack_lines = silt::vm::error::render_call_stack(
+                            &e.call_stack,
+                            |frame_name, frame_span| {
+                                // Use module path if the frame
+                                // belongs to an imported module,
+                                // then normalize to match user's
+                                // path style (relative/absolute).
+                                let frame_path: String = match module_sources.get(frame_name) {
+                                    Some((p, _)) => normalize_path(p),
+                                    None => path.to_string(),
+                                };
+                                if frame_span.line > 0 {
+                                    format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
+                                } else {
+                                    format!("{frame_path}:<unknown location>")
                                 }
-                            } else {
-                                // Span-less runtime error: render via
-                                // `SourceError::runtime_at` with a zero
-                                // span (adding the file path and color
-                                // gating a bare `VmError` Display lacks)
-                                // and indent to match the FAIL header's
-                                // alignment.
-                                let source_err = SourceError::runtime_at(
-                                    &e.message,
-                                    silt::lexer::Span::new(0, 0),
-                                    &source,
-                                    path.as_str(),
-                                );
-                                let formatted = format!("{source_err}");
-                                for line in formatted.lines() {
-                                    eprintln!("    {line}");
-                                }
+                            },
+                        );
+                        if !stack_lines.is_empty() {
+                            eprintln!("\n    call stack:");
+                            for line in stack_lines {
+                                eprintln!("    {line}");
                             }
-                            failed += 1;
+                        }
+                    } else {
+                        // Span-less runtime error: render via
+                        // `SourceError::runtime_at` with a zero
+                        // span (adding the file path and color
+                        // gating a bare `VmError` Display lacks)
+                        // and indent to match the FAIL header's
+                        // alignment.
+                        let source_err = SourceError::runtime_at(
+                            &e.message,
+                            silt::lexer::Span::new(0, 0),
+                            &source,
+                            path.as_str(),
+                        );
+                        let formatted = format!("{source_err}");
+                        for line in formatted.lines() {
+                            eprintln!("    {line}");
                         }
                     }
+                    failed += 1;
                 }
             }
+            // Failures of tasks this test spawned and never joined are
+            // reported under the test's result line.
+            vm.report_unjoined_task_failures();
         }
+    }
+
+    // `--filter` ruled every file out: say so instead of printing a
+    // summary of nothing.
+    if files_considered == 0 {
+        println!("no matching test files found");
+        return;
     }
 
     let test_word = if total == 1 { "test" } else { "tests" };
