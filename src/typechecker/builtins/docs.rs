@@ -3207,6 +3207,42 @@ JsonError` is wired in):
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
 
+## Decodable types
+
+The type argument of `json.parse`, `json.parse_list` and `json.parse_map`
+names the type to decode into:
+
+| Function | Type argument |
+|----------|---------------|
+| `json.parse` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+| `json.parse_list` | a record type |
+| `json.parse_map` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+
+The fields of a record type (and of every record type nested in it) may have
+these types:
+
+- `Int`, `Float`, `ExtFloat`, `String`, `Bool`
+- `Date`, `Time`, `DateTime`
+- `List(T)` and `Range(T)`, `Option(T)`, `Map(String, T)`
+- tuples, such as `(Int, String)`
+- non-generic record types
+- type aliases of any of these
+
+where `T` is again one of these types. Anything else (a `Set`, an enum, a
+generic record, a function, a `Map` whose key is not `String`, a type
+parameter) has no decoder.
+
+When the type is written at the call, `json.parse(text, Config)`, the
+compiler checks it. A record with a field no decoder exists for is a compile
+error that names the field and its type; so is an enum, or a type the function
+does not take (such as `json.parse_list(text, Int)`). The check applies
+equally to a decoder imported by name (`import json.{ parse }`) and to one
+called through a module alias. When the type only arrives at run time, through
+a `type a` parameter, the same problems are reported then: a field without a
+decoder gives an `Err(JsonUnknown(msg))` whose message names the field and its
+record, and a type the function does not take is a run-time error.
+
+
 ## `json.parse`
 
 ```
@@ -3296,7 +3332,7 @@ json.parse_map(s: String, type v) -> Result(Map(String, v), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
+parameter (`Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type).
 
 ```silt
 import json
@@ -7409,6 +7445,42 @@ TomlError` is wired in):
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
 
+## Decodable types
+
+The type argument of `toml.parse`, `toml.parse_list` and `toml.parse_map`
+names the type to decode into:
+
+| Function | Type argument |
+|----------|---------------|
+| `toml.parse` | a record type |
+| `toml.parse_list` | a record type |
+| `toml.parse_map` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+
+The fields of a record type (and of every record type nested in it) may have
+these types:
+
+- `Int`, `Float`, `ExtFloat`, `String`, `Bool`
+- `Date`, `Time`, `DateTime`
+- `List(T)` and `Range(T)`, `Option(T)`, `Map(String, T)`
+- tuples, such as `(Int, String)`
+- non-generic record types
+- type aliases of any of these
+
+where `T` is again one of these types. Anything else (a `Set`, an enum, a
+generic record, a function, a `Map` whose key is not `String`, a type
+parameter) has no decoder.
+
+When the type is written at the call, `toml.parse(text, Config)`, the
+compiler checks it. A record with a field no decoder exists for is a compile
+error that names the field and its type; so is an enum, or a type the function
+does not take (such as `toml.parse_list(text, Int)`). The check applies
+equally to a decoder imported by name (`import toml.{ parse }`) and to one
+called through a module alias. When the type only arrives at run time, through
+a `type a` parameter, the same problems are reported then: a field without a
+decoder gives an `Err(TomlUnknown(msg))` whose message names the field and its
+record, and a type the function does not take is a run-time error.
+
+
 ## `toml.parse`
 
 ```
@@ -7485,7 +7557,7 @@ toml.parse_map(s: String, type v) -> Result(Map(String, v), TomlError)
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
-a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
+a `type` parameter (`Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type).
 
 ```silt
 import toml

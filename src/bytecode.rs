@@ -20,6 +20,24 @@ enum ConstantKey {
     Float(u64), // f64::to_bits()
 }
 
+// ── Record tags ────────────────────────────────────────────────────
+
+/// Runtime type name carried by a record built from an anonymous record
+/// literal (`{x: 1}`) or bound by a record rest pattern. The typechecker
+/// lets such a value flow wherever a nominal record of the same shape is
+/// expected, so at run time `<anon>` stands for "whatever record type the
+/// typechecker decided this is".
+pub const ANON_RECORD_TAG: &str = "<anon>";
+
+/// Whether a record whose runtime type name is `tag` satisfies a check for
+/// the nominal record type `expected`. An `<anon>` record satisfies every
+/// check: the typechecker has already proved the shapes agree. This is the
+/// one rule every run-time record-tag check uses (pattern tag tests,
+/// equality, builtins that accept a `Date`/`Response`/... record).
+pub fn record_tag_matches(tag: &str, expected: &str) -> bool {
+    tag == expected || tag == ANON_RECORD_TAG
+}
+
 // ── Opcodes ────────────────────────────────────────────────────────
 
 /// Bytecode instructions for the stack-based VM.
@@ -186,7 +204,8 @@ pub enum Op {
     /// the `...rest` portion. Layout: u8 count, then count u16 name
     /// indices into the constant pool (string).
     DestructRecordRest, // operand: u8 count, count*u16 name indices
-    /// Test if TOS is a record with given type name. Peek, push bool.
+    /// Test if TOS is a record with given type name, or an `<anon>` record
+    /// (see [`record_tag_matches`]). Peek, push bool.
     TestRecordTag, // operand: u16 name_index
     /// Test if TOS map contains key. Peek, push bool.
     TestMapHasKey, // operand: u16 const_index (string key)
