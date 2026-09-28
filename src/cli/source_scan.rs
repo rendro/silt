@@ -103,11 +103,18 @@ pub(crate) fn looks_like_library_module(program: &Program) -> bool {
 /// The diagnostic for a `main` that declares parameters, if `program` has
 /// one. The entry point is called without arguments, so such a program
 /// can never start.
+///
+/// Library modules and test files are not entry points: they are
+/// imported or run by `silt test`, never started through their `main`.
+/// They are exempt here as they are from the missing-`main` error.
 pub(crate) fn main_signature_error(
     program: &Program,
     source: &str,
     path: &str,
 ) -> Option<SourceError> {
+    if looks_like_library_module(program) || looks_like_test_file(program) {
+        return None;
+    }
     let (count, span) = program.decls.iter().find_map(|decl| {
         let (name, params) = match decl {
             Decl::Fn(f) => (f.name, &f.params),
@@ -258,6 +265,15 @@ mod tests {
 
         for source in ["fn main() { 1 }", "fn helper(x) { x }", "let main = 3", ""] {
             assert!(main_signature_error(&parse(source), source, "main.silt").is_none());
+        }
+
+        // Library modules and test files are not entry points.
+        for source in [
+            "pub fn greet() { 1 }\npub fn main(x: Int) { x }",
+            "fn main(args: List(String)) { () }\nfn test_a() { 1 }",
+            "import test\nfn main(x: Int) { x }",
+        ] {
+            assert!(main_signature_error(&parse(source), source, "lib.silt").is_none());
         }
     }
 }

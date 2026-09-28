@@ -1054,6 +1054,39 @@ fn main_with_parameters_in_other_forms() {
     assert!(message.contains("must take no parameters"), "{out:#?}");
 }
 
+/// Library modules and test files are not entry points, so a `main` with
+/// parameters in them is not an error: `silt check` accepts the library
+/// and `silt test` runs the test file's tests.
+#[test]
+fn main_with_parameters_in_a_library_or_test_file_is_not_an_entry_point_error() {
+    let mut project = Project::new(
+        "main_param_library",
+        &[
+            (
+                "lib.silt",
+                "pub fn greet() -> String { \"hi\" }\npub fn main(x: Int) { x }\n",
+            ),
+            (
+                "param_test.silt",
+                "fn main(args: List(String)) { () }\nfn test_a() { 1 }\n",
+            ),
+        ],
+    );
+    let check = project.silt(&["check", "lib.silt"]);
+    assert_eq!(check.code, Some(0), "{check:#?}");
+    assert!(
+        !check.stderr.contains("must take no parameters"),
+        "{check:#?}"
+    );
+    let test = project.silt(&["test", "param_test.silt"]);
+    assert_eq!(test.code, Some(0), "{test:#?}");
+    assert!(test.stderr.contains("PASS"), "{test:#?}");
+    assert!(
+        !test.stderr.contains("must take no parameters"),
+        "{test:#?}"
+    );
+}
+
 /// Guard: a `main` without parameters and a function with parameters
 /// that is not `main` are accepted.
 #[test]
@@ -1348,10 +1381,6 @@ fn test_and_check_report_the_same_diagnostics() {
         (
             "type_error_and_warning_test.silt",
             "import test\nfn test_bad() {\n  let list = [1]\n  let n: Int = \"s\"\n  test.assert_eq(n, 1)\n}\n",
-        ),
-        (
-            "main_with_parameter_test.silt",
-            "import test\nfn main(x: Int) { x }\nfn test_a() {\n  test.assert_eq(1, 1)\n}\n",
         ),
     ];
     let mut project = Project::new("parity", files);
