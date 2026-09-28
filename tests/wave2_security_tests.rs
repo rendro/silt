@@ -417,3 +417,57 @@ fn a_network_git_url_keeps_the_network_whitespace_hint() {
         assert!(!out.stderr.contains(LOCAL_HINT), "{url:?}: {out:?}");
     }
 }
+
+/// `silt check --format json` puts the real path of a dependency's file
+/// in `file`, JSON-escaped only: a display-escaped path (`lib\\tx`) would
+/// decode to a file that does not exist.
+#[cfg(unix)]
+#[test]
+fn json_output_names_the_real_path_of_a_dependency_file() {
+    let ws = fresh_workspace("json_real_path");
+    let app = package_with_tab_dependency(
+        &ws,
+        "pub fn f(n: Int) -> Int {\n  let s: String = n\n  1\n}\n",
+    );
+    let out = silt(&ws, &app, &["check", "--format", "json"]);
+    assert!(!out.timed_out, "silt hung; {out:?}");
+    let reported: serde_json::Value =
+        serde_json::from_str(out.stdout.trim()).unwrap_or_else(|e| panic!("{e}; {out:?}"));
+    let files: Vec<&str> = reported
+        .as_array()
+        .expect("a list of diagnostics")
+        .iter()
+        .filter_map(|d| d["file"].as_str())
+        .collect();
+    assert!(
+        files.iter().any(|f| f.ends_with("lib\tx/src/lib.silt")),
+        "expected the real path with its tab; files: {files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.contains("lib\\tx")),
+        "a display-escaped path in `file`; files: {files:?}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The "did you mean" hint of a failed import shows a file name from a
+/// dependency's directory through the display rule, like the path above
+/// it.
+#[cfg(unix)]
+#[test]
+fn a_did_you_mean_hint_escapes_the_file_name() {
+    let ws = fresh_workspace("did_you_mean");
+    let app =
+        package_with_tab_dependency(&ws, "import helper\npub fn f(n: Int) -> Int {\n  n\n}\n");
+    fs::write(ws.join("lib\tx/src/helpe\tr.silt"), "pub fn g() { 1 }\n").unwrap();
+    let out = silt(&ws, &app, &["check"]);
+    assert!(!out.timed_out, "silt hung; {out:?}");
+    let hint = out
+        .stderr
+        .lines()
+        .find(|line| line.contains("did you mean"))
+        .unwrap_or_else(|| panic!("expected a did-you-mean hint; {out:?}"));
+    assert!(hint.contains("helpe\\tr"), "{hint:?}");
+    assert!(!hint.chars().any(|c| c.is_control()), "{hint:?}");
+    let _ = fs::remove_dir_all(&ws);
+}

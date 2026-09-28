@@ -893,14 +893,18 @@ impl Compiler {
         errors: &[typechecker::TypeError],
         source: &str,
         file_path: &std::path::Path,
-        file_display: &str,
     ) {
         if !self.module_type_error_files.insert(file_path.to_path_buf()) {
             return;
         }
+        // `SourceError.file` holds the path as it is: its `Display`
+        // escapes it for a terminal, and `silt check --format json`
+        // JSON-escapes it. A display-escaped path would be escaped twice
+        // there.
+        let file = module_path_for_display(file_path);
         let converted: Vec<crate::errors::SourceError> = errors
             .iter()
-            .map(|e| crate::errors::SourceError::from_type_error(e, source, file_display))
+            .map(|e| crate::errors::SourceError::from_type_error(e, source, &file))
             .collect();
         let has_user_import_warning = converted.iter().any(|e| {
             e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
@@ -1965,12 +1969,7 @@ impl Compiler {
             // of dropping the whole batch. Import-resolvable shapes
             // stay suppressed inside the harvest — see
             // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(
-                &module_errors,
-                &source,
-                &resolved.file_path,
-                &file_display,
-            );
+            self.harvest_module_type_errors(&module_errors, &source, &resolved.file_path);
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -2120,7 +2119,7 @@ impl Compiler {
         // `harvest_module_type_errors`). First-wins keying by file path
         // means this is a no-op when the pre-typecheck pass already
         // harvested the same module.
-        self.harvest_module_type_errors(&module_type_errors, &source, file_path, &file_display);
+        self.harvest_module_type_errors(&module_type_errors, &source, file_path);
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
