@@ -741,3 +741,30 @@ fn main() {
         "{label}: expected the frame-limit wording: {outcome:?}"
     );
 }
+
+/// Stream stages run their callbacks on threads of their own. Those
+/// threads get the stack and the recursion budget of a scheduler worker,
+/// so a transform callback that nests 100 callback levels keeps every
+/// item. Before, the stage thread had the default stack: a debug build
+/// aborted at 13 levels, and with the budget but not the stack the stage
+/// stopped at 8 levels and the stream silently lost the rest.
+#[test]
+fn stream_transform_callbacks_nest_as_deep_as_in_a_task() {
+    let src = r#"
+import list
+import stream
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+fn main() {
+  let out = stream.from_list([3, 100, 2]) |> stream.map { n -> deep(n) } |> stream.collect
+  println(out)
+  let kept = stream.from_list([1, 100, 2, 4]) |> stream.filter { n -> deep(n) > 0 } |> stream.count
+  println("count {kept}")
+}
+"#;
+    assert_prints("stream_deep_callbacks", src, "[3, 100, 2]\ncount 4\n", 3);
+}

@@ -153,6 +153,37 @@ pub fn set_native_stack_budget(bytes: usize) {
     NATIVE_DEPTH_LIMIT.with(|limit| limit.set(native_depth_limit_for(bytes)));
 }
 
+/// Start an OS thread that runs silt callbacks outside the scheduler: a
+/// stream stage or an HTTP handler. It gets the stack of a scheduler
+/// worker and the matching native recursion budget, so callbacks nest as
+/// deep there as in a task. If the system refuses a stack that large, the
+/// thread starts on the default stack, whose budget is the default one.
+pub(crate) fn spawn_callback_thread<F, T>(f: F) -> std::thread::JoinHandle<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let bytes = crate::scheduler::WORKER_STACK_BYTES;
+    // `Builder::spawn` drops its closure when it fails, so the body is
+    // shared with the fallback and taken by whichever thread runs.
+    let body = Arc::new(parking_lot::Mutex::new(Some(f)));
+    let for_large = body.clone();
+    let spawned = std::thread::Builder::new()
+        .stack_size(bytes)
+        .spawn(move || {
+            set_native_stack_budget(bytes);
+            let f = for_large.lock().take().expect("thread body runs once");
+            f()
+        });
+    match spawned {
+        Ok(handle) => handle,
+        Err(_) => std::thread::spawn(move || {
+            let f = body.lock().take().expect("thread body runs once");
+            f()
+        }),
+    }
+}
+
 /// Most interpreter loops that may be nested on the current thread.
 pub(crate) fn native_depth_limit() -> usize {
     NATIVE_DEPTH_LIMIT.with(|limit| limit.get())

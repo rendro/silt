@@ -260,7 +260,7 @@ fn from_list(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let xs = xs.clone();
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         for v in xs.iter() {
             if !push(&out_clone, v) {
                 break;
@@ -279,7 +279,7 @@ fn from_range(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let hi = require_int(&args[1], "stream.from_range")?;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         for i in lo..=hi {
             if !push(&out_clone, &Value::Int(i)) {
                 break;
@@ -297,7 +297,7 @@ fn repeat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let v = args[0].clone();
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         loop {
             if !push(&out_clone, &v) {
                 break;
@@ -319,7 +319,7 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut state = init;
         loop {
             // fn(state) -> Option((value, next_state))
@@ -361,7 +361,7 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = n as usize;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         use std::io::Read;
         match std::fs::File::open(&path) {
             Ok(mut file) => {
@@ -398,7 +398,7 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let path = require_string(&args[0], "stream.file_lines")?.to_string();
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         use std::io::BufRead;
         match std::fs::File::open(&path) {
             Ok(file) => {
@@ -448,7 +448,7 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = n as usize;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         use std::io::Read;
         loop {
             let mut buf = vec![0u8; n];
@@ -493,7 +493,7 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     };
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         // We can't easily wrap the trait-object stream in a BufReader
         // because BufReader requires owning the reader (can't borrow from
         // a Mutex guard across loop iterations). Read byte-by-byte —
@@ -557,7 +557,7 @@ fn spawn_pump<F>(in_ch: Arc<Channel>, out_ch: Arc<Channel>, mut each: F)
 where
     F: FnMut(Value, &Channel) -> bool + Send + 'static,
 {
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
@@ -699,7 +699,7 @@ fn take(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = n as usize;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut emitted = 0;
         while emitted < n {
             match in_ch.receive_blocking() {
@@ -727,7 +727,7 @@ fn drop_n(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = n.max(0) as usize;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut dropped = 0;
         while dropped < n {
             match in_ch.receive_blocking() {
@@ -762,7 +762,7 @@ fn take_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
@@ -793,7 +793,7 @@ fn drop_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut dropping = true;
         loop {
             match in_ch.receive_blocking() {
@@ -833,7 +833,7 @@ fn chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = n as usize;
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut buffer: Vec<Value> = Vec::with_capacity(n);
         loop {
             match in_ch.receive_blocking() {
@@ -876,7 +876,7 @@ fn scan(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut acc = init;
         loop {
             match in_ch.receive_blocking() {
@@ -907,7 +907,7 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.dedup")?.clone();
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         let mut prev: Option<Value> = None;
         loop {
             match in_ch.receive_blocking() {
@@ -991,7 +991,7 @@ fn merge(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     for in_ch in channels {
         let out_clone = out.clone();
         let remaining = remaining.clone();
-        std::thread::spawn(move || {
+        crate::vm::spawn_callback_thread(move || {
             loop {
                 match in_ch.receive_blocking() {
                     TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
@@ -1017,7 +1017,7 @@ fn zip(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let b = require_channel(&args[1], "stream.zip")?.clone();
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         loop {
             let ra = a.receive_blocking();
             let rb = b.receive_blocking();
@@ -1060,7 +1060,7 @@ fn concat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    std::thread::spawn(move || {
+    crate::vm::spawn_callback_thread(move || {
         for ch in channels {
             loop {
                 match ch.receive_blocking() {

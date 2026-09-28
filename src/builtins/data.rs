@@ -2453,7 +2453,7 @@ fn do_http_serve_inner(
             let inflight_guard = inflight.clone();
             inflight_guard.fetch_add(1, Ordering::AcqRel);
 
-            std::thread::spawn(move || {
+            crate::vm::spawn_callback_thread(move || {
                 // Guard that decrements inflight on thread exit
                 // even if a panic or early-return path fires.
                 struct Decrement(Arc<AtomicUsize>);
