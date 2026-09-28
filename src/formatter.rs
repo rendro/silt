@@ -3026,12 +3026,14 @@ pub fn format(source: &str) -> Result<String, FmtError> {
 ///     `{ e }`, and in that a parameter `_` is a wildcard pattern in one
 ///     and a name in the other. So a block that holds nothing but one
 ///     expression is written as that expression, and a name `_` in a
-///     pattern as a wildcard;
+///     pattern as a wildcard, unless the declaration uses `_` as a value;
 ///   * `where` bounds on the same type variable are gathered into one
 ///     clause (`a: X, b: Y, a: Z` becomes `a: X + Z, b: Y`), so bounds
 ///     are written grouped by type variable;
 ///   * imports are moved to the top and sorted, so imports are compared
-///     as a set, apart from the other declarations;
+///     as a set, apart from the other declarations; a name that two
+///     declarations bind must keep the order of its declarations, since
+///     that order decides which one the name refers to;
 ///   * a pattern alternative in parentheses inside another one,
 ///     `(a | b) | c`, is printed as `a | b | c`, so alternatives are
 ///     written flat.
@@ -3061,7 +3063,76 @@ mod self_check {
             .map_err(|e| unparseable(&e.message, e.span, output))?;
 
         compare_programs(&decl_shapes(source_program), &decl_shapes(&output_program))?;
+        compare_binders(source_program, &output_program)?;
         compare_comments(source_comments, &output_comments)
+    }
+
+    // ── Names bound more than once ──────────────────────────────────
+
+    /// The top-level names that `decl` binds.
+    fn bound_names(decl: &Decl) -> Vec<Symbol> {
+        match decl {
+            Decl::Fn(f) => vec![f.name],
+            Decl::Type(t) => vec![t.name],
+            Decl::Trait(t) => vec![t.name],
+            Decl::TraitImpl(_) => Vec::new(),
+            Decl::Import(target, _) => match target {
+                ImportTarget::Module(m) => vec![*m],
+                ImportTarget::Items(_, items) => items.clone(),
+                ImportTarget::Alias(_, alias) => vec![*alias],
+            },
+            Decl::Let { pattern, .. } => match &pattern.kind {
+                PatternKind::Ident(name) => vec![*name],
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// For every name that two or more top-level declarations bind, the
+    /// declarations that bind it, in order. Which of them a use of the
+    /// name refers to depends on that order.
+    fn binders(program: &Program) -> Vec<(String, Vec<String>)> {
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &program.decls {
+            let mut writer = ShapeWriter::default();
+            writer.decl(decl);
+            for name in bound_names(decl) {
+                by_name
+                    .entry(resolve(name).to_string())
+                    .or_default()
+                    .push(writer.out.clone());
+            }
+        }
+        let mut shared: Vec<(String, Vec<String>)> = by_name
+            .into_iter()
+            .filter(|(_, decls)| decls.len() > 1)
+            .collect();
+        shared.sort();
+        shared
+    }
+
+    /// Imports are compared as a set, but when a name is bound by more
+    /// than one declaration, moving or sorting them can change which one
+    /// the name refers to.
+    fn compare_binders(before: &Program, after: &Program) -> Result<(), InternalError> {
+        let before = binders(before);
+        let after = binders(after);
+        for (name, decls) in &before {
+            let same = after
+                .iter()
+                .any(|(other, other_decls)| other == name && other_decls == decls);
+            if !same {
+                return Err(InternalError {
+                    message: format!(
+                        "the result would change which declaration the name `{name}` \
+                         refers to: it is bound more than once, and the declarations \
+                         would change order"
+                    ),
+                    span: None,
+                });
+            }
+        }
+        Ok(())
     }
 
     fn unparseable(message: &str, span: Span, output: &str) -> InternalError {
@@ -3109,6 +3180,13 @@ mod self_check {
             .map(|decl| {
                 let mut writer = ShapeWriter::default();
                 writer.decl(decl);
+                if writer.saw_underscore_value {
+                    writer = ShapeWriter {
+                        underscore_is_a_name: true,
+                        ..ShapeWriter::default()
+                    };
+                    writer.decl(decl);
+                }
                 let (label, span) = describe(decl);
                 DeclShape {
                     is_import: matches!(decl, Decl::Import(..)),
@@ -3275,6 +3353,13 @@ mod self_check {
     #[derive(Default)]
     struct ShapeWriter {
         out: String,
+        /// Write a parameter named `_` as a name, not as a wildcard.
+        /// Set when the declaration refers to `_` as a value: there
+        /// `fn(_) { _ }` binds a name that the body uses, and `{ _ -> _ }`
+        /// would not.
+        underscore_is_a_name: bool,
+        /// Whether an expression referred to `_`.
+        saw_underscore_value: bool,
     }
 
     impl ShapeWriter {
@@ -3627,7 +3712,9 @@ mod self_check {
                 PatternKind::Wildcard => self.open("wildcard"),
                 // A parameter `_` is a wildcard in `{ _ -> ... }` and a
                 // name in `fn(_) { ... }`.
-                PatternKind::Ident(name) if resolve(*name) == "_" => self.open("wildcard"),
+                PatternKind::Ident(name) if resolve(*name) == "_" && !self.underscore_is_a_name => {
+                    self.open("wildcard")
+                }
                 PatternKind::Ident(name) => {
                     self.open("bind");
                     self.sym(*name);
@@ -3847,6 +3934,9 @@ mod self_check {
                     }
                 }
                 ExprKind::Ident(name) => {
+                    if resolve(*name) == "_" {
+                        self.saw_underscore_value = true;
+                    }
                     self.open("name");
                     self.sym(*name);
                 }
@@ -9593,6 +9683,44 @@ mod self_check_tests {
         assert!(out.contains("import list\nimport string -- s\n"), "{out}");
         assert!(out.contains("-- header"), "{out}");
         assert!(out.contains("-- about list"), "{out}");
+    }
+
+    #[test]
+    fn reordering_two_imports_of_one_name_is_refused() {
+        let e = refusal(
+            "import zeta.{ name }\nimport alpha.{ name }\n\nfn main() {\n  println(name())\n}\n",
+        );
+        assert!(e.message.contains("the name `name`"), "{}", e.message);
+    }
+
+    #[test]
+    fn hoisting_an_import_above_a_declaration_of_its_name_is_refused() {
+        let e = refusal(
+            "fn name() {\n  \"local\"\n}\n\nimport zeta.{ name }\n\nfn main() {\n  println(name())\n}\n",
+        );
+        assert!(e.message.contains("the name `name`"), "{}", e.message);
+    }
+
+    #[test]
+    fn imports_of_different_names_are_still_sorted() {
+        let out = formatted("import zeta.{ a }\nimport alpha.{ b }\n\nfn main() {\n  1\n}\n");
+        assert!(
+            out.starts_with("import alpha.{ b }\nimport zeta.{ a }\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn an_underscore_parameter_used_as_a_value_is_not_made_a_wildcard() {
+        let src = "import list\n\nfn main() {\n  println(list.map([1, 2], fn(_) { _ * 10 }))\n}\n";
+        refusal(src);
+    }
+
+    #[test]
+    fn an_unused_underscore_parameter_still_becomes_a_trailing_closure() {
+        let out =
+            formatted("import list\n\nfn main() {\n  println(list.map([1, 2], fn(_) { 10 }))\n}\n");
+        assert!(out.contains("{ _ -> 10 }"), "{out}");
     }
 
     #[test]
