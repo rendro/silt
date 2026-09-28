@@ -299,7 +299,10 @@ impl fmt::Display for SourceError {
 
         // Location line: --> file:line:col
         if self.span.line > 0 {
-            let file = self.file.as_deref().unwrap_or("<input>");
+            // The file can sit in a dependency's directory, named by a
+            // manifest: it is shown by the display rule, so the locator
+            // stays one line.
+            let file = crate::git::escape_for_display(self.file.as_deref().unwrap_or("<input>"));
             write!(
                 f,
                 "\n {cyan}-->{reset} {file}:{line}:{col}",

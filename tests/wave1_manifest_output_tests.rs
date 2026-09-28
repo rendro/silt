@@ -1296,8 +1296,10 @@ fn assert_git_output_is_marked(out: &Outcome, first: &str, command: &str, contex
         "{context}: expected the command `{command}` on the first line; {out:?}"
     );
     for line in &lines[1..] {
+        // An empty line of git's is the mark alone, without its
+        // trailing space.
         assert!(
-            line.starts_with(GIT_LINE),
+            line.starts_with(GIT_LINE) || *line == GIT_LINE.trim_end(),
             "{context}: the line {line:?} of git's output is not marked; {out:?}"
         );
     }
