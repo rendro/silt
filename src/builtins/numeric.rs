@@ -156,7 +156,7 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("int.to_float takes 1 argument".into()));
             }
             let n = require_int(&args[0], "int.to_float")?;
-            Ok(Value::Float(n as f64))
+            Ok(float_value(n as f64))
         }
         "to_string" => {
             if args.len() != 1 {
@@ -182,6 +182,15 @@ fn extract_float(val: &Value, fn_name: &str) -> Result<f64, VmError> {
     }
 }
 
+/// Build a `Float` from a finite `f64`. `-0.0` becomes `0.0`: every
+/// `Float` comparison (equality, ordering, hashing, sets, maps) treats
+/// the two zeros as one value, so no `Float` may carry a negative zero
+/// that would print or format differently. Every `Float` this module
+/// produces goes through here.
+pub(crate) fn float_value(f: f64) -> Value {
+    Value::Float(if f == 0.0 { 0.0 } else { f })
+}
+
 /// Dispatch `float.<name>(args)`.
 pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -205,7 +214,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                         vec![Value::Int(0)],
                     )],
                 )),
-                Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Float(n)])),
+                Ok(n) => Ok(Value::Variant("Ok".into(), vec![float_value(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
                     vec![classify_float_parse_error(&e, &s)],
@@ -219,7 +228,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             match &args[0] {
                 Value::Float(f) => {
                     let result = f.round();
-                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                    Ok(float_value(result))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.round())),
                 other => Err(VmError::new(format!(
@@ -235,7 +244,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             match &args[0] {
                 Value::Float(f) => {
                     let result = f.ceil();
-                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                    Ok(float_value(result))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.ceil())),
                 other => Err(VmError::new(format!(
@@ -251,7 +260,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             match &args[0] {
                 Value::Float(f) => {
                     let result = f.floor();
-                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                    Ok(float_value(result))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.floor())),
                 other => Err(VmError::new(format!(
@@ -267,7 +276,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             match &args[0] {
                 Value::Float(f) => {
                     let result = f.abs();
-                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                    Ok(float_value(result))
                 }
                 Value::ExtFloat(f) => Ok(Value::ExtFloat(f.abs())),
                 other => Err(VmError::new(format!(
@@ -280,10 +289,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             // Accepts (Float) or (Float, Int). The documented 2-arg form
             // formats with a fixed number of decimal places; the 1-arg form
             // uses the shortest round-trippable representation (Rust's
-            // default `Display` for `f64`). The 1-arg form exists because
-            // the typechecker tolerates arity ±1 for module-qualified calls
-            // via `FieldAccess` and some call sites rely on that, so the
-            // runtime mirrors that tolerance rather than erroring.
+            // default `Display` for `f64`). The typechecker signature
+            // declares the `decimals` parameter optional
+            // (`with_optional_last_param` in
+            // `typechecker/builtins/float.rs`), so both forms reach here.
             if args.is_empty() || args.len() > 2 {
                 return Err(VmError::new(
                     "float.to_string takes 1 or 2 arguments".into(),
@@ -376,7 +385,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let b = extract_float(&args[1], "float.min")?;
             let result = a.min(b);
             if result.is_finite() {
-                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                Ok(float_value(result))
             } else {
                 Ok(Value::ExtFloat(result))
             }
@@ -389,7 +398,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let b = extract_float(&args[1], "float.max")?;
             let result = a.max(b);
             if result.is_finite() {
-                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                Ok(float_value(result))
             } else {
                 Ok(Value::ExtFloat(result))
             }
@@ -414,7 +423,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let result = x.clamp(lo, hi);
             if result.is_finite() {
-                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                Ok(float_value(result))
             } else {
                 // Shouldn't happen for well-typed Float inputs, but if a
                 // NaN leaks in we surface it as ExtFloat rather than
@@ -487,7 +496,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if matches!(&args[0], Value::ExtFloat(_)) {
                 Ok(Value::ExtFloat(f.sin()))
             } else {
-                Ok(Value::Float(f.sin()))
+                Ok(float_value(f.sin()))
             }
         }
         "cos" => {
@@ -498,7 +507,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if matches!(&args[0], Value::ExtFloat(_)) {
                 Ok(Value::ExtFloat(f.cos()))
             } else {
-                Ok(Value::Float(f.cos()))
+                Ok(float_value(f.cos()))
             }
         }
         "tan" => {
@@ -509,7 +518,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if matches!(&args[0], Value::ExtFloat(_)) {
                 Ok(Value::ExtFloat(f.tan()))
             } else {
-                Ok(Value::Float(f.tan()))
+                Ok(float_value(f.tan()))
             }
         }
         "asin" => {
@@ -534,7 +543,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if matches!(&args[0], Value::ExtFloat(_)) {
                 Ok(Value::ExtFloat(f.atan()))
             } else {
-                Ok(Value::Float(f.atan()))
+                Ok(float_value(f.atan()))
             }
         }
         "atan2" => {
@@ -546,7 +555,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if matches!(&args[0], Value::ExtFloat(_)) || matches!(&args[1], Value::ExtFloat(_)) {
                 Ok(Value::ExtFloat(y.atan2(x)))
             } else {
-                Ok(Value::Float(y.atan2(x)))
+                Ok(float_value(y.atan2(x)))
             }
         }
         "exp" => {
@@ -580,7 +589,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 // Convert to [0.0, 1.0)
                 (s >> 11) as f64 / ((1u64 << 53) as f64)
             });
-            Ok(Value::Float(val))
+            Ok(float_value(val))
         }
         _ => Err(VmError::new(format!("unknown math function: {name}"))),
     }

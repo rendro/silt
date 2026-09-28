@@ -200,11 +200,15 @@ impl QuickFix for FixArrowFnType {
         // Expand the diagnostic range outward to the enclosing `(` and `)`
         // on the same line, verifying we really see a `(A -> B)` shape.
         let src = &doc.source;
+        // `position_to_offset` returns a char boundary. The diagnostic may
+        // be stale (computed for an earlier version of the text), so check
+        // that it still points at `->` before using it: this also makes
+        // `arrow_off + 2` a char boundary, which every slice below needs.
         let arrow_off = position_to_offset(src, &diag.range.start);
-        let bytes = src.as_bytes();
-        if arrow_off >= bytes.len() {
+        if !src[arrow_off..].starts_with("->") {
             return None;
         }
+        let bytes = src.as_bytes();
 
         // Find the most recent `(` before the arrow on the same line.
         let line_start = src[..arrow_off].rfind('\n').map(|i| i + 1).unwrap_or(0);

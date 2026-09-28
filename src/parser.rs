@@ -455,8 +455,10 @@ enum Segment {
 
 const MAX_DEPTH: usize = 128;
 
-/// Upper bound on the height of one expression tree, counted in nested
-/// sub-expressions plus chained operations (see `Parser::expr_height`).
+/// Upper bound on the number of operations one expression tree may chain
+/// or nest (see `Parser::expr_height`). Every operator, pipe, call, index,
+/// field access, record update and ascription is one operation; a method
+/// call `x.f()` is two (a field access and a call).
 ///
 /// `MAX_DEPTH` bounds the parser's own recursion. It does not bound the
 /// tree: the operator loop in `parse_expr_bp_inner` builds `a + b + c + ...`,
@@ -471,9 +473,10 @@ const MAX_DEPTH: usize = 128;
 /// 7,000 levels); 80 KiB is the pessimistic figure. Statement blocks,
 /// lambdas and loops add up to three levels per nesting step that this
 /// count does not see, at most 3 * `MAX_DEPTH` = 384. The worst accepted
-/// tree is therefore 2,048 + 384 levels: about 95 MiB at the measured
-/// cost and 190 MiB at the pessimistic one, both inside the reserve.
-const MAX_EXPR_HEIGHT: usize = 2048;
+/// tree is therefore 2,048 operations over one operand plus 384 levels:
+/// about 95 MiB at the measured cost and 190 MiB at the pessimistic one,
+/// both inside the reserve.
+const MAX_EXPR_OPERATIONS: usize = 2048;
 
 /// The construct whose block follows a header expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,11 +518,16 @@ pub struct Parser {
     /// The innermost "expression followed by a block" header being
     /// parsed, if any.
     header: Option<BlockHeader>,
-    /// Height of the tallest operand seen so far in the expression that
-    /// is being parsed, plus one per operation already chained onto it.
-    /// `parse_expr_bp` saves and resets it on entry and folds the
-    /// finished expression's height into the enclosing one on exit.
-    /// Checked against `MAX_EXPR_HEIGHT`.
+    /// Operations on the longest path of the expression that is being
+    /// parsed: the height of its tallest operand plus one per operation
+    /// already chained onto it. A bare operand is 0; `a + b + c` and
+    /// `x.f` count one per operator or access. `parse_expr_bp` saves and
+    /// resets it on entry and folds the finished expression's height,
+    /// plus one for the nesting, into the enclosing one on exit, so a
+    /// nested expression (a call argument, a list element, a
+    /// parenthesised group) counts one more than its operations: the
+    /// count errs on the high side. Checked against
+    /// `MAX_EXPR_OPERATIONS` by `check_expr_height`.
     expr_height: usize,
     errors: Vec<ParseError>,
     depth: usize,
@@ -639,17 +647,20 @@ impl Parser {
         result
     }
 
-    /// Fail when the expression under construction is taller than
-    /// `MAX_EXPR_HEIGHT`.
-    fn check_expr_height(&self) -> Result<()> {
-        if self.expr_height >= MAX_EXPR_HEIGHT {
+    /// Fail when the expression under construction, which starts at
+    /// `start`, chains or nests more than `MAX_EXPR_OPERATIONS`
+    /// operations. The error points at the start of the expression,
+    /// because the whole expression is what has to be split up.
+    fn check_expr_height(&self, start: Span) -> Result<()> {
+        if self.expr_height > MAX_EXPR_OPERATIONS {
             return Err(ParseError {
                 message: format!(
-                    "expression is too deep: more than {MAX_EXPR_HEIGHT} operations are \
-                     nested or chained (operators, pipes, calls, field accesses); \
-                     split it up with intermediate `let` bindings"
+                    "expression is too deep: it chains or nests more than \
+                     {MAX_EXPR_OPERATIONS} operations (each operator, pipe, call, index \
+                     or field access counts as one, so a method call `x.f()` counts as \
+                     two); split it up with intermediate `let` bindings"
                 ),
-                span: self.span(),
+                span: start,
             });
         }
         Ok(())
@@ -1683,10 +1694,12 @@ impl Parser {
             self.advance();
             self.skip_nl();
             let target = self.parse_type_expr()?;
+            let body = TypeBody::Alias(target);
+            check_type_decl_names(name, name_span, &body)?;
             return Ok(TypeDecl {
                 name,
                 params,
-                body: TypeBody::Alias(target),
+                body,
                 is_pub: false,
                 span,
                 name_span,
@@ -1707,6 +1720,7 @@ impl Parser {
 
         self.skip_nl();
         self.expect(&Token::RBrace)?;
+        check_type_decl_names(name, name_span, &body)?;
 
         Ok(TypeDecl {
             name,
@@ -1742,7 +1756,21 @@ impl Parser {
             if self.at(&Token::RBrace) {
                 break;
             }
-            let (name, _) = self.expect_ident()?;
+            let (name, name_span) = self.expect_ident()?;
+            // The body was taken for a record because its first name is
+            // lower case. A first name without `:` that looks like an
+            // enum variant may be a variant spelled in lower case.
+            if fields.is_empty() && self.peek_skip_nl() != &Token::Colon {
+                let text = intern::resolve(name);
+                return Err(ParseError {
+                    message: format!(
+                        "expected `:` after record field '{text}'; if '{text}' is meant as an \
+                         enum variant, variant names start with an uppercase letter, e.g. `{}`",
+                        capitalized(&text)
+                    ),
+                    span: name_span,
+                });
+            }
             self.expect(&Token::Colon)?;
             let ty = self.parse_type_expr()?;
             fields.push(RecordField { name, ty });
@@ -2635,6 +2663,11 @@ impl Parser {
         }
         self.advance();
         self.skip_nl();
+        // The right operand becomes a child of the node the caller
+        // builds, and the operator loop counts that node. `parse_expr_bp`
+        // adds one level for the operand as a nested expression; take it
+        // off again, so an operator chain counts exactly one per operator.
+        let left_height = std::mem::replace(&mut self.expr_height, 0);
         let right = if pipe_rhs {
             let prev = self.header;
             if let Some(header) = self.header.as_mut() {
@@ -2646,6 +2679,7 @@ impl Parser {
         } else {
             self.parse_expr_bp(r_bp)?
         };
+        self.expr_height = left_height.max(self.expr_height.saturating_sub(1));
         Ok(Some(right))
     }
 
@@ -2663,9 +2697,11 @@ impl Parser {
         // the enclosing expression's tally.
         let enclosing_height = std::mem::replace(&mut self.expr_height, 0);
         let mut result = self.parse_expr_bp_inner(min_bp);
-        if result.is_ok()
-            && let Err(too_deep) = self.check_expr_height()
-        {
+        let too_deep = match &result {
+            Ok(expr) => self.check_expr_height(expr.span).err(),
+            Err(_) => None,
+        };
+        if let Some(too_deep) = too_deep {
             result = Err(too_deep);
         }
         self.expr_height = enclosing_height.max(self.expr_height + 1);
@@ -2683,7 +2719,7 @@ impl Parser {
         loop {
             if chained {
                 self.expr_height += 1;
-                self.check_expr_height()?;
+                self.check_expr_height(left.span)?;
             }
             chained = true;
 
@@ -4414,6 +4450,53 @@ impl Parser {
 
 fn is_constructor(name: Symbol) -> bool {
     intern::resolve(name).starts_with(|c: char| c.is_uppercase())
+}
+
+/// `name` with its first character in upper case, for "did you mean"
+/// suggestions.
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// A declared type name and its enum variant names must start with an
+/// upper-case letter. Everywhere a type is written, a lower-case name is
+/// a type variable, and in a pattern a lower-case name binds a variable,
+/// so a lower-case type could never be named and a lower-case variant
+/// could never be matched.
+fn check_type_decl_names(name: Symbol, name_span: Span, body: &TypeBody) -> Result<()> {
+    if !is_constructor(name) {
+        let text = intern::resolve(name);
+        return Err(ParseError {
+            message: format!(
+                "type name '{text}' must start with an uppercase letter, e.g. `type {}`: \
+                 a lowercase name where a type is expected is a type variable, so this \
+                 type could never be referred to",
+                capitalized(&text)
+            ),
+            span: name_span,
+        });
+    }
+    if let TypeBody::Enum(variants) = body {
+        for variant in variants {
+            if !is_constructor(variant.name) {
+                let text = intern::resolve(variant.name);
+                return Err(ParseError {
+                    message: format!(
+                        "enum variant '{text}' must start with an uppercase letter, e.g. `{}`: \
+                         a lowercase name in a pattern binds a variable, so this variant \
+                         could never be matched",
+                        capitalized(&text)
+                    ),
+                    span: variant.name_span,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────

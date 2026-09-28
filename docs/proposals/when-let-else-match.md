@@ -24,10 +24,20 @@ needed, for two reasons.
    ```
 
 2. The shape this proposal set out to replace, a `match` inside the
-   `when let` else body, is rejected only because a `match` whose arms all
-   diverge is not typed `Never`. That is a gap in the typechecker, and the
-   planned fix is to close it there. Once it lands, the natural form
-   type-checks and no new syntax is required.
+   `when let` else body, was rejected only because a `match` whose arms
+   all diverge was not typed `Never`. That gap in the typechecker is now
+   closed: a `match` whose every arm diverges is typed `Never`, so the
+   natural form type-checks and no new syntax is required:
+
+   ```silt
+   let res = int.parse(s)
+   when let Ok(n) = res else {
+     match res {
+       Err(e) -> return Err("bad port '{s}': {e}")
+       Ok(_) -> panic("unreachable")
+     }
+   }
+   ```
 
 The rest of this document is kept for the record. Its Problem section
 describes the language as it was when the proposal was written.

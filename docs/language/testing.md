@@ -82,8 +82,10 @@ silt test --filter addition     -- runs only test_addition
 silt test --filter string       -- runs only test_string_length
 ```
 
-The filter matches against the function name (not the file name). Files that
-cannot contain any matching test are skipped entirely.
+The filter matches against the function name (not the file name). A file with
+no matching test is skipped entirely: it is not compiled and nothing is
+reported for it. A file whose tests cannot be listed, because it cannot be read
+or does not lex, is still reported, and its error fails the run.
 
 ## Assertions
 
