@@ -222,7 +222,7 @@ pub(crate) fn resolve_package_entry_point_for(kind: EntryPointKind) -> Result<Op
         }
         eprintln!(
             "package has no entry point — expected `src/main.silt` at {}",
-            entry.display()
+            silt::git::escape_for_display(&entry.display().to_string())
         );
         eprintln!("  = note: found `src/lib.silt` — this is a library-only package");
         eprintln!(
@@ -233,7 +233,7 @@ pub(crate) fn resolve_package_entry_point_for(kind: EntryPointKind) -> Result<Op
     }
     eprintln!(
         "package has no entry point — expected `src/main.silt` at {}",
-        entry.display()
+        silt::git::escape_for_display(&entry.display().to_string())
     );
     Err(())
 }

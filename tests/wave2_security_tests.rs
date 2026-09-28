@@ -272,6 +272,24 @@ fn a_runtime_error_in_a_dependency_escapes_the_locator_path() {
             .any(|line| line.contains("lib\\tx/src/lib.silt:2:")),
         "expected a locator naming `lib\\tx/src/lib.silt`; {out:?}"
     );
+    // The call stack names the dependency's path too.
+    let frames: Vec<&str> = out
+        .stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with("-> "))
+        .collect();
+    assert!(
+        frames
+            .iter()
+            .any(|line| line.contains("lib\\tx/src/lib.silt:2:")),
+        "expected a call-stack frame naming `lib\\tx/src/lib.silt`; {out:?}"
+    );
+    for line in &frames {
+        assert!(
+            !line.chars().any(|c| c.is_control()),
+            "the frame {line:?} holds a raw control character; {out:?}"
+        );
+    }
     let _ = fs::remove_dir_all(&ws);
 }
 

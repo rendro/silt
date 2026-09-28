@@ -134,19 +134,30 @@ where
     }
     let head = 10;
     let tail = 5;
+    // A frame's location can be a dependency's path, which comes from a
+    // manifest: it goes through the same display rule as other printed
+    // manifest values.
+    let mut line = |name: &str, span: &Span| {
+        let at = format_frame(name, span);
+        format!(
+            "  -> {}  at {}",
+            crate::git::escape_for_display(name),
+            crate::git::escape_for_display(&at)
+        )
+    };
     let mut out = Vec::new();
     if meaningful.len() <= head + tail {
         for (name, span) in &meaningful {
-            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+            out.push(line(name, span));
         }
     } else {
         for (name, span) in &meaningful[..head] {
-            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+            out.push(line(name, span));
         }
         let omitted = meaningful.len() - head - tail;
         out.push(format!("  ... ({omitted} more frames)"));
         for (name, span) in &meaningful[meaningful.len() - tail..] {
-            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+            out.push(line(name, span));
         }
     }
     out
