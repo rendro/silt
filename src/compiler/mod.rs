@@ -59,7 +59,7 @@ const DECODING_BUILTINS: &[&str] = &[
 
 /// The field types the decoders support, as shown in compile errors.
 const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, ExtFloat, String, \
-     Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, and \
+     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, and \
      non-generic record types";
 
 /// A record declaration, kept to describe and check its field types.
