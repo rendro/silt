@@ -208,14 +208,23 @@ fn check_invariants(src: &str, out: &RunOutcome) -> Result<(), String> {
     // The older `deadlock: all N tasks ...` form is preserved here for
     // forward-compatibility — if a future change re-introduces a
     // worker-side fire path, this check still recognises it.
+    //
+    // Exit 1 with the unjoined-failure report is acceptable too: the
+    // generator's supervisor can join a peer it cancelled, which raises
+    // `cancelled` in the supervisor, and nobody joins the supervisor.
+    // `silt run` exits 1 for such a failure (owner decision of
+    // 2026-09-28).
     match out.exit {
         Some(0) => Ok(()),
         Some(1) => {
-            if out.stderr.contains("deadlock on main thread") || out.stderr.contains("deadlock:") {
+            if out.stderr.contains("deadlock on main thread")
+                || out.stderr.contains("deadlock:")
+                || out.stderr.contains("failed and was never joined")
+            {
                 Ok(())
             } else {
                 Err(format!(
-                    "EXIT 1 with no deadlock diagnostic; src was:\n---\n{src}\n---\n\
+                    "EXIT 1 with no deadlock diagnostic or unjoined-failure report; src was:\n---\n{src}\n---\n\
                      stdout={:?}\nstderr={:?}",
                     out.stdout, out.stderr
                 ))
