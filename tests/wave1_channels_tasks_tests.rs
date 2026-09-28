@@ -1086,3 +1086,80 @@ fn main() {
         );
     }
 }
+
+/// Workers reserve a 256 MiB stack each. Under an address-space limit
+/// (`RLIMIT_AS`, as containers and CI jobs set) that reservation can be
+/// refused; the workers then fall back to the default stack and the
+/// program still runs, as it did before workers had large stacks.
+#[cfg(target_os = "linux")]
+#[test]
+fn tasks_run_under_an_address_space_limit() {
+    use std::os::unix::process::CommandExt;
+    let src = r#"
+import channel
+import task
+import list
+fn collect(ch, n, acc) {
+  match n {
+    0 -> acc
+    _ -> match channel.receive(ch) {
+      Message(v) -> collect(ch, n - 1, acc + v)
+      _ -> acc
+    }
+  }
+}
+fn main() {
+  let ch = channel.new()
+  let ps = 1..50 |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+  let r = task.spawn(fn() { collect(ch, 25, 0) })
+  let m = collect(ch, 25, 0)
+  let t = task.join(r)
+  println("total {m + t}")
+}
+"#;
+    let dir = fresh_dir("rlimit_as");
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let program = dir.join("main.silt");
+    std::fs::write(&program, src).expect("write program");
+    // 800 MB: room for the binary and its 256 MiB main thread, not for
+    // several 256 MiB workers besides.
+    const LIMIT: libc::rlim_t = 800_000 * 1024;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+    command.arg("run").arg(&program).stdin(Stdio::null());
+    // SAFETY: only an async-signal-safe `setrlimit` runs in the child
+    // between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            let limit = libc::rlimit {
+                rlim_cur: LIMIT,
+                rlim_max: LIMIT,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn silt");
+    let started = Instant::now();
+    while child.try_wait().expect("try_wait").is_none() {
+        if started.elapsed() >= RUN_TIMEOUT {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("collect output");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        (out.status.code(), stdout.as_ref()),
+        (Some(0), "total 1275\n"),
+        "stderr: {stderr}"
+    );
+}

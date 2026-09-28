@@ -486,22 +486,29 @@ impl Scheduler {
 
         // Capacity: num_workers + 1 for the watchdog thread.
         let mut handles = Vec::with_capacity(num_workers + 1);
-        for _ in 0..num_workers {
+        // Workers reserve `WORKER_STACK_BYTES`. Where the system refuses
+        // a reservation that large (an address-space limit, strict
+        // overcommit), the first worker falls back to the default stack
+        // and its default budget, and the rest follow it; tasks then
+        // nest less deeply but the program runs.
+        let mut stack_bytes = Some(WORKER_STACK_BYTES);
+        while handles.len() < num_workers {
             let inner = self.inner.clone();
-            let spawned = thread::Builder::new()
-                .stack_size(WORKER_STACK_BYTES)
-                .spawn(move || {
-                    crate::vm::set_native_stack_budget(WORKER_STACK_BYTES);
-                    worker_loop(inner);
-                });
+            let mut builder = thread::Builder::new();
+            if let Some(bytes) = stack_bytes {
+                builder = builder.stack_size(bytes);
+            }
+            let spawned = builder.spawn(move || {
+                if let Some(bytes) = stack_bytes {
+                    crate::vm::set_native_stack_budget(bytes);
+                }
+                worker_loop(inner);
+            });
             match spawned {
                 Ok(handle) => handles.push(handle),
+                Err(_) if handles.is_empty() && stack_bytes.is_some() => stack_bytes = None,
                 Err(e) if handles.is_empty() => {
-                    return Err(format!(
-                        "cannot start a scheduler worker thread \
-                         (stack size {} MiB): {e}",
-                        WORKER_STACK_BYTES / (1024 * 1024)
-                    ));
+                    return Err(format!("cannot start a scheduler worker thread: {e}"));
                 }
                 // The workers started so far run the tasks.
                 Err(_) => break,
