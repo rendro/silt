@@ -328,11 +328,11 @@ fn format_module_source_error(
         let line_num = clamped_span.line;
         let gutter_width = crate::errors::line_num_width(line_num);
         let gutter_blank: String = " ".repeat(gutter_width);
-        let col = if clamped_span.col > 0 {
-            clamped_span.col - 1
-        } else {
-            0
-        };
+        // A long line is cut to a window around the error, as in
+        // `SourceError::Display`.
+        let (src_line, col) =
+            crate::errors::excerpt_around(src_line, clamped_span.col.saturating_sub(1));
+        let src_line = src_line.as_str();
         // Preserve tabs so the caret lines up with the actual char.
         // Use the shared helper from `errors.rs` so CJK / emoji /
         // other double-wide chars get one space per display cell

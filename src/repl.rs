@@ -193,8 +193,9 @@ pub fn run_repl() {
     }
 
     // The failures of spawned tasks that nobody joins are taken and
-    // shown after each input (`report_task_failures`), instead of by the
-    // scheduler when the session ends.
+    // shown when the session ends (`report_task_failures`), rendered for
+    // the REPL instead of by the scheduler. Not after each input: the
+    // handle may still be bound, and a later input may join or cancel it.
     crate::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
     let mut type_ctx = ReplTypeContext::new();
@@ -251,7 +252,6 @@ pub fn run_repl() {
                 let _ = rl.add_history_entry(&input);
 
                 eval_input(&mut vm, &mut type_ctx, &input, &names);
-                report_task_failures();
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -265,8 +265,8 @@ pub fn run_repl() {
         }
     }
 
-    // Tasks that failed since the last input. A task that is still
-    // running when the session ends is not reported.
+    // Tasks that failed and that no input joined or cancelled. A task
+    // that is still running when the session ends is not reported.
     report_task_failures();
 
     if let Some(ref p) = history_path {
@@ -275,8 +275,9 @@ pub fn run_repl() {
 }
 
 /// Report on stderr the spawned tasks that have failed so far and that
-/// nobody joined or cancelled. The REPL calls it after each input, so a
-/// failure shows up after the input during which it happened.
+/// nobody joined or cancelled. The REPL calls it when the session ends:
+/// until then a handle may still be bound, and an input may join or
+/// cancel it.
 ///
 /// The code of a task can come from any earlier input, so the location
 /// is shown as `<declaration>`, as for the frames of every REPL runtime

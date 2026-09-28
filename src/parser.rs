@@ -655,10 +655,11 @@ impl Parser {
         if self.expr_height > MAX_EXPR_OPERATIONS {
             return Err(ParseError {
                 message: format!(
-                    "expression is too deep: it chains or nests more than \
-                     {MAX_EXPR_OPERATIONS} operations (each operator, pipe, call, index \
-                     or field access counts as one, so a method call `x.f()` counts as \
-                     two); split it up with intermediate `let` bindings"
+                    "expression is too deep: it is more than {MAX_EXPR_OPERATIONS} levels \
+                     deep (each operator, pipe, call or field access in a chain adds a \
+                     level, a method call `x.f()` adds two, and so does each enclosing \
+                     bracket, call, list, string interpolation or `match`); split it up \
+                     with intermediate `let` bindings"
                 ),
                 span: start,
             });
@@ -4455,7 +4456,9 @@ fn is_constructor(name: Symbol) -> bool {
 /// `name` with its first character in upper case, for "did you mean"
 /// suggestions.
 fn capitalized(name: &str) -> String {
-    let mut chars = name.chars();
+    // `_red` and `_Red` both suggest `Red`: a leading underscore does not
+    // make a name start with an upper-case letter.
+    let mut chars = name.trim_start_matches('_').chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
@@ -4468,7 +4471,15 @@ fn capitalized(name: &str) -> String {
 /// so a lower-case type could never be named and a lower-case variant
 /// could never be matched.
 fn check_type_decl_names(name: Symbol, name_span: Span, body: &TypeBody) -> Result<()> {
-    if !is_constructor(name) {
+    // A type name is refused only when it starts with a lower-case letter:
+    // `_Meters` resolves as a named type wherever it is written. A variant
+    // must start with an upper-case letter, because `_Red ->` in a pattern
+    // binds a variable.
+    let starts_lowercase = intern::resolve(name)
+        .chars()
+        .next()
+        .is_some_and(char::is_lowercase);
+    if starts_lowercase {
         let text = intern::resolve(name);
         return Err(ParseError {
             message: format!(

@@ -439,23 +439,11 @@ pub(crate) fn line_num_width(n: usize) -> usize {
     ((n as f64).log10().floor() as usize) + 1
 }
 
-/// Build the padding string used to align a diagnostic caret under the
-/// `col`-th char of `src_line` (0-based). Emits one space per display
-/// cell rather than one space per `char`, so CJK / emoji / other
-/// double-wide characters don't push the caret to the left of its
-/// intended column. Tabs are passed through verbatim so the downstream
-/// terminal expands them using its own tab-stop settings (matching the
-/// rendered source line above the caret). Fall back to width 1 for
-/// chars with no defined Unicode width (e.g. unassigned / control).
-///
-/// Exposed at `pub(crate)` so `compiler::format_module_source_error`
-/// can share the same alignment logic, and so `tests/caret_width_tests.rs`
-/// can exercise it directly. Lock: tests/caret_width_tests.rs.
 /// The part of `line` to show above the caret, and the caret's column in
 /// it. A line of at most `EXCERPT_CHARS` characters is shown whole; a
 /// longer one (a generated 8000-character expression, say) is cut to a
 /// window around `col`, with `…` where text was left out.
-fn excerpt_around(line: &str, col: usize) -> (String, usize) {
+pub(crate) fn excerpt_around(line: &str, col: usize) -> (String, usize) {
     const EXCERPT_CHARS: usize = 160;
     const BEFORE_CARET: usize = 60;
     let chars: Vec<char> = line.chars().collect();
@@ -480,6 +468,18 @@ fn excerpt_around(line: &str, col: usize) -> (String, usize) {
     (shown, shown_col)
 }
 
+/// Build the padding string used to align a diagnostic caret under the
+/// `col`-th char of `src_line` (0-based). Emits one space per display
+/// cell rather than one space per `char`, so CJK / emoji / other
+/// double-wide characters don't push the caret to the left of its
+/// intended column. Tabs are passed through verbatim so the downstream
+/// terminal expands them using its own tab-stop settings (matching the
+/// rendered source line above the caret). Fall back to width 1 for
+/// chars with no defined Unicode width (e.g. unassigned / control).
+///
+/// Exposed at `pub(crate)` so `compiler::format_module_source_error`
+/// can share the same alignment logic, and so `tests/caret_width_tests.rs`
+/// can exercise it directly. Lock: tests/caret_width_tests.rs.
 pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let mut out = String::new();

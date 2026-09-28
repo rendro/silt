@@ -485,7 +485,8 @@ more than one frame. The rules:
 
 Under `silt test`, the failure fails the test that spawned the task (see
 [Testing](language/testing.md#spawned-tasks)). In the REPL it is reported
-after the input during which it happened.
+when the session ends, since a later input may still join or cancel the
+task.
 
 ### Scoped deadlines: `task.deadline(dur, fn)`
 
@@ -1251,8 +1252,9 @@ When the main thread waits (a `channel.send`, `channel.receive`,
 checks whether any task could still end the wait. If none can -- every task
 is parked on a channel or a join that nothing will satisfy -- the wait fails
 with a runtime error that starts with `deadlock on main thread`, and the
-program exits with status 1. Before that error, silt reports the tasks that
-failed and that nobody joined (see
+program exits with status 1. Together with that error, silt reports the
+tasks that failed and that nobody joined (`silt run` before it, `silt test`
+under the failing test, after it; see
 [Failures that nobody joins](#failures-that-nobody-joins)): a failed
 producer is the usual reason why a counterpart is missing.
 

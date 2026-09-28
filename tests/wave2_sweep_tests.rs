@@ -182,6 +182,31 @@ fn a_lowercase_enum_type_name_is_rejected() {
     );
 }
 
+/// A type name that starts with `_` resolves as a named type wherever it
+/// is written, so it is not refused.
+#[test]
+fn a_type_name_starting_with_an_underscore_is_accepted() {
+    assert_runs(
+        "underscore_type",
+        "type _Meters = Int\nfn f(m: _Meters) -> Int { m + 1 }\nfn main() { println(f(3)) }\n",
+        "4\n",
+    );
+}
+
+/// A variant that starts with `_` binds a variable in a pattern, so it is
+/// refused; the hint suggests the name without the underscore.
+#[test]
+fn a_variant_starting_with_an_underscore_is_refused_with_a_usable_hint() {
+    assert_rejected(
+        "underscore_variant",
+        "type Color { _Red, Green }\nfn main() { println(1) }\n",
+        &[
+            "enum variant '_Red' must start with an uppercase letter",
+            "e.g. `Red`",
+        ],
+    );
+}
+
 #[test]
 fn a_lowercase_enum_variant_is_rejected() {
     assert_rejected(
@@ -265,8 +290,8 @@ fn a_chain_of_2049_operators_is_refused_at_the_start_of_the_expression() {
     assert_eq!(out.code, Some(1), "2049 operators must be refused\n{out:?}");
     assert!(
         out.stderr.contains("expression is too deep")
-            && out.stderr.contains("more than 2048 operations")
-            && out.stderr.contains("counts as two"),
+            && out.stderr.contains("more than 2048 levels")
+            && out.stderr.contains("adds two"),
         "the message must state the limit and how it is counted\n{out:?}"
     );
     assert!(
@@ -289,8 +314,8 @@ fn a_chain_of_1025_method_calls_is_refused_and_the_message_says_why() {
         "1025 method calls must be refused\n{out:?}"
     );
     assert!(
-        out.stderr.contains("more than 2048 operations")
-            && out.stderr.contains("a method call `x.f()` counts as two"),
+        out.stderr.contains("more than 2048 levels")
+            && out.stderr.contains("a method call `x.f()` adds two"),
         "the message must explain that a method call counts as two\n{out:?}"
     );
 }

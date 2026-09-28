@@ -14,8 +14,8 @@
 //!     the task. The failure now fails the test that spawned the task,
 //!     also when it happens after that test returned, and the report is
 //!     indented under it.
-//!   * The REPL reported such failures only when the session ended. It
-//!     now reports them after the input during which they happened.
+//!   * The REPL reports such failures when the session ends, rendered
+//!     without `<input>`; a task that a later input joins is not reported.
 //!
 //! Every test runs the built `silt` binary on files in a fresh temporary
 //! directory and asserts on exit status, stdout and stderr. Each run has
@@ -610,12 +610,10 @@ fn test_cancels() {
 
 // ── REPL ─────────────────────────────────────────────────────────────
 
-/// The REPL reports a task failure after the input during which it
-/// happened, not when the session ends. The last input is a name that
-/// does not exist, whose type error marks the end of the session on
-/// stderr; the report must come before it.
+/// The REPL reports a failed task that nobody joined once, when the
+/// session ends: after the last input's output, not before it.
 #[test]
-fn repl_reports_task_failure_after_the_input() {
+fn repl_reports_an_unjoined_task_failure_when_the_session_ends() {
     let input = "import task\n\
                  import time\n\
                  let h = task.spawn(fn() { 1 / 0 })\n\
@@ -634,9 +632,8 @@ fn repl_reports_task_failure_after_the_input() {
             .find("marker_after_the_failure")
             .unwrap_or_else(|| panic!("run {run}: the marker input must be answered\n{out:#?}"));
         assert!(
-            report < marker,
-            "run {run}: the failure must be reported after the input during which it \
-             happened, before later inputs\n{out:#?}"
+            marker < report,
+            "run {run}: the failure is reported when the session ends\n{out:#?}"
         );
         assert_eq!(
             out.stderr.matches(REPORT_HEADER).count(),
@@ -646,6 +643,30 @@ fn repl_reports_task_failure_after_the_input() {
         assert!(
             !out.stderr.contains("<input>"),
             "run {run}: the REPL shows no `<input>` locator\n{out:#?}"
+        );
+    }
+}
+
+/// A task that fails and is joined by a later input is not reported as
+/// unjoined: the join raises its error, and that is all.
+#[test]
+fn repl_task_joined_by_a_later_input_is_not_reported() {
+    let input = "import task\n\
+                 import time\n\
+                 let h = task.spawn(fn() { 1 / 0 })\n\
+                 time.sleep(time.ms(300))\n\
+                 task.join(h)\n\
+                 :quit\n";
+    for run in 1..=REPEATS {
+        let out = run_silt("repl", "unused.silt", "", &["repl"], Some(input));
+        assert!(!out.timed_out, "run {run}: the REPL hung\n{out:#?}");
+        assert!(
+            out.stderr.contains("joined task failed: division by zero"),
+            "run {run}: the join raises the task's error\n{out:#?}"
+        );
+        assert!(
+            !out.stderr.contains(NEVER_JOINED),
+            "run {run}: a joined task is not reported as unjoined\n{out:#?}"
         );
     }
 }

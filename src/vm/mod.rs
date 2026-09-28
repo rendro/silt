@@ -106,14 +106,15 @@ use runtime::{IoPool, RegexCache, TimerManager};
 /// frames below the first loop and for the native work of the innermost
 /// call.
 ///
-/// Optimised build: measured the same way. A level entered through a
-/// method call costs about 3.6 KiB, through `set.map` about 5.8 KiB,
-/// through `list.unfold` about 6.0 KiB, and through `list.fold`,
-/// `list.map` or `list.sort_by` (the most expensive measured) about
-/// 7.1 KiB. The value, 12 KiB, is 1.69 times the most expensive level:
-/// the same margin as the unoptimised value, so again the nested loops
-/// fill at most about 60% of the stack. On a 256 MiB stack that allows
-/// 21845 levels.
+/// Optimised build: measured from the resident size of the thread's
+/// stack at two depths. A level entered through a method call costs about
+/// 4.0 KiB, through `set.map` about 6.2 KiB, through `list.unfold` about
+/// 6.3 KiB, and through `list.fold`, `list.map`, `list.sort_by`, string
+/// interpolation or a pattern match (the most expensive measured) about
+/// 7.5 KiB, the same on the main thread, in a task and in a stream stage.
+/// The value, 12 KiB, is 1.6 times the most expensive level: at the limit
+/// of 21845 levels on a 256 MiB stack the nested loops fill about 62% of
+/// it, and the stack would overflow only at about 34,900 levels.
 ///
 /// The margin is guarded by `tests/wave2_vm_tests.rs`, which recurses
 /// through the most expensive shapes to exactly the limit, on the main
