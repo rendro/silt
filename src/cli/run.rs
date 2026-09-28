@@ -2,12 +2,13 @@
 //! program with the bytecode VM. Also backs the bare `silt
 //! <file>.silt` convenience shim.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
 use silt::errors::SourceError;
-use silt::vm::Vm;
+use silt::vm::{Vm, VmError};
 
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::module_sources::collect_module_function_sources;
@@ -212,12 +213,17 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
     };
     let script = Arc::new(script);
 
-    // Run via VM
+    // Run via VM. The failures of tasks that nobody joins are taken and
+    // reported here, against the program's files, instead of by the
+    // scheduler.
+    silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
     let run_result = vm.run(script);
-    // Every exit path below ends the process with `process::exit`, so the
-    // failures of tasks that nobody joined are reported here.
-    vm.report_unjoined_task_failures();
+    // The program has ended. The tasks that failed by now and that
+    // nobody joined or cancelled are reported, and make the run fail. A
+    // task that is still running is not a failure; if it fails later,
+    // nobody takes its failure and it is not reported.
+    let tasks_failed = report_task_failures(path, &source, &module_sources);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
     // `vm.run` (main's return value) was discarded wholesale, so
@@ -243,97 +249,139 @@ pub(crate) fn vm_run_file(path: &str, strict_effects: bool) {
         process::exit(1);
     }
     if let Err(e) = run_result {
-        if let Some(span) = e.span {
-            // F13 (audit round 17) + G1 (audit round 21): normalize
-            // frame and error-header paths so they all use the same
-            // style the user typed on the command line.  Moved above
-            // the SourceError construction so the `-->` line also
-            // benefits from normalization, not just the call-stack
-            // frames.
-            //
-            // Lock: tests/cli_test_rendering_tests.rs
-            // `test_cross_module_call_stack_uses_consistent_path_style`
-            // `test_run_module_error_paths_consistently_normalized`.
-            //
-            // Round-101: the normalization body lives in the shared
-            // `crate::cli::paths::display_path_for` helper — `silt test`
-            // (src/cli/test.rs) builds the same closure from it, so the
-            // two subcommands can never drift. Lock:
-            // tests/round101_display_path_helper_lock_tests.rs.
-            let user_path_is_absolute = Path::new(path).is_absolute();
-            let cwd = std::env::current_dir().ok();
-            let normalize_path = |candidate: &Path| -> String {
-                crate::cli::paths::display_path_for(
-                    user_path_is_absolute,
-                    cwd.as_deref(),
-                    candidate,
-                )
-            };
-
-            // Determine which source text & file path to render against.
-            // Prefer the innermost non-synthetic frame's function name,
-            // falling back to the main file when the frame isn't from an
-            // imported module.
-            let innermost_fn_name: Option<&str> = e
-                .call_stack
-                .iter()
-                .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
-                .map(|(n, _)| n.as_str());
-            let (err_source, err_path): (&str, String) =
-                match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                    Some((module_path, module_source)) => {
-                        (module_source.as_str(), normalize_path(module_path))
-                    }
-                    None => (source.as_str(), normalize_path(Path::new(path))),
-                };
-            let source_err = SourceError::runtime_at(&e.message, span, err_source, &err_path);
-            eprintln!("{source_err}");
-            // Print call stack if there are user frames beyond the error site.
-            // Drop synthetic entry-point frames (<script>, <call:...>) by name
-            // rather than by span — a zero-spanned frame inside an otherwise
-            // good stack shouldn't cause the whole stack to be discarded.
-            // Keep <module:...> frames for module-aware path resolution.
-            //
-            // Round-73 G1: delegate filter+truncation to the shared
-            // `render_call_stack` helper so `silt run` and `silt test` can
-            // never drift again. The helper applies the exact same
-            // `<script>` / `<call:...>` drop + `<module:...>` keep
-            // policy, plus the same head/tail truncation.
-            let stack_lines =
-                silt::vm::error::render_call_stack(&e.call_stack, |name, frame_span| {
-                    // Each frame uses its own function's source file for
-                    // file labels — this matters when the call crosses a
-                    // module boundary.
-                    let frame_path: String = match module_sources.get(name) {
-                        Some((p, _)) => normalize_path(p),
-                        None => normalize_path(Path::new(path)),
-                    };
-                    if frame_span.line > 0 {
-                        format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
-                    } else {
-                        format!("{frame_path}:<unknown location>")
-                    }
-                });
-            if !stack_lines.is_empty() {
-                eprintln!("\ncall stack:");
-                for line in stack_lines {
-                    eprintln!("{line}");
-                }
-            }
-        } else {
-            // Span-less runtime error: funnel through
-            // `SourceError::runtime_at` with a zero span so the output
-            // carries the file path and the ANSI color gating every other
-            // diagnostic gets — a bare `VmError` Display is plain text
-            // with no file to point at. (Round-36 originally added this
-            // to route around a legacy internal Display prefix; that
-            // Display has since been canonicalized to the
-            // `error[runtime]:` header itself — see src/vm/error.rs — so
-            // the prefix concern is historical.)
-            let source_err =
-                SourceError::runtime_at(&e.message, silt::lexer::Span::new(0, 0), &source, path);
-            eprintln!("{source_err}");
-        }
+        eprintln!(
+            "{}",
+            render_runtime_error(&e, path, &source, &module_sources)
+        );
         process::exit(1);
     }
+    if tasks_failed {
+        process::exit(1);
+    }
+}
+
+/// Report on stderr the failures of tasks that nobody joined or
+/// cancelled and that have happened so far, each rendered like any other
+/// runtime error of the program at `path`. Returns true if there was
+/// one.
+fn report_task_failures(
+    path: &str,
+    source: &str,
+    module_sources: &HashMap<String, (PathBuf, String)>,
+) -> bool {
+    let failures = silt::scheduler::take_unjoined_failures();
+    for failure in &failures.failures {
+        eprintln!(
+            "{}",
+            render_runtime_error(&failure.report_error(), path, source, module_sources)
+        );
+    }
+    let not_kept: usize = failures.not_kept.iter().map(|(_, count)| count).sum();
+    if not_kept > 0 {
+        let source_err = SourceError::runtime_at(
+            silt::scheduler::UnjoinedFailures::not_kept_message(not_kept),
+            silt::lexer::Span::new(0, 0),
+            source,
+            path,
+        );
+        eprintln!("{source_err}");
+    }
+    !failures.is_empty()
+}
+
+/// Render a runtime error of the program at `path`, the way `silt run`
+/// shows it: the header, the location with its source line, in the file
+/// of the innermost frame (the program's own file, or the imported module
+/// the frame belongs to), then the call stack when it has more than one
+/// meaningful frame. `module_sources` maps function names to the file
+/// and source of the module they come from
+/// (`collect_module_function_sources`). `silt test` renders the failures
+/// of tasks with it as well.
+pub(crate) fn render_runtime_error(
+    e: &VmError,
+    path: &str,
+    source: &str,
+    module_sources: &HashMap<String, (PathBuf, String)>,
+) -> String {
+    let Some(span) = e.span else {
+        // Span-less runtime error: funnel through
+        // `SourceError::runtime_at` with a zero span so the output
+        // carries the file path and the ANSI color gating every other
+        // diagnostic gets — a bare `VmError` Display is plain text
+        // with no file to point at. (Round-36 originally added this
+        // to route around a legacy internal Display prefix; that
+        // Display has since been canonicalized to the
+        // `error[runtime]:` header itself — see src/vm/error.rs — so
+        // the prefix concern is historical.)
+        return SourceError::runtime_at(&e.message, silt::lexer::Span::new(0, 0), source, path)
+            .to_string();
+    };
+    // F13 (audit round 17) + G1 (audit round 21): normalize
+    // frame and error-header paths so they all use the same
+    // style the user typed on the command line, the `-->` line
+    // included.
+    //
+    // Lock: tests/cli_test_rendering_tests.rs
+    // `test_cross_module_call_stack_uses_consistent_path_style`
+    // `test_run_module_error_paths_consistently_normalized`.
+    //
+    // Round-101: the normalization body lives in the shared
+    // `crate::cli::paths::display_path_for` helper — `silt test`
+    // (src/cli/test.rs) builds the same closure from it, so the
+    // two subcommands can never drift. Lock:
+    // tests/round101_display_path_helper_lock_tests.rs.
+    let user_path_is_absolute = Path::new(path).is_absolute();
+    let cwd = std::env::current_dir().ok();
+    let normalize_path = |candidate: &Path| -> String {
+        crate::cli::paths::display_path_for(user_path_is_absolute, cwd.as_deref(), candidate)
+    };
+
+    // Determine which source text & file path to render against.
+    // Prefer the innermost non-synthetic frame's function name,
+    // falling back to the main file when the frame isn't from an
+    // imported module.
+    let innermost_fn_name: Option<&str> = e
+        .call_stack
+        .iter()
+        .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
+        .map(|(n, _)| n.as_str());
+    let (err_source, err_path): (&str, String) = match innermost_fn_name
+        .and_then(|n| module_sources.get(n))
+    {
+        Some((module_path, module_source)) => (module_source.as_str(), normalize_path(module_path)),
+        None => (source, normalize_path(Path::new(path))),
+    };
+    let mut rendered = SourceError::runtime_at(&e.message, span, err_source, &err_path).to_string();
+    // The call stack, if there are user frames beyond the error site.
+    // Synthetic entry-point frames (<script>, <call:...>) are dropped
+    // by name rather than by span — a zero-spanned frame inside an
+    // otherwise good stack shouldn't cause the whole stack to be
+    // discarded. <module:...> frames are kept for module-aware path
+    // resolution.
+    //
+    // Round-73 G1: filter and truncation live in the shared
+    // `render_call_stack` helper so `silt run` and `silt test` can
+    // never drift again.
+    let stack_lines = silt::vm::error::render_call_stack(&e.call_stack, |name, frame_span| {
+        // Each frame uses its own function's source file for file
+        // labels — this matters when the call crosses a module
+        // boundary.
+        let frame_path: String = match module_sources.get(name) {
+            Some((p, _)) => normalize_path(p),
+            None => normalize_path(Path::new(path)),
+        };
+        if frame_span.line > 0 {
+            format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
+        } else {
+            format!("{frame_path}:<unknown location>")
+        }
+    });
+    if !stack_lines.is_empty() {
+        rendered.push_str("\n\ncall stack:");
+        for line in stack_lines {
+            rendered.push('\n');
+            rendered.push_str(&line);
+        }
+    }
+    rendered
 }

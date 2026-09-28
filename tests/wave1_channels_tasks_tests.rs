@@ -57,6 +57,10 @@ const DEADLOCK: &str = "deadlock on main thread";
 /// Part of every report of a task that failed and was not joined.
 const NEVER_JOINED: &str = "failed and was never joined";
 
+/// The first line of such a report, once per report. (The report shows
+/// the source line of the failure, and repeats its message under it.)
+const REPORT_HEADER: &str = "error[runtime]: task <handle:";
+
 #[derive(Debug)]
 struct Outcome {
     /// Exit status; `None` if the process was ended by a signal.
@@ -152,6 +156,42 @@ fn assert_completes(label: &str, src: &str, expected: &str, repeats: usize) -> V
             out.code,
             Some(0),
             "{ctx}: the program must exit with status 0\n{out:#?}"
+        );
+        assert_eq!(
+            out.stdout, expected,
+            "{ctx}: the program printed something else than expected\n{out:#?}"
+        );
+        outcomes.push(out);
+    }
+    outcomes
+}
+
+/// In each of `repeats` runs the program must run to its end, report
+/// no deadlock, print exactly `expected`, and exit with status 1
+/// because a task failed and nobody joined it. Returns the outcomes,
+/// for further assertions.
+fn assert_completes_with_unjoined_failure(
+    label: &str,
+    src: &str,
+    expected: &str,
+    repeats: usize,
+) -> Vec<Outcome> {
+    let mut outcomes = Vec::with_capacity(repeats);
+    for run in 1..=repeats {
+        let out = run_program(label, src);
+        let ctx = format!("{label}, run {run} of {repeats}");
+        assert!(
+            !out.timed_out,
+            "{ctx}: the program hung and was killed after {RUN_TIMEOUT:?}\n{out:#?}"
+        );
+        assert!(
+            !out.stderr.contains(DEADLOCK),
+            "{ctx}: the program was told `{DEADLOCK}`, but it can complete\n{out:#?}"
+        );
+        assert_eq!(
+            out.code,
+            Some(1),
+            "{ctx}: a task failed unjoined, so the program must exit with status 1\n{out:#?}"
         );
         assert_eq!(
             out.stdout, expected,
@@ -869,7 +909,7 @@ fn main() {
 // ── H5. A failed task that nobody joins is reported ──────────────────
 
 /// The failure of a task that is never joined is reported on stderr,
-/// with its error. The exit status stays 0.
+/// with its error, and the run exits with status 1.
 ///
 /// The main thread cannot wait for the failure without joining the
 /// task, so it sleeps. The sleep is long, to leave the task time to
@@ -885,7 +925,8 @@ fn main() {
   println("main done")
 }
 "#;
-    let outcomes = assert_completes("h5_unjoined", src, "main done\n", REPEATS);
+    let outcomes =
+        assert_completes_with_unjoined_failure("h5_unjoined", src, "main done\n", REPEATS);
     for out in outcomes {
         assert!(
             out.stderr.contains(NEVER_JOINED),
@@ -896,7 +937,7 @@ fn main() {
             "the report must contain the task's error\n{out:#?}"
         );
         assert_eq!(
-            out.stderr.matches(NEVER_JOINED).count(),
+            out.stderr.matches(REPORT_HEADER).count(),
             1,
             "one failed task, one report\n{out:#?}"
         );
@@ -930,7 +971,8 @@ fn main() {
   println("main done")
 }
 "#;
-    let outcomes = assert_completes("h5_kept_handle", src, "main done\n", REPEATS);
+    let outcomes =
+        assert_completes_with_unjoined_failure("h5_kept_handle", src, "main done\n", REPEATS);
     for out in outcomes {
         assert!(
             out.stderr.contains(NEVER_JOINED),
@@ -967,7 +1009,8 @@ fn main() {
   println("main done {task.join(fine)}")
 }
 "#;
-    let outcomes = assert_completes("h5_two_failures", src, "main done 42\n", REPEATS);
+    let outcomes =
+        assert_completes_with_unjoined_failure("h5_two_failures", src, "main done 42\n", REPEATS);
     for out in outcomes {
         assert!(
             out.stderr.contains("first worker failed"),
@@ -978,7 +1021,7 @@ fn main() {
             "the second failure must be reported\n{out:#?}"
         );
         assert_eq!(
-            out.stderr.matches(NEVER_JOINED).count(),
+            out.stderr.matches(REPORT_HEADER).count(),
             2,
             "two failed tasks, two reports\n{out:#?}"
         );

@@ -5,10 +5,11 @@
 //! them when data arrives.
 
 use parking_lot::{Condvar, Mutex};
-use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
@@ -410,16 +411,50 @@ struct SchedulerInner {
     failed_tasks: Mutex<FailedTasks>,
 }
 
-/// The failed tasks of one scheduler, up to `MAX_RECORDED_FAILURES`.
+/// Failed tasks kept for the report of failures that nobody joined, up
+/// to `MAX_RECORDED_FAILURES`. Each scheduler has one; while the
+/// failures are collected (`collect_unjoined_failures`), the one of the
+/// process is used instead.
 #[derive(Default)]
 struct FailedTasks {
     /// Handles of tasks that ended with an error. Whether a join has
-    /// received the error since is read from the handle, at report
-    /// time.
+    /// received the error since, or a cancel has dismissed it, is read
+    /// from the handle at report time.
     handles: Vec<Arc<TaskHandle>>,
-    /// Number of failed tasks that were not recorded because `handles`
-    /// was full of failures that nobody had joined.
-    not_recorded: usize,
+    /// Per owner tag, the number of failed tasks that were not recorded
+    /// because `handles` was full of failures that nobody had joined.
+    not_recorded: BTreeMap<u64, usize>,
+}
+
+impl FailedTasks {
+    /// Keep the handle of a task that ended with an error. Returns the
+    /// handles that were let go to make room (failures that have been
+    /// joined or cancelled since they were kept); the caller drops them
+    /// after it has released the lock on the record.
+    fn record(&mut self, handle: &Arc<TaskHandle>) -> Vec<Arc<TaskHandle>> {
+        let mut handled_since = Vec::new();
+        if self.handles.len() >= MAX_RECORDED_FAILURES {
+            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(&mut self.handles)
+                .into_iter()
+                .partition(|h| h.has_unjoined_failure());
+            self.handles = unhandled;
+            handled_since = handled;
+        }
+        if self.handles.len() >= MAX_RECORDED_FAILURES {
+            *self.not_recorded.entry(handle.owner()).or_insert(0) += 1;
+        } else {
+            self.handles.push(handle.clone());
+        }
+        handled_since
+    }
+
+    /// Empty the record, and return what it held.
+    fn take(&mut self) -> (Vec<Arc<TaskHandle>>, BTreeMap<u64, usize>) {
+        (
+            std::mem::take(&mut self.handles),
+            std::mem::take(&mut self.not_recorded),
+        )
+    }
 }
 
 impl Default for Scheduler {
@@ -537,14 +572,18 @@ impl Scheduler {
     }
 
     /// Report on stderr every task of this scheduler that failed and
-    /// whose error no `task.join` has received. Each failure is
-    /// reported once, so the call can be repeated. Returns the number
-    /// of failures that this call reported.
+    /// whose error no `task.join` has received and no `task.cancel` has
+    /// dismissed. Each failure is reported once, so the call can be
+    /// repeated. Returns the number of failures that this call reported.
     ///
     /// It runs by itself when the scheduler is dropped and when the
     /// thread that spawned the first task ends. A caller that ends the
     /// process in another way (`std::process::exit`) calls it before
     /// that.
+    ///
+    /// While the failures are collected (`collect_unjoined_failures`),
+    /// the scheduler keeps none, and this reports nothing: the front
+    /// end takes them with `take_unjoined_failures` and reports them.
     pub fn report_unjoined_failures(&self) -> usize {
         report_unjoined_failures(&self.inner)
     }
@@ -729,7 +768,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 
         let Task { id, mut vm, handle } = task;
 
+        // The tasks that this slice spawns belong to the owner of this
+        // task. See `set_task_owner`.
+        RUNNING_TASK_OWNER.with(|owner| owner.set(Some(handle.owner())));
         let result = vm.execute_slice(time_slice);
+        RUNNING_TASK_OWNER.with(|owner| owner.set(None));
 
         match result {
             SliceResult::Yielded => {
@@ -1620,47 +1663,32 @@ impl Drop for EndSelectPark {
     }
 }
 
-/// Keep the handle of a task that ended with an error, for
-/// `report_unjoined_failures`.
+/// Keep the handle of a task that ended with an error, for the report
+/// of failures that nobody joined: in the record of the process while
+/// the failures are collected, in the scheduler's own record otherwise.
 fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
-    // Handles are dropped after the lock has been released.
-    let mut joined_since: Vec<Arc<TaskHandle>> = Vec::new();
-    {
-        let mut failed = inner.failed_tasks.lock();
-        if failed.handles.len() >= MAX_RECORDED_FAILURES {
-            // Failures that a join has received since they were
-            // recorded need no report: make room.
-            let (unjoined, joined): (Vec<_>, Vec<_>) = std::mem::take(&mut failed.handles)
-                .into_iter()
-                .partition(|h| h.has_unjoined_failure());
-            failed.handles = unjoined;
-            joined_since = joined;
-        }
-        if failed.handles.len() >= MAX_RECORDED_FAILURES {
-            failed.not_recorded += 1;
-        } else {
-            failed.handles.push(handle.clone());
-        }
-    }
-    drop(joined_since);
+    let handled_since = if COLLECTING.load(Ordering::SeqCst) {
+        collected_failures().lock().record(handle)
+    } else {
+        inner.failed_tasks.lock().record(handle)
+    };
+    // Dropped after the lock has been released.
+    drop(handled_since);
 }
 
-/// Report on stderr every recorded task that failed and whose error no
-/// join has received. A failure is reported once: the record is emptied
-/// and each handle gives its error out once. Returns the number of
-/// failures that this call reported, those that were counted but not
-/// kept included.
+/// Report on stderr every recorded task of this scheduler that failed,
+/// whose error no join has received and that no cancel has dismissed.
+/// A failure is reported once: the record is emptied and each handle
+/// gives its error out once. Returns the number of failures that this
+/// call reported, those that were counted but not kept included.
 ///
 /// The report has no file name and no source line: the scheduler knows
-/// neither. It shows what `VmError`'s own `Display` shows.
+/// neither. It shows what `VmError`'s own `Display` shows. A front end
+/// that knows the program's files collects the failures instead
+/// (`collect_unjoined_failures`) and renders them itself; the record of
+/// the scheduler stays empty then.
 fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
-    let (handles, not_recorded) = {
-        let mut failed = inner.failed_tasks.lock();
-        (
-            std::mem::take(&mut failed.handles),
-            std::mem::take(&mut failed.not_recorded),
-        )
-    };
+    let (handles, not_recorded) = inner.failed_tasks.lock().take();
     let mut reported = 0;
     let mut report = String::new();
     for handle in &handles {
@@ -1668,20 +1696,15 @@ fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
             continue;
         };
         reported += 1;
-        error.message = format!(
-            "task <handle:{}> failed and was never joined: {}",
-            handle.id, error.message
-        );
-        report.push_str(&format!(
-            "{error}\n  = note: no task.join received this error; \
-             join the task to handle the error in the program\n"
-        ));
+        error.message = unjoined_failure_headline(handle.id, &error.message);
+        report.push_str(&format!("{error}\n  = help: {UNJOINED_FAILURE_HELP}\n"));
     }
+    let not_recorded: usize = not_recorded.values().sum();
     if not_recorded > 0 {
         reported += not_recorded;
         report.push_str(&format!(
-            "error[runtime]: {not_recorded} more task(s) failed; their errors \
-             were not kept (at most {MAX_RECORDED_FAILURES} unjoined failures are)\n"
+            "error[runtime]: {}\n",
+            UnjoinedFailures::not_kept_message(not_recorded)
         ));
     }
     if !report.is_empty() {
@@ -1724,6 +1747,154 @@ thread_local! {
             schedulers: RefCell::new(Vec::new()),
         }
     };
+}
+
+// ── Who spawned a task, and the failures that nobody joined ─────────
+
+/// The owner tag of the tasks spawned outside any task. See
+/// `set_task_owner`.
+static PROGRAM_TASK_OWNER: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// On a worker thread, while it runs a slice of a task: the owner
+    /// tag of that task.
+    static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Set the owner tag of the tasks spawned from now on outside any task:
+/// by the thread that runs the program, or by a thread that runs a
+/// stream stage or an HTTP handler. A task spawned by a task gets the
+/// owner of the task that spawns it, so one tag covers every task that
+/// descends from the tasks spawned under it.
+///
+/// A report of a task's failure carries the owner tag
+/// (`UnjoinedFailure::owner`). `silt test` sets one tag per test, and
+/// so charges the failure of a task to the test that spawned it. 0, the
+/// default, means no owner.
+pub fn set_task_owner(owner: u64) {
+    PROGRAM_TASK_OWNER.store(owner, Ordering::SeqCst);
+}
+
+/// The owner tag of a task spawned here and now. See `set_task_owner`.
+pub(crate) fn current_task_owner() -> u64 {
+    RUNNING_TASK_OWNER
+        .try_with(|owner| owner.get())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| PROGRAM_TASK_OWNER.load(Ordering::SeqCst))
+}
+
+/// What the report of a failure that nobody joined advises.
+const UNJOINED_FAILURE_HELP: &str =
+    "join the task with task.join to handle its error, or cancel it with task.cancel";
+
+/// The first line of the report of a failure that nobody joined.
+fn unjoined_failure_headline(task_id: usize, message: &str) -> String {
+    format!("task <handle:{task_id}> failed and was never joined: {message}")
+}
+
+/// Set once a front end collects the failures that nobody joined. See
+/// `collect_unjoined_failures`.
+static COLLECTING: AtomicBool = AtomicBool::new(false);
+
+/// The record of failed tasks of the whole process, used instead of the
+/// schedulers' own while `COLLECTING` is set.
+fn collected_failures() -> &'static Mutex<FailedTasks> {
+    static COLLECTED: OnceLock<Mutex<FailedTasks>> = OnceLock::new();
+    COLLECTED.get_or_init(|| Mutex::new(FailedTasks::default()))
+}
+
+/// A task that failed, whose error no join received and that no cancel
+/// dismissed. Given out by `take_unjoined_failures`.
+#[derive(Debug, Clone)]
+pub struct UnjoinedFailure {
+    /// The id of the task, as `<handle:N>` shows it.
+    pub task_id: usize,
+    /// The owner tag the task was spawned under. See `set_task_owner`.
+    pub owner: u64,
+    /// The error the task ended with, as the task raised it.
+    pub error: VmError,
+}
+
+impl UnjoinedFailure {
+    /// The error to report: the task's error, with a message that names
+    /// the task and says what to do. The first line of the message is
+    /// the headline; the line after it is a `help:` note, as the
+    /// diagnostic renderers expect. Span and call stack are the task's.
+    pub fn report_error(&self) -> VmError {
+        let mut error = self.error.clone();
+        error.message = format!(
+            "{}\nhelp: {UNJOINED_FAILURE_HELP}",
+            unjoined_failure_headline(self.task_id, &self.error.message)
+        );
+        error
+    }
+}
+
+/// The failures that nobody joined, as `take_unjoined_failures` gives
+/// them out.
+#[derive(Debug, Default)]
+pub struct UnjoinedFailures {
+    /// The failures whose errors were kept, in the order in which the
+    /// tasks failed.
+    pub failures: Vec<UnjoinedFailure>,
+    /// Per owner tag, the number of failed tasks whose errors were not
+    /// kept: at most `MAX_RECORDED_FAILURES` unjoined failures are kept
+    /// at a time.
+    pub not_kept: Vec<(u64, usize)>,
+}
+
+impl UnjoinedFailures {
+    /// True if there is nothing to report.
+    pub fn is_empty(&self) -> bool {
+        self.failures.is_empty() && self.not_kept.is_empty()
+    }
+
+    /// The message that reports `count` failed tasks whose errors were
+    /// not kept.
+    pub fn not_kept_message(count: usize) -> String {
+        format!(
+            "{count} more task(s) failed and were never joined; their errors were not kept \
+             (at most {MAX_RECORDED_FAILURES} are kept at a time)"
+        )
+    }
+}
+
+/// From now on, keep the failures that nobody joined for
+/// `take_unjoined_failures`, instead of having each scheduler print them
+/// on stderr. This is for the front end that owns the process (`silt
+/// run`, `silt test`, the REPL): it decides when a failure counts and
+/// renders the report with the program's files. It cannot be undone.
+///
+/// A failure that is not taken is never reported. A task that fails
+/// after the front end's last take, one that was still running when the
+/// program ended, therefore leaves no report.
+pub fn collect_unjoined_failures() {
+    COLLECTING.store(true, Ordering::SeqCst);
+}
+
+/// Take every task failure, of any scheduler of the process, that has
+/// been recorded since the last take, whose error no join received and
+/// that no cancel dismissed. Each failure is given out once. Empty
+/// unless `collect_unjoined_failures` has been called.
+pub fn take_unjoined_failures() -> UnjoinedFailures {
+    // The lock is released at the end of this statement; the handles
+    // are dropped after that.
+    let (handles, not_recorded) = collected_failures().lock().take();
+    let failures = handles
+        .iter()
+        .filter_map(|handle| {
+            handle.take_unjoined_failure().map(|error| UnjoinedFailure {
+                task_id: handle.id,
+                owner: handle.owner(),
+                error,
+            })
+        })
+        .collect();
+    UnjoinedFailures {
+        failures,
+        not_kept: not_recorded.into_iter().collect(),
+    }
 }
 
 /// RAII guard for a callback installed via
@@ -2169,7 +2340,7 @@ fn main() {
         {
             let failed = scheduler.inner.failed_tasks.lock();
             assert_eq!(failed.handles.len(), MAX_RECORDED_FAILURES);
-            assert_eq!(failed.not_recorded, 5);
+            assert_eq!(failed.not_recorded.get(&0), Some(&5));
         }
         // Joined failures make room for new ones.
         for handle in scheduler.inner.failed_tasks.lock().handles.iter() {
@@ -2183,7 +2354,38 @@ fn main() {
         // Leave nothing for the report that runs when the scheduler is
         // dropped: this test is about the record, not about stderr.
         failed.handles.clear();
-        failed.not_recorded = 0;
+        failed.not_recorded.clear();
+    }
+
+    /// A task spawned by a task belongs to the owner of the task that
+    /// spawns it, whatever owner the program has set meanwhile.
+    #[test]
+    fn test_task_spawned_by_a_task_gets_the_spawning_task_owner() {
+        let scheduler = Scheduler::new();
+        let handle = Arc::new(TaskHandle::with_owner(1, 77));
+        let vm = make_vm(
+            r#"
+import task
+fn main() {
+  task.spawn(fn() { 1 })
+}
+"#,
+        );
+        scheduler
+            .submit(Task {
+                id: 1,
+                vm,
+                handle: handle.clone(),
+            })
+            .unwrap();
+        match handle.join() {
+            Ok(Value::Handle(child)) => assert_eq!(
+                child.owner(),
+                77,
+                "the child task must carry the owner of the task that spawned it"
+            ),
+            other => panic!("expected the child's handle, got {other:?}"),
+        }
     }
 
     // ── Shutdown ───────────────────────────────────────────────────

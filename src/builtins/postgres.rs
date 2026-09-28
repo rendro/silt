@@ -1358,6 +1358,14 @@ const STREAM_CHANNEL_CAPACITY: usize = 256;
 ///
 /// `try_send` takes the value by value, so we clone on each attempt
 /// — cheap for Value since the heavy payloads are Arc-backed.
+///
+/// At most one send waker of this call is registered at a time, and
+/// none is left behind when it returns. Each wait registers its waker
+/// through a `WakerRegistration` guard that is dropped, and so
+/// deregistered, when the wait ends. A waker left in the channel's queue
+/// would be chosen by a later receive in place of a sender that is
+/// really waiting (a parked task, or the main thread), which would then
+/// miss its wake-up.
 fn channel_send_blocking_retry(ch: &Arc<Channel>, val: Value) -> bool {
     use parking_lot::{Condvar, Mutex as PLMutex};
     use std::time::Duration;
@@ -1370,13 +1378,16 @@ fn channel_send_blocking_retry(ch: &Arc<Channel>, val: Value) -> bool {
             TrySendResult::Full => {}
         }
         let pair2 = pair.clone();
-        ch.register_send_waker(Box::new(move || {
+        // Deregisters the waker when it is dropped: at the end of this
+        // iteration, or on a return below. If the waker has fired, it
+        // is no longer in the queue and the drop does nothing.
+        let _registration = ch.register_send_waker_guard(Box::new(move || {
             let (lock, cvar) = &*pair2;
             *lock.lock() = true;
             cvar.notify_one();
         }));
         // Re-check after registering: avoid a lost wakeup if space
-        // opened between try_send and register_send_waker.
+        // opened between try_send and register_send_waker_guard.
         match ch.try_send(val.clone()) {
             TrySendResult::Sent => return true,
             TrySendResult::Closed => return false,
@@ -2409,6 +2420,60 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stream send that has to wait for room keeps at most one send
+    /// waker registered, leaves none behind when it returns, and so
+    /// cannot take the wake-up of a sender that registers after it.
+    ///
+    /// Before, each 50 ms poll of the wait registered another waker and
+    /// none was removed: after the send, the stale wakers stood first in
+    /// the queue, and a receive woke one of them instead of the waiting
+    /// sender. The sleep below lets the send wait through several polls;
+    /// nothing is asserted about time.
+    #[test]
+    fn blocking_stream_send_leaves_no_send_waker_behind() {
+        use crate::value::TryReceiveResult;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        let ch = Arc::new(Channel::new(1, 1));
+        assert!(matches!(ch.try_send(Value::Int(1)), TrySendResult::Sent));
+        let sender_ch = ch.clone();
+        let sender =
+            std::thread::spawn(move || channel_send_blocking_retry(&sender_ch, Value::Int(2)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            ch.send_waker_queue_len() <= 1,
+            "a waiting send keeps at most one waker registered, found {}",
+            ch.send_waker_queue_len()
+        );
+        assert!(matches!(
+            ch.try_receive(),
+            TryReceiveResult::Value(Value::Int(1))
+        ));
+        assert!(sender.join().expect("sender thread"), "the send completes");
+        assert_eq!(
+            ch.send_waker_queue_len(),
+            0,
+            "the send left a waker in the channel's queue"
+        );
+
+        // The buffer is full again (it holds 2). The next receive must
+        // wake the sender that waits now.
+        let woken = Arc::new(AtomicBool::new(false));
+        let woken_by_waker = woken.clone();
+        let _registration = ch.register_send_waker_guard(Box::new(move || {
+            woken_by_waker.store(true, Ordering::SeqCst);
+        }));
+        assert!(matches!(
+            ch.try_receive(),
+            TryReceiveResult::Value(Value::Int(2))
+        ));
+        assert!(
+            woken.load(Ordering::SeqCst),
+            "the receive woke a stale waker instead of the waiting sender"
+        );
+    }
 
     /// URL-parsing unit: `sslmode=verify-full` + `sslrootcert` get
     /// stripped cleanly and the remaining params are preserved.

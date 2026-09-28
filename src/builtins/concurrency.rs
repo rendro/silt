@@ -558,7 +558,12 @@ fn spawn_with_deadline(
     deadline: Option<Instant>,
 ) -> Result<Value, VmError> {
     let task_id = vm.next_task_id();
-    let handle = Arc::new(TaskHandle::new(task_id));
+    // The task belongs to whoever spawns it: the owner of the task that
+    // runs this, or the owner the front end set for the program.
+    let handle = Arc::new(TaskHandle::with_owner(
+        task_id,
+        crate::scheduler::current_task_owner(),
+    ));
 
     let child_closure = closure.clone();
     let mut child_vm = vm.spawn_child();
@@ -688,6 +693,11 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             };
             handle.complete(Err(VmError::new("cancelled".to_string())));
+            // Cancelling a task handles it. If the task had failed
+            // before, its failure is dismissed: it is not reported as
+            // an unjoined failure. A join still raises that failure,
+            // because the handle keeps the result that came first.
+            handle.mark_joined();
             Ok(Value::Unit)
         }
         "spawn_until" => {
@@ -1265,7 +1275,10 @@ fn confirm_main_starved(
 /// reason why the counterparty of the wait is missing: a producer that
 /// stopped with an error before it sent. Without the report the user
 /// sees the deadlock and not its cause. Each failure is reported once,
-/// so the report at the end of the program does not repeat it.
+/// so the report at the end of the program does not repeat it. Where a
+/// front end collects the failures (`scheduler::collect_unjoined_failures`),
+/// this reports nothing: the front end takes them when the verdict
+/// reaches it and shows them before it.
 fn report_unjoined_failures(vm: &Vm) {
     if let Some(sched) = vm.current_scheduler() {
         let _ = sched.report_unjoined_failures();

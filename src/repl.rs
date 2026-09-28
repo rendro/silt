@@ -192,6 +192,10 @@ pub fn run_repl() {
         let _ = rl.load_history(p);
     }
 
+    // The failures of spawned tasks that nobody joins are taken and
+    // shown after each input (`report_task_failures`), instead of by the
+    // scheduler when the session ends.
+    crate::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
     let mut type_ctx = ReplTypeContext::new();
 
@@ -247,6 +251,7 @@ pub fn run_repl() {
                 let _ = rl.add_history_entry(&input);
 
                 eval_input(&mut vm, &mut type_ctx, &input, &names);
+                report_task_failures();
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -260,8 +265,42 @@ pub fn run_repl() {
         }
     }
 
+    // Tasks that failed since the last input. A task that is still
+    // running when the session ends is not reported.
+    report_task_failures();
+
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
+    }
+}
+
+/// Report on stderr the spawned tasks that have failed so far and that
+/// nobody joined or cancelled. The REPL calls it after each input, so a
+/// failure shows up after the input during which it happened.
+///
+/// The code of a task can come from any earlier input, so the location
+/// is shown as `<declaration>`, as for the frames of every REPL runtime
+/// error.
+fn report_task_failures() {
+    let taken = crate::scheduler::take_unjoined_failures();
+    for failure in &taken.failures {
+        let error = failure.report_error();
+        eprintln!(
+            "{}",
+            render_runtime_error_without_source(&error.message, error.span.is_some())
+        );
+        for line in repl_call_stack_lines(&error.call_stack) {
+            eprintln!("{line}");
+        }
+    }
+    for (_, count) in &taken.not_kept {
+        eprintln!(
+            "{}",
+            render_runtime_error_without_source(
+                &crate::scheduler::UnjoinedFailures::not_kept_message(*count),
+                false
+            )
+        );
     }
 }
 
