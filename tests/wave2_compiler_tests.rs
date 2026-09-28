@@ -558,6 +558,30 @@ fn main() {
     assert_prints("w6_named_fn", src, "baz\n42\n");
 }
 
+/// A file module's own top-level binding shadows a decoder it imports by
+/// name, as in the entry program: the call is not checked as a decoder
+/// call (found by the wave 2 verifier; v0.14.2 and `main` run it).
+#[test]
+fn guard_w3_a_module_let_shadows_a_name_imported_decoder() {
+    let util = r#"
+import json.{ parse_list }
+
+let parse_list = { s, t -> s }
+
+pub fn go() -> String { parse_list("[1]", Int) }
+"#;
+    let main = r#"
+import util
+
+fn main() { println(util.go()) }
+"#;
+    assert_prints_files(
+        "w3_module_let_shadows",
+        &[("main.silt", main), ("util.silt", util)],
+        "[1]\n",
+    );
+}
+
 #[test]
 fn w6_method_call_on_an_imported_function() {
     let util = r#"
