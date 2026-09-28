@@ -315,7 +315,10 @@ impl fmt::Display for SourceError {
         }
 
         // Source snippet with caret
-        if let Some(ref src_line) = self.source_line {
+        if let Some(ref full_line) = self.source_line {
+            let full_col = self.span.col.saturating_sub(1);
+            let (src_line, col) = excerpt_around(full_line, full_col);
+            let src_line = src_line.as_str();
             let line_num = self.span.line;
             let gutter_width = line_num_width(line_num);
 
@@ -341,11 +344,6 @@ impl fmt::Display for SourceError {
             )?;
 
             // Caret line
-            let col = if self.span.col > 0 {
-                self.span.col - 1
-            } else {
-                0
-            };
             // Build spacing to align caret under the error position.
             let spacing: String = caret_spacing(src_line, col);
 
@@ -453,6 +451,35 @@ pub(crate) fn line_num_width(n: usize) -> usize {
 /// Exposed at `pub(crate)` so `compiler::format_module_source_error`
 /// can share the same alignment logic, and so `tests/caret_width_tests.rs`
 /// can exercise it directly. Lock: tests/caret_width_tests.rs.
+/// The part of `line` to show above the caret, and the caret's column in
+/// it. A line of at most `EXCERPT_CHARS` characters is shown whole; a
+/// longer one (a generated 8000-character expression, say) is cut to a
+/// window around `col`, with `…` where text was left out.
+fn excerpt_around(line: &str, col: usize) -> (String, usize) {
+    const EXCERPT_CHARS: usize = 160;
+    const BEFORE_CARET: usize = 60;
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= EXCERPT_CHARS {
+        return (line.to_string(), col);
+    }
+    let col = col.min(chars.len());
+    let start = col
+        .saturating_sub(BEFORE_CARET)
+        .min(chars.len() - EXCERPT_CHARS);
+    let end = start + EXCERPT_CHARS;
+    let mut shown = String::new();
+    let mut shown_col = col - start;
+    if start > 0 {
+        shown.push('…');
+        shown_col += 1;
+    }
+    shown.extend(&chars[start..end]);
+    if end < chars.len() {
+        shown.push('…');
+    }
+    (shown, shown_col)
+}
+
 pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let mut out = String::new();
@@ -472,6 +499,23 @@ pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_line_is_cut_to_a_window_around_the_caret() {
+        let short = "let x = 1";
+        assert_eq!(excerpt_around(short, 4), (short.to_string(), 4));
+
+        let long: String = "1 + ".repeat(2000);
+        let (shown, col) = excerpt_around(&long, 4000);
+        assert!(shown.starts_with('…') && shown.ends_with('…'), "{shown}");
+        assert_eq!(shown.chars().count(), 162);
+        let caret_char = shown.chars().nth(col).unwrap();
+        assert_eq!(caret_char, long.chars().nth(4000).unwrap());
+
+        let (shown, col) = excerpt_around(&long, 0);
+        assert!(!shown.starts_with('…') && shown.ends_with('…'));
+        assert_eq!(col, 0);
+    }
 
     #[test]
     fn test_get_source_line() {

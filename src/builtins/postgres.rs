@@ -448,7 +448,10 @@ fn wrap_v_bool(b: bool) -> Value {
     Value::Variant("VBool".into(), vec![Value::Bool(b)])
 }
 fn wrap_v_float(f: f64) -> Value {
-    Value::Variant("VFloat".into(), vec![Value::Float(f)])
+    Value::Variant(
+        "VFloat".into(),
+        vec![crate::builtins::numeric::float_value(f)],
+    )
 }
 fn wrap_v_null() -> Value {
     Value::Variant("VNull".into(), vec![])

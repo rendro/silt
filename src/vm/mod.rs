@@ -745,17 +745,6 @@ impl Vm {
         self.runtime.scheduler.lock().clone()
     }
 
-    /// Report on stderr every task that failed and that no `task.join`
-    /// received, and return how many were reported. Each failure is
-    /// reported once. A caller that ends the process with
-    /// `std::process::exit` calls this first: the scheduler also reports
-    /// when the thread that runs the program ends, but whether that runs
-    /// on `exit` depends on the platform.
-    pub fn report_unjoined_task_failures(&self) -> usize {
-        self.current_scheduler()
-            .map_or(0, |s| s.report_unjoined_failures())
-    }
-
     /// Get or create the shared scheduler.
     pub(crate) fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
         let mut guard = self.runtime.scheduler.lock();

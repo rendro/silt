@@ -491,6 +491,39 @@ fn builtins_never_produce_a_negative_zero_float() {
     );
 }
 
+/// The Float producers outside numeric.rs: `list.product_float`, and the
+/// JSON and TOML decoders of a `Float` field. A `Float` is finite, so a
+/// TOML `nan` does not decode into one.
+#[test]
+fn decoders_and_list_product_never_produce_a_negative_zero_float() {
+    assert_runs(
+        "negative_zero_producers",
+        r#"import float
+import list
+import json
+import toml
+type R { x: Float }
+fn main() {
+  let p = list.product_float([-1.0, 0.0])
+  println("product {p} {float.to_string(p)}")
+  match json.parse("\{\"x\": -0.0}", R) {
+    Ok(r) -> println("json {r.x} {float.to_string(r.x)}")
+    Err(e) -> println("json err {e}")
+  }
+  match toml.parse("x = -0.0", R) {
+    Ok(r) -> println("toml {r.x} {float.to_string(r.x)}")
+    Err(e) -> println("toml err {e}")
+  }
+  match toml.parse("x = nan", R) {
+    Ok(r) -> println("nan accepted {r.x}")
+    Err(_) -> println("nan rejected")
+  }
+}
+"#,
+        "product 0 0.0\njson 0 0.0\ntoml 0 0.0\nnan rejected\n",
+    );
+}
+
 // ════════════════════════════════════════════════════════════════════
 // 5. examples/budget.silt
 // ════════════════════════════════════════════════════════════════════

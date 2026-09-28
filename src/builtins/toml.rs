@@ -489,7 +489,12 @@ fn toml_to_typed_value(
             _ => Err(mismatch("Int", toml_type_name(tv))),
         },
         FieldType::Float => match tv {
-            ::toml::Value::Float(f) => Ok(Value::Float(*f)),
+            // A `Float` is finite; `nan` and `inf` fit only an `ExtFloat`
+            // field.
+            ::toml::Value::Float(f) if f.is_finite() => {
+                Ok(crate::builtins::numeric::float_value(*f))
+            }
+            ::toml::Value::Float(_) => Err(mismatch("Float", "a non-finite float")),
             // TOML integers coerce to Float the way JSON numbers do.
             ::toml::Value::Integer(n) => Ok(Value::Float(*n as f64)),
             _ => Err(mismatch("Float", toml_type_name(tv))),

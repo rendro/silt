@@ -969,7 +969,7 @@ fn json_to_typed_value(
         FieldType::Float => match json {
             serde_json::Value::Number(n) => {
                 if let Some(f) = n.as_f64() {
-                    Ok(Value::Float(f))
+                    Ok(crate::builtins::numeric::float_value(f))
                 } else {
                     Err(unknown("expected Float, got non-numeric number".into()))
                 }

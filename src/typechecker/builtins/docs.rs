@@ -853,7 +853,10 @@ task.cancel(handle: Handle) -> ()
 
 Flips the handle's result slot to `Err("cancelled")` using first-writer-wins
 semantics: if the task has already completed with some other result,
-`task.cancel` is a no-op on the handle. This is **not** a synchronous stop
+the result is kept and a later `task.join` still returns it. Cancelling a
+task that has already failed also dismisses that failure: it is not
+reported as unjoined and does not make `silt run` exit 1. This is **not**
+a synchronous stop
 signal — treat it as a cooperative request, not a hard stop:
 
 - If the task is **currently parked** (blocked on a channel, `task.join`,
