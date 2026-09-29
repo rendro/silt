@@ -1,7 +1,8 @@
-import io
+-- The result is an ExtFloat: the annotation rejects Float and Int.
 import math
 fn program() { math.log10(1.0) }
 
 fn main() {
-  println(io.inspect(program()))
+  let r: ExtFloat = program()
+  println(r == 0.0)
 }

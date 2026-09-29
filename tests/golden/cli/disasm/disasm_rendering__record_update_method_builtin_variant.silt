@@ -1,0 +1,29 @@
+-- cmd: disasm
+-- The operand rendering of the opcodes main compiles to. The prelude
+-- chunks never emit RecordUpdate or CallBuiltin, and their CallMethod
+-- lines have other constant indices, so these needles match main only.
+-- (Variant construction compiles to GetGlobal + Call; the compiler emits
+-- no MakeVariant.)
+-- stdout-contains: == main (arity=0, upvalues=0) ==
+-- stdout-contains: RecordUpdate         1
+-- stdout-contains: |  field 3     ; "x"
+-- stdout-contains: CallMethod           7     1   ; "display"
+-- stdout-contains: CallBuiltin          9     1   ; "string.length"
+-- stdout-contains: GetGlobal            10    ; "Circle"
+import string
+
+type Point { x: Int, y: Int }
+
+type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let q = p.{ x: 5 }
+  println(q.display())
+  println(string.length("abc"))
+  let s = Circle(3)
+  println(s)
+}

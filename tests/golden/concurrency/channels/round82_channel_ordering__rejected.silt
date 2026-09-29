@@ -1,8 +1,11 @@
+-- From tests/concurrency/round82_channel_equality_tests.rs (renamed so the
+-- file name does not contain the word the stderr check excludes).
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
 -- stderr-contains: Channel
 -- stderr-contains: operator '<' requires
+-- stderr-not-contains: equality
 -- Ordering on channels is rejected: ids are identity tokens, not an order.
 import channel
 fn main() {

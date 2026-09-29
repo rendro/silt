@@ -5,6 +5,7 @@
 mod anon_record_resolve_recursion_tests;
 mod auto_derive_builtin_synth_tests;
 mod builtin_module_constant_value_access_runtime_tests;
+mod builtin_module_dispatch_tests;
 mod bytes_module_tests;
 mod call_method_yield_tests;
 mod canonical_resolver_isolation_tests;

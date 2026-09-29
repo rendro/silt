@@ -1,4 +1,4 @@
-import io
+import float
 type Shape {
   Circle(Float),
   Rect(Float, Float),
@@ -18,5 +18,5 @@ fn program() {
 }
 
 fn main() {
-  println(io.inspect(program()))
+  println(float.to_string(program(), 1))
 }

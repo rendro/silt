@@ -1,9 +1,14 @@
 -- exit: 0
 -- Tuples support Hash, so the auto-derived Pair.hash exists and the call
--- runs (the value itself is unspecified).
+-- runs. The value itself is unspecified; the program checks that its
+-- printed form parses as an Int and that it is deterministic.
+import int
+import result
 type Pair { t: (Int, Int) }
 fn h(x: a) -> Int where a: Hash { x.hash() }
 fn main() {
     let p = Pair { t: (1, 2) }
-    println(h(p))
+    let v = h(p)
+    println(result.is_ok(int.parse("{v}")))
+    println(v == h(Pair { t: (1, 2) }))
 }

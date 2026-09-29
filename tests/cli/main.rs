@@ -17,6 +17,7 @@ mod cli_self_update_flag_tests;
 mod cli_strict_effects_flag_tests;
 mod cli_test_rendering_tests;
 mod cli_watch_subcommand_gate_tests;
+mod empty_file_tests;
 mod git_module_tests;
 mod lockfile_matches_manifest_offline_tests;
 mod lockfile_tests;

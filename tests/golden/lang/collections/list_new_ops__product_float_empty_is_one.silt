@@ -1,2 +1,3 @@
+import float
 import list
-fn main() { println(list.product_float([])) }
+fn main() { println(float.to_string(list.product_float([]), 1)) }

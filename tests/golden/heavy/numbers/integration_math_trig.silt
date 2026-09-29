@@ -1,7 +1,8 @@
-import io
+-- math.sin returns Float; float.to_string prints it with a decimal.
+import float
 import math
 fn program() { math.sin(0.0) }
 
 fn main() {
-  println(io.inspect(program()))
+  println(float.to_string(program(), 1))
 }

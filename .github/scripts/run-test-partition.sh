@@ -30,11 +30,20 @@ rest_filter='not (binary(=heavy) | binary(=concurrency))'
 
 set -x
 case "$partition" in
-  heavy | concurrency)
+  heavy)
     if $nextest; then
-      exec cargo nextest run --all-features --test "$partition"
+      exec cargo nextest run --all-features --test heavy
     else
-      exec cargo test --all-features --test "$partition"
+      exec cargo test --all-features --test heavy
+    fi
+    ;;
+  concurrency)
+    # At most 4 tests at once, as .config/nextest.toml does for nextest:
+    # all at once oversubscribes the CPU and the timing tests fail.
+    if $nextest; then
+      exec cargo nextest run --all-features --test concurrency
+    else
+      exec cargo test --all-features --test concurrency -- --test-threads=4
     fi
     ;;
   rest1 | rest2)
