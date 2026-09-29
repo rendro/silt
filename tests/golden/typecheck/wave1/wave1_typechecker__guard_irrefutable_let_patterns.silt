@@ -1,0 +1,40 @@
+-- exit: 0
+-- GUARD: irrefutable destructuring in `let` keeps working.
+type Wrap { W(Int) }
+type Pt { x: Int, y: Int }
+type Box(a) { Boxed(a) }
+type Pair(a, b) { first: a, second: b }
+
+fn main() {
+  let (a, b) = (1, "s")
+  println("{a}{b}")
+  let ((c, d), e) = ((1, 2), 3)
+  println(c + d + e)
+  let W(n) = W(5)
+  println(n)
+  let Boxed(s) = Boxed("p")
+  println(s)
+  let (W(m), k) = (W(1), 10)
+  println(m + k)
+  let ((W(q), r), t) = ((W(1), 2), 3)
+  println(q + r + t)
+  let Pt { x, y } = Pt { x: 1, y: 2 }
+  println(x + y)
+  let Pt { x: px, y: _ } = Pt { x: 7, y: 2 }
+  println(px)
+  let Pair { first, second } = Pair { first: 1, second: "z" }
+  println("{first}{second}")
+  let (Pt { x: x2, y: y2 }, z2) = (Pt { x: 1, y: 2 }, 3)
+  println(x2 + y2 + z2)
+  let (_, w) = (1, 2)
+  println(w)
+  let () = ()
+  let _ = 5
+  let {name, age} = {name: "A", age: 3}
+  println("{name}{age}")
+  let [..rest] = [1, 2, 3]
+  println(rest)
+  let ([..rest2], u) = ([1, 2], 3)
+  println(rest2)
+  println(u)
+}

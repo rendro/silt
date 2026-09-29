@@ -3,4 +3,3 @@
 //! One test binary; each module was a separate test crate before.
 
 mod integration;
-mod integration_concurrency;

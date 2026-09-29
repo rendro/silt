@@ -1,0 +1,35 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 3
+-- A task that fails after its test has returned, while a later test
+-- runs, fails the test that spawned it, not the one that runs. The
+-- summary and the exit status count it.
+--
+-- The later test waits until the task is about to fail, then sleeps,
+-- so the failure happens during the later test.
+import channel
+import task
+import test
+import time
+
+let about_to_fail = channel.new(1)
+
+fn test_a_spawns_late_failure() {
+  let _ = task.spawn(fn() {
+    time.sleep(time.ms(100))
+    channel.send(about_to_fail, 1)
+    let zero = 0
+    10 / zero
+  })
+  test.assert_eq(1, 1)
+}
+
+fn test_b_waits() {
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  test.assert_eq(2, 2)
+}
+
+fn test_c() {
+  test.assert_eq(3, 3)
+}

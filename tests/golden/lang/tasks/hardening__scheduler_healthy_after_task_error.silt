@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: failed and was never joined: division by zero
+import task
+fn main() {
+  -- First task fails
+  let h1 = task.spawn(fn() {
+    1 / 0
+  })
+
+  -- Second task should still work
+  let h2 = task.spawn(fn() {
+    42
+  })
+  println(task.join(h2))
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- Matching supertrait impl args typecheck.
+trait Carry(b) { fn carry(self, x: b) -> b }
+trait Holds(b): Carry(b) { fn take(self, x: b) -> b }
+type Bag { v: Int }
+trait Carry(Int) for Bag { fn carry(self, x: Int) -> Int { x + 1 } }
+trait Holds(Int) for Bag { fn take(self, x: Int) -> Int { x } }
+fn main() { }

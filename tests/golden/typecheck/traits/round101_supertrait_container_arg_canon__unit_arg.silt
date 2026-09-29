@@ -1,0 +1,7 @@
+-- A `Carry(Unit)` supertrait arg is accepted.
+type Bag { n: Int }
+trait Carry(c) { fn carry(self) -> c }
+trait Holds(b): Carry(Unit) { fn hold(self) -> b }
+trait Carry(Unit) for Bag { fn carry(self) -> Unit { () } }
+trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
+fn main() { println("{(Bag { n: 1 }).hold()}") }

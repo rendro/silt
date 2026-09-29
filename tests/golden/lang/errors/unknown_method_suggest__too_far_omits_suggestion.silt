@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'qqqqqqqq_unrelated'
+-- stderr-not-contains: did you mean
+fn main() {
+  let xs = [1, 2, 3]
+  println(xs.qqqqqqqq_unrelated())
+}

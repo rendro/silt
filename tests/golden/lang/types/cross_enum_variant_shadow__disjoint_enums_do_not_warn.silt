@@ -1,0 +1,5 @@
+-- cmd: check
+-- stderr-not-contains: shadows
+type Color { Red, Green, Blue }
+type Suit { Hearts, Diamonds, Clubs, Spades }
+fn main() { }

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A projection through an unknown trait is an error, not a crash.
+-- stderr-contains: NoSuchTrait
+-- stderr-not-contains: panicked
+fn bad(x: Int) -> <Int as NoSuchTrait>::Item { 0 }
+
+fn main() {}

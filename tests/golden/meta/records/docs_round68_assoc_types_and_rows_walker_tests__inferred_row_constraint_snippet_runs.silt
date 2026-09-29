@@ -1,0 +1,5 @@
+fn show_name(p) = p.name
+
+fn main() {
+  println(show_name({name: "A", age: 30}))
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- `==` on two channels typechecks (identity equality).
+import channel
+fn main() {
+    let c1 = channel.new(10)
+    let c2 = channel.new(10)
+    println(c1 == c2)
+}

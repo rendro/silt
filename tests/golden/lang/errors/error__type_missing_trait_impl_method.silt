@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: missing method 'farewell'
+trait Greetable {
+  fn greet(self) -> String
+  fn farewell(self) -> String
+}
+
+trait Greetable for Int {
+  fn greet(self) = "hello"
+}
+
+fn main() { 42 }

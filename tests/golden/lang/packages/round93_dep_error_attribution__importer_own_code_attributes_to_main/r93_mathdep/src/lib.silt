@@ -1,0 +1,9 @@
+import inner
+
+pub fn divide(a: Int, b: Int) -> Int {
+  a / b
+}
+
+pub fn divide_deep(a: Int, b: Int) -> Int {
+  inner.deep_div(a, b)
+}

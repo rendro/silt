@@ -1,0 +1,19 @@
+-- cmd: fmt --check
+-- exit: 0
+-- The formatter leaves an associated-type declaration and binding unchanged.
+
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type Wrap {
+  v: Int,
+}
+
+trait Stream for Wrap {
+  type Item = Int
+  fn first(self) -> Int {
+    self.v
+  }
+}

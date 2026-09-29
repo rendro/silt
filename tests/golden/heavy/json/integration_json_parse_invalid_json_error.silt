@@ -1,0 +1,13 @@
+import io
+import json
+type User { name: String }
+fn program() {
+  match json.parse("not json", User) {
+    Ok(_) -> false
+    Err(_) -> true
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

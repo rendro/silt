@@ -1,0 +1,5 @@
+import calc.{ add, square }
+
+fn main() {
+  println(add(square(3), square(4)))
+}

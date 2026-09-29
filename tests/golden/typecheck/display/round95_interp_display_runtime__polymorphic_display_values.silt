@@ -1,0 +1,13 @@
+-- Display-able values (Int, String, List, record) interpolate through a polymorphic function.
+-- stdout-contains: val=42
+-- stdout-contains: val=hi
+-- stdout-contains: val=[1, 2, 3]
+-- stdout-contains: val=P {
+type P { name: String, age: Int }
+fn show(x: a) -> String { "val={x}" }
+fn main() {
+  println(show(42))
+  println(show("hi"))
+  println(show([1, 2, 3]))
+  println(show(P { name: "x", age: 3 }))
+}

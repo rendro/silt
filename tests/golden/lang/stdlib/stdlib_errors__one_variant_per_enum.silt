@@ -1,0 +1,15 @@
+import io
+import json
+import toml
+import int
+import http
+import regex
+fn main() {
+  let _io = IoNotFound("p")
+  let _json = JsonSyntax("m", 0)
+  let _toml = TomlSyntax("m", 0)
+  let _parse = ParseEmpty
+  let _http = HttpConnect("host")
+  let _regex = RegexTooBig
+  println(true)
+}

@@ -1,0 +1,9 @@
+import io
+fn nums() { [1, 2, 3] }
+fn program() {
+  [0, ..nums(), 4]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

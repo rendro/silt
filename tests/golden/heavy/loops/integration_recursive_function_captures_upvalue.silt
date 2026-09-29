@@ -1,0 +1,23 @@
+-- A top-level recursive function is called via a closure that
+-- captures a variable from the enclosing scope.
+-- sum_with_base(100, 5) = 5 + 4 + 3 + 2 + 1 + 100 = 115
+import io
+fn sum_with_base(base, n) {
+  match n {
+    0 -> base
+    _ -> n + sum_with_base(base, n - 1)
+  }
+}
+
+fn make_summer(base) {
+  fn(n) { sum_with_base(base, n) }
+}
+
+fn program() {
+  let f = make_summer(100)
+  f(5)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,13 @@
+import io
+import time
+fn program() {
+  let a = time.now()
+  let b = a |> time.add(time.seconds(10))
+  let forward = time.since(a, b)
+  let backward = time.since(b, a)
+  (forward.ns > 0, backward.ns < 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

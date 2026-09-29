@@ -1,0 +1,9 @@
+type P { x: Int, name: String }
+fn main() {
+    let a = P{x: 1, name: "a"}
+    let b = P{x: 2, name: "b"}
+    println(a < b)
+    println(a == b)
+    println(a.compare(b))
+    println(a.hash() == a.hash())
+}

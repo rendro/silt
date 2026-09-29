@@ -1,0 +1,32 @@
+-- repeat: 3
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new(10)
+
+  let h1 = task.spawn(fn() {
+    channel.send(ch, 1)
+  })
+
+  let h2 = task.spawn(fn() {
+    channel.send(ch, 2)
+  })
+
+  let h3 = task.spawn(fn() {
+    channel.send(ch, 3)
+  })
+
+  task.join(h1)
+  task.join(h2)
+  task.join(h3)
+
+  when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Message(b) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Message(c) = channel.receive(ch) else { panic("pattern did not match") }
+  a + b + c
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

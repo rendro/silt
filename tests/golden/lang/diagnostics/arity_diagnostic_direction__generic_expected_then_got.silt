@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch
+-- stderr-contains: expected 2, got 3
+-- stderr-not-contains: expected 3, got 2
+type Pair(a, b) { Pair(a, b) }
+fn mk() -> Pair(Int, Int) { Pair(1, 2) }
+fn consume(p: Pair(Int, Int, Int)) -> Int { 0 }
+fn main() { println(consume(mk())) }

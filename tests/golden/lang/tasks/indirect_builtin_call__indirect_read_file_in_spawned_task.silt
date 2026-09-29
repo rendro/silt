@@ -1,0 +1,16 @@
+-- io.read_file bound to a variable and called indirectly (Op::Call, not
+-- Op::CallBuiltin) inside a spawned task survives the yield/resume
+-- cycle. The case reads its own source.
+-- hello from indirect
+import io
+import string
+import task
+
+fn main() {
+  let read = io.read_file
+  let h = task.spawn(fn() { read("indirect_builtin_call__indirect_read_file_in_spawned_task.silt") })
+  match task.join(h) {
+    Ok(s) -> println(string.contains(s, "-- hello from indirect"))
+    Err(e) -> println(e.message())
+  }
+}

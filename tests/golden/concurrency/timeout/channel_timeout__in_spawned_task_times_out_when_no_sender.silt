@@ -1,0 +1,17 @@
+-- repeat: 3
+-- recv_timeout inside a spawned task really expires: a timer wake must
+-- not re-arm a fresh full-duration timer (round 101 livelock).
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(1)
+  let h = task.spawn(fn() {
+    match channel.recv_timeout(ch, time.ms(50)) {
+      Ok(_) -> "got value"
+      Err(ChannelTimeout) -> "timed out"
+      Err(ChannelClosed) -> "closed"
+    }
+  })
+  println(task.join(h))
+}

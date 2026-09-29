@@ -1,0 +1,5 @@
+error[type]: trait 'Equal' is a builtin trait and cannot be redefined
+ --> trait_builtin_redefinition__redefine_equal.silt:6:1
+   |
+ 6 | trait Equal { fn foo(self) -> Bool }
+   | ^ trait 'Equal' is a builtin trait and cannot be redefined

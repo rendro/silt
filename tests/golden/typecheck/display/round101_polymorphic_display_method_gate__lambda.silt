@@ -1,0 +1,7 @@
+-- Polymorphic `.display()` on a function fails at run time, prints nothing, and has no interpolation suffix.
+-- exit: 1
+-- stderr-contains: does not implement Display
+-- stderr-contains: 'Fn'
+-- stderr-not-contains: required for string interpolation
+fn show(x: a) -> String { x.display() }
+fn main() { println(show(fn(y) { y })) }

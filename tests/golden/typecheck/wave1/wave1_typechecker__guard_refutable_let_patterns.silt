@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in `let`
+-- stderr-contains: constructor 'Dollars' is only one of 2 variants of enum 'Money'
+-- stderr-contains: constructor 'Some' is only one of 2 variants of enum 'Option'
+-- stderr-contains: list patterns can fail to match
+-- stderr-contains: integer literal patterns
+-- stderr-contains: boolean literal patterns
+-- stderr-contains: range patterns
+-- stderr-contains: map patterns
+-- stderr-contains: pin patterns
+-- stderr-contains: integer literal patterns
+-- stderr-not-contains: error[runtime]
+-- GUARD: `let` rejects every refutable shape, one diagnostic per statement with site, reason and advice (exact stderr).
+type Money { Dollars(Int), Cents(Int) }
+type Pt { x: Int, y: Int }
+
+fn main() {
+  let v = Cents(250)
+  let pinned = 5
+  let Dollars(n) = v
+  let (a, Some(b)) = (1, Some(2))
+  let [x, y] = [1, 2]
+  let 5 = 5
+  let true = false
+  let 1..10 = 999
+  let #{ "k": kv } = #{ "k": 1 }
+  let ^pinned = 99
+  let Pt { x: 0, y: py } = Pt { x: 1, y: 2 }
+  println("bound")
+}

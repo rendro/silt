@@ -1,0 +1,6 @@
+-- A channel is equal to itself.
+import channel
+fn main() {
+    let c1 = channel.new(10)
+    println(c1 == c1)
+}

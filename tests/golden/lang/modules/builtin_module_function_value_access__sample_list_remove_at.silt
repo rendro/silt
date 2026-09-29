@@ -1,0 +1,5 @@
+import list
+fn main() {
+  let f = list.remove_at
+  println(f([10, 20, 30], 1))
+}

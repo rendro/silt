@@ -1,0 +1,20 @@
+import uuid
+fn main() {
+  -- uppercase input canonicalizes to lowercase; lowercase is unchanged
+  match uuid.parse("550E8400-E29B-41D4-A716-446655440000") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+  match uuid.parse("550e8400-e29b-41d4-a716-446655440000") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+  match uuid.parse("not-a-uuid") {
+    Ok(_) -> println("wrong: should have errored")
+    Err(e) -> println(e)
+  }
+  match uuid.parse("550e8400e29b41d4a71644665544") {
+    Ok(_) -> println("wrong")
+    Err(_) -> println("err")
+  }
+}

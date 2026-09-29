@@ -1,0 +1,4 @@
+import uuid
+fn main() {
+  println(uuid.nil())
+}

@@ -1,0 +1,8 @@
+import io
+fn program() {
+  io.inspect(["a", "b", "c"])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

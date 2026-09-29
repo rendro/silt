@@ -1,0 +1,14 @@
+import io
+import list
+fn program() {
+  [1, 2, 3, 4, 5] |> list.filter_map { n ->
+    match n % 2 == 0 {
+      true -> Some(n * 10)
+      _ -> None
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

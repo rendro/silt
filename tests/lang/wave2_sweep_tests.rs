@@ -1,5 +1,9 @@
 //! Stage 2, wave 2, sweep lane: behavioural locks.
 //!
+//! Parts 1, 2 and 4 are golden cases (`tests/golden/lang/*/wave2_sweep__*`);
+//! what stays here drives the language server over stdio (3) and runs a
+//! file of the repository (5).
+//!
 //!   1. A type name, and an enum variant name, must start with an
 //!      upper-case letter. A lower-case type name is a type variable
 //!      wherever a type is written, and a lower-case name in a pattern
@@ -29,6 +33,8 @@ use serde_json::{Value, json};
 /// killed and reported as a hang.
 const RUN_TIMEOUT: Duration = Duration::from_secs(20);
 
+// The fields are shown in failure messages through `Debug`.
+#[allow(dead_code)]
 #[derive(Debug)]
 struct Outcome {
     /// Exit status; `None` if the process was ended by a signal.
@@ -91,233 +97,6 @@ fn run_in(cwd: &Path, out_dir: &Path, subcommand: &str, target: &Path) -> Outcom
         stderr: read_text(&err_path),
         timed_out,
     }
-}
-
-/// Write `src` to `main.silt` in a fresh directory and run
-/// `silt <subcommand> main.silt` there.
-fn run_program(label: &str, subcommand: &str, src: &str) -> Outcome {
-    let dir = fresh_dir(label);
-    let work = dir.join("work");
-    std::fs::create_dir_all(&work).expect("create work dir");
-    std::fs::write(work.join("main.silt"), src).expect("write main.silt");
-    let out = run_in(&work, &dir, subcommand, Path::new("main.silt"));
-    assert!(!out.timed_out, "{label}: `silt {subcommand}` hung\n{out:?}");
-    out
-}
-
-/// `silt check` and `silt run` both reject `src` with a parse error
-/// whose message contains every one of `needles`.
-fn assert_rejected(label: &str, src: &str, needles: &[&str]) {
-    for subcommand in ["check", "run"] {
-        let out = run_program(label, subcommand, src);
-        assert_eq!(
-            out.code,
-            Some(1),
-            "{label}: `silt {subcommand}` must fail\n{out:?}"
-        );
-        assert!(
-            out.stderr.contains("error[parse]"),
-            "{label}: `silt {subcommand}` must report a parse error\n{out:?}"
-        );
-        for needle in needles {
-            assert!(
-                out.stderr.contains(needle),
-                "{label}: `silt {subcommand}` must say {needle:?}\n{out:?}"
-            );
-        }
-        assert!(
-            !out.stderr.contains("error[runtime]"),
-            "{label}: `silt {subcommand}` must not get as far as running\n{out:?}"
-        );
-    }
-}
-
-/// `silt run` runs `src` and prints exactly `expected`.
-fn assert_runs(label: &str, src: &str, expected: &str) {
-    let out = run_program(label, "run", src);
-    assert_eq!(
-        out.code,
-        Some(0),
-        "{label}: `silt run` must succeed\n{out:?}"
-    );
-    assert_eq!(out.stdout, expected, "{label}: wrong output\n{out:?}");
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 1. Type and variant names start with an upper-case letter
-// ════════════════════════════════════════════════════════════════════
-
-#[test]
-fn a_lowercase_record_type_name_is_rejected() {
-    assert_rejected(
-        "lc_record",
-        "type point { x: Int, y: Int }\n\
-         fn main() {\n  let p = point { x: 1, y: 2 }\n  println(p.x)\n}\n",
-        &[
-            "type name 'point' must start with an uppercase letter",
-            "`type Point`",
-            "main.silt:1:6",
-        ],
-    );
-}
-
-#[test]
-fn a_lowercase_type_alias_name_is_rejected() {
-    assert_rejected(
-        "lc_alias",
-        "type meters = Int\n\
-         fn grow(m: meters) -> meters = m + 1\n\
-         fn main() {\n  println(grow(1))\n}\n",
-        &["type name 'meters' must start with an uppercase letter"],
-    );
-}
-
-#[test]
-fn a_lowercase_enum_type_name_is_rejected() {
-    assert_rejected(
-        "lc_enum",
-        "type color { Red, Green }\n\
-         fn main() {\n  println(Green)\n}\n",
-        &["type name 'color' must start with an uppercase letter"],
-    );
-}
-
-/// A type name that starts with `_` resolves as a named type wherever it
-/// is written, so it is not refused.
-#[test]
-fn a_type_name_starting_with_an_underscore_is_accepted() {
-    assert_runs(
-        "underscore_type",
-        "type _Meters = Int\nfn f(m: _Meters) -> Int { m + 1 }\nfn main() { println(f(3)) }\n",
-        "4\n",
-    );
-}
-
-/// A variant that starts with `_` binds a variable in a pattern, so it is
-/// refused; the hint suggests the name without the underscore.
-#[test]
-fn a_variant_starting_with_an_underscore_is_refused_with_a_usable_hint() {
-    assert_rejected(
-        "underscore_variant",
-        "type Color { _Red, Green }\nfn main() { println(1) }\n",
-        &[
-            "enum variant '_Red' must start with an uppercase letter",
-            "e.g. `Red`",
-        ],
-    );
-}
-
-#[test]
-fn a_lowercase_enum_variant_is_rejected() {
-    assert_rejected(
-        "lc_variant",
-        "type Color { Red, green }\n\
-         fn main() {\n  let c = Red\n  match c {\n    Red -> println(\"red\")\n    green -> println(\"green\")\n  }\n}\n",
-        &[
-            "enum variant 'green' must start with an uppercase letter",
-            "`Green`",
-            "main.silt:1:19",
-        ],
-    );
-}
-
-/// A body whose first name is lower case is read as a record, so a
-/// lower-case first variant fails as a record field without `:`. The
-/// message says what a variant has to look like.
-#[test]
-fn a_lowercase_first_enum_variant_gets_a_variant_hint() {
-    assert_rejected(
-        "lc_first_variant",
-        "type Color { red, Green }\nfn main() {\n  println(Green)\n}\n",
-        &[
-            "expected `:` after record field 'red'",
-            "variant names start with an uppercase letter",
-            "`Red`",
-        ],
-    );
-    assert_rejected(
-        "lc_first_variant_fields",
-        "type Shape {\n  circle(Float)\n  Square(Float)\n}\nfn main() {\n  println(1)\n}\n",
-        &["variant names start with an uppercase letter", "`Circle`"],
-    );
-}
-
-/// Guard (passes before and after the fix): upper-case types, variants
-/// and aliases with lower-case record fields keep working.
-#[test]
-fn uppercase_type_and_variant_names_keep_working() {
-    assert_runs(
-        "uc_names",
-        "type Point { x: Int, y: Int }\n\
-         type Color { Red, Green(Int) }\n\
-         type Meters = Int\n\
-         fn grow(m: Meters) -> Meters = m + 1\n\
-         fn main() {\n  let p = Point { x: 1, y: 2 }\n  let c = Green(3)\n  match c {\n    \
-         Red -> println(\"red\")\n    Green(n) -> println(\"green {n} {p.x} {grow(p.y)}\")\n  }\n}\n",
-        "green 3 1 3\n",
-    );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 2. Expression depth
-// ════════════════════════════════════════════════════════════════════
-
-/// `let r = x + x + ... + x` with `operators` operators, on line 3; the
-/// expression starts in column 11.
-fn plus_chain(operators: usize) -> String {
-    let tail = " + x".repeat(operators);
-    format!("fn main() {{\n  let x = 1\n  let r = x{tail}\n  println(r)\n}}\n")
-}
-
-/// `let r = x.same().same()...` with `calls` method calls.
-fn method_chain(calls: usize) -> String {
-    let tail = ".same()".repeat(calls);
-    format!(
-        "trait Same {{\n  fn same(self) -> Int\n}}\n\
-         trait Same for Int {{\n  fn same(self) -> Int = self\n}}\n\
-         fn main() {{\n  let x = 7\n  let r = x{tail}\n  println(r)\n}}\n"
-    )
-}
-
-#[test]
-fn a_chain_of_2048_operators_is_accepted() {
-    assert_runs("plus_2048", &plus_chain(2048), "2049\n");
-}
-
-#[test]
-fn a_chain_of_2049_operators_is_refused_at_the_start_of_the_expression() {
-    let out = run_program("plus_2049", "check", &plus_chain(2049));
-    assert_eq!(out.code, Some(1), "2049 operators must be refused\n{out:?}");
-    assert!(
-        out.stderr.contains("expression is too deep")
-            && out.stderr.contains("more than 2048 levels")
-            && out.stderr.contains("adds two"),
-        "the message must state the limit and how it is counted\n{out:?}"
-    );
-    assert!(
-        out.stderr.contains("main.silt:3:11"),
-        "the error must point at the start of the expression\n{out:?}"
-    );
-}
-
-#[test]
-fn a_chain_of_1024_method_calls_is_accepted() {
-    assert_runs("method_1024", &method_chain(1024), "7\n");
-}
-
-#[test]
-fn a_chain_of_1025_method_calls_is_refused_and_the_message_says_why() {
-    let out = run_program("method_1025", "check", &method_chain(1025));
-    assert_eq!(
-        out.code,
-        Some(1),
-        "1025 method calls must be refused\n{out:?}"
-    );
-    assert!(
-        out.stderr.contains("more than 2048 levels")
-            && out.stderr.contains("a method call `x.f()` adds two"),
-        "the message must explain that a method call counts as two\n{out:?}"
-    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -494,58 +273,6 @@ fn an_arrow_diagnostic_on_the_arrow_still_gets_the_rewrite() {
     assert!(
         text.contains("Fn(Int) -> Int"),
         "the quick fix must rewrite `(Int -> Int)` to `Fn(Int) -> Int`\n{response}"
-    );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 4. No negative-zero Float
-// ════════════════════════════════════════════════════════════════════
-
-#[test]
-fn builtins_never_produce_a_negative_zero_float() {
-    assert_runs(
-        "negative_zero",
-        "import float\nimport math\n\
-         fn num(s: String) -> Float {\n  match float.parse(s) {\n    Ok(f) -> f\n    Err(_) -> 1.0\n  }\n}\n\
-         fn main() {\n  \
-         let a = num(\"-0.0\")\n  println(\"parse {a} {float.to_string(a)}\")\n  \
-         let b = num(\"-1e-400\")\n  println(\"underflow {b} {float.to_string(b)}\")\n  \
-         let c = math.atan2(num(\"-1e-300\"), num(\"1e300\"))\n  println(\"atan2 {c} {float.to_string(c)}\")\n\
-         }\n",
-        "parse 0 0.0\nunderflow 0 0.0\natan2 0 0.0\n",
-    );
-}
-
-/// The Float producers outside numeric.rs: `list.product_float`, and the
-/// JSON and TOML decoders of a `Float` field. A `Float` is finite, so a
-/// TOML `nan` does not decode into one.
-#[test]
-fn decoders_and_list_product_never_produce_a_negative_zero_float() {
-    assert_runs(
-        "negative_zero_producers",
-        r#"import float
-import list
-import json
-import toml
-type R { x: Float }
-fn main() {
-  let p = list.product_float([-1.0, 0.0])
-  println("product {p} {float.to_string(p)}")
-  match json.parse("\{\"x\": -0.0}", R) {
-    Ok(r) -> println("json {r.x} {float.to_string(r.x)}")
-    Err(e) -> println("json err {e}")
-  }
-  match toml.parse("x = -0.0", R) {
-    Ok(r) -> println("toml {r.x} {float.to_string(r.x)}")
-    Err(e) -> println("toml err {e}")
-  }
-  match toml.parse("x = nan", R) {
-    Ok(r) -> println("nan accepted {r.x}")
-    Err(_) -> println("nan rejected")
-  }
-}
-"#,
-        "product 0 0.0\njson 0 0.0\ntoml 0 0.0\nnan rejected\n",
     );
 }
 

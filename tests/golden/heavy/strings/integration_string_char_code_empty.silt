@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: empty string
+import string
+fn main() { string.char_code("") }

@@ -1,0 +1,15 @@
+import io
+import list
+fn program() {
+  loop n = 1, acc = [] {
+    match {
+      n > 5 -> acc
+      n % 2 == 0 -> loop(n + 1, list.append(acc, n))
+      _ -> loop(n + 1, acc)
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

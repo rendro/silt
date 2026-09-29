@@ -1,0 +1,21 @@
+-- repeat: 3
+-- Rendezvous: sender blocks until receiver is ready.
+-- Receive before join to avoid deadlock.
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new()
+
+  let producer = task.spawn(fn() {
+    channel.send(ch, 99)
+  })
+
+  when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
+  task.join(producer)
+  val
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

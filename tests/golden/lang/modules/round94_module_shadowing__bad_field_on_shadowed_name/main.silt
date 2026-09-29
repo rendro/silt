@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: 'nope'
+-- stderr-not-contains: on module
+import other
+type P { year: Int }
+fn f(other: P) -> Int { other.nope }
+fn main() { println(f(P { year: 5 })) }

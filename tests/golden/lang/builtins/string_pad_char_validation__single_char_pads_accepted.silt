@@ -1,0 +1,9 @@
+import string
+fn main() {
+  -- pad_left_accepts_single_char_pad
+  println(string.pad_left("42", 5, "0"))
+  -- pad_right_accepts_single_char_pad
+  println(string.pad_right("hi", 5, "."))
+  -- pad_left_accepts_multibyte_single_char_pad: bytes != chars
+  println(string.pad_left("hi", 5, "é"))
+}

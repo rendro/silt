@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '==' requires a comparable type
+fn f() { 1 }
+fn g() { 2 }
+fn main() { println(f == g) }

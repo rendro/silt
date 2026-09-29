@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- Distinct methods from distinct traits on one type are fine.
+trait A { fn alpha(self) -> Int }
+trait B { fn beta(self) -> Int }
+trait A for Int { fn alpha(self) -> Int { 1 } }
+trait B for Int { fn beta(self) -> Int { 2 } }
+fn main() {
+  println((5).alpha())
+  println((5).beta())
+}

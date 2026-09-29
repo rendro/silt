@@ -1,0 +1,42 @@
+-- repeat: 3
+-- Multiple receivers on one rendezvous channel — each message goes to exactly one.
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new()
+  let results = channel.new(10)
+
+  let r1 = task.spawn(fn() {
+    when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
+    channel.send(results, v * 2)
+  })
+  let r2 = task.spawn(fn() {
+    when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
+    channel.send(results, v * 2)
+  })
+  let r3 = task.spawn(fn() {
+    when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
+    channel.send(results, v * 2)
+  })
+
+  -- Send three messages; each receiver gets exactly one
+  channel.send(ch, 10)
+  channel.send(ch, 20)
+  channel.send(ch, 30)
+
+  task.join(r1)
+  task.join(r2)
+  task.join(r3)
+
+  when let Message(a) = channel.receive(results) else { panic("pattern did not match") }
+  when let Message(b) = channel.receive(results) else { panic("pattern did not match") }
+  when let Message(c) = channel.receive(results) else { panic("pattern did not match") }
+
+  -- Sum: (10+20+30)*2 = 120
+  a + b + c
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

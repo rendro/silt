@@ -1,0 +1,8 @@
+trait Pretty { fn pretty(self) -> String }
+trait Pretty for Map { fn pretty(self) -> String = "map" }
+fn show(x: a) -> String where a: Pretty { x.pretty() }
+fn main() {
+  let m = #{"a": 1}
+  println(m.pretty())
+  println(show(m))
+}

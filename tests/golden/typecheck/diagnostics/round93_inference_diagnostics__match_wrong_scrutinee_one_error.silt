@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A match of Result arms against an Int reports exactly one error and no non-exhaustive cascade (exact stderr).
+fn main() {
+  let r = match 42 {
+    Ok(v) -> v,
+    Err(e) -> 0,
+  }
+  println(r)
+}

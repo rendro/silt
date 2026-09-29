@@ -1,0 +1,23 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- Cancelling a task parked on a receive leaves the scheduler clean: a
+-- later main-thread rendezvous receive completes, no false deadlock.
+import channel
+import task
+import time
+
+fn main() {
+  let dead = channel.new(0)
+  let victim = task.spawn(fn() { channel.receive(dead) })
+  time.sleep(time.ms(50))
+  task.cancel(victim)
+  time.sleep(time.ms(50))
+  let ch = channel.new(0)
+  let feeder = task.spawn(fn() { channel.send(ch, 42) })
+  let got = match channel.receive(ch) {
+    Message(v) -> v
+    _ -> 0
+  }
+  let _ = task.join(feeder)
+  println("{got}")
+}

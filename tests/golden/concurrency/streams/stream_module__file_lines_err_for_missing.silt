@@ -1,0 +1,9 @@
+-- The first chunk of file_lines on a missing file is the open error.
+import stream
+fn main() {
+  match stream.first(stream.file_lines("/definitely/not/a/real/path/__silt_test")) {
+    Some(Err(_)) -> println("Some(Err)")
+    Some(Ok(line)) -> println("Some(Ok({line}))")
+    None -> println("None")
+  }
+}

@@ -1,0 +1,12 @@
+import io
+import list
+import map
+fn program() {
+  let xs = [1, 2, 3, 4, 5, 6]
+  let groups = xs |> list.group_by { x -> x % 2 }
+  map.get(groups, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,20 @@
+-- cmd: test --filter add
+-- exit: 0
+-- stderr-contains: PASS wave1_tooling__guard_filter_selects_by_name.silt::test_add_small
+-- stderr-contains: PASS wave1_tooling__guard_filter_selects_by_name.silt::test_add_big
+-- stderr-contains: SKIP wave1_tooling__guard_filter_selects_by_name.silt::skip_test_add_later
+-- stderr-contains: 3 tests: 2 passed, 0 failed, 1 skipped
+-- stderr-not-contains: test_subtract
+import test
+fn test_add_small() {
+  test.assert_eq(1 + 1, 2)
+}
+fn test_subtract() {
+  test.assert_eq(5 - 3, 2)
+}
+pub fn test_add_big() {
+  test.assert_eq(100 + 200, 300)
+}
+fn skip_test_add_later() {
+  test.assert(false)
+}

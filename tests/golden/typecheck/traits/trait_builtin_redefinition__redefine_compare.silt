@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Redeclaring builtin trait Compare is one clean error with no "missing method" cascade (exact stderr).
+-- stderr-contains: trait 'Compare' is a builtin trait and cannot be redefined
+-- stderr-not-contains: missing method
+trait Compare { fn foo(self) -> Bool }
+fn main() { println(1) }

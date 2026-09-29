@@ -1,0 +1,6 @@
+type Color { Red, Green, Blue, }
+trait Compare for Color {
+    fn compare(self: Color, other: Color) -> Int = 0 - 42
+}
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() { println(cmp_gen(Red, Green)) }

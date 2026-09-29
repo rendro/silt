@@ -1,0 +1,12 @@
+import toml
+import list
+type Point { x: Int, y: Int }
+fn run_main() {
+  let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
+  match toml.parse_list(input, Point) {
+    Ok(pts) -> list.length(pts)
+    Err(_) -> 0
+  }
+}
+
+fn main() { println(run_main()) }

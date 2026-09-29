@@ -1,0 +1,14 @@
+import io
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+fn program() {
+  sum([1, 2, 3, 4, 5])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

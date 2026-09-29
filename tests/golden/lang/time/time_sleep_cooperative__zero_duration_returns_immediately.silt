@@ -1,0 +1,9 @@
+import task
+import time
+fn main() {
+  let h = task.spawn(fn() {
+    time.sleep(time.ms(0))
+    println("zero-ok")
+  })
+  task.join(h)
+}

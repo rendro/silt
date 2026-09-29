@@ -1,0 +1,6 @@
+import http
+import map
+fn main() {
+  let f = http.parse_query
+  println(map.length(f("a=1&b=2")))
+}

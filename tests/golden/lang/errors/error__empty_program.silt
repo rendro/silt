@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- An empty program is reported cleanly, without a crash.

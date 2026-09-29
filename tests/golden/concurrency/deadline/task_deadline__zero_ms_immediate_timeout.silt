@@ -1,0 +1,15 @@
+-- A 0ms deadline is already past when io.read_file runs: it returns the
+-- deadline Err without doing the I/O.
+import io
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(0), fn() {
+    io.read_file("/tmp/silt_td_unused.txt")
+  })
+  match outcome {
+    Ok(s) -> println(s)
+    Err(msg) -> println(msg)
+  }
+}

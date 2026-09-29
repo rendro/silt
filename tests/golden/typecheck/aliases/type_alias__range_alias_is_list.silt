@@ -1,0 +1,5 @@
+-- An alias of Range(Int) accepts a List(Int).
+import list
+type PhDR = Range(Int)
+fn f(x: PhDR) -> Int { list.length(x) }
+fn main() { println(f([1, 2, 3, 4, 5])) }

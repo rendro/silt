@@ -1,0 +1,3 @@
+-- cmd: check
+-- exit: 1
+fn main() { pintln("hello") }

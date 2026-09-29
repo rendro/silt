@@ -1,0 +1,8 @@
+import fs
+fn main() {
+  let outcome = match fs.list_dir("no_such_dir") {
+    Ok(_) -> "unexpected"
+    Err(_) -> "error"
+  }
+  println(outcome)
+}

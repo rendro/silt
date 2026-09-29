@@ -1,0 +1,13 @@
+import fs
+import io
+import list
+fn main() {
+  let _ = fs.mkdir("listed")
+  let _ = io.write_file("listed/alpha.txt", "a")
+  let _ = io.write_file("listed/beta.txt", "b")
+  let entries = match fs.list_dir("listed") {
+    Ok(entries) -> list.sort(entries)
+    Err(_) -> []
+  }
+  println(io.inspect(entries))
+}

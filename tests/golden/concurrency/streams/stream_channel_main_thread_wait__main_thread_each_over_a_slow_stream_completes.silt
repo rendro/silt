@@ -1,0 +1,18 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- `channel.each` on the main thread over a stream with a slow stage,
+-- in a program with no `task.spawn`, so no scheduler ever exists. The
+-- stage sleeps before every element, so the channel is empty each time
+-- the main thread looks.
+import channel
+import stream
+import time
+
+fn main() {
+  let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
+    time.sleep(time.ms(300))
+    x * 10
+  }
+  channel.each(out) { v -> println(v) }
+  println("done")
+}

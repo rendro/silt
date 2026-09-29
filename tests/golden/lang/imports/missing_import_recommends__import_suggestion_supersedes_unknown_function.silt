@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: module 'list' is not imported
+-- stderr-not-contains: unknown function 'notafunction'
+fn main() {
+    list.notafunction([1, 2, 3])
+}

@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { (time.days_in_month(2024, 2), time.days_in_month(2023, 2), time.days_in_month(2024, 7)) }
+
+fn main() {
+  println(io.inspect(program()))
+}

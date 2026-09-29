@@ -1,0 +1,14 @@
+-1
+0
+true
+Node(Leaf, Leaf)
+-1
+GLeaf
+-1
+true
+false
+Big { a: 1, b: 2, c: 3, d: x }
+-1
+-1
+false
+Failed(2, z)

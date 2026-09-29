@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.sum([1, 2, 3, 4])) }

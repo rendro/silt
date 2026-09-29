@@ -1,0 +1,2 @@
+-- The preregistered Equal impl on Int still works.
+fn main() { println(1 == 1) }

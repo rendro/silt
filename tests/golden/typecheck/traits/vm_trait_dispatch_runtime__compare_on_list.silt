@@ -1,0 +1,9 @@
+-- `.compare()` on List(Int) through a Compare bound orders element-wise.
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+  let x: List(Int) = [1, 2, 3]
+  let y: List(Int) = [1, 2, 4]
+  println(cmp_gen(x, y))
+  println(cmp_gen(y, x))
+  println(cmp_gen(x, x))
+}

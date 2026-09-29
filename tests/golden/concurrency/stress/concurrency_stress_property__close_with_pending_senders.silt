@@ -1,0 +1,36 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: panicked
+-- stdout-contains: drained=
+-- Closing a small buffered channel while senders are active: the buffer
+-- drains and the program exits cleanly (the count varies with timing).
+import channel
+import list
+import task
+import time
+
+fn main() {
+  let ch = channel.new(2)   -- small buffer; most senders will block
+  let done = channel.new(8)
+  -- 8 senders; buffer is 2, so 6 will block waiting.
+  let senders = 1..8
+    |> list.map { i -> task.spawn(fn() {
+      let _ = channel.try_send(ch, i)
+      let _ = channel.try_send(done, i)
+    }) }
+  time.sleep(time.ms(10))
+  channel.close(ch)
+  -- Drain the buffer until Closed.
+  let drained = loop c = 0 {
+    match channel.try_receive(ch) {
+      Message(_v) -> loop(c + 1)
+      Empty -> c
+      Closed -> c
+      Sent -> c
+    }
+  }
+  senders |> list.each { h ->
+    let _ = task.join(h)
+  }
+  println("drained={drained}")
+}

@@ -1,0 +1,5 @@
+1..10: no yes yes no
+-10..-1: no yes yes no
+-5..5: no yes yes no
+1..-1: no no no
+-3..7: no yes yes no

@@ -39,64 +39,8 @@ fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::types::TypeError>) {
     (program, errors)
 }
 
-fn type_error_messages(errors: &[silt::types::TypeError]) -> Vec<String> {
-    errors
-        .iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message.clone())
-        .collect()
-}
-
-// ── F2: AnonRecord usage in a later let must suppress the
-//        "cannot infer" cascade ─────────────────────────────────────
-
-#[test]
-fn f2_anon_record_field_use_suppresses_cannot_infer_cascade() {
-    // The exact repro from the audit. `nullary()` returns an empty
-    // list (List(?a) at inference time). Without the F2 fix,
-    // `expr_references_name` did not recurse into
-    // `ExprKind::AnonRecord`, so `x`'s use inside `{ val: x }` was
-    // invisible to `check_unresolved_let_types`, which then fired the
-    // misleading "cannot infer the type of `x`" diagnostic.
-    let source = r#"
-fn nullary() = []
-fn main() {
-  let x = nullary()
-  let r = { val: x }
-  ()
-}
-"#;
-    let (_program, errors) = typecheck(source);
-    let messages = type_error_messages(&errors);
-    assert!(
-        !messages.iter().any(|m| m.contains("cannot infer")),
-        "AnonRecord field use must suppress 'cannot infer' cascade for `x` (round 67 F2); \
-         got errors: {messages:?}"
-    );
-}
-
-#[test]
-fn f2_anon_record_spread_use_suppresses_cannot_infer_cascade() {
-    // Same idea, but the use site is a *spread* head — exercises
-    // the `spread` arm that the fix recurses into. Without the F2
-    // fix, `r` is an unresolved bare Var (because `r2`'s spread is
-    // invisible) and a "cannot infer" error fires for `r`.
-    let source = r#"
-fn make() = ({ val: 1 })
-fn main() {
-  let r = make()
-  let r2 = { ...r, extra: 2 }
-  ()
-}
-"#;
-    let (_program, errors) = typecheck(source);
-    let messages = type_error_messages(&errors);
-    assert!(
-        !messages.iter().any(|m| m.contains("cannot infer")),
-        "AnonRecord spread head must keep the spread base reachable to the \
-         unresolved-let walker (round 67 F2); got errors: {messages:?}"
-    );
-}
+// F2 (the "cannot infer" cascade) is covered by the golden cases
+// tests/golden/lang/records/anon_record_resolve_recursion__*.silt.
 
 // ── F9: AnonRecord field-value sub-expression types must be
 //        substituted (no leftover bare Type::Var) ─────────────────

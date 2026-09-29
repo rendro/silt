@@ -1,0 +1,10 @@
+import encoding
+fn main() {
+  match encoding.form_decode("a=1&b=hello+world") {
+    Ok(pairs) -> match pairs {
+      [(_, v1), (_, v2)] -> println("{v1}|{v2}")
+      _ -> println("wrong-shape")
+    }
+    Err(e) -> println(e)
+  }
+}

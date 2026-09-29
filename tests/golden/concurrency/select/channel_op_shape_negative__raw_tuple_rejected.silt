@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: ChannelOp
+-- The old (Channel(a), a) send-arm tuple is rejected; use Send(ch, v).
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  let _ = channel.select([(ch, 1)])
+  ()
+}

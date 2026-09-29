@@ -1,0 +1,14 @@
+fn first() {
+  Color.Red
+}
+
+fn describe() {
+  Color.Green.display()
+}
+
+type Color { Red, Green }
+
+fn main() {
+  println(first())
+  println(describe())
+}

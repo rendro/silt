@@ -1,0 +1,9 @@
+-- exit: 1
+-- cmd: check
+-- stderr-contains: unknown function 'genuinely_missing' on module 'mymod'
+-- stderr-not-contains: but is not `pub`
+import mymod
+
+fn main() {
+  mymod.genuinely_missing()
+}

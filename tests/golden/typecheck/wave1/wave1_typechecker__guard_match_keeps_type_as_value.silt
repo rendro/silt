@@ -1,0 +1,19 @@
+-- exit: 0
+-- GUARD: an all-diverging match is accepted where a value is expected; a value arm keeps its type.
+fn always_fails(n: Int) -> Int {
+  match n {
+    0 -> panic("zero")
+    _ -> panic("other")
+  }
+}
+
+fn one_value_arm(n: Int) -> Int {
+  match n {
+    0 -> panic("zero")
+    _ -> n + 1
+  }
+}
+
+fn main() {
+  println(one_value_arm(1))
+}

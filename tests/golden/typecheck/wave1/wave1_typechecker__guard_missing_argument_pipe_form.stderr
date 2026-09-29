@@ -1,0 +1,11 @@
+error[type]: function expects 3 arguments, got 2
+ --> wave1_typechecker__guard_missing_argument_pipe_form.silt:10:11
+    |
+ 10 |   println([1, 2] |> list.fold(0))
+    |           ^ function expects 3 arguments, got 2
+
+error[type]: function expects 3 arguments, got 2
+ --> wave1_typechecker__guard_missing_argument_pipe_form.silt:11:11
+    |
+ 11 |   println("aXb" |> string.replace("X"))
+    |           ^ function expects 3 arguments, got 2

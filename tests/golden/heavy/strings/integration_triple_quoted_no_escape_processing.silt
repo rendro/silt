@@ -1,0 +1,9 @@
+-- \n should be literal backslash-n, not newline
+import io
+fn program() {
+  """hello\nworld"""
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

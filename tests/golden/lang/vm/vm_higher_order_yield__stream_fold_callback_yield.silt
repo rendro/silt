@@ -1,0 +1,15 @@
+-- the callback's io.read_file suspends the task mid-iteration
+import task
+import io
+import stream
+fn main() {
+  let h = task.spawn(fn() {
+    let s = stream.from_list([1, 2, 3])
+    stream.fold(s, 0, fn(acc, x) {
+      let _ = io.read_file("vm_higher_order_yield__stream_fold_callback_yield.silt")
+      acc + x
+    })
+  })
+  let v = task.join(h)
+  println(v)
+}

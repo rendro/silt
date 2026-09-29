@@ -1,0 +1,15 @@
+-- The closure is defined after the shadow, so it captures the inner value.
+import io
+fn program() {
+  let x = 1
+  let result = {
+    let x = 2
+    let f = fn() { x }
+    f()
+  }
+  result
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

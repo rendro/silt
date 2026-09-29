@@ -5,9 +5,9 @@
 //!   F12 — http client errors echoed URL credentials verbatim.
 //!   F18 — `Colors.dim` field was dead (written, never read); deleted.
 //!
-//! The F18 test is a dead-code idempotency lock (grep the source); F11
-//! and F12 are behaviour tests that must fail before the fix and pass
-//! after.
+//! F11 and F12 are behaviour tests that must fail before the fix and pass
+//! after. F11 runs an ill-typed program on purpose (a runtime defence), so
+//! it cannot be a golden case; F12 calls the redactor directly.
 
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
@@ -168,32 +168,4 @@ fn f12_http_get_unreachable_does_not_leak_password_in_err() {
         !scrubbed.contains("spyuser"),
         "wiring test: scrubber must strip user: {scrubbed}"
     );
-}
-
-// ── F18: dead-code lock — Colors.dim must stay deleted ────────────────
-
-#[test]
-fn f18_colors_dim_field_stays_deleted() {
-    let src = include_str!("../../src/errors.rs");
-    // The old declaration had `    dim: &'static str,` inside the struct
-    // and `    dim: "...",` inside both const initializers. All three
-    // lines mention `dim:` with a leading indent; grep for the field-
-    // style `    dim:` to catch any resurrection.
-    assert!(
-        !src.contains("    dim: &'static str"),
-        "Colors.dim field was deleted — don't resurrect it without a reader"
-    );
-    assert!(
-        !src.contains("pub dim:"),
-        "Colors.dim field was deleted — don't resurrect it without a reader (pub form)"
-    );
-    // Also ensure no initializer of the form `dim: "\x1b[2m"` or
-    // `dim: ""` comes back (both were removed together).
-    assert!(
-        !src.contains(r#"dim: "\x1b[2m""#),
-        "Colors.dim initializer (ON) was deleted — don't resurrect it"
-    );
-    // The empty-string variant is harder to pattern-match safely; the
-    // above two assertions are sufficient to catch resurrection because
-    // a field without a declaration or ON-initializer can't compile.
 }

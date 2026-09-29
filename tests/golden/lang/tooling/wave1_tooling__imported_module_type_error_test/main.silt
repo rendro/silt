@@ -1,0 +1,11 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- stderr-contains: helper.silt:2:24
+-- stderr-not-contains: PASS
+-- stderr-contains: 1 file failed to compile
+import test
+import helper
+fn test_double() {
+  test.assert_eq(helper.double(2), 4)
+}

@@ -3,7 +3,8 @@
 //! `time.sleep` must park the scheduled task on the shared timer thread
 //! rather than blocking the worker thread with `thread::sleep`. When
 //! sixteen tasks each sleep 500ms, wall time should be ~500ms (not
-//! serialized across the 4-ish worker pool).
+//! serialized across the 4-ish worker pool). The non-timing cases are
+//! golden cases `tests/golden/lang/time/time_sleep_cooperative__*`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -90,66 +91,5 @@ fn main() {
     assert!(
         wall < ceiling,
         "16 parallel 500ms sleeps took {wall:?}; expected under {ceiling:?} (cooperative park)"
-    );
-}
-
-#[test]
-fn test_time_sleep_returns_unit_after_delay_at_least_n_ms() {
-    // Single task sleeps 100ms. Confirms the delay still actually
-    // happens (guards against accidentally completing the
-    // IoCompletion instantly).
-    let src = r#"
-import task
-import test
-import time
-
-fn main() {
-  let h = task.spawn(fn() {
-    let before = time.now()
-    time.sleep(time.ms(100))
-    let elapsed = time.since(before, time.now())
-    test.assert(elapsed.ns >= 100000000)
-  })
-  task.join(h)
-  println("ok")
-}
-"#;
-    let (stdout, stderr, code, _wall) = run_silt(src);
-    assert_eq!(code, 0, "silt exit nonzero; stderr={stderr}");
-    assert!(
-        stdout.contains("ok"),
-        "expected 'ok' in stdout; got {stdout:?}"
-    );
-}
-
-#[test]
-fn test_time_sleep_zero_duration_returns_immediately_no_yield() {
-    // `time.sleep` with a zero duration should return Unit without
-    // any yield or delay. This exercises the dur_ns <= 0 fast path
-    // and preserves the pre-fix behavior.
-    let src = r#"
-import task
-import time
-
-fn main() {
-  let h = task.spawn(fn() {
-    time.sleep(time.ms(0))
-    println("zero-ok")
-  })
-  task.join(h)
-}
-"#;
-    let (stdout, stderr, code, wall) = run_silt(src);
-    assert_eq!(code, 0, "silt exit nonzero; stderr={stderr}");
-    assert!(
-        stdout.contains("zero-ok"),
-        "expected 'zero-ok' in stdout; got {stdout:?}"
-    );
-    // Very generous bound: the silt process itself takes time to spin
-    // up. We just want to ensure the sleep(0) did NOT itself cause a
-    // multi-second pause.
-    assert!(
-        wall < Duration::from_secs(5),
-        "time.sleep(0) wall time {wall:?} unexpectedly high"
     );
 }

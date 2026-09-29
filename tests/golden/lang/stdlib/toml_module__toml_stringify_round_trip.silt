@@ -1,0 +1,17 @@
+import toml
+type User { name: String, age: Int, active: Bool }
+fn run_main() {
+  let input = "name = \"Alice\"\nage = 30\nactive = true\n"
+  match toml.parse(input, User) {
+    Ok(u1) -> match toml.stringify(u1) {
+      Ok(s) -> match toml.parse(s, User) {
+        Ok(u2) -> u2.name
+        Err(_) -> "parse2 failed"
+      }
+      Err(_) -> "stringify failed"
+    }
+    Err(_) -> "parse1 failed"
+  }
+}
+
+fn main() { println(run_main()) }

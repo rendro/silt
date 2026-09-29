@@ -1,0 +1,5 @@
+-- exit: 1
+fn helper() { 1 / 0 }
+fn middle() { helper() }
+fn outer() { middle() }
+fn main() { outer() }

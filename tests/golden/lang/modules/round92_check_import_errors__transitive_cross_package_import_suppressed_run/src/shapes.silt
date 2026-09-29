@@ -1,0 +1,3 @@
+import mathx
+
+pub fn nine(x: Int) -> Int = mathx.triple(x) * 3

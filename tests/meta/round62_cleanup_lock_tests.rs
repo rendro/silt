@@ -1,19 +1,7 @@
 //! Round 62 audit-cleanup regression locks.
 //!
-//! Round 62 swept four maintenance findings flagged by the audit:
-//!
-//! - L4: 27 stale `#[allow(dead_code)]` annotations on live `*_MD`
-//!   constants and helper fns in `src/typechecker/builtins/docs.rs`.
-//! - L5: two unused `pub fn`s (`clear_aliases`,
-//!   `clear_assoc_bindings`) in `src/types/canonical.rs`.
-//! - L6: weak-OR `joined.contains("arity")` substring branch in
-//!   `tests/lang/record_arity_tests.rs` whose `"arity"` token does not
-//!   appear in the canonical post-round-60 diagnostic.
-//! - L7: vim grammar covered fewer operators than vscode; round 62
-//!   extended vim and locked the operator-set parity here.
-//!
-//! Each test below is a single-purpose source-text lock against the
-//! corresponding finding so future drift surfaces immediately.
+//! L7: the vim grammar covered fewer operators than vscode; round 62
+//! extended vim and locked the operator-set parity here.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -26,71 +14,6 @@ fn repo_root() -> PathBuf {
 fn read_repo_file(rel: &str) -> String {
     let path = repo_root().join(rel);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
-}
-
-/// L4: every `#[allow(dead_code)]` annotation in
-/// `src/typechecker/builtins/docs.rs` is stale — every annotated
-/// symbol has at least one in-tree caller under default features
-/// (verified by grep at the time of the round 62 sweep). Lock the
-/// file against any reintroduction of the annotation.
-#[test]
-fn typechecker_builtins_docs_has_no_stale_allow_dead_code() {
-    let src = read_repo_file("src/typechecker/builtins/docs.rs");
-    assert!(
-        !src.contains("#[allow(dead_code)]"),
-        "src/typechecker/builtins/docs.rs must not contain any \
-         `#[allow(dead_code)]` annotations — every `*_MD` constant and \
-         every `attach_module_*` helper has live callers under default \
-         features. If a new dead annotation creeps in, either the \
-         caller was removed (in which case delete the symbol too) or \
-         the annotation is a stale carry-over from an earlier phase \
-         (in which case delete the annotation)."
-    );
-}
-
-/// L5: `clear_aliases` and `clear_assoc_bindings` had zero callers
-/// across the entire repo; their docstrings advertised them as test-
-/// isolation hooks but no test actually used them. Round 62 deleted
-/// both functions and rewrote the cross-reference comments to
-/// document the absence honestly. Lock the source against any silent
-/// reintroduction of either function.
-#[test]
-fn canonical_does_not_export_unused_clear_helpers() {
-    let src = read_repo_file("src/types/canonical.rs");
-    assert!(
-        !src.contains("pub fn clear_aliases"),
-        "src/types/canonical.rs must not export `clear_aliases` — the \
-         alias registry is intentionally process-global and not cleared \
-         between checks. If a real caller appears (e.g. an out-of- \
-         process integration harness), reintroduce the function with a \
-         docstring that names the caller and remove this lock."
-    );
-    assert!(
-        !src.contains("pub fn clear_assoc_bindings"),
-        "src/types/canonical.rs must not export `clear_assoc_bindings` \
-         — same rationale as `clear_aliases`. Reintroduce only when a \
-         real caller exists."
-    );
-}
-
-/// L6: the canonical post-round-60 arity diagnostic is
-/// `"type argument count mismatch for <name>: expected 0, got <n>"`.
-/// The bare `joined.contains("arity")` substring branch deleted in
-/// round 62 was a future-drift escape hatch — the canonical phrase
-/// does NOT contain the word "arity", so the branch was dead AND
-/// would silently mask a rephrasing that dropped both anchored
-/// phrases. Lock the test source against a reintroduction of the
-/// weak-OR branch.
-#[test]
-fn record_arity_test_does_not_use_weak_or_substring() {
-    let src = read_repo_file("tests/lang/record_arity_tests.rs");
-    assert!(
-        !src.contains("joined.contains(\"arity\")"),
-        "tests/lang/record_arity_tests.rs must not weak-OR on the bare \
-         substring `\"arity\"` — the canonical post-round-60 \
-         diagnostic does not contain that token. Anchor the assertion \
-         on the canonical phrase (`expected 0` and `got`) instead."
-    );
 }
 
 /// L7: extract the operator-literal set covered by each editor

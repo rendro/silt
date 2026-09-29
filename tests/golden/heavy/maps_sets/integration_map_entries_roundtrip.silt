@@ -1,0 +1,12 @@
+import io
+import map
+fn program() {
+  let m = #{ "a": 1, "b": 2 }
+  let entries = map.entries(m)
+  let rebuilt = map.from_entries(entries)
+  map.get(rebuilt, "a")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

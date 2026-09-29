@@ -19,7 +19,13 @@
 //! E1 fix) must keep working — locked here by the control test.
 //!
 //! Full RUN-path tests: each builds real packages on disk (silt.toml +
-//! src/ + path-dep manifest) and executes via the CLI binary.
+//! src/ + path-dep manifest) and executes via the CLI binary. The
+//! path-dep cases are golden cases
+//! `tests/golden/lang/packages/round93_dep_error_attribution__*`. The
+//! sibling-module control stays here because it needs the entry file at
+//! `src/main.silt` (the golden harness runs a case-root `main.silt`, and
+//! with the entry outside `src/` the renderer attributes a `src/util.silt`
+//! error to `main.silt`); the git-dep variant needs git and an env var.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -105,117 +111,6 @@ fn locator_line(stderr: &str) -> &str {
         .unwrap_or_else(|| panic!("no `-->` locator line in stderr:\n{stderr}"))
 }
 
-// Note on the dep-side spans: `a / b` in the dep's lib.silt is at
-// 4:3 (lines 1-2 are `import inner` + blank); in inner.silt it's at
-// 2:3. The PRE-fix bug rendered exactly those line:col pairs against
-// main.silt — so every dep-side assertion checks BOTH the file name
-// and that main.silt is absent from the same line.
-
-/// Finding case 1: a runtime error inside a path-dep function must be
-/// attributed to the DEP's lib.silt (file + line:col), both in the
-/// `-->` locator and in the call-stack frame, and main.silt must NOT
-/// appear as the error location.
-///
-/// Pre-fix: locator was `--> .../app/src/main.silt:4:3` (a caret on
-/// main's closing-brace line) and the stack frame read
-/// `divide at .../main.silt:4:3`.
-#[test]
-fn runtime_error_in_path_dep_attributes_to_dep_lib() {
-    let ws = temp_workspace("path_dep");
-    let main_path = build_workspace(
-        &ws,
-        "import r93_mathdep\n\nfn main() {\n  r93_mathdep.divide(1, 0)\n}\n",
-    );
-    let (stderr, ok) = silt_run(&main_path);
-    assert!(!ok, "division by zero must exit non-zero; stderr={stderr}");
-    assert!(
-        stderr.contains("division by zero"),
-        "expected division-by-zero error; stderr={stderr}"
-    );
-
-    let locator = locator_line(&stderr);
-    assert!(
-        locator.contains("r93_mathdep") && locator.contains("lib.silt:4:3"),
-        "error location must be the dep's lib.silt:4:3; locator={locator}\nstderr={stderr}"
-    );
-    assert!(
-        !locator.contains("main.silt"),
-        "importer's main.silt must NOT appear as the error location; locator={locator}\nstderr={stderr}"
-    );
-
-    // Call-stack frame for `divide` must point into the dep too.
-    let divide_frame = stderr
-        .lines()
-        .find(|l| l.trim_start().starts_with("->") && l.contains("divide"))
-        .unwrap_or_else(|| panic!("no `divide` call-stack frame in stderr:\n{stderr}"));
-    assert!(
-        divide_frame.contains("r93_mathdep") && divide_frame.contains("lib.silt:4:3"),
-        "`divide` frame must point at the dep's lib.silt:4:3; frame={divide_frame}\nstderr={stderr}"
-    );
-    assert!(
-        !divide_frame.contains("main.silt"),
-        "`divide` frame must not point at main.silt; frame={divide_frame}\nstderr={stderr}"
-    );
-
-    // The `main` frame still legitimately points at main.silt (the call
-    // site) — sanity-check the renderer didn't swing the other way.
-    let main_frame = stderr
-        .lines()
-        .find(|l| l.trim_start().starts_with("->") && l.contains("main  at"))
-        .unwrap_or_else(|| panic!("no `main` call-stack frame in stderr:\n{stderr}"));
-    assert!(
-        main_frame.contains("main.silt:4:3"),
-        "`main` frame must keep pointing at the call site in main.silt; frame={main_frame}\nstderr={stderr}"
-    );
-
-    let _ = std::fs::remove_dir_all(&ws);
-}
-
-/// Nested case: the dep's lib.silt imports its OWN sibling module
-/// (`inner`); an error inside that sibling must attribute to the dep's
-/// inner.silt, resolved against the DEP's source root — not the
-/// consumer's, and not the dep's lib.silt.
-#[test]
-fn runtime_error_in_dep_sibling_module_attributes_to_dep_file() {
-    let ws = temp_workspace("dep_sibling");
-    let main_path = build_workspace(
-        &ws,
-        "import r93_mathdep\n\nfn main() {\n  r93_mathdep.divide_deep(1, 0)\n}\n",
-    );
-    let (stderr, ok) = silt_run(&main_path);
-    assert!(!ok, "division by zero must exit non-zero; stderr={stderr}");
-
-    let locator = locator_line(&stderr);
-    assert!(
-        locator.contains("r93_mathdep") && locator.contains("inner.silt:2:3"),
-        "error location must be the dep's inner.silt:2:3; locator={locator}\nstderr={stderr}"
-    );
-    assert!(
-        !locator.contains("main.silt") && !locator.contains("lib.silt"),
-        "neither main.silt nor lib.silt may be the error location; locator={locator}\nstderr={stderr}"
-    );
-
-    // Frames: deep_div → inner.silt, divide_deep → lib.silt.
-    let deep_frame = stderr
-        .lines()
-        .find(|l| l.trim_start().starts_with("->") && l.contains("deep_div"))
-        .unwrap_or_else(|| panic!("no `deep_div` frame in stderr:\n{stderr}"));
-    assert!(
-        deep_frame.contains("inner.silt:2:3"),
-        "`deep_div` frame must point at the dep's inner.silt:2:3; frame={deep_frame}\nstderr={stderr}"
-    );
-    let wrapper_frame = stderr
-        .lines()
-        .find(|l| l.trim_start().starts_with("->") && l.contains("divide_deep"))
-        .unwrap_or_else(|| panic!("no `divide_deep` frame in stderr:\n{stderr}"));
-    assert!(
-        wrapper_frame.contains("lib.silt:8:3"),
-        "`divide_deep` frame must point at the dep's lib.silt:8:3; frame={wrapper_frame}\nstderr={stderr}"
-    );
-
-    let _ = std::fs::remove_dir_all(&ws);
-}
-
 /// Control (E1, prior fix — must pass before AND after): an error in a
 /// sibling module of the importer's OWN package still attributes to
 /// that sibling file.
@@ -248,39 +143,6 @@ fn sibling_module_attribution_still_correct() {
     assert!(
         boom_frame.contains("util.silt:2:3"),
         "`boom` frame must point at util.silt:2:3; frame={boom_frame}\nstderr={stderr}"
-    );
-
-    let _ = std::fs::remove_dir_all(&ws);
-}
-
-/// Control: an error in the importer's OWN code (with a dep imported
-/// and successfully used) still attributes to main.silt at the correct
-/// line:col — the dep mapping must not steal attribution of main-file
-/// frames.
-#[test]
-fn error_in_importer_own_code_attributes_to_main() {
-    let ws = temp_workspace("own_code");
-    let main_path = build_workspace(
-        &ws,
-        "import r93_mathdep\n\nfn main() {\n  let ok = r93_mathdep.divide(4, 2)\n  println(ok)\n  1 / 0\n}\n",
-    );
-    let (stderr, ok) = silt_run(&main_path);
-    assert!(!ok, "division by zero must exit non-zero; stderr={stderr}");
-
-    let locator = locator_line(&stderr);
-    assert!(
-        locator.contains("main.silt:6:3"),
-        "error location must be main.silt:6:3 (the `1 / 0` in main); locator={locator}\nstderr={stderr}"
-    );
-    assert!(
-        !locator.contains("lib.silt") && !locator.contains("inner.silt"),
-        "no dep file may be the error location; locator={locator}\nstderr={stderr}"
-    );
-    // The rendered snippet must be main's own line, proving the right
-    // SOURCE text was used (not just the right path label).
-    assert!(
-        stderr.contains("1 / 0"),
-        "snippet must show main's `1 / 0` line; stderr={stderr}"
     );
 
     let _ = std::fs::remove_dir_all(&ws);

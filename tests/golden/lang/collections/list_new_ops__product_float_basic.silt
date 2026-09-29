@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.product_float([1.5, 2.0, 4.0])) }

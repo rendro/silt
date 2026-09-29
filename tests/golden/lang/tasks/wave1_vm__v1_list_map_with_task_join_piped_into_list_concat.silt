@@ -1,0 +1,14 @@
+-- repeat: 5
+import list
+import task
+import time
+fn main() {
+  let worker = task.spawn { ->
+    let hs = [1, 2, 3] |> list.map { n -> task.spawn { ->
+      time.sleep(time.ms(30))
+      n * 10
+    } }
+    [0] |> list.concat(list.map(hs, task.join))
+  }
+  println(task.join(worker))
+}

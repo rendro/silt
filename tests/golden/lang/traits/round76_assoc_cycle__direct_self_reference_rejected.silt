@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: self-referential
+-- stderr-contains: Container
+-- stderr-contains: Item
+trait Container {
+  type Item
+  fn unwrap(self) -> Self::Item
+}
+
+trait Container for Int {
+  type Item = <Int as Container>::Item
+  fn unwrap(self) -> <Int as Container>::Item = self
+}
+
+fn main() {
+  let x: Int = 7
+  println(x.unwrap())
+}

@@ -1,0 +1,7 @@
+import list
+fn run_main() -> Int {
+  let s = list.scan([10, 20, 30], 0) { acc, x -> acc + x }
+  list.length(s)
+}
+
+fn main() { println(run_main()) }

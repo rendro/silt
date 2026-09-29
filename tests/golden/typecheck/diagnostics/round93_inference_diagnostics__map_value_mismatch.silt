@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: map values must have the same type: first value is Int, but value 2 is String
+-- Mixed map values get the curated message.
+fn main() {
+  let m = #{ "a": 1, "b": "x" }
+  println(m)
+}

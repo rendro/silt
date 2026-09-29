@@ -1,0 +1,2 @@
+import c_b
+pub fn fa() = 1

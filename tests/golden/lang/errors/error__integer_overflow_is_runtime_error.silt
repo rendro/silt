@@ -1,0 +1,3 @@
+-- exit: 1
+-- stderr-contains: integer overflow
+fn main() { println(9223372036854775807 + 1) }

@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let x = 7
+  match {
+    x > 10 -> "big"
+    x > 5 -> "medium"
+    _ -> "small"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: expected integer after - in range pattern
+fn f(x) {
+    match x {
+        -1..-1.0 -> "yes"
+        _ -> "no"
+    }
+}
+
+fn main() {
+    println(f(1))
+}

@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: negative input
+fn check(n) {
+  n > 0
+}
+
+fn f(n) {
+  when check(n) else {
+    panic("negative input")
+  }
+}
+
+fn main() {
+  let y = f(0 - 5)
+  println("guard skipped, got {y}")
+}

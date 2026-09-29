@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: list elements must have the same type: first element is Int, but element 3 is String
+-- A mixed list literal names the first element's type and the deviant, in that order.
+fn main() {
+  let xs = [1, 2, "x"]
+  println(xs)
+}

@@ -1,0 +1,5 @@
+48656c6c6f
+deadbeef
+invalid hex: hex string must have even length, got 3 chars
+invalid hex: invalid hex character at position 0: 'x'
+[]

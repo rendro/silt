@@ -1,0 +1,20 @@
+-- repeat: 3
+-- Task that spawns tasks that spawn tasks.
+import io
+import task
+fn program() {
+  let h = task.spawn(fn() {
+    let inner = task.spawn(fn() {
+      let innermost = task.spawn(fn() {
+        42
+      })
+      task.join(innermost) + 1
+    })
+    task.join(inner) + 1
+  })
+  task.join(h)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

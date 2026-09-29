@@ -1,0 +1,16 @@
+import io
+fn classify(x) {
+  match x {
+    0.0..10.0 -> "low"
+    10.0..100.0 -> "mid"
+    _ -> "high"
+  }
+}
+
+fn program() {
+  [classify(5.0), classify(50.0), classify(200.0)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

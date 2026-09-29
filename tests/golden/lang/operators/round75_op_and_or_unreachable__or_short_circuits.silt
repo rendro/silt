@@ -1,0 +1,5 @@
+fn main() {
+  -- If `||` were eager, panic("rhs ran") would fire here.
+  let r = true || panic("rhs ran")
+  println(r)
+}

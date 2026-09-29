@@ -1,0 +1,16 @@
+-- Nested deadlines: the inner, tighter one wins inside its scope.
+import io
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.seconds(60), fn() {
+    task.deadline(time.ms(0), fn() {
+      io.read_file("/nonexistent_silt_inner")
+    })
+  })
+  match outcome {
+    Ok(s) -> println(s)
+    Err(msg) -> println(msg)
+  }
+}

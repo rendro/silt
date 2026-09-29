@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: enum variant '_Red' must start with an uppercase letter
+-- stderr-contains: e.g. `Red`
+-- stderr-not-contains: error[runtime]
+type Color { _Red, Green }
+fn main() { println(1) }

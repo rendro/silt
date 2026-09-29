@@ -1,0 +1,13 @@
+-- A closure captures another closure (which itself captured a value).
+-- add_base(5) = 15, add_base(15) = 25
+import io
+fn program() {
+  let base = 10
+  let add_base = fn(x) { x + base }
+  let apply_twice = fn(x) { add_base(add_base(x)) }
+  apply_twice(5)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

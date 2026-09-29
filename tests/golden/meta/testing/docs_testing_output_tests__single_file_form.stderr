@@ -1,0 +1,6 @@
+  PASS docs_testing_output_tests__single_file_form.silt::test_addition
+  PASS docs_testing_output_tests__single_file_form.silt::test_string_length
+  SKIP docs_testing_output_tests__single_file_form.silt::skip_test_not_ready_yet
+  PASS docs_testing_output_tests__single_file_form.silt::test_with_helper
+
+4 tests: 3 passed, 0 failed, 1 skipped

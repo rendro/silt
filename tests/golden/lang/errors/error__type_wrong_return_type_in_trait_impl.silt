@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+trait Numeric {
+  fn double(self) -> Int
+}
+
+trait Numeric for Int {
+  fn double(self) -> String = "wrong"
+}
+
+fn main() { 42 }

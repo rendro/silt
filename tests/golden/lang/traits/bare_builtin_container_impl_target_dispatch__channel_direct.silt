@@ -1,0 +1,7 @@
+import channel
+trait Pretty { fn pretty(self) -> String }
+trait Pretty for Channel { fn pretty(self) -> String = "channel" }
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  println(ch.pretty())
+}

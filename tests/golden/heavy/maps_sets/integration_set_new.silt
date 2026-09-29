@@ -1,0 +1,11 @@
+import io
+import set
+fn program() {
+  let s = set.new()
+  let s2 = set.insert(s, 42)
+  set.contains(s2, 42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

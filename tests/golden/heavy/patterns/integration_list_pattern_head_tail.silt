@@ -1,0 +1,17 @@
+import io
+fn first(xs) {
+  match xs {
+    [head, ..tail] -> Some(head)
+    [] -> None
+  }
+}
+fn program() {
+  match first([10, 20, 30]) {
+    Some(n) -> n
+    None -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

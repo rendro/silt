@@ -1,0 +1,8 @@
+-- A tuple or-pattern whose first alternative partially matches falls through cleanly.
+fn main() {
+  let r = match (5, 2) {
+    (1, _) | (_, 2) -> "found"
+    _ -> "nope"
+  }
+  println(r)
+}

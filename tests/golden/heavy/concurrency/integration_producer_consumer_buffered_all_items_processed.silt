@@ -1,0 +1,38 @@
+-- repeat: 3
+-- Producer sends N items through buffered channel; consumer processes all.
+-- 1+2+...+10 = 55
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new(10)
+
+  let producer = task.spawn(fn() {
+    loop i = 1 {
+      match i > 10 {
+        true -> channel.close(ch)
+        _ -> {
+          channel.send(ch, i)
+          loop(i + 1)
+        }
+      }
+    }
+  })
+
+  let consumer = task.spawn(fn() {
+    loop total = 0 {
+      match channel.receive(ch) {
+        Message(val) -> loop(total + val)
+        Closed -> total
+        _ -> total
+      }
+    }
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

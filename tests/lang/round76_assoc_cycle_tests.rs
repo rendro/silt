@@ -16,24 +16,15 @@
 //! typechecker turns into a "self-referential" error. The runtime
 //! path also stays alive: a subprocess `silt check` must exit
 //! cleanly (non-stack-overflow) on the broken input.
+//!
+//! The typechecker verdicts are golden cases in
+//! tests/golden/lang/traits/round76_assoc_cycle__*.silt. The test left here
+//! compiles and runs the ill-typed program anyway (the in-process runner
+//! ignores type errors), which the CLI never does.
 
 use std::time::Duration;
 
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::scheduler::test_support::InProcessRunner;
-use silt::typechecker;
-use silt::types::Severity;
-
-fn type_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
-    typechecker::check(&mut program)
-        .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
-        .collect()
-}
 
 const T1_DIRECT_CYCLE: &str = r#"
 trait Container {
@@ -51,20 +42,6 @@ fn main() {
   println(x.unwrap())
 }
 "#;
-
-/// Direct self-reference: typechecker must reject with a
-/// "self-referential" error. Must NOT loop / stack-overflow.
-#[test]
-fn t1_direct_self_reference_rejected_with_error() {
-    let errs = type_errors(T1_DIRECT_CYCLE);
-    assert!(
-        errs.iter().any(|m| m.contains("self-referential")
-            && m.contains("Container")
-            && m.contains("Item")),
-        "expected self-referential assoc-type error mentioning Container::Item; got:\n{}",
-        errs.join("\n")
-    );
-}
 
 /// Same input run through the in-process runner: the program must
 /// fail to typecheck (so the run does not actually execute), but the
@@ -110,39 +87,4 @@ fn t1_direct_self_reference_no_stack_overflow_at_runtime_path() {
              AssocProj shape is back. error_message={msg}"
         );
     }
-}
-
-/// Mutual cycle through two distinct trait/assoc pairs:
-/// `Foo::T = <Int as Bar>::S; Bar::S = <Int as Foo>::T`. The cycle
-/// detector must catch the second registration even though neither
-/// binding is directly self-referential.
-#[test]
-fn t1_mutual_cycle_through_assoc_projections_rejected() {
-    let src = r#"
-trait Foo {
-  type T
-}
-
-trait Bar {
-  type S
-}
-
-trait Bar for Int {
-  type S = <Int as Foo>::T
-}
-
-trait Foo for Int {
-  type T = <Int as Bar>::S
-}
-
-fn main() {
-  println("ok")
-}
-"#;
-    let errs = type_errors(src);
-    assert!(
-        errs.iter().any(|m| m.contains("self-referential")),
-        "expected mutual-cycle assoc-type error; got:\n{}",
-        errs.join("\n")
-    );
 }

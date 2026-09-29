@@ -1,0 +1,9 @@
+-- exit: 0
+import time
+import test
+fn main() {
+  let before = time.now()
+  time.sleep(time.ms(10))
+  let elapsed = time.since(before, time.now())
+  test.assert(elapsed.ns > 0)
+}

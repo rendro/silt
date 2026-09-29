@@ -1,0 +1,14 @@
+import io
+fn make_multiplier(factor) {
+  fn(x) { x * factor }
+}
+
+fn program() {
+  let double = make_multiplier(2)
+  let triple = make_multiplier(3)
+  double(5) + triple(5)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

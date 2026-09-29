@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: expected Bytes, got String
+import crypto
+fn main() {
+  crypto.sha256("not bytes")
+}

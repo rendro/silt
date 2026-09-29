@@ -1,0 +1,10 @@
+import io
+import map
+fn program() {
+  let m = #{ true: "yes", false: "no" }
+  map.get(m, false)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

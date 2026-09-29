@@ -1,0 +1,6 @@
+error[type]: undefined variable 'pintln'
+ --> diagnostic_suggestion__undefined_variable_suggests_close_match.silt:3:13
+   |
+ 3 | fn main() { pintln("hello") }
+   |             ^ undefined variable 'pintln'
+  = help: did you mean `println`?

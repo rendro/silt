@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate top-level definition of 'x'; names must be unique at module scope
+let x = 1
+let x = 2
+
+fn main() {
+  println(x)
+}

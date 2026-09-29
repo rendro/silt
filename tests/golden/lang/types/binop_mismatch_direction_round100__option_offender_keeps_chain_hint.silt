@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires
+-- stderr-contains: got 'Option(Int)'
+-- stderr-contains: help: to chain through an `Option`
+import list
+
+fn main() {
+  let xs: List(Int) = [1, 2, 3]
+  let head = list.head(xs)
+  let y = head + 1
+  print(y)
+}

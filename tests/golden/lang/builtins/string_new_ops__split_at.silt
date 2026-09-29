@@ -1,0 +1,11 @@
+import string
+fn main() {
+  -- test_split_at_middle
+  println(string.split_at("hello", 2) == ("he", "llo"))
+  -- test_split_at_zero
+  println(string.split_at("hello", 0) == ("", "hello"))
+  -- test_split_at_len
+  println(string.split_at("hello", 5) == ("hello", ""))
+  -- test_split_at_unicode: "café" is 4 chars, 5 bytes
+  println(string.split_at("café", 3) == ("caf", "é"))
+}

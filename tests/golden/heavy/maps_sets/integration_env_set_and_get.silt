@@ -1,0 +1,10 @@
+import io
+import env
+fn program() {
+    env.set("SILT_TEST_VAR_SET", "hello_silt")
+    env.get("SILT_TEST_VAR_SET")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,26 @@
+-- repeat: 3
+-- A scheduled task blocks on receive, gets woken by a send from another task.
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new(1)
+
+  -- Consumer spawns first but has to wait for producer.
+  let consumer = task.spawn(fn() {
+    when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
+    val * 2
+  })
+
+  -- Producer sends after a moment.
+  let producer = task.spawn(fn() {
+    channel.send(ch, 21)
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

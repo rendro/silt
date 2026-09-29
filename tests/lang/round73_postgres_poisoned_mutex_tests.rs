@@ -94,26 +94,3 @@ fn postgres_source_has_no_bare_into_inner_unwrap() {
             .join("\n"),
     );
 }
-
-/// Positive-shape assertion: the `transact` finalizer's `Ok(mutex)`
-/// arm uses the recovery pattern. Guards against a "delete the COMMIT
-/// path entirely" rewrite that would pass the negative grep but break
-/// the builtin.
-#[test]
-fn postgres_finalizer_uses_poison_recovery_pattern() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = PathBuf::from(manifest_dir)
-        .join("src")
-        .join("builtins")
-        .join("postgres.rs");
-    let src =
-        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-
-    assert!(
-        src.contains("mutex.into_inner().unwrap_or_else(|e| e.into_inner())"),
-        "expected the COMMIT/ROLLBACK finalizer in src/builtins/postgres.rs \
-         to consume the inner mutex via \
-         `mutex.into_inner().unwrap_or_else(|e| e.into_inner())`, but the \
-         pattern was not found",
-    );
-}

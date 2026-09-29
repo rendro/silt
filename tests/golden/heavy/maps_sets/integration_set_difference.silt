@@ -1,0 +1,11 @@
+import io
+import set
+fn program() {
+  let a = #[1, 2, 3]
+  let b = #[2, 3, 4]
+  set.to_list(set.difference(a, b))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

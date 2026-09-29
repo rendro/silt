@@ -1,0 +1,13 @@
+type Money { cents: Int }
+
+let shown = Money { cents: 5 }.display()
+
+trait Display for Money {
+  fn display(self) -> String {
+    "USD {self.cents}"
+  }
+}
+
+fn main() {
+  println(shown)
+}

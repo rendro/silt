@@ -1,0 +1,31 @@
+import json
+import toml
+
+type Address { city: String }
+type User {
+  name: String,
+  age: Int,
+  score: Float,
+  active: Bool,
+  tags: List(String),
+  nick: Option(String),
+  home: Address,
+  seen: Date,
+}
+
+fn main() {
+  let raw = "\{\"name\": \"A\", \"age\": 3, \"score\": 1.5, \"active\": true, \"tags\": [\"x\"], \"home\": \{\"city\": \"B\"\}, \"seen\": \"2024-03-15\"\}"
+  match json.parse(raw, User) {
+    Ok(u) -> println("{u.name} {u.age} {u.score} {u.active} {u.tags} {u.nick} {u.home.city} {u.seen.year}")
+    Err(e) -> println("err: {e.message()}")
+  }
+  match json.parse("\{\"name\": 1\}", User) {
+    Ok(u) -> println(u.name)
+    Err(e) -> println("err: {e.message()}")
+  }
+  let text = "name = \"A\"\nage = 3\nscore = 1.5\nactive = true\ntags = [\"x\"]\nseen = 2024-03-15\n[home]\ncity = \"B\"\n"
+  match toml.parse(text, User) {
+    Ok(u) -> println("{u.name} {u.age} {u.score} {u.active} {u.tags} {u.nick} {u.home.city} {u.seen.year}")
+    Err(e) -> println("err: {e.message()}")
+  }
+}

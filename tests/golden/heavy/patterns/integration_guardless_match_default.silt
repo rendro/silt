@@ -1,0 +1,11 @@
+import io
+fn program() {
+  match {
+    false -> "nope"
+    _ -> "default"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

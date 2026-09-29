@@ -1,0 +1,49 @@
+import list
+fn main() {
+  let empty: List(Int) = []
+  -- test_list_map_empty
+  println(list.map(empty, { x -> x + 1 }))
+  -- test_list_filter_empty
+  println(list.filter(empty, { x -> x > 0 }))
+  -- test_list_fold_empty_returns_init
+  println(list.fold(empty, 42) { acc, x -> acc + x })
+  -- test_list_find_empty_returns_none
+  println(list.find(empty, { x -> true }))
+  -- test_list_head_empty_returns_none
+  println(list.head(empty))
+  -- test_list_last_empty_returns_none
+  println(list.last(empty))
+  -- test_list_reverse_empty
+  println(list.reverse(empty))
+  -- test_list_sort_empty
+  println(list.sort(empty))
+  -- test_list_sort_single_element
+  println(list.sort([42]))
+  -- test_list_sort_already_sorted
+  println(list.sort([1, 2, 3, 4, 5]))
+  -- test_list_unique_empty
+  println(list.unique(empty))
+  -- test_list_unique_all_same
+  println(list.unique([1, 1, 1]))
+  -- test_list_flatten_empty
+  let no_lists: List(List(Int)) = []
+  println(list.flatten(no_lists))
+  -- test_list_flatten_nested_empty
+  println(list.flatten([empty, empty, empty]))
+  -- test_list_zip_empty
+  println(list.zip(empty, [1, 2, 3]))
+  -- test_list_zip_uneven_lengths
+  println(list.zip([1, 2], [10, 20, 30]))
+  -- test_list_any_empty_is_false
+  println(list.any(empty, { x -> true }))
+  -- test_list_all_empty_is_true
+  println(list.all(empty, { x -> false }))
+  -- test_list_enumerate_empty
+  println(list.enumerate(empty))
+  -- test_list_take_zero
+  println(list.take([1, 2, 3], 0))
+  -- test_list_drop_all
+  println(list.drop([1, 2, 3], 3))
+  -- test_list_concat_both_empty
+  println(list.concat(empty, empty))
+}

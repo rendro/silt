@@ -1,0 +1,13 @@
+-- match { _ -> expr } — regression check, must still work
+import io
+fn program() {
+  let x = 99
+  match x {
+    0 -> "zero"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

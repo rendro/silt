@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn pick(a: a, b: a) -> a where a: Compare = match a.compare(b) {
+  1 -> a,
+  _ -> b
+}
+
+fn main() {
+  let s = pick("foo", "bar")
+  s
+}

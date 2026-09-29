@@ -1,0 +1,4 @@
+fn main() {
+  when let Some(x) = Some(42) else { panic("no") }
+  println(x)
+}

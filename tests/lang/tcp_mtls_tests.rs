@@ -352,35 +352,3 @@ fn mtls_accept_rejects_client_with_wrong_ca_cert() {
         "expected server Err(...), got: {server_result:?}"
     );
 }
-
-#[test]
-fn mtls_typechecks() {
-    // Smoke test: the typechecker registers `tcp.accept_tls_mtls` when
-    // tcp-tls is enabled, and the parser/compiler accept the call shape.
-    let src = r#"
-import bytes
-import tcp
-fn main() {
-  match tcp.listen("127.0.0.1:0") {
-    Ok(l) -> match tcp.accept_tls_mtls(l, bytes.empty(), bytes.empty(), bytes.empty()) {
-      Ok(_) -> ()
-      Err(_) -> ()
-    }
-    Err(_) -> ()
-  }
-}
-"#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    let errors = silt::typechecker::check(&mut program);
-    let hard: Vec<_> = errors
-        .into_iter()
-        .filter(|e| e.severity == silt::types::Severity::Error)
-        .collect();
-    assert!(hard.is_empty(), "got: {hard:?}");
-    // Compile too, so a missing builtin would surface here.
-    let mut compiler = silt::compiler::Compiler::new();
-    compiler.compile_program(&program).expect("compile");
-}

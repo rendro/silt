@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- Positive control: `<` on Int lists typechecks.
+fn main() {
+  print([1, 2, 3] < [4, 5, 6])
+}

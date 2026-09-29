@@ -1,0 +1,5 @@
+import string
+fn main() {
+  let f = string.starts_with_at
+  println(f("hello", 1, "ello"))
+}

@@ -1,0 +1,7 @@
+-- Nominal-vs-nominal record equality still works.
+type Person { x: Int }
+fn main() {
+  let p: Person = Person { x: 1 }
+  let s: Person = Person { x: 1 }
+  println(p == s)
+}

@@ -1,0 +1,9 @@
+import io
+import http
+fn program() {
+  http.parse_query("a=1&a=2&a=3")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.sum_float([0.5, 1.5, 2.0])) }

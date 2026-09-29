@@ -10,11 +10,11 @@
 //! / CI scripts depend on.
 //!
 //! Fix: strip ANSI at the JSON boundary in `print_json_errors`
-//! (`src/cli/check.rs`). These locks run `silt check --format json`
-//! against a module-import-with-lex-error fixture under both
-//! `FORCE_COLOR=1` and `NO_COLOR=1` and assert the stdout contains
-//! zero `\x1b` bytes in either case — symmetric coverage so a future
-//! refactor can't restore the leak under only one signal.
+//! (`src/cli/check.rs`). This lock runs `silt check --format json`
+//! against a module-import-with-lex-error fixture under `FORCE_COLOR=1`
+//! (which the golden harness cannot set) and asserts the stdout contains
+//! zero `\x1b` bytes. The `NO_COLOR=1` half is the golden case
+//! `tests/golden/lang/diagnostics/round86_check_json_no_ansi__no_color`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -117,34 +117,5 @@ fn json_output_has_no_ansi_under_force_color() {
         !stdout.contains("\\u001b") && !stdout.contains("\\u001B"),
         "FORCE_COLOR=1: `silt check --format json` stdout must contain \
          no `\\u001b` JSON-encoded ANSI escape sequences. Got stdout:\n{stdout}"
-    );
-}
-
-#[test]
-fn json_output_has_no_ansi_under_no_color() {
-    // Symmetric control: `NO_COLOR=1` already disables color in the
-    // upstream renderer, so this case should pass even without the
-    // boundary strip — but we lock it too so a regression that
-    // accidentally re-enables color under NO_COLOR still fails here.
-    let main = write_broken_import_fixture();
-    let (code, stdout, stderr) = run_silt_check_json(&main, None, Some("1"));
-    assert_eq!(
-        code, 1,
-        "silt check should exit 1 on lex error in imported module; \
-         got code={code}\nstdout={stdout}\nstderr={stderr}"
-    );
-    assert!(
-        stdout.contains("\"hints\""),
-        "expected JSON to contain a `hints` field; got stdout:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains('\x1b'),
-        "NO_COLOR=1: `silt check --format json` stdout must contain no \
-         raw ANSI escape bytes. Got stdout:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("\\u001b") && !stdout.contains("\\u001B"),
-        "NO_COLOR=1: `silt check --format json` stdout must contain no \
-         `\\u001b` JSON-encoded ANSI escape sequences. Got stdout:\n{stdout}"
     );
 }

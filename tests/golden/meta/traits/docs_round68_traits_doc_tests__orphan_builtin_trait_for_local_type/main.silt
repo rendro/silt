@@ -1,0 +1,12 @@
+-- Orphan rule, inside a package: a built-in trait for a local type is
+-- allowed, and the override of the auto-derived Display dispatches.
+type Color { Red, Green, Blue }
+
+trait Display for Color {
+  fn display(self) -> String { "a color" }
+}
+
+fn main() {
+  let c: Color = Red
+  println(c.display())
+}

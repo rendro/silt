@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- One spanned diagnostic naming ChannelResult, not a cascade.
+type Empty {}
+fn main() = ()

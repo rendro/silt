@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+fn main() {
+    let p = {name: "A", age: 30}
+    let n = match p {
+        {name: nm, ...rest} -> nm
+    }
+    let _ = n
+}

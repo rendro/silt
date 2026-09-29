@@ -1,0 +1,24 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- `channel.select` on the main thread over a slow stream after a task
+-- has been spawned and joined. A scheduler exists then, and the
+-- verdict would come from the wake graph, which cannot see stream
+-- threads either. The stage sleeps longer than the 200 ms confirmation
+-- window of the detector, so a false verdict has time to fire.
+import channel
+import stream
+import task
+import time
+
+fn main() {
+  task.join(task.spawn(fn() { 1 }))
+  let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
+    time.sleep(time.ms(300))
+    x * 10
+  }
+  match channel.select([Recv(out)]) {
+    (_, Message(v)) -> println("got {v}")
+    (_, Closed) -> println("closed")
+    _ -> println("other")
+  }
+}

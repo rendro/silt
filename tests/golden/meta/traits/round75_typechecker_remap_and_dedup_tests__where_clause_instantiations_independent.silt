@@ -1,0 +1,10 @@
+-- One constrained generic instantiated twice with different types: the
+-- where-clause tyvar of the first call must not leak into the second.
+fn show(x: b, type b) -> String where b: Display = x.display()
+
+fn main() {
+  let r1 = show(42, Int)
+  let r2 = show("hi", String)
+  println(r1)
+  println(r2)
+}

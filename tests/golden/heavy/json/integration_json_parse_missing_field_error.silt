@@ -1,0 +1,17 @@
+-- Phase 1 of the stdlib error redesign: json.parse now returns
+-- `Err(JsonError)`. Pattern-match the typed variant directly
+-- rather than asserting a brittle message string.
+import io
+import json
+type User { name: String, age: Int }
+fn program() {
+  match json.parse("\{\"name\": \"Alice\"\}", User) {
+    Ok(_) -> "unexpected"
+    Err(JsonMissingField(f)) -> f
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

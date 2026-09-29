@@ -1,0 +1,24 @@
+import float
+import math
+fn main() {
+  -- is_finite_true_for_finite_extfloat
+  println(float.is_finite(math.sqrt(4.0)))
+  -- is_finite_false_for_infinity
+  println(float.is_finite(float.infinity))
+  -- is_finite_false_for_nan
+  println(float.is_finite(float.nan))
+  -- is_infinite_true_for_pos_infinity
+  println(float.is_infinite(float.infinity))
+  -- is_infinite_true_for_neg_infinity
+  println(float.is_infinite(float.neg_infinity))
+  -- is_infinite_false_for_nan
+  println(float.is_infinite(float.nan))
+  -- is_infinite_false_for_finite_extfloat
+  println(float.is_infinite(math.sqrt(4.0)))
+  -- is_nan_true_for_nan
+  println(float.is_nan(float.nan))
+  -- is_nan_false_for_infinity
+  println(float.is_nan(float.infinity))
+  -- is_nan_false_for_finite_extfloat
+  println(float.is_nan(math.sqrt(4.0)))
+}

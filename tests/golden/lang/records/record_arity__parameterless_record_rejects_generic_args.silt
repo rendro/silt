@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch for record 'Point': expected 0, got 1
+type Point { x: Int, y: Int }
+fn read(p: Point(Bool)) -> Int { p.x }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let _ = read(p)
+}

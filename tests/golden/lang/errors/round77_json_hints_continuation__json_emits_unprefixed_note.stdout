@@ -1,0 +1,1 @@
+[{"col":0,"file":"round77_json_hints_continuation__json_emits_unprefixed_note.silt","hints":["note: add one as the entry point"],"kind":"compile","line":0,"message":"program has no main() function","severity":"error"}]

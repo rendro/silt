@@ -1,0 +1,16 @@
+import io
+import time
+fn program() {
+  must_date(2024, 12, 25) |> time.format_date("%A")
+}
+
+fn must_date(y, m, d) {
+  match time.date(y, m, d) {
+    Ok(date) -> date
+    Err(_) -> panic("invalid date")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

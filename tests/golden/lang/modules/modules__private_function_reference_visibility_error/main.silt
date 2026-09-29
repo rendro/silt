@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: `helper` exists in module `mymod` but is not `pub`
+-- stderr-not-contains: undefined global
+import mymod
+
+fn main() {
+  mymod.helper()
+}

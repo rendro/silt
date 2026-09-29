@@ -1,0 +1,1 @@
+let main = fn() { println("from let") }

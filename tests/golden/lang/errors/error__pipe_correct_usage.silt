@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 0
+fn double(x) = x * 2
+fn main() { 5 |> double }

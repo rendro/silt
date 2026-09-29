@@ -1,0 +1,14 @@
+type S { A(Int), B(String, Int), C }
+
+fn value(s) {
+  100 + match s {
+    A(n) | B(_, n) -> n
+    C -> 0
+  }
+}
+
+fn main() {
+  println(value(A(1)))
+  println(value(B("b", 2)))
+  println(value(C))
+}

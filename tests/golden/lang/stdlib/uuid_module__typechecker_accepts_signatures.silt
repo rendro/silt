@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+import uuid
+fn main() {
+  let _ = uuid.v4()
+  let _ = uuid.v7()
+  let _ = uuid.nil()
+  let _ = uuid.is_valid("x")
+  let _ = uuid.parse("x")
+}

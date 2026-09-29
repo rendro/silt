@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected ->, found "hello"
+fn main() {
+  match 1 {
+    1 "hello"
+  }
+}

@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { (string.is_alnum("a"), string.is_alnum("3"), string.is_alnum("!")) }
+
+fn main() {
+  println(io.inspect(program()))
+}

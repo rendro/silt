@@ -1,0 +1,15 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- `channel.receive` on the main thread on such a stream receives the
+-- first value.
+import channel
+import stream
+import time
+
+fn main() {
+  let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
+    time.sleep(time.ms(300))
+    x * 10
+  }
+  println(channel.receive(out))
+}

@@ -1,0 +1,9 @@
+-- exit: 0
+import map
+fn main() {
+  let m = #{}
+  let _ = map.keys(m)
+  let _ = map.values(m)
+  let _ = map.entries(m)
+  let _ = map.length(m)
+}

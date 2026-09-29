@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- A variant sharing its enum's name still works as a constructor.
+type Box(T) { Box(T) }
+
+fn use_it() {
+    let _ = Box(42)
+}
+
+fn main() {}

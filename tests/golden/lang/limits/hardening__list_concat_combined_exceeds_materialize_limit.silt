@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: concatenated list exceeds maximum size
+import list
+fn main() {
+  println(list.concat((1..5_000_001), (1..5_000_001)))
+}

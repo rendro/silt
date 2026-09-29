@@ -1,0 +1,11 @@
+-- Hashing a ~4e9-element range (and one near i64::MAX) is closed-form and finishes promptly.
+fn main() {
+  let r = 0..4000000000
+  let h = r.hash()
+  println("hashed ok")
+  let big = 0..9223372036854775806
+  let h2 = big.hash()
+  println("hashed max ok")
+  println(h == h)
+  println(h2 == h2)
+}

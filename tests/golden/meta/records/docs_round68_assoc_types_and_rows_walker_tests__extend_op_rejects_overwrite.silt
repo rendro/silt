@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: existing field
+fn main() {
+  let p = {name: "Alice"}
+  let q = {...p, name: "Bob"}
+  let _ = q
+  ()
+}

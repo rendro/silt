@@ -1,0 +1,6 @@
+type Tagged { Foo(Int), Bar(Int, String), }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(d(Foo(7)))
+    println(d(Bar(42, "hi")))
+}

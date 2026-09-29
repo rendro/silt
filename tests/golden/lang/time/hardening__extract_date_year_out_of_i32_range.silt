@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: time: year
+-- stderr-contains: out of range for i32
+import time
+fn main() {
+  let d = Date { year: 4294967296 + 1999, month: 1, day: 1 }
+  println(time.format_date(d, "%Y-%m-%d"))
+}

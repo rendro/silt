@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch for builtin 'List' in trait impl: expected 1, got 2
+trait MyDisplay { fn my_display(self) -> String }
+trait MyDisplay for List(a, b) {
+  fn my_display(self) -> String { "bad" }
+}
+fn main() { }

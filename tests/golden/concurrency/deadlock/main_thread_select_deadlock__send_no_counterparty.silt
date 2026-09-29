@@ -1,0 +1,14 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- A main-thread select whose only send arm has no receiver reports a
+-- deadlock.
+import channel
+
+fn main() {
+  let ch = channel.new(0)
+  match channel.select([Send(ch, 42)]) {
+    (_, Sent) -> println("unreachable")
+    _ -> println("unreachable")
+  }
+}

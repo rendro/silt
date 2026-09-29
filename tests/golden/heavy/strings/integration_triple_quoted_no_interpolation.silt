@@ -1,0 +1,10 @@
+-- {name} should be literal text, not interpolated
+import io
+fn program() {
+  let name = "Alice"
+  """{name} is here"""
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

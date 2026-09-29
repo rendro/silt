@@ -1,0 +1,14 @@
+import io
+fn get_name(m) {
+  match m {
+    #{ "name": n } -> n
+    _ -> "unknown"
+  }
+}
+fn program() {
+  get_name(#{ "name": "Alice", "age": "30" })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

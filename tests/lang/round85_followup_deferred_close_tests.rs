@@ -1,101 +1,16 @@
-//! Round-85 follow-up: lock the two deferred items closed.
-//!
-//! Item 1 — `Op::RecordUpdateAnon` removed.
-//! Round 83 added the sibling opcode to normalize a spread's runtime
-//! `type_name` to `"<anon>"`. Round 84 added the `<anon>` wildcard to
-//! `Value::PartialEq`; round 85 mirrored it into `Value::Ord` and
-//! `Value::Hash`. The wildcards close the soundness gap from the
-//! comparison/hashing surfaces, leaving the runtime tag-rebrand
-//! strictly redundant. This follow-up removes the opcode and these
-//! locks guard against accidental re-introduction.
-//!
-//! Item 2 — `format_module_source_error` inner-snippet color symmetry.
-//! Round 83 added `NO_COLOR` / `FORCE_COLOR` support to
-//! `SourceError::Display` via `active_colors()`. The module-import
-//! inner snippet rendered by `format_module_source_error` was still
-//! plain text, producing colored outer header + plain inner snippet
-//! under `FORCE_COLOR=1` in a TTY. This follow-up routes the inner
-//! `-->` / `|` / `^` glyphs through `active_colors()` too. These
-//! locks verify the inner ANSI escapes appear under FORCE_COLOR and
-//! disappear under NO_COLOR.
+//! Round-85 follow-up: `format_module_source_error` inner-snippet color
+//! symmetry. Round 83 added `NO_COLOR` / `FORCE_COLOR` support to
+//! `SourceError::Display` via `active_colors()`. The module-import inner
+//! snippet rendered by `format_module_source_error` was still plain text,
+//! producing a colored outer header and a plain inner snippet under
+//! `FORCE_COLOR=1`. The inner `-->` / `|` / `^` glyphs now go through
+//! `active_colors()` too. These tests set `FORCE_COLOR`, which the golden
+//! harness cannot; the plain `NO_COLOR` form is the golden case
+//! `tests/golden/lang/modules/round85_followup_deferred_close__inner_snippet_plain_under_no_color`.
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-
-const BYTECODE_RS: &str = "src/bytecode.rs";
-const VM_EXECUTE_RS: &str = "src/vm/execute.rs";
-const COMPILER_MOD_RS: &str = "src/compiler/mod.rs";
-const DISASSEMBLE_RS: &str = "src/disassemble.rs";
-
-fn read(path: &str) -> String {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push(path);
-    fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
-}
-
-// ── Item 1: RecordUpdateAnon removed ─────────────────────────────────
-
-#[test]
-fn item1_record_update_anon_variant_absent_from_bytecode() {
-    let src = read(BYTECODE_RS);
-    // The `Op::RecordUpdateAnon` variant declaration and its
-    // `Op::from_byte` arm must both be gone. Bare-name comments
-    // explaining the removal in a historical note are allowed; the
-    // qualified `Op::RecordUpdateAnon` form is the actual code use.
-    assert!(
-        !src.contains("Op::RecordUpdateAnon"),
-        "`Op::RecordUpdateAnon` was removed in the round-85 follow-up; \
-         no qualified-form code uses should remain in {BYTECODE_RS}."
-    );
-}
-
-#[test]
-fn item1_record_update_anon_dispatch_arm_absent_from_vm() {
-    let src = read(VM_EXECUTE_RS);
-    assert!(
-        !src.contains("Op::RecordUpdateAnon"),
-        "VM dispatch must not reference `Op::RecordUpdateAnon` after \
-         the round-85 follow-up; the unified `Op::RecordUpdate` arm \
-         preserves the base record's `type_name`. See {VM_EXECUTE_RS}."
-    );
-}
-
-#[test]
-fn item1_compiler_emits_only_record_update_for_spread() {
-    let src = read(COMPILER_MOD_RS);
-    assert!(
-        !src.contains("Op::RecordUpdateAnon"),
-        "Compiler must not emit `Op::RecordUpdateAnon` after the \
-         round-85 follow-up; spreads emit `Op::RecordUpdate` and rely \
-         on the PartialEq/Ord/Hash `<anon>` wildcards for soundness. \
-         See {COMPILER_MOD_RS}."
-    );
-    // Positive: the spread emission site must use `Op::RecordUpdate`
-    // (already covered by the existing dot-update path, but we want
-    // an explicit lock that the spread path didn't get accidentally
-    // dropped entirely).
-    assert!(
-        src.contains("Op::RecordUpdate"),
-        "Compiler must still emit `Op::RecordUpdate` for record \
-         updates and spreads — found no references in {COMPILER_MOD_RS}."
-    );
-}
-
-#[test]
-fn item1_disassembler_arm_unified() {
-    let src = read(DISASSEMBLE_RS);
-    // Single arm, no `|` alternation, calls the helper with label
-    // "field". Same shape as `DestructRecordRest` but with the
-    // sibling label.
-    assert!(
-        src.contains("Op::RecordUpdate => fmt_u8_count_then_u16_names"),
-        "Disassembler must route `Op::RecordUpdate` through \
-         `fmt_u8_count_then_u16_names` with label \"field\" in {DISASSEMBLE_RS}."
-    );
-}
-
-// ── Item 2: format_module_source_error inner-snippet color symmetry ──
 
 /// Build a fixture: a main file that imports a broken module, and a
 /// broken module containing a lex error. Returns the path to the main
@@ -173,31 +88,6 @@ fn item2_inner_snippet_colored_under_force_color() {
         stderr.contains("\x1b[36m|\x1b[0m"),
         "FORCE_COLOR=1: inner snippet `|` gutter must be cyan-wrapped. \
          Got stderr:\n{stderr}"
-    );
-}
-
-#[test]
-fn item2_inner_snippet_plain_under_no_color() {
-    let main = write_broken_import_fixture();
-    let stderr = run_silt_capture_stderr(&main, None, Some("1"));
-    // Sanity.
-    assert!(
-        stderr.contains("badlex.silt") && stderr.contains("@@@"),
-        "expected error stderr to reference badlex.silt and contain \
-         the broken source line, got: {stderr:?}"
-    );
-    // No ANSI escapes anywhere — `NO_COLOR=1` wins over any other
-    // signal per the no-color.org spec.
-    assert!(
-        !stderr.contains('\x1b'),
-        "NO_COLOR=1: stderr must contain no ANSI escape sequences. \
-         Got stderr:\n{stderr}"
-    );
-    // The inner-snippet glyphs must still be present as plain text.
-    assert!(stderr.contains("-->"), "plain `-->` must still be present");
-    assert!(
-        stderr.contains('^'),
-        "plain `^` caret must still be present"
     );
 }
 

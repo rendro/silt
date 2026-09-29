@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse
+-- stderr-contains: Bag
+-- stderr-contains: items
+-- stderr-contains: Set(Int)
+import json
+
+type Bag { items: Set(Int) }
+
+fn main() {
+  let r = "\{\"items\": \"oops\"\}" |> json.parse(Bag)
+  match r {
+    Ok(v) -> println(v)
+    Err(e) -> println("err: {e.message()}")
+  }
+}

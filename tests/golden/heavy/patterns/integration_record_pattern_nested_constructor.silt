@@ -1,0 +1,20 @@
+import io
+type Status { Active, Inactive }
+type User { name: String, status: Status }
+
+fn describe(u) {
+  match u {
+    User { name, status: Active } -> "{name} is active"
+    User { name, status: Inactive } -> "{name} is inactive"
+  }
+}
+
+fn program() {
+  let u1 = User { name: "Alice", status: Active }
+  let u2 = User { name: "Bob", status: Inactive }
+  [describe(u1), describe(u2)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

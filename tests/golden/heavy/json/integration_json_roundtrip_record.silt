@@ -1,0 +1,20 @@
+-- Assert BOTH fields are bound correctly on the roundtripped record,
+-- not just `.name`. Previously only `parsed.name == "Carol"` was
+-- checked — a parser bug that mis-assigned `age` (or dropped it)
+-- would have gone undetected. We return a tuple of both fields and
+-- assert their exact values.
+import io
+import json
+type User { name: String, age: Int }
+fn program() {
+  let u = User { name: "Carol", age: 25 }
+  let text = json.stringify(u)
+  match json.parse(text, User) {
+    Ok(parsed) -> (parsed.name, parsed.age)
+    Err(_) -> ("fail", 0)
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

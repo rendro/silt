@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: mismatch
+fn add(a: Int, b: Int) -> String {
+  a + b
+}
+fn main() { add(1, 2) }

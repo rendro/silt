@@ -1,0 +1,19 @@
+-- repeat: 3
+import list
+import task
+import time
+fn nest(level, round) {
+  match level {
+    0 -> {
+      time.sleep(time.ms(1))
+      round
+    }
+    _ -> list.fold([1], 0) { acc, x -> acc + nest(level - 1, round) }
+  }
+}
+fn main() {
+  let t = task.spawn { ->
+    list.fold(1..40, 0) { total, round -> total + nest(5, round) }
+  }
+  println(task.join(t))
+}

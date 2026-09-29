@@ -1,0 +1,21 @@
+-- repeat: 3
+-- Locks in 3a4edd6 G1: `Channel(T)` must resolve to `Type::Channel(T)`,
+-- not the catch-all `Type::Generic("Channel", [T])`. Without the fix,
+-- the annotation was a different nominal type than the value returned
+-- by `channel.new(...)` and the `let` binding failed to type-check.
+import io
+import channel
+fn program() {
+  let ch: Channel(Int) = channel.new(10)
+  channel.send(ch, 42)
+  match channel.receive(ch) {
+    Message(v) -> v
+    Sent -> 0
+    Closed -> 0
+    Empty -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: does not implement Compare
+import set
+import list
+fn main() {
+  let f = fn(y){ y }
+  let g = fn(z){ z + 100 }
+  let s = set.from_list([g, f])
+  let applied = list.map(set.to_list(s), fn(h){ h(1) })
+  println(applied)
+}

@@ -1,0 +1,8 @@
+-- A concrete `.hash()` on a list of functions fails at run time.
+-- exit: 1
+-- stderr-contains: does not implement Hash
+-- stderr-contains: 'Fn'
+fn main() {
+  let xs = [fn(y) { y }]
+  println(xs.hash())
+}

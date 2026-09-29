@@ -1,0 +1,7 @@
+-- A nominal P passed to an anon-typed parameter compares equal to an anon literal.
+type P { x: Int }
+fn f(r: { x: Int }) -> Bool { r == { x: 1 } }
+fn main() {
+  let p: P = P { x: 1 }
+  println(f(p))
+}

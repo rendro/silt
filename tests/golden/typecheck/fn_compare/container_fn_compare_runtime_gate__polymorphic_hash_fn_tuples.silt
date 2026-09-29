@@ -1,0 +1,8 @@
+-- `.hash()` through a polymorphic wrapper on tuples holding functions fails.
+-- exit: 1
+-- stderr-contains: does not implement Hash
+-- stderr-contains: 'Fn'
+fn h(a: x) -> Int where x: Hash { a.hash() }
+fn main() {
+  println(h((fn(y) { y }, 1)) == h((fn(z) { z + 5 }, 1)))
+}

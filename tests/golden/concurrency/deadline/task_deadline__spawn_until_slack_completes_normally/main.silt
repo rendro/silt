@@ -1,0 +1,15 @@
+-- repeat: 3
+-- task.spawn_until with generous slack: the child's I/O completes.
+import io
+import task
+import time
+
+fn main() {
+  let handle = task.spawn_until(time.seconds(60), fn() {
+    match io.read_file("fixture.txt") {
+      Ok(s) -> s
+      Err(e) -> e.message()
+    }
+  })
+  println(task.join(handle))
+}

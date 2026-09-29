@@ -1,0 +1,30 @@
+-- repeat: 3
+-- After the main thread's rendezvous receive returns (having waited
+-- through at least one watchdog tick), no receiver is parked, so a
+-- try_send on the same channel must fail rather than phantom-succeed.
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(150))
+    channel.send(ch, 42)
+  }
+
+  match channel.receive(ch) {
+    Message(v) -> {
+      task.join(sender)
+      let probe = task.spawn { ->
+        channel.try_send(ch, 999)
+      }
+      let ok = task.join(probe)
+      match ok {
+        true -> println("BUG:leaked_waker_phantom_send v={v}")
+        false -> println("ok:{v}")
+      }
+    }
+    _ -> println("FAIL:unexpected_close_or_empty")
+  }
+}

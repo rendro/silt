@@ -1,0 +1,55 @@
+-- exit: 0
+-- Guardless matches, `return` arms, a match ending a block, and a nested match all diverge.
+fn load_data() -> Result(Int, String) { Ok(42) }
+
+fn guardless(n: Int) -> Int {
+  when n > 0 else {
+    match {
+      n == 0 -> panic("zero")
+      _ -> panic("negative")
+    }
+  }
+  n
+}
+
+fn match_with_return(res: Result(Int, String)) -> Int {
+  when let Ok(data) = res else {
+    match res {
+      Err(e) -> return 0
+      Ok(_) -> return 1
+    }
+  }
+  data
+}
+
+fn match_in_block(res: Result(Int, String)) -> Int {
+  when let Ok(data) = res else {
+    println("failing")
+    match res {
+      Err(e) -> panic("load failed: {e}")
+      Ok(_) -> panic("unreachable")
+    }
+  }
+  data
+}
+
+fn nested_match(res: Result(Int, String), flag: Bool) -> Int {
+  when let Ok(data) = res else {
+    match flag {
+      true -> match res {
+        Err(e) -> panic("a: {e}")
+        Ok(_) -> panic("unreachable")
+      }
+      false -> panic("b")
+    }
+  }
+  data
+}
+
+fn main() {
+  println(guardless(3))
+  println(match_with_return(load_data()))
+  println(match_with_return(Err("no")))
+  println(match_in_block(load_data()))
+  println(nested_match(load_data(), true))
+}

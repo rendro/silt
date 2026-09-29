@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: does not implement Hash
+import list
+import map
+fn main() {
+  let f = fn(y){ y }
+  let g = fn(z){ z + 100 }
+  let groups = list.group_by([1, 2], fn(x){ match x { 1 -> f, _ -> g } })
+  println(list.length(map.entries(groups)))
+}

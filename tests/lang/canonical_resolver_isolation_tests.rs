@@ -15,63 +15,25 @@
 //! aliases) while one-shot typechecks (LSP pulls, REPL inputs) get a
 //! fresh `Resolver` per invocation.
 //!
-//! The three tests below lock the three properties of the new design:
+//! The tests below lock the properties of the new design:
 //!
 //! 1. `two_resolvers_do_not_share_aliases` — two `Resolver` instances
 //!    are independent. (Direct unit test; pre-refactor this would have
 //!    failed because the registry was a process-global.)
-//! 2. `cross_module_compile_shares_one_resolver` — explicit cross-
-//!    module threading via `check_with_package_and_imports_options_resolver`.
-//!    Module A registers an alias; module B (which receives A's
-//!    `Resolver`) reads it. Locks the cross-module sharing contract.
+//! 2. Cross-module sharing (module B importing A sees A's aliases) is
+//!    the golden case
+//!    `tests/golden/lang/modules/canonical_resolver_isolation__cross_module_alias_shared`.
 //! 3. `lsp_pull_does_not_inherit_other_files_aliases` — two independent
 //!    `typechecker::check` calls (the legacy LSP entry point allocates
 //!    a fresh resolver internally per call). The first registers an
 //!    alias; the second references the same name without import and
 //!    sees an "unknown type" diagnostic. Locks the LSP isolation goal.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-
-use silt::compiler::Compiler;
-use silt::intern::intern;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
 use silt::types::canonical::{AliasInfo, Resolver};
 use silt::types::{Severity, Type};
-
-fn rand_u64() -> u64 {
-    use std::time::SystemTime;
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64
-}
-
-/// Mirror of `setup_dir` in `tests/typecheck/cross_module_inference_tests.rs`,
-/// kept self-contained here so this test file doesn't reach across
-/// integration-test boundaries. See the canonicalize-on-macOS comment
-/// in that file for why we always canonicalize the tempdir path.
-fn setup_dir(files: &[(&str, &str)], main_source: &str) -> PathBuf {
-    let raw_dir = std::env::temp_dir().join(format!(
-        "silt_resolver_iso_{}_{}",
-        std::process::id(),
-        rand_u64()
-    ));
-    let _ = fs::remove_dir_all(&raw_dir);
-    fs::create_dir_all(&raw_dir).expect("mkdir");
-    let dir = raw_dir.canonicalize().expect("canonicalize tempdir");
-    for (name, content) in files {
-        fs::write(dir.join(name), content).expect("write module");
-    }
-    fs::write(dir.join("main.silt"), main_source).expect("write main");
-    if let Ok(d) = fs::File::open(&dir) {
-        let _ = d.sync_all();
-    }
-    dir
-}
 
 // ── 1. Resolver instances are independent ──────────────────────────
 
@@ -108,84 +70,9 @@ fn two_resolvers_do_not_share_aliases() {
     );
 }
 
-// ── 2. Cross-module compile shares one Resolver ─────────────────────
-
 fn parse(src: &str) -> silt::ast::Program {
     let tokens = Lexer::new(src).tokenize().expect("lex");
     Parser::new(tokens).parse_program().expect("parse")
-}
-
-/// Module A declares `pub type Mass = Float`. Module B does
-/// `import a` and uses `Mass` in a binding annotation. Driven through
-/// the same compiler entry point the CLI pipeline uses
-/// (`Compiler::with_package_roots` + `pre_typecheck_imports` +
-/// `check_with_package_and_imports_options_resolver`), this end-to-end
-/// path must thread the same `Resolver` through every module's
-/// typecheck so module B's annotation resolves the alias via the
-/// shared resolver to `Float`. No "unknown type 'Mass'" diagnostic
-/// must surface.
-///
-/// Pre-refactor this contract was satisfied implicitly because the
-/// alias registry was a process-global. Post-refactor it must hold
-/// because the compiler now owns a session-scoped `Resolver` that it
-/// threads through every per-module typecheck call.
-#[test]
-fn cross_module_compile_shares_one_resolver() {
-    let dir = setup_dir(
-        &[(
-            "a.silt",
-            r#"
-pub type ResolverShared_Mass = Float
-            "#,
-        )],
-        r#"
-import a
-
-fn use_mass(x: ResolverShared_Mass) -> ResolverShared_Mass = x
-
-fn main() {
-  let m: ResolverShared_Mass = 1.5
-  let _ = use_mass(m)
-}
-"#,
-    );
-
-    let main_path = dir.join("main.silt");
-    let source = fs::read_to_string(&main_path).expect("read main");
-    let tokens = Lexer::new(&source).tokenize().expect("lex");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
-
-    let local_pkg = intern("__test__");
-    let mut roots = HashMap::new();
-    roots.insert(local_pkg, dir.clone());
-    let mut compiler = Compiler::with_package_roots(local_pkg, roots);
-    compiler.pre_typecheck_imports(&program);
-    let exports = compiler.module_exports_snapshot();
-
-    // Thread the compiler's session-shared resolver through the
-    // entrypoint typecheck. Without this threading the alias body
-    // registered while pre-typechecking `a.silt` would not be visible
-    // here, and the body of `use_mass` could not unify.
-    let resolver = compiler.take_resolver();
-    let (errors, _exports, _resolver) =
-        typechecker::check_with_package_and_imports_options_resolver(
-            &mut program,
-            Some(local_pkg),
-            exports,
-            false,
-            Some(resolver),
-        );
-
-    let hard: Vec<_> = errors
-        .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .collect();
-    assert!(
-        hard.iter()
-            .all(|e| !e.message.contains("unknown type") && !e.message.contains("undefined type")),
-        "cross-module compile must resolve `ResolverShared_Mass` via the shared resolver; \
-         got hard errors: {hard:?}"
-    );
 }
 
 // ── 3. LSP-style isolation: fresh resolver per pull ────────────────

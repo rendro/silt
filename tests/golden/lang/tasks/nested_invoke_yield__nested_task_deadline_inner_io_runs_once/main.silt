@@ -1,0 +1,17 @@
+-- The inner callback runs once across a nested yield.
+import task
+import io
+import time
+
+fn main() {
+  let h = task.spawn(fn() {
+    task.deadline(time.seconds(10), fn() {
+      task.deadline(time.seconds(10), fn() {
+        println("enter-inner")
+        let _ = io.read_file("data.txt")
+        println("exit-inner")
+      })
+    })
+  })
+  task.join(h)
+}

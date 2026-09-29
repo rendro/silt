@@ -1,0 +1,10 @@
+-- Control: the shared binding at the same position in both alternatives (7).
+type E { A(Int), B(Int, Int) }
+fn pick(e: E) -> Int {
+  match e {
+    A(x) | B(x, _) -> x
+  }
+}
+fn main() {
+  println(pick(B(7, 99)))
+}

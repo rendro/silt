@@ -1,0 +1,7 @@
+import list
+fn run_main() -> Int {
+  let r = 5..8
+  list.length(list.take(r, 100))
+}
+
+fn main() { println(run_main()) }

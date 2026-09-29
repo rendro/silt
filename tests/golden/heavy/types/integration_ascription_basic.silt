@@ -1,0 +1,9 @@
+import io
+fn program() {
+  let x = 42 as Int
+  x
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

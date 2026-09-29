@@ -1,0 +1,17 @@
+-- Two closures escape the same function but capture different params.
+-- add3(10) = 13, mul4(10) = 40 => 53
+import io
+fn make_ops(a, b) {
+  let adder = fn(x) { x + a }
+  let muler = fn(x) { x * b }
+  (adder, muler)
+}
+
+fn program() {
+  let (add3, mul4) = make_ops(3, 4)
+  add3(10) + mul4(10)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

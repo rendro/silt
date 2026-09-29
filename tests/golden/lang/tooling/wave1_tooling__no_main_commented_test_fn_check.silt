@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- stderr-not-contains: silt test
+{-
+fn test_x() { 1 }
+-}
+fn helper() { 1 }

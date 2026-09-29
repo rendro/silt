@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'Measurable'
+-- A non-implementing argument to a constrained function is still rejected.
+trait Measurable {
+  fn measure(self) -> Int
+}
+trait Measurable for String {
+  fn measure(self) -> Int { 0 }
+}
+fn measure_it(x: a) -> Int where a: Measurable { x.measure() }
+fn main() { println(measure_it(42)) }

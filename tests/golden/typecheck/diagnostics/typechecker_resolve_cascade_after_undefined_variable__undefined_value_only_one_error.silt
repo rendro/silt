@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'nonExistent'
+-- stderr-not-contains: cannot infer
+-- `let x = nonExistent` reports only the undefined variable, no "cannot infer" cascade (exact stderr).
+fn main() {
+  let x = nonExistent
+}

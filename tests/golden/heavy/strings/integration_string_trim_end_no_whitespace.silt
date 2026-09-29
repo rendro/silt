@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.trim_end("hello") }
+
+fn main() {
+  println(io.inspect(program()))
+}

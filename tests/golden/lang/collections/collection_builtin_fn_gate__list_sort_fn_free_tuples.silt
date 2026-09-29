@@ -1,0 +1,4 @@
+import list
+fn main() {
+  println(list.length(list.sort([(2, "b"), (1, "a")])))
+}

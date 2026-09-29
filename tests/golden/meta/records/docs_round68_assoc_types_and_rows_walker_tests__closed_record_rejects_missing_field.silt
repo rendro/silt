@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: missing required field: b
+fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
+
+fn main() {
+  let _ = ident({a: 1})
+  ()
+}

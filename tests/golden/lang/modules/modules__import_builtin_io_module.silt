@@ -1,0 +1,8 @@
+import io
+import list
+
+fn main() {
+  let args = io.args()
+  -- just verify it returns a list
+  println(list.length(args) >= 0)
+}

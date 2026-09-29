@@ -1,0 +1,15 @@
+import io
+fn check(a: t, b: t) where t: Equal + Compare {
+  let eq = a == b
+  let lt = a < b
+  eq
+}
+
+fn program() {
+  check(1, 2)
+  check(3, 3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

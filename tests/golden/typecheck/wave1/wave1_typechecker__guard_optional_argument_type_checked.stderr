@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected String, got Int
+ --> wave1_typechecker__guard_optional_argument_type_checked.silt:11:21
+    |
+ 11 |   test.assert(true, 5)
+    |                     ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> wave1_typechecker__guard_optional_argument_type_checked.silt:12:32
+    |
+ 12 |   println(float.to_string(1.5, "two"))
+    |                                ^ type mismatch: expected Int, got String

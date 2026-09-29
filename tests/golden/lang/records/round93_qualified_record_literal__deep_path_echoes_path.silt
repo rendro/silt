@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: qualified record construction
+-- stderr-contains: a.b.Pt { ... }
+-- stderr-contains: single module qualifier
+fn main() {
+  let a = a.b.Pt { x: 1 }
+  ()
+}

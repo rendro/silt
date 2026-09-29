@@ -1,0 +1,8 @@
+import int
+fn main() {
+  match int.parse("") {
+    Ok(n) -> println("Ok({n})")
+    Err(ParseEmpty) -> println("Err(ParseEmpty)")
+    Err(_) -> println("Err(other)")
+  }
+}

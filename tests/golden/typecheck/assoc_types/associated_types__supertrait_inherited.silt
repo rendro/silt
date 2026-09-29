@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 0
+-- A subtrait refers to its supertrait's associated type as `Self::Item`.
+trait Super {
+  type Item
+  fn one(self) -> Self::Item
+}
+
+trait Sub: Super {
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Super for Wrap {
+  type Item = Int
+  fn one(self) -> Int { self.v }
+}
+
+trait Sub for Wrap {
+  fn first(self) -> Int { self.v }
+}
+
+fn main() {}

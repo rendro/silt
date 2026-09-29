@@ -1,0 +1,26 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: failed and was never joined
+-- stderr-contains: division
+-- A producer fails before it sends, the consumer waits for it, and
+-- the main thread joins the consumer. The deadlock diagnostic is the
+-- consequence; the report names the cause.
+import channel
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let consumer = task.spawn(fn() {
+    match channel.receive(ch) {
+      Message(v) -> "got {v}"
+      Closed -> "closed"
+      _ -> "other"
+    }
+  })
+  let producer = task.spawn(fn() {
+    let zero = 0
+    channel.send(ch, 10 / zero)
+  })
+  println(task.join(consumer))
+}

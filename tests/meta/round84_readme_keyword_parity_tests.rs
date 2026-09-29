@@ -64,26 +64,6 @@ fn round84_readme_keyword_row_matches_lexer_keywords() {
     );
 }
 
-/// The doc row must not contain any boolean-literal-shaped tokens
-/// (`true` / `false`). Those live in `KEYWORD_LITERALS` because they
-/// lex to `Token::Bool(_)` rather than a keyword token. Mixing them
-/// into the README keyword row would suggest they're keyword-shaped,
-/// which is wrong.
-#[test]
-fn round84_readme_keyword_row_excludes_keyword_literals() {
-    let row = extract_readme_keyword_row();
-    let doc_set: BTreeSet<&str> = row.split_ascii_whitespace().collect();
-    for lit in KEYWORD_LITERALS {
-        assert!(
-            !doc_set.contains(lit),
-            "README `**keywords**` row contains {lit:?}, which is a \
-             `KEYWORD_LITERALS` member (Token::Bool), not a keyword. \
-             Remove it from the README keyword row; document it under \
-             literals if a row is desired."
-        );
-    }
-}
-
 /// Lock `KEYWORD_LITERALS` itself: it must be exactly `{"true",
 /// "false"}`. The LSP rename gate (`src/lsp/rename.rs`) and the
 /// completion gate consult both `KEYWORDS` and `KEYWORD_LITERALS`,

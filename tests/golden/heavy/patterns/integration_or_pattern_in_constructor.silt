@@ -1,0 +1,16 @@
+import io
+fn classify(opt) {
+  match opt {
+    Some(1 | 2 | 3) -> "small"
+    Some(_) -> "other"
+    None -> "none"
+  }
+}
+
+fn program() {
+  [classify(Some(1)), classify(Some(2)), classify(Some(99)), classify(None)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

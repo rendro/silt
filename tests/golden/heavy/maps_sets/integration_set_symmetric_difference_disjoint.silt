@@ -1,0 +1,10 @@
+-- Disjoint inputs: result is the union.
+import io
+import set
+fn program() {
+  set.to_list(set.symmetric_difference(#[1, 2], #[3, 4]))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

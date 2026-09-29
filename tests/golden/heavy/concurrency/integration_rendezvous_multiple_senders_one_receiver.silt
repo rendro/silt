@@ -1,0 +1,29 @@
+-- repeat: 3
+-- Multiple senders on a rendezvous channel, one receiver collects all.
+import io
+import channel
+import task
+import list
+fn program() {
+  let ch = channel.new()
+
+  let s1 = task.spawn(fn() { channel.send(ch, 10) })
+  let s2 = task.spawn(fn() { channel.send(ch, 20) })
+  let s3 = task.spawn(fn() { channel.send(ch, 30) })
+
+  -- Receive all three messages
+  when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Message(b) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Message(c) = channel.receive(ch) else { panic("pattern did not match") }
+
+  task.join(s1)
+  task.join(s2)
+  task.join(s3)
+
+  -- Sum should be 60 regardless of order
+  a + b + c
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

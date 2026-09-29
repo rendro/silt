@@ -1,0 +1,6 @@
+import string
+
+fn main() {
+  let parts = "a,b,c" |> string.split(",")
+  println(parts == ["a", "b", "c"])
+}

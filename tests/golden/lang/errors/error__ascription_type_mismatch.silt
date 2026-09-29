@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+fn main() {
+  42 as String
+}

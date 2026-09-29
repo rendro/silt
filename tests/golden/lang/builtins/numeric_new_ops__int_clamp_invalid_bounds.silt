@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: int.clamp: invalid bounds
+import int
+fn main() {
+  let _ = int.clamp(5, 10, 0)
+}

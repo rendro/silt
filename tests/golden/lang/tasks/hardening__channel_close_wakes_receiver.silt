@@ -1,0 +1,14 @@
+import channel
+import task
+fn main() {
+  let ch = channel.new(0)
+  let sender = task.spawn(fn() {
+    channel.close(ch)
+  })
+  let r = channel.receive(ch)
+  task.join(sender)
+  println(match r {
+    Closed -> "closed"
+    _ -> "unexpected"
+  })
+}

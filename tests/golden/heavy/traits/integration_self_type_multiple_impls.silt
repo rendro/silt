@@ -1,0 +1,23 @@
+-- Same trait implemented for different types, Self resolves correctly for each
+import io
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+trait Zero for Float {
+  fn zero() -> Self { 0.0 }
+}
+
+fn program() {
+  let a = Int.zero()
+  let b = Float.zero()
+  a
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

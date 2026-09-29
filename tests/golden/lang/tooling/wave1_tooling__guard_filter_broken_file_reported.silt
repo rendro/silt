@@ -1,0 +1,5 @@
+-- cmd: test --filter broken
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: 1 file failed to compile
+fn test_broken( {

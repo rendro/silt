@@ -1,0 +1,8 @@
+import time
+fn main() {
+  println(time.days_in_month(2024, 2))
+  println(time.days_in_month(2023, 2))
+  println(time.days_in_month(2024, 4))
+  println(time.days_in_month(2024, 1))
+  println(time.days_in_month(2024, 12))
+}

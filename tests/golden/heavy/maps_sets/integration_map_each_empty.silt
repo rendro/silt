@@ -1,0 +1,11 @@
+import io
+import map
+fn program() {
+  let m = #{}
+  map.each(m) { k, v -> panic("should not run") }
+  "ok"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

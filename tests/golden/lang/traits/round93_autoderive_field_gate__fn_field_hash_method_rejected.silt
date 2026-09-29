@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'H' cannot derive 'Hash'
+-- stderr-contains: field 'f'
+-- stderr-contains: Fn(Int) -> Int
+-- stderr-contains: not hashable
+type H { f: Fn(Int) -> Int }
+fn mk() -> H { H{f: fn(x) { x }} }
+fn main() { println(mk().hash()) }

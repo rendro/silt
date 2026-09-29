@@ -1,0 +1,7 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: FAIL wave1_tooling__test_err_shows_payload.silt::test_plain_err
+-- stderr-contains: error[runtime]: test_plain_err returned Err: the disk is full
+fn test_plain_err() -> Result(Int, String) {
+  Err("the disk is full")
+}

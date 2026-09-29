@@ -1,0 +1,9 @@
+import io
+fn program() {
+  let greetings = ["hello", "world"]
+  [..greetings, "!"]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

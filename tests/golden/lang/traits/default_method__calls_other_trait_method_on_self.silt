@@ -1,0 +1,15 @@
+trait Describable {
+  fn name(self) -> String
+  fn greet(self) -> String { "hi, " + self.name() }
+}
+
+type Person { who: String }
+
+trait Describable for Person {
+  fn name(self) -> String { self.who }
+}
+
+fn main() {
+  let p = Person { who: "alice" }
+  println(p.greet())
+}

@@ -1,5 +1,7 @@
-//! Integration tests for the filesystem metadata / walk / glob APIs
-//! added to the `fs` builtin module.
+//! Integration tests for the filesystem metadata / walk / symlink APIs
+//! of the `fs` builtin module that need a temp-dir tree built from Rust
+//! (symlinks, fresh mtimes). Cases that need no setup live in
+//! `tests/golden/lang/fs/fs_walk_stat__*`.
 //!
 //! Each test creates its own temp directory under `std::env::temp_dir()`
 //! and cleans up on drop (via the `TempDir` guard below). Tests drive
@@ -224,136 +226,6 @@ fn main() {{
     }
 }
 
-#[test]
-fn test_fs_stat_mode_field_typechecks_as_int() {
-    // Exercises the typechecker scheme registration: reading `.mode` as
-    // an Int must compile cleanly. Regression guard against drift where
-    // the runtime adds a field that the type scheme doesn't advertise.
-    let dir = TempDir::new("stat_mode_ty");
-    let file = dir.path().join("a.txt");
-    std::fs::write(&file, "x").unwrap();
-    let file_str = file.to_str().unwrap().replace('\\', "/");
-    let input = format!(
-        r#"
-import fs
-fn main() {{
-    match fs.stat("{file_str}") {{
-        Ok(s) -> s.mode
-        Err(_) -> -1
-    }}
-}}
-"#
-    );
-    let result = run(&input);
-    assert!(matches!(result, Value::Int(_)));
-}
-
-#[test]
-fn test_fs_stat_accessed_and_created_are_option_datetime() {
-    // Exercises typechecker registration of `accessed` / `created` as
-    // Option(DateTime). The user code pattern-matches through Some/None
-    // and reads nested date fields — the typechecker has to see those
-    // paths to confirm the record scheme is right.
-    let dir = TempDir::new("stat_opt_dt");
-    let file = dir.path().join("a.txt");
-    std::fs::write(&file, "x").unwrap();
-    let file_str = file.to_str().unwrap().replace('\\', "/");
-    let input = format!(
-        r#"
-import fs
-fn main() {{
-    match fs.stat("{file_str}") {{
-        Ok(s) -> match s.accessed {{
-            Some(dt) -> dt.date.year
-            None -> 0
-        }}
-        Err(_) -> -1
-    }}
-}}
-"#
-    );
-    let result = run(&input);
-    // `accessed` must be populated on every common filesystem for a file
-    // we just wrote and then stat'd: ext4/xfs/btrfs/apfs/ntfs all return
-    // an atime, and `std::env::temp_dir()` (where TempDir lives) points
-    // at a normally-mounted temp location on every platform our CI
-    // exercises. A `y == 0` result here would mean either
-    // `fs.stat.accessed` silently regressed to always-None (the pattern
-    // match falls through to the `None -> 0` arm), or the accessed
-    // DateTime's year field returned 0 — both are regressions we want
-    // to catch rather than paper over. `-1` would mean fs.stat returned
-    // Err, which also shouldn't happen for a file we just wrote.
-    //
-    // The historical `y == 0` escape hatch was defensive against
-    // noatime mounts, but no stock temp-dir setup uses noatime; if a
-    // future platform needs it, add a targeted cfg-gated test rather
-    // than reintroducing the silent-pass branch.
-    match result {
-        Value::Int(y) => {
-            assert!(y >= 1970, "unexpected year value {y}");
-        }
-        other => panic!("expected Int, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_fs_stat_on_directory_reports_is_dir() {
-    let dir = TempDir::new("stat_dir");
-    let sub = dir.path().join("subdir");
-    std::fs::create_dir(&sub).unwrap();
-    let sub_str = sub.to_str().unwrap().replace('\\', "/");
-    let input = format!(
-        r#"
-import fs
-fn main() {{
-    fs.stat("{sub_str}")
-}}
-"#
-    );
-    let inner = ok_inner(run(&input));
-    let (name, fields) = record_fields(inner);
-    assert_eq!(name, "FileStat");
-    assert_eq!(fields.get("is_file"), Some(&Value::Bool(false)));
-    assert_eq!(fields.get("is_dir"), Some(&Value::Bool(true)));
-    assert_eq!(fields.get("is_symlink"), Some(&Value::Bool(false)));
-    // size on directories varies wildly across OSes (and filesystems);
-    // don't assert an exact value, only that the field is an Int.
-    assert!(matches!(fields.get("size"), Some(Value::Int(_))));
-}
-
-#[test]
-fn test_fs_stat_missing_path_errs() {
-    let dir = TempDir::new("stat_missing");
-    let missing = dir.path().join("does_not_exist");
-    let missing_str = missing.to_str().unwrap().replace('\\', "/");
-    let input = format!(
-        r#"
-import fs
-fn main() {{
-    fs.stat("{missing_str}")
-}}
-"#
-    );
-    let msg = err_msg(run(&input));
-    // The OS-level message varies between Linux / macOS / Windows
-    // ("No such file or directory", "cannot find", "The system cannot
-    // find"), so we don't lock that. What we DO lock is the silt-side
-    // framing: `io_error_to_variant` maps NotFound to `IoNotFound(path)`,
-    // and `err_msg`/`IoError.message` render that as
-    // `"file not found: <path>"`. That prefix plus the missing path's
-    // final segment must appear — otherwise we'd be accepting a bare
-    // Rust panic message or a silently-swallowed "error" string.
-    assert!(!msg.is_empty(), "expected a non-empty error message");
-    assert!(
-        msg.contains("file not found"),
-        "expected silt's NotFound framing 'file not found' in: {msg}"
-    );
-    assert!(
-        msg.contains("does_not_exist"),
-        "expected the missing path segment 'does_not_exist' in: {msg}"
-    );
-}
-
 // ── fs.walk ────────────────────────────────────────────────────────
 
 #[test]
@@ -403,57 +275,6 @@ fn main() {{
         }
         other => panic!("expected Int length, got {other:?}"),
     }
-}
-
-// ── fs.glob ────────────────────────────────────────────────────────
-
-#[test]
-fn test_fs_glob_filters_by_extension() {
-    let dir = TempDir::new("glob");
-    std::fs::write(dir.path().join("one.silt"), "").unwrap();
-    std::fs::write(dir.path().join("two.silt"), "").unwrap();
-    std::fs::write(dir.path().join("readme.md"), "").unwrap();
-
-    let pattern = format!("{}/*.silt", dir.as_silt_str());
-    let input = format!(
-        r#"
-import fs
-import list
-fn main() {{
-    match fs.glob("{pattern}") {{
-        Ok(paths) -> list.length(paths)
-        Err(_) -> -1
-    }}
-}}
-"#
-    );
-    let result = run(&input);
-    assert_eq!(result, Value::Int(2), "expected 2 .silt matches");
-}
-
-#[test]
-fn test_fs_glob_malformed_pattern_errs() {
-    // `[` opens a character class that is never closed → pattern error.
-    let input = r#"
-import fs
-fn main() {
-    fs.glob("src/[unterminated")
-}
-"#;
-    let msg = err_msg(run(input));
-    // The glob crate's `PatternError::Display` wording may drift
-    // ("Pattern syntax error near position 4: invalid range pattern"
-    // today, but we don't pin the exact phrasing). What we DO lock is
-    // the silt-side framing: a bad pattern routes through
-    // `IoInvalidInput(err.to_string())`, which `IoError.message`
-    // renders with the `"invalid input:"` prefix. Locking that prefix
-    // catches regressions where the error is silently swallowed to a
-    // generic "error" or raised as a bare VmError.
-    assert!(!msg.is_empty());
-    assert!(
-        msg.contains("invalid input"),
-        "expected silt's InvalidInput framing 'invalid input' in: {msg}"
-    );
 }
 
 // ── fs.read_link / fs.is_symlink ───────────────────────────────────
@@ -544,46 +365,5 @@ fn main() {{
     assert!(
         msg.contains("invalid input"),
         "expected silt's InvalidInput framing 'invalid input' in: {msg}"
-    );
-}
-
-// ── fs.walk materialization cap (indirect) ─────────────────────────
-//
-// Exercising the 1M cap for real is impractical in a unit test — we
-// can't cheaply create a million entries and still stay fast. Instead
-// we verify the *shape* of the cap's failure mode holds by checking
-// that fs.walk on a modest tree returns Ok (so the cap didn't
-// spuriously trip) and that walk on a nonexistent root returns Err.
-// Together these pin down the entry/exit invariants around the cap.
-
-#[test]
-fn test_fs_walk_missing_root_returns_err() {
-    let dir = TempDir::new("walk_missing");
-    let missing = dir.path().join("nope");
-    // Don't create it — we want the walker to fail on first iteration.
-    let missing_str = missing.to_str().unwrap().replace('\\', "/");
-    let input = format!(
-        r#"
-import fs
-fn main() {{
-    fs.walk("{missing_str}")
-}}
-"#
-    );
-    let msg = err_msg(run(&input));
-    // walkdir surfaces the underlying `std::io::Error` via
-    // `.io_error()`, which `fs.walk` pipes into `io_result_err(&e, root)`.
-    // That yields `IoNotFound(root)`, which `IoError.message` renders
-    // as `"file not found: <root>"`. OS-level message text varies
-    // across platforms and walkdir versions, so we anchor only on the
-    // silt-side wording plus the caller-supplied missing segment.
-    assert!(!msg.is_empty());
-    assert!(
-        msg.contains("file not found"),
-        "expected silt's NotFound framing 'file not found' in: {msg}"
-    );
-    assert!(
-        msg.contains("nope"),
-        "expected the missing path segment 'nope' in: {msg}"
     );
 }

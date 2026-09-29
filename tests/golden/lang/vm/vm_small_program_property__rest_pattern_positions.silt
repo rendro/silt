@@ -1,0 +1,28 @@
+import list
+
+fn head_rest(xs) {
+  match xs {
+    [] -> -1
+    [h, ..t] -> h + list.length(t)
+  }
+}
+
+fn only_rest(xs) {
+  match xs {
+    [..t] -> list.length(t)
+  }
+}
+
+fn pair_plus_rest(xs) {
+  match xs {
+    [a, b, ..t] -> a + b + list.length(t)
+    _ -> -1
+  }
+}
+
+fn main() {
+  let a = head_rest([10, 1, 2, 3])
+  let b = only_rest([1, 2, 3, 4, 5])
+  let c = pair_plus_rest([1, 2, 3, 4])
+  println(a + b + c)
+}

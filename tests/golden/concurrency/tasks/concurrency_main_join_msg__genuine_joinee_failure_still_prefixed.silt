@@ -1,0 +1,14 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: joined task failed
+-- stderr-not-contains: deadlock on main thread
+-- A joinee that really fails is still reported as "joined task failed".
+import task
+
+fn main() {
+  let h = task.spawn(fn() {
+    let x = 1 / 0
+    x
+  })
+  task.join(h)
+}

@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.captures_all("(\\w+)@(\\w+)", "alice@home bob@work")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

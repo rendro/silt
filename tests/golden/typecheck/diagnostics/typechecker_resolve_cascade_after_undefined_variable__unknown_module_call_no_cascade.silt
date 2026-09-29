@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-not-contains: cannot infer
+-- A call into an unknown module reports its error without a "cannot infer" cascade.
+fn main() {
+  let x = unknown_module.foo()
+}

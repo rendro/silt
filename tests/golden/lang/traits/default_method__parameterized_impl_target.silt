@@ -1,0 +1,12 @@
+type Box(a) { value: a }
+
+trait Wrapper {
+  fn describe(self) -> String { "a wrapped value" }
+}
+
+trait Wrapper for Box(a) {}
+
+fn main() {
+  let b = Box { value: 42 }
+  println(b.describe())
+}

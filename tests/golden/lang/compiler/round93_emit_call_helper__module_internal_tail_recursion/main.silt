@@ -1,0 +1,6 @@
+-- stderr-not-contains: stack overflow
+import counter
+
+fn main() {
+  println("{counter.selfcount(200000)}")
+}

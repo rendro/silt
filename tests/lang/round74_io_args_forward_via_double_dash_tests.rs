@@ -82,41 +82,6 @@ fn silt_run_forwards_program_args_after_double_dash() {
 }
 
 #[test]
-fn silt_run_with_no_program_args_returns_empty_io_args() {
-    // Without `--`, no extra positionals are accepted; `io.args()`
-    // should return an empty list (not the silt binary's own argv).
-    let dir = fresh_dir("run_empty");
-    let script = dir.join("dump_args.silt");
-    write_args_dumper(&script);
-
-    let out = silt_cmd()
-        .args(["run", script.to_str().unwrap()])
-        .output()
-        .expect("failed to run silt");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "silt run must succeed with no program args; \
-         exit={:?}\nstdout={stdout}\nstderr={stderr}",
-        out.status.code()
-    );
-    // Pre-fix io.args() returned the binary's own argv ("silt", "run",
-    // "<path>"); post-fix it returns nothing when no `--` is present.
-    let trimmed = stdout.trim();
-    assert!(
-        trimmed.is_empty(),
-        "io.args() must be empty when no `--` is present; got stdout: {stdout}"
-    );
-    // Specifically the binary path must NOT leak into io.args().
-    assert!(
-        !stdout.contains("silt") || !stdout.contains("run"),
-        "binary argv must not leak through io.args(); got: {stdout}"
-    );
-}
-
-#[test]
 fn silt_run_double_dash_with_no_args_succeeds() {
     // `silt run script -- ` (trailing `--` with no args after) must be
     // accepted as a no-op; io.args() returns empty.

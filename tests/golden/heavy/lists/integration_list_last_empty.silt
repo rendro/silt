@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.last([]) }
+
+fn main() {
+  println(io.inspect(program()))
+}

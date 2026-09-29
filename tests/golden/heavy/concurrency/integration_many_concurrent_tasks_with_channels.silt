@@ -1,0 +1,40 @@
+-- repeat: 3
+-- 100 tasks all sending through a single channel to verify M:N scheduling.
+-- Sum of 0..99 = 4950
+import io
+import channel
+import list
+import task
+fn program() {
+  let ch = channel.new(200)
+
+  let handles = loop i = 0, acc = [] {
+    match i >= 100 {
+      true -> acc
+      _ -> {
+        let h = task.spawn(fn() {
+          channel.send(ch, i)
+        })
+        loop(i + 1, list.append(acc, h))
+      }
+    }
+  }
+
+  -- Join all handles
+  handles |> list.each { h -> task.join(h) }
+
+  -- Drain all messages and sum them
+  loop i = 0, total = 0 {
+    match i >= 100 {
+      true -> total
+      _ -> {
+        when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
+        loop(i + 1, total + val)
+      }
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

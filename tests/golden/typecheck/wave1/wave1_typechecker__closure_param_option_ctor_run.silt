@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-not-contains: error[runtime]
+-- `silt run` refuses the `Some(x)` closure parameter before the VM.
+import list
+fn main() {
+  println([Some(1), None] |> list.map { Some(x) -> x + 1 })
+}

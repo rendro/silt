@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- `match x { }` on a zero-variant enum is vacuously exhaustive.
+type Absurd { }
+fn elim(x: Absurd) -> Int { match x { } }
+fn main() {}

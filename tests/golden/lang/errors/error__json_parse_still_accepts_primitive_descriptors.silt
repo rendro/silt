@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+import json
+fn main() {
+  let r = json.parse("42", Int)
+  match r {
+    Ok(n) -> {
+      let _: Int = n
+    }
+    Err(_) -> ()
+  }
+}

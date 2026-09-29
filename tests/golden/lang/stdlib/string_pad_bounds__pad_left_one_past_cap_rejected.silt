@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: pad_left
+-- stderr-contains: exceeds maximum
+import string
+fn main() {
+  string.pad_left("hi", 10000001, " ")
+}

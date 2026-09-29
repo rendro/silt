@@ -1,0 +1,19 @@
+-- cmd: test
+-- exit: 1
+-- stderr-not-contains: error[type]
+-- stderr-not-contains: warning[
+-- stderr-contains: PASS main.silt::test_passes
+-- stderr-contains: FAIL main.silt::test_fails
+-- stderr-contains: SKIP main.silt::skip_test_later
+-- stderr-contains: 3 tests: 1 passed, 1 failed, 1 skipped
+import test
+import helper
+fn test_passes() {
+  test.assert_eq(helper.double(2), 4)
+}
+fn test_fails() {
+  test.assert_eq(helper.double(2), 5)
+}
+fn skip_test_later() {
+  test.assert(false)
+}

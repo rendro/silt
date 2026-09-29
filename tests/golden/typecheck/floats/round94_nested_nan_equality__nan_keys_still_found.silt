@@ -1,0 +1,11 @@
+-- A NaN set member and map key are still found (keying keeps NaN self-equal).
+import set
+import map
+
+fn main() {
+    let nan = 0.0 / 0.0
+    let s = set.from_list([nan])
+    println(set.contains(s, nan))
+    let m = #{ nan: "x" }
+    println(map.get(m, nan))
+}

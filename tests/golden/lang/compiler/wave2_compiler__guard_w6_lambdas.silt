@@ -1,0 +1,13 @@
+import list
+
+trait Baz { fn baz(self) -> String }
+trait Baz for Fun { fn baz(self) -> String = "baz" }
+
+let tl = { x -> x + 1 }
+
+fn main() {
+  let f = { x -> x * 3 }
+  println(f.baz())
+  println(tl.baz())
+  println(list.length([1, 2, 3]))
+}

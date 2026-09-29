@@ -1,0 +1,15 @@
+-- cmd: disasm
+-- exit: 0
+-- Feature tcp-tls: the typechecker and compiler accept the
+-- tcp.accept_tls_mtls call shape (disasm typechecks and compiles).
+import bytes
+import tcp
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(l) -> match tcp.accept_tls_mtls(l, bytes.empty(), bytes.empty(), bytes.empty()) {
+      Ok(_) -> ()
+      Err(_) -> ()
+    }
+    Err(_) -> ()
+  }
+}

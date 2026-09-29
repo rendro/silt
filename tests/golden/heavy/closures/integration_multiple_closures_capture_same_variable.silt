@@ -1,0 +1,13 @@
+-- Two sibling closures both capture the same variable from their parent.
+-- add_shared(5) = 15, mul_shared(3) = 30, total = 45
+import io
+fn program() {
+  let shared = 10
+  let add_shared = fn(x) { x + shared }
+  let mul_shared = fn(x) { x * shared }
+  add_shared(5) + mul_shared(3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

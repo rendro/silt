@@ -1,0 +1,7 @@
+type Pair { Both(Int, Int), Just(Int), }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    println(eq_gen(Both(1, 2), Both(1, 2)))
+    println(eq_gen(Both(1, 2), Both(1, 3)))
+    println(eq_gen(Both(1, 2), Just(1)))
+}

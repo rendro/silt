@@ -1,0 +1,13 @@
+-- exit: 1
+-- stderr-contains: stack overflow
+-- stderr-contains: tail position
+-- Non-tail recursion exceeding the frame limit should produce a clear error.
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+fn main() {
+  deep(200000)
+}

@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: --> inner.silt:1:
+-- stderr-contains: pub fn broken(
+import inner
+
+fn main() {
+  inner.broken()
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+import encoding
+fn main() {
+  encoding.url_encode(42)
+}

@@ -1,0 +1,7 @@
+import set
+fn main() {
+  let f = set.symmetric_difference
+  let a = set.from_list([1, 2, 3])
+  let b = set.from_list([2, 3, 4])
+  println(set.length(f(a, b)))
+}

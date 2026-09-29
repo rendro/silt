@@ -1,0 +1,47 @@
+-- exit: 0
+-- GUARD: a block ending in a diverging expression diverges, after statements and nested.
+fn load_data() -> Result(Int, String) { Ok(42) }
+
+fn stmt_then_panic() -> Int {
+  let res = load_data()
+  when let Ok(data) = res else {
+    println("failing")
+    panic("load failed")
+  }
+  data
+}
+
+fn nested_block() -> Int {
+  let res = load_data()
+  when let Ok(data) = res else {
+    {
+      println("failing")
+      panic("load failed")
+    }
+  }
+  data
+}
+
+fn return_in_block() -> Int {
+  let res = load_data()
+  when let Ok(data) = res else {
+    println("failing")
+    return 0
+  }
+  data
+}
+
+fn when_bool(n: Int) -> Int {
+  when n > 0 else {
+    println("failing")
+    return 0
+  }
+  n
+}
+
+fn main() {
+  println(stmt_then_panic())
+  println(nested_block())
+  println(return_in_block())
+  println(when_bool(3))
+}

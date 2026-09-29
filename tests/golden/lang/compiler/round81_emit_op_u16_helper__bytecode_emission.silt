@@ -1,0 +1,19 @@
+-- exercises Constant, GetLocal, Jump/JumpIfFalse (match arms) and
+-- SetGlobal (top-level let), every one of which carries a u16 operand
+import list
+
+let tag = "round81"
+
+fn classify(n) {
+  match (n % 3, n % 5) {
+    (0, 0) -> "FizzBuzz"
+    (0, _) -> "Fizz"
+    (_, 0) -> "Buzz"
+    _ -> "{n}"
+  }
+}
+
+fn main() {
+  1..6
+  |> list.each { n -> println("{tag}:{classify(n)}") }
+}

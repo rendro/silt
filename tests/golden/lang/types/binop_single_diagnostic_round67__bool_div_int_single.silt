@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+fn main() {
+    let x = true / 1
+    ()
+}

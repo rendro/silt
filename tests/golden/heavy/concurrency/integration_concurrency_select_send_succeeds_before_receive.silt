@@ -1,0 +1,19 @@
+-- repeat: 3
+-- Send should succeed immediately when channel has space, even if receive ops also present.
+import io
+import channel
+fn program() {
+  let empty_ch = channel.new(10)
+  let send_ch = channel.new(1)
+
+  -- empty_ch has nothing to receive, but send_ch has room
+  match channel.select([Recv(empty_ch), Send(send_ch, 99)]) {
+    (_, Sent) -> "sent_first"
+    (_, Message(_)) -> "received"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

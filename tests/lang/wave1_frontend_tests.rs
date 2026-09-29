@@ -20,6 +20,11 @@
 //!    and the match body may follow the right operand of `|>` directly
 //!    (`match xs |> list.head { ... }`).
 //!
+//! The run-only tests of part 3 are golden cases
+//! (`tests/golden/lang/control/wave1_frontend__*`); what stays here runs
+//! `silt fmt` (which rewrites the file), or generates chains of 10,000
+//! links and runs `check`, `run` and `fmt` on each.
+//!
 //! Every test runs the built `silt` binary on files in a fresh temporary
 //! directory and asserts on its exit status, its output and the files.
 //! Each run has a timeout, so a hang fails the test instead of hanging
@@ -968,58 +973,7 @@ fn a_chain_of_200_links_still_formats() {
 // 3. Expressions that are followed by a block
 // ════════════════════════════════════════════════════════════════════
 
-/// `silt run` on `src` must succeed and print `expected`.
-fn assert_runs(label: &str, src: &str, expected: &str) {
-    let ws = Workspace::new(label);
-    ws.write(MAIN, src);
-    let out = ws.silt(&["run", MAIN]);
-    assert_ended_cleanly(label, "silt run", &out);
-    assert_eq!(out.code, Some(0), "{label}: the program must run\n{out:?}");
-    assert_eq!(out.stdout.trim(), expected, "{label}\n{out:?}");
-}
-
 const LIST_TYPE: &str = "type L { Nil, Cons(Int, L) }\n";
-
-#[test]
-fn a_loop_initialiser_may_end_in_a_constructor() {
-    let src = format!(
-        "{LIST_TYPE}{}",
-        r#"fn build(n) {
-  loop i = n, acc = Nil {
-    match i {
-      0 -> acc
-      _ -> loop(i - 1, Cons(i, acc))
-    }
-  }
-}
-fn main() {
-  println("{build(2)}")
-}
-"#
-    );
-    assert_runs("loop_ctor_last", &src, "Cons(1, Cons(2, Nil))");
-}
-
-#[test]
-fn a_loop_body_after_a_constructor_may_start_with_any_statement() {
-    let src = format!(
-        "{LIST_TYPE}{}",
-        r#"fn count(xs) {
-  loop rest = xs, n = 0, seen = Nil {
-    let next = Cons(n, seen)
-    match rest {
-      Nil -> n
-      Cons(_, tail) -> loop(tail, n + 1, next)
-    }
-  }
-}
-fn main() {
-  println("{count(Cons(7, Cons(8, Nil)))}")
-}
-"#
-    );
-    assert_runs("loop_ctor_let", &src, "2");
-}
 
 /// Whether the `{` of the loop body is on the line of the header or on
 /// the next one makes no difference, to the parser or to the formatter
@@ -1038,16 +992,6 @@ fn main() {
 "#;
     let same_line = format!("{LIST_TYPE}fn build(n) {{\n  loop i = n, acc = Nil {{\n{body}");
     let next_line = format!("{LIST_TYPE}fn build(n) {{\n  loop i = n, acc = Nil\n  {{\n{body}");
-    assert_runs(
-        "brace_same_line",
-        &same_line,
-        "Cons(1, Cons(2, Cons(3, Nil)))",
-    );
-    assert_runs(
-        "brace_next_line",
-        &next_line,
-        "Cons(1, Cons(2, Cons(3, Nil)))",
-    );
     assert_fmt_keeps_program(
         "fmt_brace_same_line",
         &same_line,
@@ -1057,24 +1001,6 @@ fn main() {
         "fmt_brace_next_line",
         &next_line,
         &["loop i = n, acc = Nil {"],
-    );
-}
-
-#[test]
-fn a_trailing_closure_works_inside_parentheses_in_a_scrutinee() {
-    assert_runs(
-        "scrutinee_parens",
-        r#"import list
-fn main() {
-  let xs = [1, 2, 3]
-  let r = match (list.filter(xs) { x -> x > 1 }) {
-    [] -> "none"
-    _ -> "some"
-  }
-  println(r)
-}
-"#,
-        "some",
     );
 }
 
@@ -1090,7 +1016,6 @@ fn main() {
   println(r)
 }
 "#;
-    assert_runs("scrutinee_call_arg", src, "some");
     assert_fmt_keeps_program(
         "fmt_scrutinee_call_arg",
         src,
@@ -1110,61 +1035,7 @@ fn main() {
   println("{r}")
 }
 "#;
-    assert_runs("pipe_head", head, "1");
     assert_fmt_keeps_program("fmt_pipe_head", head, &["  |> list.head {\n"]);
-
-    assert_runs(
-        "pipe_length",
-        r#"import list
-fn main() {
-  let xs = [1, 2]
-  let r = match xs |> list.length {
-    n -> n + 1
-  }
-  println("{r}")
-}
-"#,
-        "3",
-    );
-    // The match is the last expression of a block: a `}` follows its body.
-    assert_runs(
-        "pipe_then_block_end",
-        r#"import list
-fn pick(xs) {
-  match xs |> list.head {
-    Some(x) -> x
-    None -> 0
-  }
-}
-fn main() {
-  println("{pick([4, 5])}")
-}
-"#,
-        "4",
-    );
-    // The match is an argument and a list element: a `)` or a `,` follows
-    // its body. Checked, not run, so that the test is about the parser.
-    let ws = Workspace::new("pipe_then_closer");
-    ws.write(
-        MAIN,
-        r#"import list
-fn main() {
-  let xs = [4, 5]
-  let shown = string_of(match xs |> list.length {
-    n -> n + 1
-  })
-  let both = [match xs |> list.head {
-    Some(x) -> x
-    None -> 0
-  }, 9]
-  println("{shown} {both}")
-}
-fn string_of(n: Int) -> String = "{n}"
-"#,
-    );
-    let check = ws.silt(&["check", MAIN]);
-    assert_ended_cleanly("pipe_then_closer", "silt check", &check);
-    assert_eq!(check.code, Some(0), "{check:?}");
 }
 
 /// Guard. A trailing closure on the right operand of a pipe in a
@@ -1192,71 +1063,9 @@ fn main() {
   println("{r} {s} {t}")
 }
 "#;
-    assert_runs("pipe_closure_then_body", src, "big [14, 6] two");
     assert_fmt_keeps_program(
         "fmt_pipe_closure_then_body",
         src,
         &["  |> list.any { x -> x > 5 } {\n"],
-    );
-}
-
-/// Guard. The loop headers that worked before work as before: a
-/// constructor that is not the last initialiser, a record literal, and a
-/// trailing closure as initialiser.
-#[test]
-fn the_other_loop_headers_still_work() {
-    let src = format!(
-        "import list\n{LIST_TYPE}{}",
-        r#"type P { x: Int }
-fn main() {
-  let a = loop acc = Nil, i = 2 {
-    match i {
-      0 -> acc
-      _ -> loop(Cons(i, acc), i - 1)
-    }
-  }
-  let b = loop p = P { x: 1 }, i = 0 {
-    match i {
-      3 -> p.x
-      _ -> loop(p.{ x: p.x * 2 }, i + 1)
-    }
-  }
-  let c = loop xs = list.map([1, 2]) { v -> v + 1 }, total = 0 {
-    match xs {
-      [] -> total
-      [h, ..t] -> loop(t, total + h)
-    }
-  }
-  let d = loop i = 3, p = P { x: 5 } {
-    match i {
-      0 -> p.x
-      _ -> loop(i - 1, p)
-    }
-  }
-  println("{a} {b} {c} {d}")
-}
-"#
-    );
-    assert_runs("loop_forms", &src, "Cons(1, Cons(2, Nil)) 8 5 5");
-}
-
-/// Guard. A record literal as scrutinee, bare and inside a list.
-#[test]
-fn a_record_literal_is_still_a_scrutinee() {
-    assert_runs(
-        "scrutinee_record",
-        r#"type P { x: Int }
-fn main() {
-  let r = match [P { x: 1 }] {
-    [] -> "none"
-    _ -> "some"
-  }
-  let s = match P { x: 1 } {
-    P { x } -> x
-  }
-  println("{r} {s}")
-}
-"#,
-        "some 1",
     );
 }

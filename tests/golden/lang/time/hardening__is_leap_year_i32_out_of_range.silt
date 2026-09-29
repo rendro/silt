@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: time.is_leap_year: year
+-- stderr-contains: out of range for i32
+import time
+fn main() {
+  println(time.is_leap_year(4294967300))
+}

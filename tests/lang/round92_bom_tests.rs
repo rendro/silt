@@ -14,6 +14,11 @@
 //! column of line 1. A BOM anywhere *else* in the file is still an
 //! error, now reported by name (`byte-order mark (U+FEFF)`) instead of
 //! as an invisible quoted character.
+//!
+//! Most cases are golden cases in tests/golden/lang/lexer/round92_bom__*.silt.
+//! The two left here cannot be: the line-1 error must sit right after the
+//! BOM, leaving no room for directive lines, and the fmt test checks the
+//! rewritten file's contents.
 
 use std::fs;
 use std::path::PathBuf;
@@ -45,53 +50,7 @@ fn run_cmd(cmd: &mut Command) -> (i32, String, String) {
     (code, stdout, stderr)
 }
 
-// ── (a) Run path: a BOM-prefixed valid program runs ───────────────────
-
-#[test]
-fn bom_prefixed_program_runs_and_prints() {
-    let path = temp_silt_file(
-        "bom_runs",
-        &format!("{BOM}fn main() {{\n  println(\"bom ok\")\n}}\n"),
-    );
-
-    let (code, stdout, stderr) = run_cmd(silt_cmd().arg("run").arg(&path));
-
-    assert_eq!(
-        code, 0,
-        "expected BOM-prefixed program to run, got exit {code}, stderr:\n{stderr}"
-    );
-    assert_eq!(
-        stdout, "bom ok\n",
-        "expected program output, got stdout:\n{stdout}"
-    );
-    assert!(
-        !stderr.contains("unexpected character"),
-        "leading BOM must not produce a lex error, got stderr:\n{stderr}"
-    );
-}
-
-// ── (b) Spans after a skipped BOM stay correct ────────────────────────
-
-#[test]
-fn bom_prefixed_program_reports_correct_line_col_for_later_error() {
-    // The `;` on line 2 is a lex error ("semicolons are not used in
-    // silt"). With the BOM skipped (not stripped), the error must still
-    // land at line 2, column 1 — the BOM only occupies a column on
-    // line 1.
-    let path = temp_silt_file("bom_line2_error", &format!("{BOM}fn main() {{\n;\n}}\n"));
-
-    let (code, _stdout, stderr) = run_cmd(silt_cmd().arg("run").arg(&path));
-
-    assert_ne!(code, 0, "expected the line-2 lex error to fail the run");
-    assert!(
-        stderr.contains("semicolons are not used"),
-        "expected the real line-2 diagnostic (not a BOM error), got stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(":2:1"),
-        "expected the error located at line 2, col 1, got stderr:\n{stderr}"
-    );
-}
+// ── Spans after a skipped BOM stay correct ────────────────────────────
 
 #[test]
 fn bom_then_error_on_line_one_points_past_the_bom() {
@@ -111,32 +70,6 @@ fn bom_then_error_on_line_one_points_past_the_bom() {
     assert!(
         stderr.contains(":1:2"),
         "expected the error located at line 1, col 2 (after the skipped BOM), got stderr:\n{stderr}"
-    );
-}
-
-// ── (c) Mid-file BOM still errors, with a readable name ───────────────
-
-#[test]
-fn mid_file_bom_errors_with_readable_name() {
-    let path = temp_silt_file(
-        "bom_midfile",
-        &format!("fn main() {{\n  let x{BOM} = 1\n  println(x)\n}}\n"),
-    );
-
-    let (code, _stdout, stderr) = run_cmd(silt_cmd().arg("run").arg(&path));
-
-    assert_ne!(code, 0, "expected mid-file BOM to be a lex error");
-    assert!(
-        stderr.contains("byte-order mark (U+FEFF)"),
-        "expected the BOM to be named (it is invisible when quoted raw), got stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(":2:"),
-        "expected the error located on line 2, got stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains(&format!("'{BOM}'")),
-        "the raw invisible BOM char must not be quoted in the message, got stderr:\n{stderr}"
     );
 }
 
@@ -170,20 +103,4 @@ fn fmt_on_bom_file_drops_bom_without_corruption() {
         "expected formatted file to run, got exit {code}, stderr:\n{stderr}"
     );
     assert_eq!(stdout, "fmt bom\n");
-}
-
-// ── check path shares the lexer with run ──────────────────────────────
-
-#[test]
-fn check_accepts_bom_prefixed_file() {
-    let path = temp_silt_file(
-        "bom_check",
-        &format!("{BOM}fn main() {{\n  println(\"check\")\n}}\n"),
-    );
-
-    let (code, _stdout, stderr) = run_cmd(silt_cmd().arg("check").arg(&path));
-    assert_eq!(
-        code, 0,
-        "expected `silt check` to accept a BOM-prefixed file, got exit {code}, stderr:\n{stderr}"
-    );
 }

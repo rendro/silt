@@ -1,0 +1,25 @@
+-- exit: 1
+-- stderr-contains: time.to_instant
+-- stderr-contains: out of range
+-- stderr-not-contains: panicked
+-- stderr-not-contains: overflowed
+import time
+fn main() {
+  let dr = time.date(262142, 12, 31)
+  let inst = match dr {
+    Ok(d) -> {
+      let tr = time.time(23, 59, 59)
+      match tr {
+        Ok(t) -> {
+          let dt = time.datetime(d, t)
+          -- try_minutes allows this magnitude; the naive +/- then
+          -- overflows chrono's valid range.
+          time.to_instant(dt, -2147483647)
+        }
+        Err(_) -> Instant { epoch_ns: 0 }
+      }
+    }
+    Err(_) -> Instant { epoch_ns: 0 }
+  }
+  println(inst.epoch_ns)
+}

@@ -1,0 +1,9 @@
+let cached = compute()
+
+fn compute() {
+  41 + 1
+}
+
+pub fn get() {
+  cached
+}

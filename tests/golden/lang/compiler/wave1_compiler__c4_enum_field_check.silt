@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: toml.parse
+-- stderr-contains: Pixel
+-- stderr-contains: `c`
+-- stderr-contains: Color
+import toml
+
+type Color { Red, Green }
+type Pixel { x: Int, c: Color }
+
+fn main() {
+  match toml.parse("x = 1\nc = \"Red\"\n", Pixel) {
+    Ok(v) -> println(v.x)
+    Err(e) -> println("err: {e.message()}")
+  }
+}

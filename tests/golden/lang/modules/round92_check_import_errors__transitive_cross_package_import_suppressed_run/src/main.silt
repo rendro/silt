@@ -1,0 +1,6 @@
+-- The transitive path-dependency call runs and prints the right value.
+import shapes
+
+fn main() {
+  println(shapes.nine(1))
+}

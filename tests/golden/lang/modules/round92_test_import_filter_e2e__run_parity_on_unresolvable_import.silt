@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: cannot load module 'ghost_mod'
+-- stderr-not-contains: undefined variable
+import ghost_mod.{answer}
+
+fn main() {
+    println(answer() + 1)
+}

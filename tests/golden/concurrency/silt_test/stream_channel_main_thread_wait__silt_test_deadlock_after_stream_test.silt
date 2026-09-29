@@ -1,0 +1,32 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: FAIL stream_channel_main_thread_wait__silt_test_deadlock_after_stream_test.silt::test_b_real_deadlock
+-- stderr-contains: 3 tests: 2 passed, 1 failed
+-- One file: a stream test, then a test that deadlocks on a fresh
+-- channel, then a trivial test. All run in the same VM, so the stage
+-- threads of the first test are alive during the second; the deadlock
+-- must still be reported as that test's failure, and the others pass.
+import channel
+import stream
+import test
+
+fn test_a_stream_pipeline() {
+  let squares = stream.from_range(1, 100)
+    |> stream.filter(fn(n) { n % 2 == 1 })
+    |> stream.map(fn(n) { n * n })
+    |> stream.take(5)
+    |> stream.collect
+  test.assert_eq(squares, [1, 9, 25, 49, 81])
+}
+
+fn test_b_real_deadlock() {
+  let fresh = channel.new(0)
+  let _ = channel.receive(fresh)
+  test.assert(false, "unreachable")
+}
+
+fn test_c_trivial() {
+  test.assert_eq(1 + 1, 2)
+}

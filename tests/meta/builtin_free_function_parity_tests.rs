@@ -17,34 +17,13 @@
 //!   * `src/typechecker/builtins.rs::register_builtins` — attaches
 //!     `GLOBALS_MD` docs to each name.
 //!
-//! Each call site is locked to the registry below by a separate
-//! `#[test]` so a single failure points at the drifting site. The
-//! checks are bidirectional: the registry and the site must contain
-//! the SAME set, not just one as a subset of the other (where a
-//! runtime API is available).
-//!
-//! The most important lock — `registry_matches_typechecker_runtime`
-//! below — derives the ground-truth set from the typechecker's actual
-//! free-function bindings at runtime, so the registry itself cannot
-//! drift from reality. The LSP `completion` and `rename` submodules
-//! are private inside `src/lsp/mod.rs`, so those sites use
-//! source-grep parity locks (matching the pattern in
-//! `tests/meta/lexer_keyword_parity_tests.rs`).
+//! The registry is checked against the typechecker's actual free-function
+//! bindings, and each consuming site that exposes a public surface (LSP
+//! rename, REPL completion, builtin docs) is checked by behaviour.
 
 use std::collections::HashSet;
-use std::fs;
-use std::path::PathBuf;
 
 use silt::module::{all_builtin_constructor_names, builtin_free_function_names};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn read_source(rel: &str) -> String {
-    let path = repo_root().join(rel);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
-}
 
 fn registry_set() -> HashSet<&'static str> {
     builtin_free_function_names().iter().copied().collect()
@@ -148,39 +127,6 @@ fn registry_matches_typechecker_runtime() {
 // ─── Site: src/lsp/rename.rs ─────────────────────────────────────────
 
 #[test]
-fn rename_site_routes_through_registry() {
-    // After round-67 `src/lsp/rename.rs` no longer defines a
-    // `BUILTIN_FUNCTIONS` const at all — `builtin_globals()` builds
-    // its slice from `module::builtin_free_function_names()` plus
-    // `types::builtins::iter_all()`. Source-level lock: the file must
-    // mention the registry helper, and the hand-rolled
-    // `BUILTIN_FUNCTIONS` const must be gone.
-    let src = read_source("src/lsp/rename.rs");
-
-    assert!(
-        src.contains("builtin_free_function_names"),
-        "src/lsp/rename.rs must consult \
-         `module::builtin_free_function_names()` so adding a new free \
-         function (e.g. `eprintln`, `assert`) flows through automatically. \
-         Before round-67 the names were hand-rolled in a `BUILTIN_FUNCTIONS` const."
-    );
-    assert!(
-        !src.contains("const BUILTIN_FUNCTIONS"),
-        "src/lsp/rename.rs should not define a hand-rolled \
-         `BUILTIN_FUNCTIONS` array — the authoritative list lives in \
-         `module::builtin_free_function_names()`."
-    );
-    // Pin the exact byte sequence of the old hand-rolled trio. If
-    // someone re-pastes it as `&["println", "print", "panic"]`, this
-    // trips. Any reordering still triggers the `const BUILTIN_FUNCTIONS`
-    // grep above.
-    assert!(
-        !src.contains("\"println\", \"print\", \"panic\""),
-        "src/lsp/rename.rs should not hand-roll the free-function trio."
-    );
-}
-
-#[test]
 fn rename_rejects_every_registry_name() {
     // Runtime check via the public `is_user_renameable` API: every
     // registry name must be rejected from rename. This is the
@@ -195,38 +141,6 @@ fn rename_rejects_every_registry_name() {
              likely drifted from `module::builtin_free_function_names()`."
         );
     }
-}
-
-// ─── Site: src/lsp/completion.rs ─────────────────────────────────────
-
-#[test]
-fn completion_site_routes_through_registry() {
-    // `lsp::completion::builtins()` is in a private submodule; we use
-    // the source-grep pattern (matching `lexer_keyword_parity_tests.rs`)
-    // to assert routing. The hand-rolled head used the literal:
-    //   ("print".to_string(), CompletionItemKind::FUNCTION),
-    let src = read_source("src/lsp/completion.rs");
-    assert!(
-        src.contains("builtin_free_function_names"),
-        "src/lsp/completion.rs must consult \
-         `module::builtin_free_function_names()` for free-function \
-         completions. Before round-67 the names were hand-rolled."
-    );
-    assert!(
-        !src.contains("(\"print\".to_string(), CompletionItemKind::FUNCTION)"),
-        "src/lsp/completion.rs should not hand-roll free-function \
-         completion items — source from `builtin_free_function_names()`."
-    );
-    assert!(
-        !src.contains("(\"println\".to_string(), CompletionItemKind::FUNCTION)"),
-        "src/lsp/completion.rs should not hand-roll free-function \
-         completion items — source from `builtin_free_function_names()`."
-    );
-    assert!(
-        !src.contains("(\"panic\".to_string(), CompletionItemKind::FUNCTION)"),
-        "src/lsp/completion.rs should not hand-roll free-function \
-         completion items — source from `builtin_free_function_names()`."
-    );
 }
 
 // ─── Site: src/repl.rs ───────────────────────────────────────────────
@@ -246,79 +160,19 @@ fn repl_site_contains_every_registry_name() {
     }
 }
 
-#[test]
-fn repl_site_routes_through_registry() {
-    let src = read_source("src/repl.rs");
-    assert!(
-        src.contains("builtin_free_function_names"),
-        "src/repl.rs must consult \
-         `module::builtin_free_function_names()` for free-function \
-         completions. Before round-67 the names were hand-rolled."
-    );
-    // Round-67: the hand-rolled trio used to live as a comma-separated
-    // string-literal triple inside the `vec![...]` initializer. Pin
-    // the exact byte sequence so a regress reintroduces this test
-    // failure.
-    assert!(
-        !src.contains("\"print\", \"println\", \"panic\""),
-        "src/repl.rs should not hand-roll the free-function trio — \
-         source from `builtin_free_function_names()`."
-    );
-}
-
-// ─── Site: src/vm/dispatch.rs ────────────────────────────────────────
-
-#[test]
-fn dispatch_site_routes_through_registry() {
-    // The dispatch site seeds `Value::BuiltinFn(name)` globals for
-    // every free function. We can't easily snapshot the VM's globals
-    // map at startup from a test, so we use a source-level lock: the
-    // for-loop must iterate `module::builtin_free_function_names()`
-    // and the old hand-rolled trio must be gone.
-    let src = read_source("src/vm/dispatch.rs");
-    assert!(
-        src.contains("builtin_free_function_names"),
-        "src/vm/dispatch.rs must consult \
-         `module::builtin_free_function_names()` when seeding free-fn \
-         globals. Before round-67 the names were hand-rolled."
-    );
-    assert!(
-        !src.contains("[\"print\", \"println\", \"panic\"]"),
-        "src/vm/dispatch.rs should not hand-roll \
-         `[\"print\", \"println\", \"panic\"]` — source from \
-         `builtin_free_function_names()`."
-    );
-}
-
 // ─── Site: src/typechecker/builtins.rs ───────────────────────────────
 
 #[test]
-fn typechecker_docs_attach_site_routes_through_registry() {
-    // The doc-attachment site at `src/typechecker/builtins.rs:~893`
-    // mixes free-fn names with a hand-rolled subset of constructors
-    // (Ok/Err/Some/None/Stop/Continue/Message/Closed/Empty/Sent/
-    // Recv/Send) — this constructor list is the specific set
-    // documented in `GLOBALS_MD`, NOT the full builtin-constructor
-    // universe (Monday, IoNotFound, … live in their per-module docs).
-    //
-    // We lock the FREE-FUNCTION subset specifically: the file must
-    // route through `builtin_free_function_names()` for those names,
-    // and the old hand-rolled trio "print", "println", "panic" must
-    // not appear in the prefix position of an array literal there.
-    let src = read_source("src/typechecker/builtins.rs");
-    assert!(
-        src.contains("builtin_free_function_names"),
-        "src/typechecker/builtins.rs must consult \
-         `module::builtin_free_function_names()` for the GLOBALS_MD \
-         doc-attachment loop's free-function targets."
-    );
-    // The old hand-rolled head was:
-    //   "print", "println", "panic", "Ok", ...
-    // Re-introducing that exact prefix trips here.
-    assert!(
-        !src.contains("\"print\", \"println\", \"panic\", \"Ok\""),
-        "src/typechecker/builtins.rs should not hand-roll the \
-         `print`/`println`/`panic` trio in the doc-attachment loop — \
-         source from `builtin_free_function_names()`."
-    );
+fn every_registry_name_has_a_builtin_doc() {
+    // The GLOBALS_MD doc-attachment loop must cover every free function,
+    // so hover works on each of them.
+    let docs = silt::typechecker::builtin_docs();
+    for name in builtin_free_function_names() {
+        assert!(
+            docs.contains_key(*name),
+            "builtin_docs() has no entry for free function `{name}` — the \
+             GLOBALS_MD attach loop in src/typechecker/builtins.rs no longer \
+             covers every `module::builtin_free_function_names()` entry."
+        );
+    }
 }

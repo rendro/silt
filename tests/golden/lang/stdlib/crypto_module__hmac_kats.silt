@@ -1,0 +1,14 @@
+import bytes
+import crypto
+fn main() {
+  -- RFC 4231 test case 1: key 0x0b * 20, data "Hi There"
+  match bytes.from_hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b") {
+    Ok(key) -> {
+      println(bytes.to_hex(crypto.hmac_sha256(key, bytes.from_string("Hi There"))))
+      println(bytes.to_hex(crypto.hmac_sha512(key, bytes.from_string("Hi There"))))
+    }
+    Err(e) -> println(e.message())
+  }
+  println(bytes.length(crypto.hmac_sha256(bytes.from_string("k"), bytes.from_string("m"))))
+  println(bytes.length(crypto.hmac_sha512(bytes.from_string("k"), bytes.from_string("m"))))
+}

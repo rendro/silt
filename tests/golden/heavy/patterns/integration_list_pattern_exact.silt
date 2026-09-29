@@ -1,0 +1,11 @@
+import io
+fn program() {
+  match [1, 2, 3] {
+    [a, b, c] -> a + b + c
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

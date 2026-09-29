@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'bananna'
+-- stderr-contains: help: did you mean `banana`?
+fn main() {
+  let banana = 1
+  bananna
+}

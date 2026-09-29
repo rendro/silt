@@ -1,0 +1,15 @@
+-- stderr-not-contains: stack overflow
+-- the non-tail call's value is usable; the tail call recurses 200k deep,
+-- far past the VM's 100k frame cap
+fn countdown(n) {
+  match n {
+    0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+
+fn main() {
+  let direct = countdown(3)
+  println("{direct}")
+  println("{countdown(200000)}")
+}

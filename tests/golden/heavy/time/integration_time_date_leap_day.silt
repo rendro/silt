@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { time.date(2024, 2, 29) }
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,11 @@
+import fs
+import io
+import list
+fn main() {
+  let _ = fs.mkdir("empty_dir")
+  let count = match fs.list_dir("empty_dir") {
+    Ok(entries) -> list.length(entries)
+    Err(_) -> -1
+  }
+  println(io.inspect(count))
+}

@@ -1,0 +1,4 @@
+﻿-- This file starts with a UTF-8 byte-order mark, which the lexer skips.
+fn main() {
+  println("bom ok")
+}

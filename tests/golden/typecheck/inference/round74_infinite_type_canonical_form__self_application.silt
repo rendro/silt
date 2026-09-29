@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- The occurs check reports the canonical wording, naming the offending type.
+-- stderr-contains: infinite type: the type variable appears inside Fn(
+fn f(x) { x(x) }
+fn main() {}

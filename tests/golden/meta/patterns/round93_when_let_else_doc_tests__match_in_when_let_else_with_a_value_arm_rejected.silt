@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'when let' else body must diverge
+fn load_data() -> Result(Int, String) {
+  Ok(42)
+}
+
+fn main() {
+  let res = load_data()
+  when let Ok(data) = res else {
+    match res {
+      Err(e) -> panic("load failed: {e}")
+      Ok(_)  -> 7
+    }
+  }
+  println(data)
+}

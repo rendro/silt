@@ -1,0 +1,18 @@
+-- io.write_file inside a spawned task commits the write before the task
+-- resumes; the main thread reads it back.
+import io
+import task
+
+fn worker() -> () {
+  let _ = io.write_file("round78_write.txt", "round78-write-payload")
+  ()
+}
+
+fn main() {
+  let h = task.spawn(worker)
+  task.join(h)
+  match io.read_file("round78_write.txt") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e.message())
+  }
+}

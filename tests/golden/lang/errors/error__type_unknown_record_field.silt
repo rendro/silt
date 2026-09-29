@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: field
+type User { name: String, age: Int }
+fn main() {
+  let u = User { name: "alice", age: 30 }
+  u.email
+}

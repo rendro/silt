@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-not-contains: to chain through
+import result
+
+fn takes_result_int(r: Result(Int, String)) -> Int {
+  result.unwrap_or(r, 0)
+}
+
+fn main() {
+  let r: Result(String, String) = Ok("s")
+  takes_result_int(r)
+}

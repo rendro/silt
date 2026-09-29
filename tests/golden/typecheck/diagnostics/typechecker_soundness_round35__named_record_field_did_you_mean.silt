@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: did you mean `name`
+-- A typo'd field on a named-record parameter gets a did-you-mean hint.
+type User { name: String, age: Int }
+fn print_name(u: User) {
+  println(u.nam)
+}
+fn main() {
+  print_name(User { name: "x", age: 1 })
+}

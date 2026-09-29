@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: exhaustive
+type Color { Red, Green, Blue }
+fn name(c: Color) {
+  match c {
+    Red -> "red"
+    Green -> "green"
+  }
+}
+fn main() { name(Red) }

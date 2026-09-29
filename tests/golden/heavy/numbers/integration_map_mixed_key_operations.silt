@@ -1,0 +1,11 @@
+import io
+import map
+fn program() {
+  let m = #{ 1: "a", 2: "b" }
+  let m2 = map.set(m, 3, "c")
+  map.length(m2)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

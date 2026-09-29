@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: program has no main() function
+let x = println("side effect")

@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { (string.is_upper("A"), string.is_upper("a"), string.is_lower("z"), string.is_lower("Z")) }
+
+fn main() {
+  println(io.inspect(program()))
+}

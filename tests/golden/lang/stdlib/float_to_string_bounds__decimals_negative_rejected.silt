@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: float.to_string: decimals must be non-negative
+import float
+fn main() {
+  let _ = float.to_string(1.5, -1)
+}

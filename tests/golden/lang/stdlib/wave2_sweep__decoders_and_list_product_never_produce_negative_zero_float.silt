@@ -1,0 +1,21 @@
+import float
+import list
+import json
+import toml
+type R { x: Float }
+fn main() {
+  let p = list.product_float([-1.0, 0.0])
+  println("product {p} {float.to_string(p)}")
+  match json.parse("\{\"x\": -0.0}", R) {
+    Ok(r) -> println("json {r.x} {float.to_string(r.x)}")
+    Err(e) -> println("json err {e}")
+  }
+  match toml.parse("x = -0.0", R) {
+    Ok(r) -> println("toml {r.x} {float.to_string(r.x)}")
+    Err(e) -> println("toml err {e}")
+  }
+  match toml.parse("x = nan", R) {
+    Ok(r) -> println("nan accepted {r.x}")
+    Err(_) -> println("nan rejected")
+  }
+}

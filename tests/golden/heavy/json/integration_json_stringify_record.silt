@@ -1,0 +1,19 @@
+-- Lock exact serialization shape, not loose substring presence.
+-- Record fields are stored in a `BTreeMap` (src/builtins/data.rs
+-- `value_to_json`), and `serde_json::Map` without the
+-- `preserve_order` feature also sorts keys alphabetically — so the
+-- stable output is `{"age":30,"name":"Alice"}` (age first).
+-- The previous chain of 4 `contains` checks didn't verify that the
+-- name↔value bindings were correct; e.g. `{"name":"30","age":"Alice"}`
+-- would have passed all four.
+import io
+import json
+type User { name: String, age: Int }
+fn program() {
+  let u = User { name: "Alice", age: 30 }
+  json.stringify(u)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

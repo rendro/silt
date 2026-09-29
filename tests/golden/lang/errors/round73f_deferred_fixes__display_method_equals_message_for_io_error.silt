@@ -1,0 +1,19 @@
+-- e.display() and e.message() render a stdlib error the same way.
+import io
+fn main() {
+    match io.read_file("nope_round74_lock_does_not_exist.txt") {
+        Ok(_) -> ()
+        Err(e) -> {
+            let display_method_form = e.display()
+            let message_form = e.message()
+            match display_method_form == message_form {
+                true -> println("EQUIV")
+                false -> {
+                    println("DRIFT")
+                    println(display_method_form)
+                    println(message_form)
+                }
+            }
+        }
+    }
+}

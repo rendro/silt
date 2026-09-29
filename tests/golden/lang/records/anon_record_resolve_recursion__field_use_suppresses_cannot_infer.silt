@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: cannot infer
+fn nullary() = []
+fn main() {
+  let x = nullary()
+  let r = { val: x }
+  ()
+}

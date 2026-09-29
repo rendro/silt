@@ -1,0 +1,23 @@
+-- A trait method whose body yields (io.read_file goes to the I/O pool)
+-- inside a spawned task must not re-run its body on resume: each line
+-- prints exactly once. The file does not exist; only the yield matters.
+import io
+import task
+
+trait Counter { fn bump(self) -> Int }
+trait Counter for Int {
+  fn bump(self) -> Int {
+    println("before-io")
+    let _ = io.read_file("round77-no-such-file.txt")
+    println("after-io")
+    self + 1
+  }
+}
+
+fn main() {
+  let h = task.spawn(fn() {
+    let n = 7
+    n.bump()
+  })
+  println(task.join(h))
+}

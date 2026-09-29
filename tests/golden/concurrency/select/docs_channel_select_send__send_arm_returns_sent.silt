@@ -1,0 +1,9 @@
+-- A select with a send arm on a buffered channel fires the (ch, Sent) arm.
+import channel
+fn main() {
+    let out = channel.new(1)
+    match channel.select([Send(out, 42)]) {
+        (^out, Sent) -> println("sent")
+        _ -> println("other")
+    }
+}

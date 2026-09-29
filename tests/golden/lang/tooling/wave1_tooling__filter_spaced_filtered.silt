@@ -1,0 +1,8 @@
+-- cmd: test --filter spaced
+-- exit: 0
+-- stderr-contains: PASS wave1_tooling__filter_spaced_filtered.silt::test_spaced
+-- stderr-contains: 1 test: 1 passed, 0 failed, 0 skipped
+import test
+fn  test_spaced() {
+  test.assert_eq(1, 1)
+}

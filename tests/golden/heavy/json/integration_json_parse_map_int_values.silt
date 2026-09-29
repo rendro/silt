@@ -1,0 +1,13 @@
+import io
+import json
+import map
+fn program() {
+  match json.parse_map("\{\"x\": 10, \"y\": 20\}", Int) {
+    Ok(m) -> map.get(m, "y")
+    Err(_) -> None
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

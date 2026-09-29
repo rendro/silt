@@ -1,0 +1,26 @@
+-- A user trait method that yields inside io.read_file, called from a
+-- spawned task, survives the yield/resume cycle.
+import io
+import task
+
+type Greeter { path: String }
+
+trait Greet { fn greet(self) -> String }
+
+trait Greet for Greeter {
+  fn greet(self) -> String {
+    match io.read_file(self.path) {
+      Ok(s) -> s
+      Err(_) -> "failed"
+    }
+  }
+}
+
+fn main() {
+  let g = Greeter { path: "greeting.txt" }
+  let handle = task.spawn(fn() {
+    let msg = g.greet()
+    msg
+  })
+  println(task.join(handle))
+}

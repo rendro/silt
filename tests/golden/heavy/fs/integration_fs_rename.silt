@@ -1,0 +1,9 @@
+import fs
+import io
+fn main() {
+  let _ = io.write_file("rename_src.txt", "hello")
+  let _ = fs.rename("rename_src.txt", "rename_dst.txt")
+  let exists_dst = fs.exists("rename_dst.txt")
+  let exists_src = fs.exists("rename_src.txt")
+  println(io.inspect((exists_dst, exists_src)))
+}

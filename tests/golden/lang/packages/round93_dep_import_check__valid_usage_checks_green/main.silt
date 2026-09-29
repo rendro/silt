@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- exact (empty) stderr: no leaked unknown-module warning
+import mathutil
+
+fn main() {
+  println(mathutil.double(21))
+}

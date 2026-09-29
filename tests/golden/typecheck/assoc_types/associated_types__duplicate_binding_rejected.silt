@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate associated-type binding 'Item'
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Stream for Wrap {
+  type Item = Int
+  type Item = Float
+  fn first(self) -> Int { self.v }
+}
+
+fn main() {}

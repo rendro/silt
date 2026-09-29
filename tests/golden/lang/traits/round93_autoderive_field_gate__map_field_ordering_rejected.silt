@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'M' cannot derive 'Compare'
+-- stderr-contains: field 'm'
+-- stderr-contains: Map(String, Int)
+-- stderr-contains: not comparable
+type M { m: Map(String, Int) }
+fn mk() -> M { M{m: #{"a": 1}} }
+fn main() { println(mk() < mk()) }

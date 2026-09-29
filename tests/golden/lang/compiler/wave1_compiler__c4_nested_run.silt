@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse_list
+-- stderr-contains: Outer
+-- stderr-contains: Inner
+-- stderr-contains: key
+-- stderr-contains: Map(Int, String)
+import json
+
+type Inner { key: Map(Int, String) }
+type Outer { inners: List(Inner) }
+
+fn main() {
+  match json.parse_list("[]", Outer) {
+    Ok(v) -> println(v)
+    Err(e) -> println("err: {e.message()}")
+  }
+}

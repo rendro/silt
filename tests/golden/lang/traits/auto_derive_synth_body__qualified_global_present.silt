@@ -1,0 +1,4 @@
+type Color { Red, Green, Blue, }
+fn main() {
+    println(Color.compare(Red, Green))
+}

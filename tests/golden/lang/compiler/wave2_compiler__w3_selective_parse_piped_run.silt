@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse
+-- stderr-contains: Bag
+-- stderr-contains: items
+-- stderr-contains: Set(Int)
+import json.{ parse }
+
+type Bag { name: String, items: Set(Int) }
+
+fn main() {
+  let r = """{"name": "b", "items": [1]}""" |> parse(Bag)
+  match r {
+    Ok(b) -> println(b.name)
+    Err(e) -> println(e.message())
+  }
+}

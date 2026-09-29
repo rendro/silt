@@ -1,0 +1,2 @@
+import string
+fn main() { println(string.slice("hello", 0, 100)) }

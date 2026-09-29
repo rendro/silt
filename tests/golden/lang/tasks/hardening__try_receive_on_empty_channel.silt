@@ -1,0 +1,8 @@
+import channel
+fn main() {
+  let ch = channel.new(10)
+  println(match channel.try_receive(ch) {
+    Empty -> "empty"
+    _ -> "unexpected"
+  })
+}

@@ -1,0 +1,16 @@
+import io
+fn process(x) {
+  let val = Ok(x)?
+  Ok(val * 2)
+}
+
+fn program() {
+  match process(21) {
+    Ok(n) -> n
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

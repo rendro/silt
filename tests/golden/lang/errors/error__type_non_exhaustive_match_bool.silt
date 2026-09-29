@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: exhaustive
+fn foo(x: Bool) {
+  match x {
+    true -> "yes"
+  }
+}
+fn main() { foo(true) }

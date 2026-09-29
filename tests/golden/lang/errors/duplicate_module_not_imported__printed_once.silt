@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+fn main() {
+  println(math.sqrt(2.0))
+}

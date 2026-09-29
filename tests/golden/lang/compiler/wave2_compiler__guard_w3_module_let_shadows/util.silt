@@ -1,0 +1,5 @@
+import json.{ parse_list }
+
+let parse_list = { s, t -> s }
+
+pub fn go() -> String { parse_list("[1]", Int) }

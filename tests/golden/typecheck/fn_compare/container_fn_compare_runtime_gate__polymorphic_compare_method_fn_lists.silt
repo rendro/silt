@@ -1,0 +1,8 @@
+-- `.compare()` through a polymorphic wrapper on lists of functions fails.
+-- exit: 1
+-- stderr-contains: does not implement Compare
+-- stderr-contains: 'Fn'
+fn cmpm(a: t, b: t) -> Int where t: Compare { a.compare(b) }
+fn main() {
+  println(cmpm([fn(y) { y }], [fn(y) { y }]))
+}

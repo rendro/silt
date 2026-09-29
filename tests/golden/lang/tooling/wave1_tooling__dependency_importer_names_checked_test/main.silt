@@ -1,0 +1,17 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: error[type]: undefined variable 'zzz_totally_undefined'
+-- stderr-not-contains: PASS
+import mathutil
+import test
+
+fn test_double() {
+  test.assert_eq(mathutil.double(2), 4)
+}
+
+fn test_dead_arm() {
+  match 1 {
+    2 -> zzz_totally_undefined(1)
+    _ -> ()
+  }
+}

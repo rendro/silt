@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- An associated-type bound (`Item: Hash`) rejects a binding to a Fn type.
+-- stderr-contains: error[type]
+-- stderr-contains: Hash
+trait Container {
+  type Item: Hash
+  fn first(self) -> Self::Item
+}
+
+type FnHolder { f: Fn(Int) -> Int }
+
+trait Container for FnHolder {
+  type Item = Fn(Int) -> Int
+  fn first(self) -> Fn(Int) -> Int { self.f }
+}
+
+fn main() {}

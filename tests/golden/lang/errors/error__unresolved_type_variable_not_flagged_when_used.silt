@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: type annotation
+fn default() -> a { panic("no value") }
+fn main() {
+  let x = default()
+  x
+}

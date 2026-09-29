@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: expects 2 arguments, got 1
+-- stderr-not-contains: error[runtime]
+-- `silt run` stops at the same arity errors instead of reaching a builtin.
+import list
+import string
+import map
+
+fn main() {
+  println(list.map([1, 2]))
+  println(string.trim())
+  println(map.get(#{ "a": 1 }))
+  println(string.replace("aXb", "X"))
+  println(list.fold([1, 2], 0))
+}

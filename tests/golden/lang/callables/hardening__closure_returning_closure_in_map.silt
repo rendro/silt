@@ -1,0 +1,5 @@
+import list
+fn main() {
+  let adders = list.map([1, 2, 3], fn(n) { fn(x) { x + n } })
+  println(list.map(adders, fn(f) { f(10) }))
+}

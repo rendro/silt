@@ -5,7 +5,6 @@
 //! coordinated port handoff). No external network access.
 //!
 //! Coverage:
-//! - listen errors on invalid address
 //! - basic connect / accept / read / write / close roundtrip
 //! - read returns Bytes (PR 1's value type)
 //! - read on closed stream errors
@@ -14,12 +13,14 @@
 //! - cooperative I/O: a server task and a client task run concurrently
 //!   under the silt scheduler without deadlocking
 //! - stress: 50 sequential connection roundtrips on the same listener
+//!
+//! The socket-free cases (signature typecheck, invalid listen address)
+//! are golden cases `tests/golden/lang/tcp/tcp_module__*` (feature `tcp`).
 
 #![cfg(feature = "tcp")]
 
 use std::sync::Arc;
 
-use silt::types::Severity;
 use silt::value::Value;
 
 fn run(input: &str) -> Value {
@@ -37,20 +38,6 @@ fn run(input: &str) -> Value {
     vm.run(script).expect("runtime error")
 }
 
-fn type_errors(input: &str) -> Vec<String> {
-    let tokens = silt::lexer::Lexer::new(input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    silt::typechecker::check(&mut program)
-        .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
-        .collect()
-}
-
 /// Pick a port from the OS by binding then immediately rebinding from
 /// silt's perspective. Returns the address string.
 fn pick_port() -> String {
@@ -60,47 +47,7 @@ fn pick_port() -> String {
     addr.to_string()
 }
 
-// ── Type-level integration ────────────────────────────────────────────
-
-#[test]
-fn test_typechecker_accepts_tcp_signatures() {
-    let errs = type_errors(
-        r#"
-import bytes
-import tcp
-fn main() {
-  match tcp.listen("127.0.0.1:0") {
-    Ok(l) -> match tcp.accept(l) {
-      Ok(s) -> {
-        let _ = tcp.write(s, bytes.empty())
-        let _ = tcp.read(s, 1024)
-        tcp.close(s)
-      }
-      Err(_) -> ()
-    }
-    Err(_) -> ()
-  }
-}
-"#,
-    );
-    assert!(errs.is_empty(), "got: {errs:?}");
-}
-
 // ── Basic ops ─────────────────────────────────────────────────────────
-
-#[test]
-fn test_listen_invalid_address_errors() {
-    let v = run(r#"
-import tcp
-fn main() {
-  match tcp.listen("not a real address") {
-    Ok(_) -> "wrong: should error"
-    Err(_) -> "ok"
-  }
-}
-"#);
-    assert_eq!(v, Value::String("ok".into()));
-}
 
 #[test]
 fn test_listen_returns_listener_handle() {

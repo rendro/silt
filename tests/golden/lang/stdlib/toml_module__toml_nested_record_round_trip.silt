@@ -1,0 +1,12 @@
+import toml
+type Address { city: String, zip: String }
+type User { name: String, address: Address }
+fn run_main() {
+  let input = "name = \"Alice\"\n\n[address]\ncity = \"NYC\"\nzip = \"10001\"\n"
+  match toml.parse(input, User) {
+    Ok(u) -> u.address.city
+    Err(_) -> "fail"
+  }
+}
+
+fn main() { println(run_main()) }

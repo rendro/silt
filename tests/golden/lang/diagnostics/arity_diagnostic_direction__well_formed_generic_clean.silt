@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Box(a) { Box(a) }
+fn id_box(b: Box(Int)) -> Box(Int) { b }
+fn main() { println(id_box(Box(1))) }

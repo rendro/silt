@@ -1,0 +1,11 @@
+import io
+import list
+
+fn program() {
+  let offset = 100
+  [1, 2, 3] |> list.map(fn(x) { x + offset })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

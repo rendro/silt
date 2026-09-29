@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 0
+-- Two projections on the same receiver type both reduce to Int, so `+` typechecks.
+trait Pair {
+  type First
+  fn first(self) -> Self::First
+}
+
+type IntPair { a: Int, b: Int }
+
+trait Pair for IntPair {
+  type First = Int
+  fn first(self) -> Int { self.a }
+}
+
+fn use_it(x: IntPair, y: IntPair) -> Int {
+  x.first() + y.first()
+}
+
+fn main() {}

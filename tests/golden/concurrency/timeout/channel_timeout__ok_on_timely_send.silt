@@ -1,0 +1,17 @@
+-- repeat: 3
+-- A sibling sends well within the timeout: recv_timeout returns Ok(v).
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let _h = task.spawn(fn() {
+    time.sleep(time.ms(20))
+    channel.send(ch, 42)
+  })
+  let r = match channel.recv_timeout(ch, time.ms(1000)) {
+    Ok(v) -> v
+    Err(_) -> -1
+  }
+  println("{r}")
+}

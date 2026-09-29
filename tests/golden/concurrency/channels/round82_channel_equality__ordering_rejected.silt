@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: Channel
+-- stderr-contains: operator '<' requires
+-- Ordering on channels is rejected: ids are identity tokens, not an order.
+import channel
+fn main() {
+    let c1 = channel.new(10)
+    let c2 = channel.new(10)
+    println(c1 < c2)
+}

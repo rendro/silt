@@ -1,0 +1,2 @@
+import stream
+fn main() { println(stream.count(stream.from_range(1, 100))) }

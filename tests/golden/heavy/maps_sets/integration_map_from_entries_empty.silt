@@ -1,0 +1,7 @@
+import io
+import map
+fn program() { map.from_entries([]) }
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot derive 'Equal'
+-- stderr-contains: element type is not equatable
+-- `==` on lists of functions is a compile error.
+fn main() {
+  let xs = [fn(x) { x }]
+  let ys = [fn(x) { x }]
+  print(xs == ys)
+}

@@ -1,0 +1,21 @@
+fn safe_div(a: Int, b: Int) -> Result(Int, String) {
+  match b == 0 {
+    true -> Err("div by zero"),
+    false -> Ok(a / b),
+  }
+}
+
+fn compute() -> Result(Int, String) {
+  let x = safe_div(10, 2)?
+  Ok(x + 1)
+}
+
+fn fails() -> Result(Int, String) {
+  let x = safe_div(10, 0)?
+  Ok(x + 1)
+}
+
+fn main() {
+  println(compute())
+  println(fails())
+}

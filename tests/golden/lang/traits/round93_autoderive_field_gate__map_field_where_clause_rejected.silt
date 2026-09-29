@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'M' does not implement trait 'Compare'
+type M { m: Map(String, Int) }
+fn mk() -> M { M{m: #{"a": 1}} }
+fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
+fn main() { println(cmp_gen(mk(), mk())) }

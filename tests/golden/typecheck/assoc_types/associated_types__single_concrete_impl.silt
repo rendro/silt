@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 0
+-- A trait with one associated type and a concrete impl typechecks.
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type IntList { values: List(Int) }
+
+trait Stream for IntList {
+  type Item = Int
+
+  fn first(self) -> Int {
+    42
+  }
+}
+
+fn main() {}

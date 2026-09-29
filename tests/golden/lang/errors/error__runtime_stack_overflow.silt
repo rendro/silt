@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: stack overflow
+fn deep(n) {
+  1 + deep(n + 1)
+}
+fn main() { deep(0) }

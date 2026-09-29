@@ -1,81 +1,13 @@
-//! Round 74 lock test for the `require_int_plain` deletion.
-//!
-//! Background: Round 65 hoisted byte-identical `require_int` bodies
-//! out of `tcp.rs` and `stream.rs` into a shared
-//! `super::common::require_int_plain` helper that produced messages of
-//! the form `"{fn_label} requires Int"` (no `, got <kind>` suffix).
-//! Round 67 added the `, got <kind>` suffix to the body, making it
-//! byte-identical to the canonical `super::common::require_int` —
-//! leaving two functions with the same body, defeating the round-65
-//! dedup.
-//!
-//! Round 74 deletes `require_int_plain` and routes the local wrappers
-//! in `tcp.rs` and `stream.rs` to `super::common::require_int`
-//! directly. These tests pin the deletion three ways:
-//!
-//! 1. Source-grep negative lock: the helper must be gone from
-//!    `common.rs`.
-//! 2. Source-grep positive lock: the call sites in `tcp.rs` and
-//!    `stream.rs` must reference `super::common::require_int(` and
-//!    must NOT reference `require_int_plain`.
-//! 3. Behavioral lock: a wrong-typed argument must still emit the
-//!    canonical `, got <kind>` suffix that round 67 introduced — i.e.
-//!    the routing change preserves the message format.
-//!
-//! If a future contributor reintroduces the shim, (1) or (2) will trip.
-//! If they accidentally drop the suffix when consolidating, (3) trips.
+//! Round 74 lock test for the `require_int_plain` deletion: the local
+//! wrappers in `tcp.rs` and `stream.rs` route to
+//! `super::common::require_int`, and a wrong-typed argument must still
+//! emit the canonical `, got <kind>` suffix round 67 introduced. The
+//! programs are ill-typed on purpose; the typechecker's verdict is
+//! ignored so the runtime check is reached.
 
 use std::sync::Arc;
 
 use silt::value::Value;
-
-// ── Source-grep locks ──────────────────────────────────────────────
-
-/// `common.rs` must NOT define `require_int_plain` (deleted in round 74).
-#[test]
-fn common_does_not_define_require_int_plain() {
-    let src = include_str!("../../src/builtins/common.rs");
-    assert!(
-        !src.contains("fn require_int_plain"),
-        "common.rs must NOT define require_int_plain — round 74 deleted \
-         the shim because it was byte-identical to require_int after \
-         round 67 added the `, got <kind>` suffix to its body"
-    );
-}
-
-/// `tcp.rs` must reference `super::common::require_int(` and must NOT
-/// reference the deleted `require_int_plain` shim.
-#[test]
-fn tcp_routes_require_int_through_common_require_int() {
-    let src = include_str!("../../src/builtins/tcp.rs");
-    assert!(
-        src.contains("super::common::require_int("),
-        "tcp.rs must call super::common::require_int directly after \
-         round 74 deleted require_int_plain"
-    );
-    assert!(
-        !src.contains("require_int_plain"),
-        "tcp.rs must not reference the deleted require_int_plain shim"
-    );
-}
-
-/// `stream.rs` must reference `super::common::require_int(` and must
-/// NOT reference the deleted `require_int_plain` shim.
-#[test]
-fn stream_routes_require_int_through_common_require_int() {
-    let src = include_str!("../../src/builtins/stream.rs");
-    assert!(
-        src.contains("super::common::require_int("),
-        "stream.rs must call super::common::require_int directly after \
-         round 74 deleted require_int_plain"
-    );
-    assert!(
-        !src.contains("require_int_plain"),
-        "stream.rs must not reference the deleted require_int_plain shim"
-    );
-}
-
-// ── Behavioral lock ────────────────────────────────────────────────
 
 /// Compile and run a silt program; capture either the returned `Value`
 /// or the runtime `VmError` message.

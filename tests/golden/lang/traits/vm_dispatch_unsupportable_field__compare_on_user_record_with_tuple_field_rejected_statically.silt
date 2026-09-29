@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: type 'Pair' does not implement trait 'Compare'
+type Pair { t: (Int, Int) }
+fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
+fn main() {
+    let p = Pair { t: (1, 2) }
+    println(cmp_gen(p, p))
+}

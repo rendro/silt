@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Greet { fn greet(self) -> String }
+trait Greet for List(a) {
+  fn greet(self) -> String { "list" }
+}
+fn main() {}

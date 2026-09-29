@@ -1,0 +1,9 @@
+import io
+import time
+fn program() {
+  ("{time.hours(2)}", "{time.minutes(30)}", "{time.seconds(5)}", "{time.ms(500)}")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

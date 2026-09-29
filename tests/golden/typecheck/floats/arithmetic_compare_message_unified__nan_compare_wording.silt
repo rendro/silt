@@ -1,0 +1,11 @@
+-- Comparing NaN floats with `<` fails with the one unified wording.
+-- exit: 1
+-- stderr-contains: cannot compare non-finite float values
+-- stderr-not-contains: cannot compare NaN values
+fn main() {
+  let a: Float = 0.0
+  let b: Float = 0.0
+  let nan = a / b
+  let other = a / b
+  println(nan < other)
+}

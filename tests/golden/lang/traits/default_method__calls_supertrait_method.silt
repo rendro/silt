@@ -1,0 +1,20 @@
+trait Sup {
+  fn sup_method(self) -> String
+}
+
+trait Sub: Sup {
+  fn sub_method(self) -> String { "sub-of-" + self.sup_method() }
+}
+
+type Thing { v: Int }
+
+trait Sup for Thing {
+  fn sup_method(self) -> String { "concrete" }
+}
+
+trait Sub for Thing {}
+
+fn main() {
+  let t = Thing { v: 1 }
+  println(t.sub_method())
+}

@@ -1,0 +1,8 @@
+import io
+fn program() {
+  true && (1 == 1)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

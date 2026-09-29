@@ -23,6 +23,12 @@
 //! cross-enum case. The same warning must also trigger when a user
 //! `type Result { ... }` shadows the builtin Result/Ok/Err registered
 //! before user code runs.
+//!
+//! The user-Result, disjoint-enum and same-enum-duplicate cases are golden
+//! cases (`tests/golden/lang/types/cross_enum_variant_shadow__*`). The two
+//! tests below stay in Rust: under `silt check` the colliding program also
+//! reports spanless "type mismatch: expected B, got A" errors, so it does
+//! not compile, and a golden case would have to lock that in.
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -89,58 +95,5 @@ fn main() { }
     assert!(
         !errs.iter().any(|e| e.contains("variant 'Red'")),
         "shadow should be a warning, not an error; got errors: {errs:?}"
-    );
-}
-
-/// A user `type Result { ... }` shadows the builtin Ok/Err variants.
-/// Because builtins populate `variant_to_enum` before user code runs,
-/// this is structurally identical to the cross-enum case and must
-/// produce the same warning.
-#[test]
-fn test_user_result_shadows_builtin() {
-    let warnings = type_warnings(
-        r#"
-type Result { Ok, Err }
-fn main() { }
-"#,
-    );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("variant 'Ok'") && w.contains("shadows")),
-        "expected shadow warning for user Result.Ok vs builtin Result.Ok, got: {warnings:?}"
-    );
-}
-
-/// Disjoint variant sets must not warn — only actual name collisions.
-#[test]
-fn test_disjoint_enums_do_not_warn() {
-    let warnings = type_warnings(
-        r#"
-type Color { Red, Green, Blue }
-type Suit { Hearts, Diamonds, Clubs, Spades }
-fn main() { }
-"#,
-    );
-    assert!(
-        !warnings.iter().any(|w| w.contains("shadows")),
-        "disjoint enums must not produce shadow warnings, got: {warnings:?}"
-    );
-}
-
-/// Same-enum duplicates must still be a hard error (round-16 G3),
-/// never downgraded to a warning by this new check.
-#[test]
-fn test_same_enum_duplicate_still_hard_error() {
-    let errs = type_errors(
-        r#"
-type Color { Red, Green, Red }
-fn main() { }
-"#,
-    );
-    assert!(
-        errs.iter()
-            .any(|e| e.contains("duplicate variant 'Red' in enum 'Color'")),
-        "same-enum duplicate must remain a hard error, got: {errs:?}"
     );
 }

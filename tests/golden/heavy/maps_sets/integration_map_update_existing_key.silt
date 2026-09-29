@@ -1,0 +1,11 @@
+import io
+import map
+fn program() {
+  let m = #{ "x": 10 }
+  let m2 = map.update(m, "x", 0) { v -> v + 1 }
+  map.get(m2, "x")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

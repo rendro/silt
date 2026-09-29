@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+import io
+import http
+fn describe(e: IoError) -> String {
+  match e {
+    HttpConnect(m) -> "nope"
+    IoNotFound(p) -> "ok"
+    _ -> "other"
+  }
+}
+fn main() { println(describe(IoNotFound("x"))) }

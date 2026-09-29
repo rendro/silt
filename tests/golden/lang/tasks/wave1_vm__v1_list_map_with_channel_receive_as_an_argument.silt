@@ -1,0 +1,19 @@
+-- repeat: 5
+import channel
+import list
+import task
+import time
+fn pair(x, ys) { (x, ys) }
+fn main() {
+  let a = channel.new(1)
+  let b = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    time.sleep(time.ms(20))
+    channel.send(b, 2)
+  }
+  let worker = task.spawn { -> pair("x", list.map([a, b], channel.receive)) }
+  println(task.join(worker))
+  task.join(sender)
+}

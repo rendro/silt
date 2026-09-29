@@ -1,0 +1,24 @@
+import list
+
+trait Deep { fn go(self) -> Int }
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+
+
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+
+fn main() {
+  println("method {500.go()}")
+  println("fold {deep(500)}")
+}

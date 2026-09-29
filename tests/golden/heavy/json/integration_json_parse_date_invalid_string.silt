@@ -1,0 +1,9 @@
+import io
+import json
+import time
+type Event { name: String, date: Date }
+fn program() { json.parse("\{\"name\": \"x\", \"date\": \"not-a-date\"\}", Event) }
+
+fn main() {
+  println(io.inspect(program()))
+}

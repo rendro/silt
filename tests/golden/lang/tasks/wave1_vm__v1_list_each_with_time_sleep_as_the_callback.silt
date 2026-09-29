@@ -1,0 +1,12 @@
+-- repeat: 5
+import list
+import task
+import time
+fn outer(g, y) { "outer called" }
+fn inner(c, y) { "INNER called instead" }
+fn main() {
+  let worker = task.spawn { ->
+    outer(inner, list.each([time.ms(10), time.ms(20)], time.sleep))
+  }
+  println(task.join(worker))
+}

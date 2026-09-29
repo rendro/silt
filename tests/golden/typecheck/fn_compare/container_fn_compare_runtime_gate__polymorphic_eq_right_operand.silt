@@ -1,0 +1,8 @@
+-- The gate walks the right operand too (empty list on the left).
+-- exit: 1
+-- stderr-contains: does not implement Equal
+-- stderr-contains: 'Fn'
+fn eq(a: x, b: x) -> Bool { a == b }
+fn main() {
+  println(eq([], [fn(y) { y }]))
+}

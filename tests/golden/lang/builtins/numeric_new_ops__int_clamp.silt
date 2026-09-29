@@ -1,0 +1,11 @@
+import int
+fn main() {
+  -- int_clamp_inside_range_returns_value
+  println(int.clamp(5, 0, 10))
+  -- int_clamp_below_lo_returns_lo
+  println(int.clamp(-3, 0, 10))
+  -- int_clamp_above_hi_returns_hi
+  println(int.clamp(42, 0, 10))
+  -- int_clamp_equal_bounds_degenerate_range: lo == hi is valid
+  println(int.clamp(100, 7, 7))
+}

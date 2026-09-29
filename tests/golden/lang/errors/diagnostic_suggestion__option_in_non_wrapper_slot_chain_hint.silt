@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires
+-- stderr-contains: Option
+-- stderr-contains: help: to chain through an `Option`
+-- stderr-contains: option.flat_map
+import list
+
+fn main() {
+  let xs: List(Int) = [1, 2, 3]
+  let head = list.head(xs)
+  head + 1
+}

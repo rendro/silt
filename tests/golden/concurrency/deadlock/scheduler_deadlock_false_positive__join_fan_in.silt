@@ -1,0 +1,34 @@
+-- repeat: 25
+-- stderr-not-contains: deadlock on main thread
+-- Probabilistic: under contention the main-thread detector must not act
+-- on a transiently starved snapshot. Main joins eight CPU workers.
+import task
+
+fn busy(id, n) {
+  loop i = 0, acc = id {
+    match i >= n {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+}
+
+fn main() {
+  let h1 = task.spawn(fn() { busy(1, 400) })
+  let h2 = task.spawn(fn() { busy(2, 400) })
+  let h3 = task.spawn(fn() { busy(3, 400) })
+  let h4 = task.spawn(fn() { busy(4, 400) })
+  let h5 = task.spawn(fn() { busy(5, 400) })
+  let h6 = task.spawn(fn() { busy(6, 400) })
+  let h7 = task.spawn(fn() { busy(7, 400) })
+  let h8 = task.spawn(fn() { busy(8, 400) })
+  let _ = task.join(h1)
+  let _ = task.join(h2)
+  let _ = task.join(h3)
+  let _ = task.join(h4)
+  let _ = task.join(h5)
+  let _ = task.join(h6)
+  let _ = task.join(h7)
+  let _ = task.join(h8)
+  println("joined 8")
+}

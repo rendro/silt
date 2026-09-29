@@ -1,0 +1,15 @@
+-- repeat: 3
+import list
+import stream
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+fn main() {
+  let out = stream.from_list([3, 100, 2]) |> stream.map { n -> deep(n) } |> stream.collect
+  println(out)
+  let kept = stream.from_list([1, 100, 2, 4]) |> stream.filter { n -> deep(n) > 0 } |> stream.count
+  println("count {kept}")
+}

@@ -1,0 +1,21 @@
+-- io.read_file gives the same result on the main thread (sync path) and
+-- inside a spawned task (yield path). The case reads its own source.
+-- round78-payload
+import io
+import string
+import task
+
+fn read_self() -> String {
+  match io.read_file("round78_io_yield_helper__read_file_sync_and_async_agree.silt") {
+    Ok(s) -> s
+    Err(_) -> "FAIL"
+  }
+}
+
+fn main() {
+  let sync = read_self()
+  let h = task.spawn(read_self)
+  let async = task.join(h)
+  println(sync == async)
+  println(string.contains(async, "-- round78-payload"))
+}

@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: list.length
+-- stderr-contains: overflow
+import list
+fn main() {
+  -- positive control first: a small range still works
+  println(list.length(1..10))
+  -- span exceeds i64::MAX
+  let r = -4611686018427387904..4611686018427387903
+  println(list.length(r))
+}

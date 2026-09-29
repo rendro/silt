@@ -1,0 +1,22 @@
+-- repeat: 5
+import channel
+import task
+import time
+fn outer(g, y) { "outer called" }
+fn inner(c, y) { "INNER called instead" }
+fn main() {
+  let worker = task.spawn { ->
+    let hs = channel.new(4)
+    channel.send(hs, task.spawn { ->
+      time.sleep(time.ms(30))
+      1
+    })
+    channel.send(hs, task.spawn { ->
+      time.sleep(time.ms(30))
+      2
+    })
+    channel.close(hs)
+    outer(inner, channel.each(hs, task.join))
+  }
+  println(task.join(worker))
+}

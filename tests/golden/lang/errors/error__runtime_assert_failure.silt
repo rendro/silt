@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: assertion failed: false
+import test
+fn main() { test.assert(false) }

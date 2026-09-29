@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '-' requires Int, Float, or ExtFloat
+fn main() {
+  let x: String = "hello"
+  x - 1
+}

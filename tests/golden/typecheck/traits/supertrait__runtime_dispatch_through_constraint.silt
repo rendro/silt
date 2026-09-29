@@ -1,0 +1,34 @@
+-- Supertrait and subtrait methods dispatch correctly through a `where t: Ord2` bound.
+trait Eq2 {
+  fn eq2(self, other: Self) -> Bool
+}
+
+trait Ord2: Eq2 {
+  fn lt2(self, other: Self) -> Bool
+}
+
+type Foo { v: Int }
+
+trait Eq2 for Foo {
+  fn eq2(self, other: Foo) -> Bool { self.v == other.v }
+}
+
+trait Ord2 for Foo {
+  fn lt2(self, other: Foo) -> Bool { self.v < other.v }
+}
+
+fn label(a: t, b: t) -> String where t: Ord2 {
+  match a.eq2(b) {
+    true -> "equal"
+    false -> match a.lt2(b) {
+      true -> "less"
+      false -> "greater"
+    }
+  }
+}
+
+fn main() {
+  println(label(Foo { v: 1 }, Foo { v: 2 }))
+  println(label(Foo { v: 3 }, Foo { v: 3 }))
+  println(label(Foo { v: 5 }, Foo { v: 4 }))
+}

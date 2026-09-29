@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- `type a` in a trait method signature is accepted.
+trait Decodable {
+    fn decode(self, type a) -> Result(a, String)
+}
+
+fn main() {}

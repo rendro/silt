@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'pintln'
+-- stderr-contains: did you mean `println`?
+fn main() { pintln("hi") }

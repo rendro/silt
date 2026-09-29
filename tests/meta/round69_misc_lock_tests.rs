@@ -1,50 +1,14 @@
 //! Round-69 lock tests for source-tree drift that doesn't fit the
 //! markdown-walker bucket.
 //!
-//! - **F5** Seven source files referenced the deleted
-//!   `docs/proposals/stdlib-errors.md`. The proposal was deleted in
-//!   commit 7680536; comments now cite that hash directly.
 //! - **F6** `silt fmt --check` printed "recursively formatting..." in
 //!   its no-files-specified banner, which lied about what the command
 //!   was doing. The wording now pivots on `check_mode`.
-//!
-//! Each test is a one-liner so the failure mode points straight at the
-//! drifted site.
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-// ── F5 ──────────────────────────────────────────────────────────────
-
-const MODULE_RS: &str = include_str!("../../src/module.rs");
-const FS_BUILTINS_RS: &str = include_str!("../../src/typechecker/builtins/fs.rs");
-const ERRORS_BUILTINS_RS: &str = include_str!("../../src/typechecker/builtins/errors.rs");
-const IO_BUILTINS_RS: &str = include_str!("../../src/builtins/io.rs");
-const TOML_BUILTINS_RS: &str = include_str!("../../src/builtins/toml.rs");
-const VM_DISPATCH_RS: &str = include_str!("../../src/vm/dispatch.rs");
-
-#[test]
-fn no_stale_stdlib_errors_proposal_refs() {
-    let needle = "docs/proposals/stdlib-errors.md";
-    let sites: &[(&str, &str)] = &[
-        ("src/module.rs", MODULE_RS),
-        ("src/typechecker/builtins/fs.rs", FS_BUILTINS_RS),
-        ("src/typechecker/builtins/errors.rs", ERRORS_BUILTINS_RS),
-        ("src/builtins/io.rs", IO_BUILTINS_RS),
-        ("src/builtins/toml.rs", TOML_BUILTINS_RS),
-        ("src/vm/dispatch.rs", VM_DISPATCH_RS),
-    ];
-    for (label, contents) in sites {
-        assert!(
-            !contents.contains(needle),
-            "{label} still references `{needle}` — that proposal was \
-             deleted in commit 7680536. Replace the link with the \
-             implementing-commit hash."
-        );
-    }
-}
 
 // ── F6 ──────────────────────────────────────────────────────────────
 

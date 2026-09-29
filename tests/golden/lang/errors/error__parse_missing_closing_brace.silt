@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected '}' to close block
+fn main() { let x = 1

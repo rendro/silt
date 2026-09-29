@@ -1,0 +1,12 @@
+-- elements in exactly one of a or b
+import io
+import set
+fn program() {
+  let a = #[1, 2, 3]
+  let b = #[2, 3, 4]
+  set.to_list(set.symmetric_difference(a, b))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

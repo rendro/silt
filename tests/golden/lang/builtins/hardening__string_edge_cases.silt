@@ -1,0 +1,24 @@
+import string
+fn main() {
+  -- test_string_split_empty_input
+  println(string.split("", "x") == [""])
+  -- test_string_chars_empty
+  println(string.chars("") == [])
+  -- test_string_repeat_zero
+  println("[{string.repeat("x", 0)}]")
+  -- test_string_trim_empty
+  println("[{string.trim("")}]")
+  -- test_string_contains_empty_needle
+  println(string.contains("hello", ""))
+  -- test_string_replace_empty_pattern
+  println(string.replace("abc", "", "-"))
+  -- test_string_length_unicode
+  println(string.length("héllo"))
+  -- test_string_is_empty_true / _false
+  println(string.is_empty(""))
+  println(string.is_empty(" "))
+  -- test_string_slice_out_of_bounds_clamped
+  println(string.slice("abc", 0, 100))
+  -- test_string_slice_start_past_end
+  println("[{string.slice("abc", 5, 10)}]")
+}

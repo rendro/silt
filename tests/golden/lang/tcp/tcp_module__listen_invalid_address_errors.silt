@@ -1,0 +1,7 @@
+import tcp
+fn main() {
+  println(match tcp.listen("not a real address") {
+    Ok(_) -> "wrong: should error"
+    Err(_) -> "ok"
+  })
+}

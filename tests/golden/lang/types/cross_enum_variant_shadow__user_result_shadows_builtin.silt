@@ -1,0 +1,5 @@
+-- cmd: check
+-- stderr-contains: variant 'Ok'
+-- stderr-contains: shadows
+type Result { Ok, Err }
+fn main() { }

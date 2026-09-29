@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: cannot load module 'nosuchmod'
+-- stderr-contains: looked for `nosuchmod.silt`
+-- stderr-contains: [dependencies]
+-- stderr-contains: silt add nosuchmod
+import nosuchmod
+
+fn main() {
+  println("x")
+}

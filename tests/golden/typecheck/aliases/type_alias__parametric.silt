@@ -1,0 +1,11 @@
+-- A parametric alias `PhDPair(a) = (a, a)` substitutes its argument.
+type PhDPair(a) = (a, a)
+fn first_pair(p: PhDPair(Int)) -> Int {
+    match p {
+        (x, _) -> x
+    }
+}
+fn main() {
+    let p: PhDPair(Int) = (7, 9)
+    println(first_pair(p))
+}

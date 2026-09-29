@@ -1,0 +1,21 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- A task waits for `channel.timeout(600)` and then sends to the main
+-- thread, which waits for that send. Without the fix the main thread
+-- is told "deadlock" while the timer is running.
+import channel
+import task
+
+fn main() {
+  let x = channel.new(0)
+  let h = task.spawn(fn() {
+    let t = channel.timeout(600)
+    let _ = channel.receive(t)
+    channel.send(x, 1)
+  })
+  match channel.receive(x) {
+    Message(v) -> println("main got: {v}")
+    _ -> println("main got no message")
+  }
+  task.join(h)
+}

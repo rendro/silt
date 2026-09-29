@@ -1,0 +1,11 @@
+-- The match is the last expression of a block: a `}` follows its body.
+import list
+fn pick(xs) {
+  match xs |> list.head {
+    Some(x) -> x
+    None -> 0
+  }
+}
+fn main() {
+  println("{pick([4, 5])}")
+}

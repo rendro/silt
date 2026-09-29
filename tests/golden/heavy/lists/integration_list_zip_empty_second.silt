@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.zip([1, 2], []) }
+
+fn main() {
+  println(io.inspect(program()))
+}

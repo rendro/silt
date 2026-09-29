@@ -1,0 +1,11 @@
+-- Nested alternatives inside a tuple: (0, A(11)) gives 11, (0, B(99, 22)) gives 22.
+type E { A(Int), B(Int, Int) }
+fn pick(p: (Int, E)) -> Int {
+  match p {
+    (_, A(x)) | (_, B(_, x)) -> x
+  }
+}
+fn main() {
+  println(pick((0, A(11))))
+  println(pick((0, B(99, 22))))
+}

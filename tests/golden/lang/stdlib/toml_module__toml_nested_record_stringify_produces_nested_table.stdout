@@ -1,0 +1,6 @@
+name = "Alice"
+
+[address]
+city = "NYC"
+zip = "10001"
+

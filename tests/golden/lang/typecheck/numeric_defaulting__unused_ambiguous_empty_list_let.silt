@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- the typechecker must not crash on an unused, unannotated empty-list let
+fn main() {
+  let _x = []
+  0
+}

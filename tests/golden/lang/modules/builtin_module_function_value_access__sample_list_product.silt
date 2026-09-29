@@ -1,0 +1,5 @@
+import list
+fn main() {
+  let f = list.product
+  println(f([2, 3, 4]))
+}

@@ -1,0 +1,23 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- The same recursion on the main thread. Passes with and without the
+-- fix.
+import list
+import task
+
+fn nest(n) {
+  match n {
+    0 -> 0
+    _ -> {
+      let inner = [n - 1] |> list.map { m -> nest(m) }
+      match inner {
+        [v] -> v + 1
+        _ -> 0 - 1
+      }
+    }
+  }
+}
+
+fn main() {
+  println("depth {nest(100)}")
+}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+import mathutil
+
+fn main() {
+  println(mathutil.double("not an int"))
+}

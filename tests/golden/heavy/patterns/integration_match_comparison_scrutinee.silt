@@ -1,0 +1,14 @@
+import io
+fn classify(a, b) {
+  match a > b {
+    true -> "greater"
+    false -> "not greater"
+  }
+}
+fn program() {
+  classify(5, 3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

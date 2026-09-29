@@ -1,0 +1,6 @@
+import io
+fn program() { true.display() }
+
+fn main() {
+  println(io.inspect(program()))
+}

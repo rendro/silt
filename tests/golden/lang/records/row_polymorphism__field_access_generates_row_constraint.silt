@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+fn show_name(p) = p.name
+fn main() {
+    let _ = show_name({name: "A", age: 30})
+}

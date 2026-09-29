@@ -1,0 +1,20 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: task.join with no progress possible
+-- stderr-not-contains: joined task failed
+-- A main-thread join on a task that can never progress reports the
+-- deadlock on its own, not as "joined task failed: ...".
+import channel
+import task
+
+fn main() {
+  let stuck = channel.new(0)
+  let h = task.spawn(fn() {
+    match channel.receive(stuck) {
+      Message(_) -> 1
+      _ -> 2
+    }
+  })
+  task.join(h)
+}

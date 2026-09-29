@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-contains: constructor 'Some' is only one of 2 variants of enum 'Option'
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- A refutable part nested in a tuple closure parameter is rejected.
+import list
+fn main() {
+  println([(1, Some(2)), (3, None)] |> list.map { (a, Some(b)) -> a + b })
+}

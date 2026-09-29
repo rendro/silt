@@ -1,0 +1,7 @@
+import io
+import float
+fn program() { float.ceil(1.2) }
+
+fn main() {
+  println(io.inspect(program()))
+}

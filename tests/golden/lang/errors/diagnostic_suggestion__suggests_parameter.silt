@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'namee'
+-- stderr-contains: help: did you mean `name`?
+fn greet(name: String) {
+  println(namee)
+}
+fn main() { greet("hi") }

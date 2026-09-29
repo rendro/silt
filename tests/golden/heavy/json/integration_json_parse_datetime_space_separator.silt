@@ -1,0 +1,12 @@
+import io
+import json
+import time
+type Log { msg: String, ts: DateTime }
+fn program() {
+  when let Ok(l) = json.parse("\{\"msg\": \"ok\", \"ts\": \"2024-03-15 09:00:00\"\}", Log) else { panic("unexpected Err") }
+  l.ts.date.day
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

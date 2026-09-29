@@ -1,0 +1,16 @@
+-- repeat: 3
+-- task.spawn_until with 0ms gives the child an already-past deadline:
+-- its I/O returns the timeout Err at entry.
+import io
+import task
+import time
+
+fn main() {
+  let handle = task.spawn_until(time.ms(0), fn() {
+    match io.read_file("/tmp/silt_spawn_until_noent") {
+      Ok(s) -> s
+      Err(e) -> e.message()
+    }
+  })
+  println(task.join(handle))
+}

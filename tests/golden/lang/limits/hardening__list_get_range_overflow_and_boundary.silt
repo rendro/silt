@@ -1,0 +1,7 @@
+import list
+fn main() {
+  -- test_list_get_range_overflow_returns_none: lo + idx past i64::MAX
+  println(list.get(9223372036854775000..9223372036854775807, 1000))
+  -- test_list_get_range_boundary_at_i64_max_returns_some
+  println(list.get(9223372036854775800..9223372036854775807, 7))
+}

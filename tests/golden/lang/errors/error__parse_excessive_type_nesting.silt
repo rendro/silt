@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type nesting exceeds maximum depth
+fn main() {
+  let x: List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(Int)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) = []
+}

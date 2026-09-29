@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.intersperse([1, 2, 3], 0)) }

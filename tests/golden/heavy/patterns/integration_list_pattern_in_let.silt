@@ -1,0 +1,9 @@
+import io
+fn program() {
+  when let [a, b, ..rest] = [1, 2, 3, 4, 5] else { panic("pattern did not match") }
+  a + b
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

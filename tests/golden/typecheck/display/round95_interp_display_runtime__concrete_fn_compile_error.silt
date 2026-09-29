@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Interpolating a concrete Fn is a compile-time Display error.
+-- stderr-contains: error[type]
+-- stderr-contains: does not implement Display
+fn helper() -> Int { 5 }
+fn main() { println("val={helper}") }

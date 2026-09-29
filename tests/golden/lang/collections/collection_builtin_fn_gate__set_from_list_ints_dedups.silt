@@ -1,0 +1,4 @@
+import set
+fn main() {
+  println(set.length(set.from_list([1, 2, 2])))
+}

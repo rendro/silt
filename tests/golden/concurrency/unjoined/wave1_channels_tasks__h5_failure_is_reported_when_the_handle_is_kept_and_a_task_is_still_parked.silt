@@ -1,0 +1,28 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- stderr-contains: failed and was never joined
+-- stderr-contains: division
+-- The main thread keeps the handle of the failed task in a variable
+-- and never joins it, and another task is still parked when the
+-- program ends.
+--
+-- The task tells the main thread that it is about to fail, and fails
+-- in its next step; the main thread sleeps after that message.
+import channel
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let about_to_fail = channel.new(1)
+  let idle = task.spawn(fn() { channel.receive(never) })
+  let failing = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    let zero = 0
+    10 / zero
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  println("main done")
+}

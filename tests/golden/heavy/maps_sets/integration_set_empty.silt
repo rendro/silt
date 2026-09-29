@@ -1,0 +1,10 @@
+import io
+import set
+fn program() {
+  let s = #[]
+  set.length(s)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

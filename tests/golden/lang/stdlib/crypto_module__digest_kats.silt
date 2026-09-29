@@ -1,0 +1,23 @@
+import bytes
+import crypto
+import string
+fn main() {
+  -- NIST SHA-256("abc"), SHA-256(""), length 32
+  println(bytes.to_hex(crypto.sha256(bytes.from_string("abc"))))
+  println(bytes.to_hex(crypto.sha256(bytes.empty())))
+  println(bytes.length(crypto.sha256(bytes.from_string("anything"))))
+  -- NIST SHA-512("abc"), length 64
+  println(bytes.to_hex(crypto.sha512(bytes.from_string("abc"))))
+  println(bytes.length(crypto.sha512(bytes.from_string("anything"))))
+  -- RFC 1321 MD5("abc"), MD5(""), length 16, md5_hex agrees with to_hex(md5)
+  println(bytes.to_hex(crypto.md5(bytes.from_string("abc"))))
+  println(bytes.to_hex(crypto.md5(bytes.empty())))
+  println(bytes.length(crypto.md5(bytes.from_string("anything"))))
+  println(crypto.md5_hex(bytes.from_string("abc")))
+  println(crypto.md5_hex(bytes.from_string("abc")) == bytes.to_hex(crypto.md5(bytes.from_string("abc"))))
+  -- RFC 7693 BLAKE2b-512("abc"), length 64, blake2b_hex, 128 hex chars
+  println(bytes.to_hex(crypto.blake2b(bytes.from_string("abc"))))
+  println(bytes.length(crypto.blake2b(bytes.from_string("anything"))))
+  println(crypto.blake2b_hex(bytes.from_string("abc")))
+  println(string.length(crypto.blake2b_hex(bytes.from_string("x"))))
+}

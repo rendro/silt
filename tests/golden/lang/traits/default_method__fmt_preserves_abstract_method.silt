@@ -1,0 +1,6 @@
+-- cmd: fmt --check
+-- exit: 0
+
+trait X {
+  fn f(self) -> Int
+}

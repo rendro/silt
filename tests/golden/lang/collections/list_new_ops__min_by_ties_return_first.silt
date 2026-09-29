@@ -1,0 +1,7 @@
+import list
+fn run_main() {
+  -- 10 and 20 both map to 0 under x % 2; first one wins.
+  list.min_by([10, 20, 30, 40]) { x -> x % 2 }
+}
+
+fn main() { println(run_main()) }

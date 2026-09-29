@@ -1,0 +1,22 @@
+-- repeat: 5
+import channel
+import option
+import result
+import task
+import time
+fn pair(x, y) { (x, y) }
+fn main() {
+  let a = channel.new(1)
+  let b = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    time.sleep(time.ms(20))
+    channel.send(b, 2)
+  }
+  let first = task.spawn { -> pair("option", option.map(Some(a), channel.receive)) }
+  println(task.join(first))
+  let second = task.spawn { -> pair("result", result.map_ok(Ok(b), channel.receive)) }
+  println(task.join(second))
+  task.join(sender)
+}

@@ -1,0 +1,7 @@
+import io
+import env
+fn program() { env.get("SILT_TEST_NONEXISTENT_VAR_12345") }
+
+fn main() {
+  println(io.inspect(program()))
+}

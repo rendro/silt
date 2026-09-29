@@ -1,0 +1,15 @@
+-- A closure captures a variable, then an inner scope shadows it;
+-- the closure should still see the original (outer) value.
+-- f captures x=100 at the time MakeClosure runs; the later let x = 999
+-- creates a new local that does not affect the captured value.
+import io
+fn program() {
+  let x = 100
+  let f = fn() { x }
+  let x = 999
+  f()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

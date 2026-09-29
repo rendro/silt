@@ -1,0 +1,12 @@
+-- The largest writable negative bound, -9223372036854775807 (i64::MIN + 1),
+-- works as a negated head, a negated tail, and both.
+fn head(x: Int) -> String { match x { -9223372036854775807..0 -> "yes"  _ -> "no" } }
+fn tail(x: Int) -> String { match x { 0..-9223372036854775807 -> "yes"  _ -> "no" } }
+fn both(x: Int) -> String { match x { -9223372036854775807..-9223372036854775807 -> "yes"  _ -> "no" } }
+
+fn main() {
+  let min1 = 0 - 9223372036854775807
+  println("head: {head(min1)} {head(0)} {head(1)}")
+  println("tail: {tail(min1)} {tail(0)}")
+  println("both: {both(min1)} {both(min1 + 1)}")
+}

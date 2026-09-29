@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: c_a -> c_b -> c_c -> c_a
+import c_a
+
+fn main() {
+  c_a.fa()
+}

@@ -316,38 +316,3 @@ fn redact_strips_inline_key_fragment_in_primary_message() {
         "safe prefix lost: {scrubbed:?}"
     );
 }
-
-/// End-to-end typechecker guard: compiling a silt program that calls
-/// `postgres.connect_with(url, #{"max_pool_size": N})` must type-check
-/// cleanly, and calling `postgres.connect_with(url)` (missing the
-/// opts bag) must be a type error. This locks the new signature
-/// against accidental arity regressions.
-#[test]
-fn connect_with_typechecks_end_to_end() {
-    use silt::compiler::Compiler;
-    use silt::lexer::Lexer;
-    use silt::parser::Parser;
-
-    // Type-checks: opts bag present with a valid Int field.
-    //
-    // Silt's typechecker doesn't *require* a successful typecheck for
-    // compilation (it gathers diagnostics but compiles anyway), so
-    // the real signal is "the compile pipeline completes without a
-    // runtime call" + "the `postgres.connect_with` name resolves".
-    let good = r#"
-        import postgres
-        fn main() {
-          let _ = postgres.connect_with("postgres://x@y/z", #{"max_pool_size": 32})
-        }
-    "#;
-    let tokens = Lexer::new(good).tokenize().expect("lex");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
-    // Running the typechecker smoke-tests name resolution. Any missing
-    // builtin would bubble as a "name not found" diagnostic.
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    // Compile must succeed — confirms the dispatch target resolves.
-    let _ = compiler
-        .compile_program(&program)
-        .expect("compile good program");
-}

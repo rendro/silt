@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let x = None as Option(Int)
+  match x {
+    Some(n) -> n
+    None -> -1
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

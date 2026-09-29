@@ -1,0 +1,6 @@
+import list
+fn main() {
+  let lo = 5
+  let hi = 4
+  println([1] |> list.flat_map { _ -> lo..hi })
+}

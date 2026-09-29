@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: badlex.silt
+-- stderr-contains: @@@
+-- A lex error inside an imported module: the inner snippet is plain
+-- text under NO_COLOR (the exact stderr has no escape sequences).
+import badlex
+
+fn main() {
+  badlex.hi()
+}

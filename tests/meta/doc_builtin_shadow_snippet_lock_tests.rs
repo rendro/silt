@@ -93,23 +93,3 @@ fn loops_and_pipes_snippets_do_not_shadow_builtin_modules() {
         violations.join("\n")
     );
 }
-
-/// Positive guard so the walker above cannot pass vacuously: the renamed
-/// triple-quoted-string examples must still be present in the page.
-#[test]
-fn loops_and_pipes_triple_quoted_examples_use_nonshadowing_names() {
-    assert!(
-        LOOPS_AND_PIPES_MD.contains("let json_text = \"\"\""),
-        "loops-and-pipes.md: the triple-quoted JSON example should bind \
-         `json_text` (a name that does not shadow the `json` builtin \
-         module). If the example was legitimately reworded, update this \
-         lock alongside it."
-    );
-    assert!(
-        LOOPS_AND_PIPES_MD.contains("let pattern = \"\"\""),
-        "loops-and-pipes.md: the triple-quoted regex example should bind \
-         `pattern` (a name that does not shadow the `regex` builtin \
-         module). If the example was legitimately reworded, update this \
-         lock alongside it."
-    );
-}

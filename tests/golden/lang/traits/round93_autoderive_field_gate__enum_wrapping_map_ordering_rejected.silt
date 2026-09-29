@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'W' cannot derive 'Compare'
+-- stderr-contains: variant 'Wrap' payload #1
+-- stderr-contains: Map(String, Int)
+-- stderr-contains: not comparable
+type W { Wrap(Map(String, Int)), Empty }
+fn mk() -> W { Wrap(#{"a": 1}) }
+fn main() { println(mk() < mk()) }

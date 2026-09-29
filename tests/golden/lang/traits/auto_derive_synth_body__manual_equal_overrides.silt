@@ -1,0 +1,6 @@
+type Color { Red, Green, Blue, }
+trait Equal for Color {
+    fn equal(self: Color, other: Color) -> Bool = true
+}
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() { println(eq_gen(Red, Green)) }

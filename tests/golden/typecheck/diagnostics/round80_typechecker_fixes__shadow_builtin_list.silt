@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- Declaring `type List` is rejected as a builtin shadow.
+-- stderr-contains: shadows builtin type 'List'
+type List { x: Int }
+fn main() {}

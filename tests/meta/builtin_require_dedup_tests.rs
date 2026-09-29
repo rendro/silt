@@ -10,136 +10,15 @@
 //! `require_int` after round 67 added the `, got <kind>` suffix to
 //! the latter, so it was deleted. The thin wrappers in `tcp.rs` and
 //! `stream.rs` now route to `super::common::require_int` directly.
-//! These tests have been updated to assert the new routing.
 //!
-//! These tests pin the dedup in three ways:
-//!
-//! 1. Source-grep negative locks against `tcp.rs` and `stream.rs`
-//!    asserting the original `match arg { Value::Int(n) => …}` /
-//!    `Value::String(s) => Ok(s.as_str())` bodies are gone — anyone
-//!    who reverts the dedup by re-inlining the bodies will trip these.
-//! 2. Source-grep positive lock against `common.rs` asserting the
-//!    new helper names are present.
-//! 3. Behavioral lock: a silt program that calls `stream.from_range`
-//!    and `stream.write_to_file` with wrong-typed arguments and
-//!    asserts the runtime error wording exactly matches what the
-//!    pre-dedup local helpers produced ("… requires Int" /
-//!    "… requires String"). The same wording is preserved verbatim
-//!    in the new shared helpers, so a behavioural drift would also
-//!    be caught here.
+//! Behavioural lock: silt programs that call `stream.*` / `tcp.*` builtins
+//! with wrong-typed arguments (ill-typed on purpose; the typechecker's
+//! verdict is ignored so the runtime check is reached) must produce the
+//! "… requires Int" / "… requires String" wording of the shared helpers.
 
 use std::sync::Arc;
 
 use silt::value::Value;
-
-// ── Source-grep locks ──────────────────────────────────────────────
-
-/// Negative lock: `tcp.rs` must no longer carry the original
-/// `require_int` body. The body shape was three lines —
-///     match arg {
-///         Value::Int(n) => Ok(*n),
-///         _ => Err(VmError::new(format!("{fn_label} requires Int"))),
-/// — and we assert the Int-arm + Err combination is gone (the new
-/// stub is a single-line delegation `super::common::require_int`).
-/// Round 74: was previously `require_int_plain`; the shim was deleted
-/// because it was byte-identical to `require_int` after round 67.
-#[test]
-fn tcp_require_int_routes_through_common() {
-    let src = include_str!("../../src/builtins/tcp.rs");
-    // Positive lock: tcp.rs must call into the shared helper.
-    assert!(
-        src.contains("super::common::require_int("),
-        "tcp.rs must delegate require_int to common::require_int; \
-         did someone revert the round-65 DC2 dedup or the round-74 plain shim removal?"
-    );
-    // Negative lock: tcp.rs must NOT reference the deleted shim.
-    assert!(
-        !src.contains("require_int_plain"),
-        "tcp.rs must not reference the deleted require_int_plain shim — \
-         it was removed in round 74 because it was byte-identical to require_int"
-    );
-    // Negative lock: the original Value::Int(n) => Ok(*n) body must be
-    // gone (a single-line delegation has no `Ok(*n)`).
-    assert!(
-        !src.contains("Value::Int(n) => Ok(*n)"),
-        "tcp.rs must not redefine its own require_int body — \
-         delegate to common::require_int instead"
-    );
-}
-
-/// Negative lock: `tcp.rs` must no longer carry the original
-/// `require_string` body. The distinctive substring is
-/// `Value::String(s) => Ok(s.as_str())` — the old `&str`-borrowing
-/// helper. The new stub delegates and contains no such match arm.
-#[test]
-fn tcp_require_string_routes_through_common() {
-    let src = include_str!("../../src/builtins/tcp.rs");
-    assert!(
-        src.contains("require_str_borrow"),
-        "tcp.rs must delegate require_string to common::require_str_borrow; \
-         did someone revert the round-65 DC2 dedup?"
-    );
-    assert!(
-        !src.contains("Value::String(s) => Ok(s.as_str())"),
-        "tcp.rs must not redefine its own require_string body — \
-         delegate to common::require_str_borrow instead"
-    );
-}
-
-/// Negative lock: `stream.rs` must no longer carry the original
-/// `require_int` / `require_string` bodies. Round 74: was previously
-/// `require_int_plain`; the shim was deleted.
-#[test]
-fn stream_require_int_routes_through_common() {
-    let src = include_str!("../../src/builtins/stream.rs");
-    assert!(
-        src.contains("super::common::require_int("),
-        "stream.rs must delegate require_int to common::require_int"
-    );
-    assert!(
-        !src.contains("require_int_plain"),
-        "stream.rs must not reference the deleted require_int_plain shim"
-    );
-    assert!(
-        !src.contains("Value::Int(n) => Ok(*n)"),
-        "stream.rs must not redefine its own require_int body"
-    );
-}
-
-#[test]
-fn stream_require_string_routes_through_common() {
-    let src = include_str!("../../src/builtins/stream.rs");
-    assert!(
-        src.contains("require_str_borrow"),
-        "stream.rs must delegate require_string to common::require_str_borrow"
-    );
-    assert!(
-        !src.contains("Value::String(s) => Ok(s.as_str())"),
-        "stream.rs must not redefine its own require_string body"
-    );
-}
-
-/// Positive lock: `common.rs` must export the canonical dedup helpers.
-/// Round 74: `require_int_plain` was deleted (byte-identical to
-/// `require_int` after round 67), so the assertion is inverted.
-#[test]
-fn common_module_exports_dedup_helpers() {
-    let src = include_str!("../../src/builtins/common.rs");
-    assert!(
-        src.contains("fn require_int("),
-        "common.rs must define require_int (canonical dedup helper)"
-    );
-    assert!(
-        !src.contains("fn require_int_plain"),
-        "common.rs must NOT define require_int_plain — the shim was \
-         deleted in round 74 because round 67 made it byte-identical \
-         to require_int"
-    );
-    assert!(
-        src.contains("fn require_str_borrow"),
-        "common.rs must define require_str_borrow (round-65 DC2 helper)"
-    );
-}
 
 // ── Behavioral lock ────────────────────────────────────────────────
 

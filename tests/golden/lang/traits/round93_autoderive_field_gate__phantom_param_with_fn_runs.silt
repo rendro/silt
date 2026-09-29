@@ -1,0 +1,7 @@
+type Tag(a) { name: String }
+fn main() {
+    let c: Tag(Fn(Int) -> Int) = Tag{name: "a"}
+    let d: Tag(Fn(Int) -> Int) = Tag{name: "b"}
+    println(c < d)
+    println(c == d)
+}

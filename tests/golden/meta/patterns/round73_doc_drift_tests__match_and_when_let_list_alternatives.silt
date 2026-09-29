@@ -1,0 +1,19 @@
+-- The alternatives to a refutable `let [a, b, c] = xs`: `match` and
+-- `when let ... else`.
+fn handle_other_shape() { 0 }
+fn use(a, b, c) { a + b + c }
+
+fn solve(xs) {
+  let _r = match xs {
+    [a, b, c] -> use(a, b, c)
+    _ -> handle_other_shape()
+  }
+
+  when let [a, b, c] = xs else { return handle_other_shape() }
+  use(a, b, c)
+}
+
+fn main() {
+  println("{solve([1, 2, 3])}")
+  println("{solve([1, 2])}")
+}

@@ -1,0 +1,2 @@
+fn internal_double(x) { x * 2 }
+pub fn quadruple(x) { internal_double(internal_double(x)) }

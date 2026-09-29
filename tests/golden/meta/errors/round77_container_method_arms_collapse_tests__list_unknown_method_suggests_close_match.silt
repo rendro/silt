@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method
+-- stderr-contains: help: did you mean `display`?
+fn main() {
+  let xs = [1, 2, 3]
+  println(xs.dispaly())
+}

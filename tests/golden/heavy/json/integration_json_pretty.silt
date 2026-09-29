@@ -1,0 +1,10 @@
+import io
+import json
+fn program() {
+  let data = #{ "a": 1 }
+  json.pretty(data)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 0
+-- A free function calls a method whose return type is a projection.
+trait Producer {
+  type Out
+  fn produce(self) -> Self::Out
+}
+
+type Wrap { v: Int }
+
+trait Producer for Wrap {
+  type Out = Int
+  fn produce(self) -> Int { self.v }
+}
+
+fn use_it(w: Wrap) -> Int {
+  w.produce()
+}
+
+fn main() {}

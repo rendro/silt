@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: must be positive
+fn positive(n) {
+  when n > 0 else { panic("must be positive") }
+  n
+}
+fn main() { positive(-5) }

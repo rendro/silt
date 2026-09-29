@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: float.clamp: invalid bounds
+import float
+fn main() {
+  let _ = float.clamp(0.5, 1.0, 0.0)
+}

@@ -1,0 +1,16 @@
+type Color { Red, Green, Blue, }
+type Tagged { Foo(Int), Bar(Int, String), }
+type Point { x: Int, y: Int, }
+type Box(a) { Boxed(a), }
+type Wrapped(a) { value: a }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(cmp_gen(Red, Green))
+    println(cmp_gen(Foo(5), Foo(3)))
+    println(eq_gen(Point { x: 1, y: 2 }, Point { x: 1, y: 2 }))
+    println(cmp_gen(Boxed(1), Boxed(2)))
+    println(d(Wrapped { value: 42 }))
+    println(Color.compare(Red, Green))
+}

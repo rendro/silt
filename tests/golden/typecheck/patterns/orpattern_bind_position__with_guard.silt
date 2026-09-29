@@ -1,0 +1,12 @@
+-- The guard sees the correctly bound value: B(99, 20) gives 40, B(1, 99) gives 99.
+type E { A(Int), B(Int, Int) }
+fn classify(e: E) -> Int {
+  match e {
+    A(x) | B(_, x) when x > 50 -> x
+    A(x) | B(_, x) -> x * 2
+  }
+}
+fn main() {
+  println(classify(B(99, 20)))
+  println(classify(B(1, 99)))
+}

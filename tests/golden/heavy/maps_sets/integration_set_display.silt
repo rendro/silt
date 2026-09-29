@@ -1,0 +1,9 @@
+import io
+fn program() {
+  let s = #[3, 1, 2]
+  io.inspect(s)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

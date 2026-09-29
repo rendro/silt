@@ -1,0 +1,12 @@
+import other
+type P { year: Int }
+fn main() {
+  let a = P { year: 5 }
+  let b = P { year: 6 }
+  println(a == b)
+  println(a == P { year: 5 })
+  println(a < b)
+  println(b < a)
+  println(a.compare(b))
+  println(a.hash() == P { year: 5 }.hash())
+}

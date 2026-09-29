@@ -1,0 +1,13 @@
+-- exit: 0
+-- A match whose arms all diverge is a valid `when let ... else` body.
+fn load_data() -> Result(Int, String) { Ok(42) }
+fn main() {
+  let res = load_data()
+  when let Ok(data) = res else {
+    match res {
+      Err(e) -> panic("load failed: {e}")
+      Ok(_)  -> panic("unreachable")
+    }
+  }
+  println(data)
+}

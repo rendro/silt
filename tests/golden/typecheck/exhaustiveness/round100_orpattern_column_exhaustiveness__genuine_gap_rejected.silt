@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A real gap (no `false` arm) in an or-pattern column is still reported.
+-- stderr-contains: non-exhaustive
+type T { A, B }
+fn f(x) {
+  match x {
+    (A | B, true) -> 1
+  }
+}
+fn main() { print(f((A, true))) }

@@ -1,0 +1,30 @@
+-- repeat: 3
+-- After a main-thread select is resolved by one channel, the losing
+-- channel has no parked receiver left: try_send on it must fail.
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let feeder = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+  }
+
+  match channel.select([Recv(a), Recv(b)]) {
+    (_, Message(_)) -> {
+      task.join(feeder)
+      let probe = task.spawn { ->
+        channel.try_send(b, 999)
+      }
+      let ok = task.join(probe)
+      match ok {
+        true -> println("BUG:leaked_select_sibling_phantom_send")
+        false -> println("ok:select")
+      }
+    }
+    _ -> println("FAIL:unexpected_branch")
+  }
+}

@@ -1,0 +1,10 @@
+-- Just "?" is effectively an empty query.
+import io
+import http
+fn program() {
+  http.parse_query("?")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,10 @@
+import io
+import json
+fn program() {
+  let data = #{ "name": "Bob", "age": "25" }
+  json.stringify(data)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

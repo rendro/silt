@@ -1,0 +1,10 @@
+-- { x, _ -> expr } — regression check, already worked
+import io
+import list
+fn program() {
+  [(1, "a"), (2, "b")] |> list.map { (x, _) -> x }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

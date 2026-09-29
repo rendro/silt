@@ -1,0 +1,11 @@
+type P { x: Int }
+fn main() {
+  let r = match [P { x: 1 }] {
+    [] -> "none"
+    _ -> "some"
+  }
+  let s = match P { x: 1 } {
+    P { x } -> x
+  }
+  println("{r} {s}")
+}

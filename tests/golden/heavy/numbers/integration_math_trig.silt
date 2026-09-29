@@ -1,0 +1,7 @@
+import io
+import math
+fn program() { math.sin(0.0) }
+
+fn main() {
+  println(io.inspect(program()))
+}

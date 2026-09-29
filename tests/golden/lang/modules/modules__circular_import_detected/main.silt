@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: circular import
+import a
+
+fn main() {
+  a.fa()
+}

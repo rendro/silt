@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+type Box(a) { value: a }
+fn grab_int(b: Box(Int)) -> Int { b.value }
+fn grab_str(b: Box(String)) -> String { b.value }
+fn main() {
+  let _ = grab_int(Box { value: 1 })
+  let _ = grab_str(Box { value: "hi" })
+}

@@ -1,0 +1,10 @@
+import io
+fn program() {
+  let inner = [2, 3]
+  let outer = [1, ..inner, 4]
+  [0, ..outer, 5]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

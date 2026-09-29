@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown function 'nonexistent' on module 'mathutil'
+import mathutil
+
+fn main() {
+  mathutil.nonexistent(1)
+}

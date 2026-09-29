@@ -1,0 +1,9 @@
+import io
+import int
+fn program() {
+  int.to_string(-7)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

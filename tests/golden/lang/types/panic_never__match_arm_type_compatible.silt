@@ -1,0 +1,11 @@
+fn get(x) {
+  match x {
+    Some(v) -> v
+    None -> panic("no value")
+  }
+}
+
+fn main() {
+  let value = get(Some(99))
+  println(value)
+}

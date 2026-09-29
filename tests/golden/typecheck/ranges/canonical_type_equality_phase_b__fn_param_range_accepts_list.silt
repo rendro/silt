@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- A `Range(Int)` parameter accepts a list argument.
+import list
+fn f(x: Range(Int)) -> Int { list.length(x) }
+fn main() -> Int {
+  f([1, 2, 3])
+}

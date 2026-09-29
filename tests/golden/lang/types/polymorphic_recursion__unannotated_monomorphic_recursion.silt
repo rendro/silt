@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn fact(n) = match n {
+  0 -> 1,
+  _ -> n * fact(n - 1)
+}
+
+fn main() {
+  fact(5)
+}

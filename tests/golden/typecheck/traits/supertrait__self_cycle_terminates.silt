@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: panicked
+-- A trait listing itself as supertrait does not hang or crash the checker.
+trait SelfCyc: SelfCyc {
+  fn s(self) -> Int
+}
+
+fn main() {}

@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected type _, got
+-- Passing a String where a type descriptor is expected fails.
+trait Tag {
+    fn tag(self, type a) -> String
+}
+
+trait Tag for Int {
+    fn tag(self, type a) -> String { "ok" }
+}
+
+fn use_it() {
+    let _ = 42.tag("not a type")
+}
+
+fn main() {}

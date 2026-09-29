@@ -1,0 +1,13 @@
+import io
+import json
+type User { name: String, age: Int }
+fn program() {
+  match json.parse("\{\"name\": \"Alice\", \"age\": 30\}", User) {
+    Ok(user) -> user.age
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

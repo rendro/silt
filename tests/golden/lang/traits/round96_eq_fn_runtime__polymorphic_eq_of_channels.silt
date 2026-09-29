@@ -1,0 +1,6 @@
+import channel
+fn eq(x: a, y: a) -> Bool { x == y }
+fn main() {
+  let c = channel.new()
+  println(eq(c, c))
+}

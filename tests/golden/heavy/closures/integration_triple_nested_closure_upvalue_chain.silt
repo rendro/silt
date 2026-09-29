@@ -1,0 +1,16 @@
+import io
+fn outer(x) {
+  let middle = fn() {
+    let inner = fn() { x }
+    inner()
+  }
+  middle()
+}
+
+fn program() {
+  outer(42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

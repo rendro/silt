@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- Positive control: set equality of equatable elements typechecks.
+fn main() {
+  print(#[1, 2, 3] == #[3, 2, 1])
+}

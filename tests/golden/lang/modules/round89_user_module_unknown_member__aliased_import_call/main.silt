@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown function 'nope' on module 'mylib'
+-- stderr-not-contains: undefined variable 'mylib'
+import lib as mylib
+
+fn main() {
+  println(mylib.nope())
+}

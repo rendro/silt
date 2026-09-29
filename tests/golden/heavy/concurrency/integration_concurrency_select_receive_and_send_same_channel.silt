@@ -1,0 +1,24 @@
+-- repeat: 3
+-- Select with both receive and send on the same buffered channel.
+-- With data present and capacity available, BOTH operations are ready.
+-- Fair select chooses between them, so either outcome is valid.
+import io
+import channel
+-- With data present and capacity available, both operations are ready.
+-- Fair select chooses between them, so either outcome is valid: receive
+-- (100) or send (-1).
+fn program() {
+  let ch = channel.new(5)
+  channel.send(ch, 100)
+
+  let outcome = match channel.select([Recv(ch), Send(ch, 200)]) {
+    (_, Message(val)) -> val
+    (_, Sent) -> -1
+    _ -> -2
+  }
+  outcome == 100 || outcome == -1
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

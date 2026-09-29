@@ -1,0 +1,16 @@
+-- A closure is passed as an argument to another function while
+-- capturing a variable from the call site's enclosing scope.
+import io
+fn apply(f, x) {
+  f(x)
+}
+
+fn program() {
+  let multiplier = 7
+  let result = apply(fn(x) { x * multiplier }, 6)
+  result
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

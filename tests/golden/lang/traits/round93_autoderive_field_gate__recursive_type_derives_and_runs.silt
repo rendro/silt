@@ -1,0 +1,9 @@
+type Tree { leaf: Int, kids: List(Tree) }
+fn main() {
+    let t1 = Tree{leaf: 1, kids: []}
+    let t2 = Tree{leaf: 2, kids: [Tree{leaf: 3, kids: []}]}
+    println(t1 < t2)
+    println(t1 == t1)
+    println(t1.compare(t2))
+    println(t2.hash() == t2.hash())
+}

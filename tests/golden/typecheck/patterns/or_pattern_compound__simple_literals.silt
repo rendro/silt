@@ -1,0 +1,8 @@
+-- Simple literal or-patterns.
+fn main() {
+  let r = match 3 {
+    1 | 2 | 3 -> "low"
+    _ -> "high"
+  }
+  println(r)
+}

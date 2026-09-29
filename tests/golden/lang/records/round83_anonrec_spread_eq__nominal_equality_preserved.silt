@@ -1,0 +1,11 @@
+type Person { x: Int }
+fn main() {
+  -- nominal_record_equality_preserved
+  let p: Person = Person { x: 1 }
+  let s: Person = Person { x: 1 }
+  println(p == s)
+  -- nominal_dot_update_equality_preserved
+  let q: Person = p.{ x: 2 }
+  let r: Person = Person { x: 2 }
+  println(q == r)
+}

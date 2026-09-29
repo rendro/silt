@@ -1,0 +1,2 @@
+(option, Some(Message(1)))
+(result, Ok(Message(2)))

@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: toml.parse_list
+-- stderr-contains: `Bool`
+-- stderr-contains: record type
+import toml
+
+fn main() {
+  println(toml.parse_list("a = 1", Bool))
+}

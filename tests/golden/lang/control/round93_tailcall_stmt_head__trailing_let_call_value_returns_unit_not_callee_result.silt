@@ -1,0 +1,12 @@
+fn g(n) {
+  n + 1
+}
+
+fn f() {
+  let x = g(41)
+}
+
+fn main() {
+  let y = f()
+  println("{y}")
+}

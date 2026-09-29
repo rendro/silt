@@ -1,0 +1,24 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- The main thread joins a task that waits for the send of a task that
+-- waits for a timer. Without the fix the join is told "deadlock".
+import channel
+import task
+
+fn main() {
+  let x = channel.new(0)
+  let waiter = task.spawn(fn() {
+    let t = channel.timeout(600)
+    let _ = channel.receive(t)
+    channel.send(x, 7)
+  })
+  let relay = task.spawn(fn() {
+    match channel.receive(x) {
+      Message(v) -> v * 2
+      _ -> 0 - 1
+    }
+  })
+  let got = task.join(relay)
+  task.join(waiter)
+  println("main got: {got}")
+}

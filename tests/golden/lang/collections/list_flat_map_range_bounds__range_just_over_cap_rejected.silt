@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: list.flat_map
+-- stderr-contains: materializing more than 10000000 is not allowed
+import list
+fn main() {
+  println([1] |> list.flat_map { _ -> 0..10000001 })
+}

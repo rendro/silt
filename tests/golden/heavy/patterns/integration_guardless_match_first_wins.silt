@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let x = 15
+  match {
+    x > 5 -> "first"
+    x > 10 -> "second"
+    _ -> "default"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

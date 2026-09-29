@@ -1,0 +1,21 @@
+-- `loop _ = () { ... loop(()) }` re-enters until the body stops calling
+-- loop(...): it drains all three buffered messages in FIFO order.
+import channel
+
+fn main() {
+  let ch = channel.new(3)
+  channel.send(ch, "a")
+  channel.send(ch, "b")
+  channel.send(ch, "c")
+  channel.close(ch)
+  loop _ = () {
+    match channel.receive(ch) {
+      Message(val) -> {
+        println(val)
+        loop(())
+      }
+      Closed -> ()
+      _ -> loop(())
+    }
+  }
+}

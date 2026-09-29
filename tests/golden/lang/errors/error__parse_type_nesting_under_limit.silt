@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- 64-deep type nesting, well under the parser depth limit, still parses.
+fn main() {
+  let x: List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(List(Int)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) = []
+}

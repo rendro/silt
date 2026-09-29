@@ -1,0 +1,30 @@
+import list
+type L { Nil, Cons(Int, L) }
+type P { x: Int }
+fn main() {
+  let a = loop acc = Nil, i = 2 {
+    match i {
+      0 -> acc
+      _ -> loop(Cons(i, acc), i - 1)
+    }
+  }
+  let b = loop p = P { x: 1 }, i = 0 {
+    match i {
+      3 -> p.x
+      _ -> loop(p.{ x: p.x * 2 }, i + 1)
+    }
+  }
+  let c = loop xs = list.map([1, 2]) { v -> v + 1 }, total = 0 {
+    match xs {
+      [] -> total
+      [h, ..t] -> loop(t, total + h)
+    }
+  }
+  let d = loop i = 3, p = P { x: 5 } {
+    match i {
+      0 -> p.x
+      _ -> loop(i - 1, p)
+    }
+  }
+  println("{a} {b} {c} {d}")
+}

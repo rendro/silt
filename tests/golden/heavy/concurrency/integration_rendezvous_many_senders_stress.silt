@@ -1,0 +1,43 @@
+-- repeat: 3
+-- 20 tasks all sending through a rendezvous channel — every message must arrive.
+import io
+import channel
+import list
+import task
+fn program() {
+  let ch = channel.new()
+
+  -- Spawn 20 senders
+  let handles = loop i = 0, acc = [] {
+    match i >= 20 {
+      true -> acc
+      _ -> {
+        let h = task.spawn(fn() {
+          channel.send(ch, i)
+        })
+        loop(i + 1, list.append(acc, h))
+      }
+    }
+  }
+
+  -- Receive all 20 messages and sum them
+  let total = loop i = 0, acc = 0 {
+    match i >= 20 {
+      true -> acc
+      _ -> {
+        when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
+        loop(i + 1, acc + val)
+      }
+    }
+  }
+
+  -- Join all senders
+  handles |> list.each { h -> task.join(h) }
+
+  -- Sum of 0..19 = 190
+  total
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

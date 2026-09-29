@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: list.remove_at
+-- stderr-contains: out of bounds
+import list
+fn main() { list.remove_at([1, 2], 5) }

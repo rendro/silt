@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: no counterparty
+-- A receive that nothing can ever satisfy (no task, no scheduler) is
+-- still reported as a deadlock.
+import channel
+
+fn main() {
+  let ch = channel.new(0)
+  match channel.receive(ch) {
+    Message(_) -> println("unreachable")
+    _ -> println("unreachable")
+  }
+}

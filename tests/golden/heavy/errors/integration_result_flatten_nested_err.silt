@@ -1,0 +1,7 @@
+import io
+import result
+fn program() { result.flatten(Ok(Err("nested"))) }
+
+fn main() {
+  println(io.inspect(program()))
+}

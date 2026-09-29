@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.max_by([]) { x -> x }) }

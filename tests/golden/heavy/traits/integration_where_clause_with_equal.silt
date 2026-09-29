@@ -1,0 +1,13 @@
+import io
+fn are_same(a: t, b: t) where t: Equal {
+  a == b
+}
+
+fn program() {
+  are_same(1, 2)
+  are_same("hello", "hello")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

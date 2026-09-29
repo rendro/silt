@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected Bool, got Int
+ --> binop_single_diagnostic_round67__bool_eq_int_single.silt:4:22
+   |
+ 4 |     let x = (true == 1)
+   |                      ^ type mismatch: expected Bool, got Int

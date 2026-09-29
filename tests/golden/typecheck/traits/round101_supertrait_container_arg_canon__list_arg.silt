@@ -1,0 +1,12 @@
+-- A `Carry(List(b))` supertrait arg is accepted and dispatches, also through a `where t: Holds(Int)` bound.
+type Bag { n: Int }
+trait Carry(c) { fn carry(self) -> c }
+trait Holds(b): Carry(List(b)) { fn hold(self) -> b }
+trait Carry(List(Int)) for Bag { fn carry(self) -> List(Int) { [1, 2] } }
+trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
+fn first_carried(x: t) -> List(Int) where t: Holds(Int) { x.carry() }
+fn main() {
+  let b = Bag { n: 1 }
+  println("{b.hold()}")
+  println("{first_carried(b)}")
+}

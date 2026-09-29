@@ -1,0 +1,7 @@
+-- exit: 0
+-- GUARD: a user module function with all its arguments, in call and pipe form.
+import util
+fn main() {
+  println(util.add(1, 2))
+  println(1 |> util.add(3))
+}

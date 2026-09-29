@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: maximum string size
+-- MAX_RANGE_MATERIALIZE is 10_000_000.
+-- "x" (1 byte) repeated 10_000_001 times exceeds the limit.
+import string
+fn main() { string.repeat("x", 10000001) }

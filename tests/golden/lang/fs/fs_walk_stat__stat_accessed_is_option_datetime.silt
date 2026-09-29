@@ -1,0 +1,21 @@
+import fs
+fn main() {
+    -- `accessed` must be populated for a regular file on every common
+    -- filesystem: 0 means it regressed to None, -1 that stat failed.
+    let y = match fs.stat("fs_walk_stat__stat_accessed_is_option_datetime.silt") {
+        Ok(s) -> match s.accessed {
+            Some(dt) -> dt.date.year
+            None -> 0
+        }
+        Err(_) -> -1
+    }
+    println(y >= 1970)
+    let c = match fs.stat("fs_walk_stat__stat_accessed_is_option_datetime.silt") {
+        Ok(s) -> match s.created {
+            Some(_) -> "some"
+            None -> "none"
+        }
+        Err(_) -> "err"
+    }
+    println(c != "err")
+}

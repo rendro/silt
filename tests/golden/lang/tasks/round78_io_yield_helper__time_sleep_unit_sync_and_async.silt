@@ -1,0 +1,14 @@
+import task
+import time
+
+fn worker() -> () {
+  time.sleep(time.ms(1))
+}
+
+fn main() {
+  let sync = time.sleep(time.ms(1))
+  let h = task.spawn(worker)
+  let async = task.join(h)
+  println(sync)
+  println(async)
+}

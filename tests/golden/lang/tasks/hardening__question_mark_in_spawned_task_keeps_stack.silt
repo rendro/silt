@@ -1,0 +1,24 @@
+import task
+import option
+
+fn bad() -> Option(Int) {
+  let _x: Int = None?
+  Some(0)
+}
+
+fn worker() -> Int {
+  let a = 111
+  let b = 222
+  let c = 333
+  match bad() {
+    Some(_) -> a + b + c
+    None -> a + b + c
+  }
+}
+
+fn main() {
+  let h = task.spawn(worker)
+  -- 111 + 222 + 333; any other value means the task's stack was
+  -- truncated to the wrong offset after the `?` early return
+  println(task.join(h))
+}

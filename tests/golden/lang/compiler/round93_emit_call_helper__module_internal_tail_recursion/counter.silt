@@ -1,0 +1,6 @@
+pub fn selfcount(n) {
+  match n {
+    0 -> 0
+    _ -> selfcount(n - 1)
+  }
+}

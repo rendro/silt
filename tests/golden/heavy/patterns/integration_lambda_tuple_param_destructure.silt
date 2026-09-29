@@ -1,0 +1,12 @@
+import io
+import list
+
+fn program() {
+  let pairs = [(1, 2), (3, 4)]
+  let sums = list.map(pairs) { (a, b) -> a + b }
+  sums
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

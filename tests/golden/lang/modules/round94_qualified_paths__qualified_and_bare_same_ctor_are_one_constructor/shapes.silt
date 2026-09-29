@@ -1,0 +1,4 @@
+pub type Shape {
+  Circle(Float),
+  Rect(Float, Float)
+}

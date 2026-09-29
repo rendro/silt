@@ -1,0 +1,7 @@
+-- Write a string to a file, read it back, and check the contents match.
+import io
+fn main() {
+  let w = io.write_file("roundtrip.txt", "hello silt io")
+  let r = io.read_file("roundtrip.txt")
+  println(io.inspect((w, r)))
+}

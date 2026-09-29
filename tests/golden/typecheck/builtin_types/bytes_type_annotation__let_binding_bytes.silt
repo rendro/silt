@@ -1,0 +1,6 @@
+-- `Bytes` is a valid let-binding annotation.
+import bytes
+fn main() {
+  let x: Bytes = bytes.empty()
+  println(x)
+}

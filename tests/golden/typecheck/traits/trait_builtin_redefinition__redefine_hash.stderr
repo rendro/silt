@@ -1,0 +1,5 @@
+error[type]: trait 'Hash' is a builtin trait and cannot be redefined
+ --> trait_builtin_redefinition__redefine_hash.silt:6:1
+   |
+ 6 | trait Hash { fn foo(self) -> Bool }
+   | ^ trait 'Hash' is a builtin trait and cannot be redefined

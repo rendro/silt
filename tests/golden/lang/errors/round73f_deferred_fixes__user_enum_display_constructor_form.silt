@@ -1,0 +1,5 @@
+type Color { Red, Green(Int), Blue }
+fn main() {
+    let c = Green(42)
+    println("{c}")
+}

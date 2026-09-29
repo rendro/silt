@@ -1,0 +1,9 @@
+type Point { x: Int, y: Int, }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let q = Point { x: 1, y: 2 }
+    let r = Point { x: 1, y: 3 }
+    println(eq_gen(p, q))
+    println(eq_gen(p, r))
+}

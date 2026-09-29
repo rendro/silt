@@ -1,0 +1,16 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- `zip` of 3 elements against 1000: it ends with the shorter input and
+-- leaves the longer source alive.
+import channel
+import stream
+
+fn main() {
+  let short = stream.from_list([1, 2, 3])
+  let long = stream.from_range(1, 1000)
+  println(stream.zip(short, long) |> stream.collect)
+  let fresh = channel.new(0)
+  channel.receive(fresh)
+  println("unreachable")
+}

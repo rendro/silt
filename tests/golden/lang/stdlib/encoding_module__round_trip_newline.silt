@@ -1,0 +1,8 @@
+import encoding
+fn main() {
+  let s = "line1\nline2"
+  match encoding.url_decode(encoding.url_encode(s)) {
+    Ok(back) -> println(back)
+    Err(e) -> println(e)
+  }
+}

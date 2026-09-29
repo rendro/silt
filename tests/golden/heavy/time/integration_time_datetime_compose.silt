@@ -1,0 +1,25 @@
+import io
+import time
+fn program() {
+  let d = must_date(2024, 6, 15)
+  let t = must_time(9, 30, 0)
+  time.datetime(d, t)
+}
+
+fn must_date(y, m, d) {
+  match time.date(y, m, d) {
+    Ok(date) -> date
+    Err(_) -> panic("invalid date")
+  }
+}
+
+fn must_time(h, m, s) {
+  match time.time(h, m, s) {
+    Ok(t) -> t
+    Err(_) -> panic("invalid time")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

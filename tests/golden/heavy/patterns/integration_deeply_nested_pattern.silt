@@ -1,0 +1,14 @@
+import io
+import option
+
+fn program() {
+  let x = Some((1, [2, 3]))
+  match x {
+    Some((a, [b, c])) -> a + b + c
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

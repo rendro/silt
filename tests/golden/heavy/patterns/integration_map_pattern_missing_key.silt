@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let m = #{"a": 1}
+  match m {
+    #{"b": x} -> x
+    _ -> 99
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

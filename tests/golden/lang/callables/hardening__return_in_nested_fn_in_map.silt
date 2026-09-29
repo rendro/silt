@@ -1,0 +1,10 @@
+import list
+fn maybe_double(x) {
+  match x > 2 {
+    true -> return x * 2
+    false -> x
+  }
+}
+fn main() {
+  println(list.map([1, 2, 3, 4], fn(x) { maybe_double(x) }))
+}

@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match
+-- stderr-not-contains: error[runtime]
+-- A match on an opaque value whose only arm is a pin is non-exhaustive.
+import bytes
+
+fn main() {
+  let a = bytes.from_string("x")
+  let b = bytes.from_string("y")
+  let r = match b {
+    ^a -> "same"
+  }
+  println(r)
+}

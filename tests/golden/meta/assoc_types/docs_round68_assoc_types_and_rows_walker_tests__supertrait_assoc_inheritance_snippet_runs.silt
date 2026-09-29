@@ -1,0 +1,24 @@
+trait Super {
+  type Item
+  fn one(self) -> Self::Item
+}
+
+trait Sub: Super {
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Super for Wrap {
+  type Item = Int
+  fn one(self) -> Int { self.v }
+}
+
+trait Sub for Wrap {
+  fn first(self) -> Int { self.v + 1 }
+}
+
+fn main() {
+  let w = Wrap { v: 41 }
+  println(w.first())
+}

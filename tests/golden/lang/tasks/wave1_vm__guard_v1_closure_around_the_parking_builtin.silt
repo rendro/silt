@@ -1,0 +1,25 @@
+-- repeat: 5
+import channel
+import list
+import task
+import time
+fn outer(g, ys) { "outer called with a function and {list.length(ys)} results" }
+fn inner(c, ys) { "INNER called instead: second arg has {list.length(ys)} results" }
+fn pair(x, ys) { (x, ys) }
+fn main() {
+  let a = channel.new(1)
+  let b = channel.new(1)
+  let c = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    time.sleep(time.ms(20))
+    channel.send(b, 2)
+    channel.send(c, 3)
+  }
+  let first = task.spawn { -> outer(inner, list.map([a]) { ch -> channel.receive(ch) }) }
+  println(task.join(first))
+  let second = task.spawn { -> pair("x", list.map([b, c]) { ch -> channel.receive(ch) }) }
+  println(task.join(second))
+  task.join(sender)
+}

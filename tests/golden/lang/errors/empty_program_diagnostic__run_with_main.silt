@@ -1,0 +1,2 @@
+-- stderr-not-contains: program has no main() function
+fn main() { println("ok") }

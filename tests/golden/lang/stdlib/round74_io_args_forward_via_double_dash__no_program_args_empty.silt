@@ -1,0 +1,6 @@
+-- Without `--`, io.args() is empty: the binary's own argv does not leak.
+import io
+import list
+fn main() {
+  io.args() |> list.each { arg -> println(arg) }
+}

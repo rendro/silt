@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: variant names start with an uppercase letter
+-- stderr-contains: `Circle`
+-- stderr-not-contains: error[runtime]
+type Shape {
+  circle(Float)
+  Square(Float)
+}
+fn main() {
+  println(1)
+}

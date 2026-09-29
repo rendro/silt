@@ -1,0 +1,14 @@
+-- Positive control: Int, String, a stdlib error variant and a user record render via polymorphic `.display()`.
+-- stdout-contains: 42
+-- stdout-contains: hi
+-- stdout-contains: cannot parse empty string
+-- stdout-contains: P {
+import int
+type P { name: String, age: Int }
+fn show(x: a) -> String { x.display() }
+fn main() {
+  println(show(42))
+  println(show("hi"))
+  println(show(ParseEmpty))
+  println(show(P { name: "x", age: 3 }))
+}

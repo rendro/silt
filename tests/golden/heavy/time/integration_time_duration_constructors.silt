@@ -1,0 +1,13 @@
+import io
+import time
+fn program() {
+  let h = time.hours(1)
+  let m = time.minutes(1)
+  let s = time.seconds(1)
+  let ms = time.ms(1)
+  (h.ns, m.ns, s.ns, ms.ns)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

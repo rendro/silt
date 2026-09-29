@@ -1,0 +1,7 @@
+-- True for a file that exists, false for one that doesn't.
+import fs
+import io
+fn main() {
+  let _ = io.write_file("present.txt", "hi")
+  println(io.inspect((fs.exists("present.txt"), fs.exists("absent.txt"))))
+}

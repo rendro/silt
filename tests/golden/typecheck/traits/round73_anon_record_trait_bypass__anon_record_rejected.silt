@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An anonymous record does not satisfy a user-trait `where` bound (rejected before run time).
+-- stderr-contains: error[type]
+-- stderr-contains: does not implement trait 'MyTrait'
+-- stderr-contains: <anon>
+trait MyTrait { fn ident(self) -> Int }
+trait MyTrait for Int { fn ident(self) = self }
+fn use_it(x: a) -> Int where a: MyTrait { x.ident() }
+fn main() {
+  let r = {x: 1, y: 2}
+  println(use_it(r))
+}

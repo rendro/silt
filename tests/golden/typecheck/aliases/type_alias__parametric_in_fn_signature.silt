@@ -1,0 +1,5 @@
+-- A parametric alias in a function signature.
+import list
+type PhDListOf(a) = List(a)
+fn count(x: PhDListOf(Int)) -> Int { list.length(x) }
+fn main() { println(count([10, 20, 30])) }

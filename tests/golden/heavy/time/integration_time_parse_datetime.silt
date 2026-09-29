@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S") }
+
+fn main() {
+  println(io.inspect(program()))
+}

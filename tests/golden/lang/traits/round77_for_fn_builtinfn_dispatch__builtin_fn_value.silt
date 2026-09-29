@@ -1,0 +1,6 @@
+trait MyTrait { fn describe(self) -> String }
+trait MyTrait for Fn { fn describe(self) -> String = "[fn]" }
+fn main() {
+  let h = println
+  println(h.describe())
+}

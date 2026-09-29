@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: joined task failed: cancelled
+-- task.join on a cancelled handle raises "joined task failed: cancelled"
+-- rather than returning an Err value.
+import channel
+import task
+fn main() {
+  let unread = channel.new(0)
+  let h = task.spawn(fn() {
+    match channel.receive(unread) {
+      _ -> 42
+    }
+  })
+  task.cancel(h)
+  let _ = task.join(h)
+}

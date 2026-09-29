@@ -36,8 +36,9 @@
 //! collapses `Fun → Fn`, the unifier accepts
 //! `Type::Fun(_, _) ↔ Generic("Fn", [])`, and the runtime dispatch
 //! name returned by `dispatch_name_for_value(VmClosure)` is now `"Fn"`.
-//! `fn_user_trait_dispatch_runtime` below exercises the end-to-end
-//! flow.
+//! The Channel and Fn receiver tests are golden cases
+//! (`tests/golden/lang/traits/round71_extfloat_direct_dispatch__*`); the
+//! ExtFloat tests stay here until stage 4 removes ExtFloat.
 
 use std::process::Command;
 
@@ -156,78 +157,4 @@ fn main() {
     out.trim().parse::<i64>().unwrap_or_else(|e| {
         panic!("expected Int hash on stdout for math.sqrt(2.0).hash(), got {out:?}: {e}")
     });
-}
-
-// ── Channel direct receiver dispatch ────────────────────────────────
-
-/// User-defined `trait Show for Channel(a)` runtime test — the
-/// FieldAccess match arm must route a `Type::Channel(_)` receiver
-/// into `method_table.get(("Channel", "show"))` so the user's impl
-/// body (`"chan-impl"`) is found. Pre-fix: the receiver fell through
-/// to the `_ =>` arm and surfaced "unknown field or method 'show'
-/// on type Channel(Int)".
-#[test]
-fn channel_user_trait_dispatch() {
-    let out = run_silt_ok(
-        "channel_show",
-        r#"
-import channel
-trait Show { fn show(self) -> String }
-trait Show for Channel(a) { fn show(self) -> String = "chan-impl" }
-fn main() {
-  let c: Channel(Int) = channel.new(1)
-  println(c.show())
-}
-"#,
-    );
-    assert_eq!(
-        out.trim(),
-        "chan-impl",
-        "user-defined Show for Channel should print 'chan-impl'; got {out:?}"
-    );
-}
-
-// ── Fn direct receiver dispatch ─────────────────────────────────────
-//
-// Round 71 originally documented `fun_user_trait_dispatch_skipped` as
-// a deferred limitation: the FieldAccess match arm was extended to
-// route `Type::Fun(_, _)` into the `method_table`, but the impl's
-// self_type (`Generic("Fun", [...])` then) did not unify with a
-// concrete `Type::Fun(...)` receiver, so end-to-end dispatch still
-// failed at the unify step.
-//
-// The round 71 follow-up (TYPE-3 LATENT) closed that gap by
-// canonicalising every function-type-name dispatch site on `"Fn"`
-// (`canonical_name`, `head_symbol_of_canon`, `type_name_for_impl`,
-// `dispatch_name_for_value`, the FieldAccess primitive-dispatch key)
-// AND adding two unifier-side enablers:
-//   - `canonicalize_type_name` collapses `Fun → Fn` so `trait T for
-//     Fun` and `trait T for Fn` register under one key.
-//   - The unifier accepts `Type::Fun(_, _) ↔ Generic("Fn", [])` so
-//     bare-`Fn` impls (parser rejects `Fn(...) -> ...` as a
-//     parameterised impl target — variadic, no surface form) unify
-//     with any function-shaped receiver.
-//
-// The end-to-end repro below now succeeds. The full lock test suite
-// for the canonical-name unification lives in
-// `tests/lang/round71_followup_fn_canonical_name_tests.rs`.
-#[test]
-fn fn_user_trait_dispatch_runtime() {
-    let out = run_silt_ok(
-        "fn_show_runtime",
-        r#"
-trait Show { fn show(self) -> String }
-trait Show for Fn { fn show(self) -> String = "fn-impl" }
-fn main() {
-  let f = fn() { 42 }
-  println(f.show())
-}
-"#,
-    );
-    assert_eq!(
-        out.trim(),
-        "fn-impl",
-        "user-defined Show for Fn should now dispatch to the impl body \
-         after the round 71 follow-up canonical-name unification; got {out:?}"
-    );
 }

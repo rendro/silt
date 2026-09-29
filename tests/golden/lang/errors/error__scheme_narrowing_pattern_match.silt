@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+fn process(pair) { match pair { (a, b) -> b + 10 } }
+fn main() { process((1, "hello")) }

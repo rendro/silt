@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- `type Foo =` with no target is a parse error.
+-- stderr-contains: error[parse]
+type Foo =
+fn main() {}

@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let json = """
+  {
+    "name": "Alice"
+  }
+  """
+  json
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

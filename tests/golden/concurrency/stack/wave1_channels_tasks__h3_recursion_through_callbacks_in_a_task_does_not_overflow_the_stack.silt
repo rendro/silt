@@ -1,0 +1,26 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: overflowed its stack
+-- Inside `task.spawn` the recursion must reach the depth that it
+-- reaches on the main thread. Without the fix the worker's 2 MiB
+-- stack overflows and the process aborts.
+import list
+import task
+
+fn nest(n) {
+  match n {
+    0 -> 0
+    _ -> {
+      let inner = [n - 1] |> list.map { m -> nest(m) }
+      match inner {
+        [v] -> v + 1
+        _ -> 0 - 1
+      }
+    }
+  }
+}
+
+fn main() {
+  let h = task.spawn(fn() { nest(100) })
+  println("depth {task.join(h)}")
+}

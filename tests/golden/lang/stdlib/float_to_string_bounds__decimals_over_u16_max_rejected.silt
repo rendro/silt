@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: float.to_string: decimals 100000 exceeds maximum precision of 65535
+-- stderr-not-contains: Formatting argument out of range
+-- stderr-not-contains: panicked
+import float
+fn main() {
+  let _ = float.to_string(1.5, 100000)
+}

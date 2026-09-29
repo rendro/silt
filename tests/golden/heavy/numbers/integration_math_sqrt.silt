@@ -1,0 +1,7 @@
+import io
+import math
+fn program() { math.sqrt(16.0) }
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-not-contains: error[runtime]
+-- `silt run` refuses the same program before the VM and prints nothing.
+import list
+type Money { Dollars(Int), Cents(Int) }
+fn main() {
+  println([Dollars(5), Cents(250)] |> list.map { Dollars(n) -> n * 100 })
+}

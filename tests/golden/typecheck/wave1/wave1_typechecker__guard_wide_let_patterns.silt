@@ -1,0 +1,25 @@
+-- exit: 0
+-- GUARD: wide product patterns (24-field record, 22-tuple) are judged in time.
+type Cfg {
+  f01: Bool, f02: Bool, f03: Bool, f04: Bool, f05: Bool, f06: Bool,
+  f07: Bool, f08: Bool, f09: Bool, f10: Bool, f11: Bool, f12: Bool,
+  f13: Bool, f14: Bool, f15: Bool, f16: Bool, f17: Bool, f18: Bool,
+  f19: Bool, f20: Bool, f21: Bool, f22: Bool, f23: Bool, f24: Option(Int),
+}
+
+fn mk() -> Cfg {
+  Cfg {
+    f01: true, f02: true, f03: true, f04: true, f05: true, f06: true,
+    f07: true, f08: true, f09: true, f10: true, f11: true, f12: true,
+    f13: true, f14: true, f15: true, f16: true, f17: true, f18: true,
+    f19: true, f20: true, f21: true, f22: true, f23: true, f24: Some(1),
+  }
+}
+
+fn main() {
+  let Cfg { f01, f23 } = mk()
+  println("{f01}{f23}")
+  let (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22) =
+    (true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true)
+  println("{a1}{a22}")
+}

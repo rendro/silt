@@ -1,0 +1,10 @@
+-- A polymorphic `<` on lists of functions fails at the execution site.
+-- exit: 1
+-- stderr-contains: does not implement Compare
+-- stderr-contains: 'Fn'
+fn lt(a: x, b: x) -> Bool { a < b }
+fn main() {
+  let xs = [fn(y) { y }]
+  let ys = [fn(y) { y }]
+  println(lt(xs, ys))
+}

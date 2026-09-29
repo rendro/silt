@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+import io
+fn main() {
+  let e: JsonError = IoNotFound("x")
+  println("unreachable")
+}

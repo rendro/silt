@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.prepend([2, 3], 1) }
+
+fn main() {
+  println(io.inspect(program()))
+}

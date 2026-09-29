@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: type 'Color' does not implement trait 'Compare'
+import channel
+type Color { Red, Green, Holding(Channel(Int)), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() { println(cmp_gen(Red, Green)) }

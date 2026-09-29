@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+-- Positive control: Recv(ch) and Send(ch, v) typecheck.
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  let _ = channel.select([Recv(ch), Send(ch, 1)])
+  ()
+}

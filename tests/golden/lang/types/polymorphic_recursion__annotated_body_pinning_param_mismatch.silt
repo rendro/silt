@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: polymorphic signature
+fn f(x: a) -> Int {
+  let _ = f(0)
+  x + 1
+}
+
+fn main() {
+  f(1)
+}

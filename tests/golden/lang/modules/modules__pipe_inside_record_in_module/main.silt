@@ -1,0 +1,8 @@
+import shapes
+
+fn main() {
+    let b = shapes.create("mybox", "mylabel")
+    -- a ghost pipe slot used to shift the fields: name="mylabel"
+    println(b.name)
+    println(b.label)
+}

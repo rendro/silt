@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: orphan impl
+trait Display for Option(a) {
+  fn display(self) -> String { "stolen-option" }
+}
+fn main() {}

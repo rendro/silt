@@ -1,0 +1,16 @@
+import io
+fn classify(n) {
+  match n {
+    -1 -> "minus one"
+    0 -> "zero"
+    1 -> "one"
+    _ -> "other"
+  }
+}
+fn program() {
+  classify(-1)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

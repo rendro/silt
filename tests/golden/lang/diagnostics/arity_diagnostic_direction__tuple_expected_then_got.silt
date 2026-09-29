@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: tuple length mismatch: expected 2, got 3
+-- stderr-not-contains: expected 3, got 2
+fn takes_2(t: (Int, Int)) -> Int { 42 }
+fn main() { println(takes_2((1, 2, 3))) }

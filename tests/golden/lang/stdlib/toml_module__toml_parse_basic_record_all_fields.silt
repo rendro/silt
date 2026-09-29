@@ -1,0 +1,12 @@
+import toml
+type User { name: String, age: Int, active: Bool }
+fn main() {
+  let input = "name = \"Alice\"\nage = 30\nactive = true\n"
+  match toml.parse(input, User) {
+    Ok(u) -> {
+      println(u.age)
+      println(u.active)
+    }
+    Err(_) -> println("fail")
+  }
+}

@@ -1,0 +1,9 @@
+import io
+import list
+fn program() {
+  list.concat([1, 2], [3, 4])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

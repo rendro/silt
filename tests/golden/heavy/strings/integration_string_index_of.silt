@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.index_of("hello world", "world") }
+
+fn main() {
+  println(io.inspect(program()))
+}

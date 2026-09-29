@@ -1,0 +1,6 @@
+fn main() {
+  let p = {name: "A", age: 30}
+  match p {
+    {name: nm} -> println(nm)
+  }
+}

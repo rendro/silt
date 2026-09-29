@@ -1,0 +1,1 @@
+[{"col":9,"file":"main.silt","hints":["help: remove it; the command-line arguments are available from io.args()"],"kind":"compile","line":4,"message":"the entry point 'main' must take no parameters, but it declares 1 parameter","severity":"error"}]

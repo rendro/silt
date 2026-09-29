@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+fn add_one(x) = x + 1
+fn main() { add_one("hello") }

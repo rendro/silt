@@ -1,0 +1,17 @@
+-- repeat: 3
+import io
+import task
+fn add(a: Int, b: Int) -> Int { a + b }
+fn program() {
+  let h1 = task.spawn(fn() { add(1, 2) })
+  let h2 = task.spawn(fn() { add(10, 20) })
+  let h3 = task.spawn(fn() { add(100, 200) })
+  let r1 = task.join(h1)
+  let r2 = task.join(h2)
+  let r3 = task.join(h3)
+  r1 + r2 + r3
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

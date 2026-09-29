@@ -1,0 +1,14 @@
+import io
+import time
+fn program() { "{must_time(9, 5, 3)}" }
+
+fn must_time(h, m, s) {
+  match time.time(h, m, s) {
+    Ok(t) -> t
+    Err(_) -> panic("invalid time")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

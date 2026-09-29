@@ -1,0 +1,12 @@
+-- key "b" is missing, so default 100 is used, then fn applied: 100 * 2 = 200
+import io
+import map
+fn program() {
+  let m = #{ "a": 1 }
+  let m2 = map.update(m, "b", 100) { v -> v * 2 }
+  map.get(m2, "b")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,25 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 3
+-- A task that fails while its test runs fails that test. The report is
+-- indented under the test's result line and names the file.
+import channel
+import task
+import test
+import time
+
+fn test_spawns_failing_task() {
+  let about_to_fail = channel.new(1)
+  let _ = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    let zero = 0
+    10 / zero
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  test.assert_eq(1, 1)
+}
+
+fn test_other() {
+  test.assert_eq(2, 2)
+}

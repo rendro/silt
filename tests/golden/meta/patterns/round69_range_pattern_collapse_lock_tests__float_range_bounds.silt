@@ -1,0 +1,14 @@
+-- Float range patterns, with positive and negated heads and tails.
+fn pos(x: Float) -> String { match x { 1.0..10.0 -> "yes"  _ -> "no" } }
+fn cross(x: Float) -> String { match x { -1.5..1.5 -> "yes"  _ -> "no" } }
+fn both_neg(x: Float) -> String { match x { -2.5..-1.5 -> "yes"  _ -> "no" } }
+fn neg_tail(x: Float) -> String { match x { 1.5..-1.5 -> "yes"  _ -> "no" } }
+fn neg_head(x: Float) -> String { match x { -3.5..7.5 -> "yes"  _ -> "no" } }
+
+fn main() {
+  println("1.0..10.0: {pos(0.5)} {pos(1.0)} {pos(10.0)} {pos(10.5)}")
+  println("-1.5..1.5: {cross(-2.0)} {cross(-1.5)} {cross(1.5)} {cross(2.0)}")
+  println("-2.5..-1.5: {both_neg(-3.0)} {both_neg(-2.5)} {both_neg(-1.5)} {both_neg(-1.0)}")
+  println("1.5..-1.5: {neg_tail(-1.5)} {neg_tail(0.0)} {neg_tail(1.5)}")
+  println("-3.5..7.5: {neg_head(-4.0)} {neg_head(-3.5)} {neg_head(7.5)} {neg_head(8.0)}")
+}

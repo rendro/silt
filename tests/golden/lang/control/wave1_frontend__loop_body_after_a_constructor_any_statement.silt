@@ -1,0 +1,13 @@
+type L { Nil, Cons(Int, L) }
+fn count(xs) {
+  loop rest = xs, n = 0, seen = Nil {
+    let next = Cons(n, seen)
+    match rest {
+      Nil -> n
+      Cons(_, tail) -> loop(tail, n + 1, next)
+    }
+  }
+}
+fn main() {
+  println("{count(Cons(7, Cons(8, Nil)))}")
+}

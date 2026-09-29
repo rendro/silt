@@ -1,0 +1,6 @@
+fn main() {
+  let r = match (1, ()) {
+    (n, ()) -> n
+  }
+  println(r)
+}

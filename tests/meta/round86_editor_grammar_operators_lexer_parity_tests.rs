@@ -20,11 +20,11 @@
 //!
 //! ## What this test locks
 //!
-//! For every multi-character operator the lexer emits via
-//! `impl Display for Token`, assert:
+//! For every multi-character operator the lexer emits, assert:
 //!
-//! 1. The `write!(f, "<op>")` line exists in `src/lexer.rs` —
-//!    anchoring the test's operator list to the source of truth.
+//! 1. The operator list equals the multi-char operators the real lexer
+//!    produces (discovered by lexing every short punctuation string),
+//!    anchoring the list to the lexer's behaviour.
 //! 2. The vim grammar (`editors/vim/syntax/silt.vim`) contains a
 //!    `syntax match siltOperator` whose literal pattern, after
 //!    stripping vim's `\` escapes, equals the operator.
@@ -43,12 +43,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use silt::lexer::{Lexer, Token};
+
 /// The canonical set of multi-character operators the lexer can
-/// emit. This list MUST match the multi-char `write!(f, "{op}")`
-/// arms in `impl fmt::Display for Token` in `src/lexer.rs`. Each
-/// entry is verified against the lexer source below, so a drift
-/// here surfaces as a test failure rather than as a silent grammar
-/// gap.
+/// emit, checked against the real lexer by
+/// `multi_char_operator_list_matches_lexer` below.
 ///
 /// Single-char operators (`+`, `-`, `*`, `/`, `%`, `=`, `<`, `>`,
 /// `!`, `?`, `^`, `|`, `:`, `,`, `.`, `(`, `)`, `[`, `]`, `{`, `}`)
@@ -83,69 +82,61 @@ fn read_repo_file(rel: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
-/// Anchor: every entry in `MULTI_CHAR_OPERATORS` corresponds to a
-/// `write!(f, "<op>")` arm in `impl fmt::Display for Token`. We
-/// `include_str!` the lexer source directly so this test fails the
-/// moment a new multi-char Display arm appears without a matching
-/// entry here (and grammar coverage assertions below).
-#[test]
-fn multi_char_operator_list_matches_lexer_display_impl() {
-    let lexer = include_str!("../../src/lexer.rs");
-    for op in MULTI_CHAR_OPERATORS {
-        let needle = format!("write!(f, \"{op}\")");
-        assert!(
-            lexer.contains(&needle),
-            "operator `{op}` listed in MULTI_CHAR_OPERATORS but no \
-             `{needle}` arm found in src/lexer.rs::impl Display for Token. \
-             Either the operator was removed from the lexer (drop it \
-             from MULTI_CHAR_OPERATORS) or its Display formatting was \
-             changed (update the needle here)."
-        );
+/// The lexer's multi-character operators, discovered by DRIVING the
+/// real lexer over every 2- and 3-character string of punctuation: a
+/// candidate is an operator when it lexes to exactly one token whose
+/// `Display` is the candidate itself. The collection prefixes `#{` and
+/// `#[` are excluded (they are not operators).
+fn lexer_multi_char_operators() -> BTreeSet<String> {
+    const PUNCT: &[char] = &[
+        '=', '!', '<', '>', '&', '|', '.', '-', ':', '+', '*', '/', '%', '?', '^', '#', '@', '~',
+        '$', ';', ',', '(', ')', '[', ']', '{', '}',
+    ];
+    let mut candidates: Vec<String> = Vec::new();
+    for &a in PUNCT {
+        for &b in PUNCT {
+            candidates.push(format!("{a}{b}"));
+            for &c in PUNCT {
+                candidates.push(format!("{a}{b}{c}"));
+            }
+        }
     }
-
-    // Reverse direction: enumerate every multi-char `write!(f, "...")`
-    // arm in the Display impl and assert each one is in our list.
-    // This catches the "new lexer token, forgot to add to grammar
-    // parity list" case. We scan the Display impl block specifically
-    // by anchoring on the function signature; we skip arms whose
-    // payload is a single char (those are not multi-char operators
-    // and are excluded by design above), plus the well-known
-    // non-operator Display payloads (keywords, EOF, newline, literal
-    // placeholders, collection prefixes).
-    let display_block = extract_display_impl_block(lexer);
-    let mut found: BTreeSet<String> = BTreeSet::new();
-    for line in display_block.lines() {
-        let trimmed = line.trim();
-        // Only consider arms whose payload is a plain literal string
-        // (no format placeholders `{...}`).
-        let Some(op) = extract_plain_write_payload(trimmed) else {
+    let mut found = BTreeSet::new();
+    for cand in candidates {
+        if cand == "#{" || cand == "#[" {
+            continue;
+        }
+        let Ok(tokens) = Lexer::new(&cand).tokenize() else {
             continue;
         };
-        // Skip single-char tokens (handled by round-62 lock or
-        // not grammar-highlighted at all).
-        if op.chars().count() < 2 {
-            continue;
+        let significant: Vec<Token> = tokens
+            .into_iter()
+            .map(|(tok, _span)| tok)
+            .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
+            .collect();
+        if let [tok] = significant.as_slice()
+            && tok.to_string() == cand
+        {
+            found.insert(cand);
         }
-        // Skip the keyword arms — keywords are highlighted via
-        // `syntax keyword siltKeyword` in vim and `keywords` in
-        // vscode, not as operators.
-        if KEYWORD_LITERALS.contains(&op.as_str()) {
-            continue;
-        }
-        // Skip Display payloads that are not operators:
-        // `EOF`, `\n`, collection prefixes (`#{`, `#[`).
-        if op == "EOF" || op == "\\n" || op == "#{" || op == "#[" {
-            continue;
-        }
-        found.insert(op);
     }
+    found
+}
+
+/// Anchor: `MULTI_CHAR_OPERATORS` is exactly the set of multi-character
+/// operators the real lexer produces, in both directions — a new lexer
+/// operator that is missing from the list (and so from the grammar
+/// checks below) fails here.
+#[test]
+fn multi_char_operator_list_matches_lexer() {
+    let found = lexer_multi_char_operators();
     let expected: BTreeSet<String> = MULTI_CHAR_OPERATORS.iter().map(|s| s.to_string()).collect();
     assert_eq!(
         found,
         expected,
-        "Display impl multi-char operator arms drifted from \
-         MULTI_CHAR_OPERATORS.\nin Display but not listed: {:?}\n\
-         listed but not in Display: {:?}",
+        "the lexer's multi-char operators drifted from \
+         MULTI_CHAR_OPERATORS.\nlexed but not listed: {:?}\n\
+         listed but not lexed: {:?}",
         found.difference(&expected).collect::<Vec<_>>(),
         expected.difference(&found).collect::<Vec<_>>()
     );
@@ -201,108 +192,6 @@ fn vscode_grammar_covers_every_multi_char_lexer_operator() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
-
-/// Keywords whose `write!(f, "<word>")` arms in the lexer Display
-/// impl are NOT operators. These are excluded from the reverse
-/// drift check in `multi_char_operator_list_matches_lexer_display_impl`.
-const KEYWORD_LITERALS: &[&str] = &[
-    "let", "fn", "type", "trait", "match", "when", "return", "pub", "mod", "import", "as", "else",
-    "where", "loop",
-];
-
-/// Return the substring of the lexer source covering the body of
-/// `impl fmt::Display for Token { fn fmt(&self, f: ...) -> ... { ... } }`.
-/// We find the signature line, then return everything up to the
-/// matching closing `}` of the function body.
-fn extract_display_impl_block(lexer: &str) -> String {
-    let needle = "impl fmt::Display for Token";
-    let start = lexer
-        .find(needle)
-        .expect("src/lexer.rs must contain `impl fmt::Display for Token`");
-    // Find the opening `{` of the impl block, then of the inner
-    // `fn fmt`, then walk to the matching close of that fn body.
-    let tail = &lexer[start..];
-    let impl_open = tail
-        .find('{')
-        .expect("impl Display for Token missing opening `{`");
-    let after_impl_open = &tail[impl_open + 1..];
-    let fn_open_rel = after_impl_open
-        .find('{')
-        .expect("fn fmt body opening `{` not found");
-    let body_start = impl_open + 1 + fn_open_rel + 1;
-    let bytes = tail.as_bytes();
-    let mut depth = 1i32;
-    let mut i = body_start;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return tail[body_start..i].to_string();
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    panic!("could not find closing `}}` of fn fmt body in lexer source");
-}
-
-/// Extract the literal payload of a `write!(f, "...")` call whose
-/// argument is a plain string (no format placeholders, no escapes
-/// beyond the universal `\\` and `\"`). Returns `None` for any
-/// other shape (e.g. `write!(f, "{n}")`, `write!(f, "{s}{{")` for
-/// the interpolation segments — those are not plain-literal
-/// operators).
-fn extract_plain_write_payload(line: &str) -> Option<String> {
-    let prefix = "write!(f, \"";
-    let p = line.find(prefix)?;
-    let after = &line[p + prefix.len()..];
-    // Find the closing `"`. The lexer Display arms only use `\"` as
-    // escape inside string-literal arms (`"\"{s}\""`); for those
-    // arms the unescaped content still contains `{`, so we'll filter
-    // them out below by rejecting any payload with `{` or `}`.
-    // (round 94 housekeeping: rewritten with `enumerate()` — newer
-    // clippy's `explicit_counter_loop` rejects the manual `idx`
-    // counter under `-D warnings`.)
-    let mut end = None;
-    let mut prev: u8 = 0;
-    for (idx, b) in after.bytes().enumerate() {
-        if b == b'"' && prev != b'\\' {
-            end = Some(idx);
-            break;
-        }
-        prev = b;
-    }
-    let end = end?;
-    let payload = &after[..end];
-    // Reject payloads with format placeholders (`{` or `}`), which
-    // signal non-plain-literal arms (numeric/string/interpolation
-    // segments). Note: the `LBrace`/`RBrace` arms write `{{`/`}}`,
-    // which the format machinery emits as a single `{`/`}` —
-    // those are single-char operators and would be filtered by the
-    // length check at the call site anyway. But for safety reject
-    // any `{` or `}` here.
-    if payload.contains('{') || payload.contains('}') {
-        return None;
-    }
-    // Decode the only relevant escape: `\\` -> `\`. Operator
-    // literals don't contain backslashes, but the `Newline` arm
-    // writes `\n` as `\\n` source — handle generically.
-    let mut out = String::with_capacity(payload.len());
-    let mut chars = payload.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    Some(out)
-}
 
 /// Pull every literal-operator pattern out of the vim grammar file.
 fn extract_vim_operator_literals(vim: &str) -> BTreeSet<String> {

@@ -1,0 +1,12 @@
+-- repeat: 3
+-- Buffered channel.new(1) should let one send succeed without receiver
+import io
+import channel
+fn program() {
+  let ch = channel.new(1)
+  channel.try_send(ch, 42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

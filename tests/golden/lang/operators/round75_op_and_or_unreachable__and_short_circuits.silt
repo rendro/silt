@@ -1,0 +1,5 @@
+fn main() {
+  -- If `&&` were eager, panic("rhs ran") would fire here.
+  let r = false && panic("rhs ran")
+  println(r)
+}

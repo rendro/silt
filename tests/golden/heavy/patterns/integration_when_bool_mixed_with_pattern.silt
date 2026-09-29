@@ -1,0 +1,14 @@
+import io
+fn process(input) {
+  when let Ok(value) = input else { return "parse failed" }
+  when value > 0 else { return "must be positive" }
+  "{value * 2}"
+}
+
+fn program() {
+  process(Ok(5))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

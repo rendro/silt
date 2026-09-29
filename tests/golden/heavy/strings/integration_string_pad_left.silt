@@ -1,0 +1,9 @@
+import io
+import string
+fn program() {
+  string.pad_left("42", 5, "0")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

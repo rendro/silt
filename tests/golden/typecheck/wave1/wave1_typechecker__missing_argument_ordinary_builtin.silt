@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expects 2 arguments, got 1
+-- stderr-contains: expects 1 argument, got 0
+-- stderr-contains: expects 2 arguments, got 1
+-- stderr-contains: expects 3 arguments, got 2
+-- stderr-contains: expects 3 arguments, got 2
+-- stderr-not-contains: error[runtime]
+-- One argument too few on ordinary builtins is a check-time error stating both counts, per call (exact stderr).
+import list
+import string
+import map
+
+fn main() {
+  println(list.map([1, 2]))
+  println(string.trim())
+  println(map.get(#{ "a": 1 }))
+  println(string.replace("aXb", "X"))
+  println(list.fold([1, 2], 0))
+}

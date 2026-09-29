@@ -1,0 +1,11 @@
+error[runtime]: task <handle:0> failed and was never joined: panic: worker failed
+ --> wave2_tasks__run_reports_task_failure_and_main_error.silt:12:5
+    |
+ 12 |     panic("worker failed")
+    |     ^ task <handle:0> failed and was never joined: panic: worker failed
+  = help: join the task with task.join to handle its error, or cancel it with task.cancel
+error[runtime]: panic: main failed
+ --> wave2_tasks__run_reports_task_failure_and_main_error.silt:16:3
+    |
+ 16 |   panic("main failed")
+    |   ^ panic: main failed

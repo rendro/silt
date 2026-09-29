@@ -1,0 +1,9 @@
+import io
+import float
+fn program() {
+  float.to_string(3.14, 2)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

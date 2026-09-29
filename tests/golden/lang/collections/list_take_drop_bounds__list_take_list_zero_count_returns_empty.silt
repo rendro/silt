@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.take([1, 2, 3], 0)) }

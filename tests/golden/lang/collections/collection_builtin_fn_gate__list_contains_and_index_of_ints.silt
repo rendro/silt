@@ -1,0 +1,5 @@
+import list
+fn main() {
+  println(list.contains([1, 2], 2))
+  println(list.index_of([1, 2], 2))
+}

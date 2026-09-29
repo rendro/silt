@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let x = -3.14
+  match x {
+    -3.14 -> "neg pi"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

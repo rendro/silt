@@ -43,124 +43,18 @@
 //! the same silent-`<handle:0>` / `<tcp-stream:0>` rendering; the gate
 //! now rejects the full set, sourced from the single VM-side oracle
 //! `Vm::value_implements_display` so the runtime layer cannot drift.
+//!
+//! The Fn / Channel / Handle runtime cases, the Display-able controls and
+//! the concrete compile-time parity cases live as golden cases under
+//! `tests/golden/typecheck/display/round95_interp_display_runtime__*`.
+//! What stays here needs a live socket (TcpListener) or calls the
+//! VM-side predicate directly.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::scheduler::test_support::InProcessRunner;
 use silt::value::{TaskHandle, Value};
 use silt::vm::Vm;
 use std::sync::Arc;
 use std::time::Duration;
-
-// ── Runtime harness (typecheck is intentionally non-fatal, matching the
-//    other runtime regression suites: the polymorphic programs typecheck
-//    clean and the behavior under test is at the VM execution site). The
-//    program-under-test returns a String from `main` so we assert on the
-//    rendered value directly rather than capturing stdout. ──────────────
-
-fn run_ok(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    match vm.run(script).expect("expected success") {
-        Value::String(s) => s,
-        other => panic!("expected main to return a String, got {other:?}"),
-    }
-}
-
-fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect_err("expected runtime error").message
-}
-
-/// Collect typechecker diagnostics that mention the interpolation Display
-/// gate, for the concrete-operand parity half.
-fn display_typecheck_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    silt::typechecker::check(&mut program)
-        .into_iter()
-        .map(|e| e.message)
-        .filter(|m| m.contains("does not implement Display"))
-        .collect()
-}
-
-// ── Runtime half: the polymorphic bypass now errors at the exec site ────
-
-#[test]
-fn polymorphic_interp_of_fn_errors_at_runtime() {
-    let src = r#"
-fn show(x: a) -> String { "val={x}" }
-fn helper() -> Int { 5 }
-fn main() { println(show(helper)) }
-"#;
-    let err = run_err(src);
-    assert!(
-        err.contains("does not implement Display") && err.contains("'Fn'"),
-        "expected a Display runtime error naming Fn, got: {err}"
-    );
-}
-
-#[test]
-fn polymorphic_interp_of_channel_errors_at_runtime() {
-    let src = r#"
-import channel
-fn show(x: a) -> String { "val={x}" }
-fn main() {
-  let c = channel.new()
-  println(show(c))
-}
-"#;
-    let err = run_err(src);
-    assert!(
-        err.contains("does not implement Display") && err.contains("'Channel'"),
-        "expected a Display runtime error naming Channel, got: {err}"
-    );
-}
-
-// ── Round-95 follow-up: the gate was incomplete. Handle / TcpListener /
-//    TcpStream are no-Display first-class types that ALSO flow through an
-//    unbounded type variable and pre-fix rendered a debug string silently
-//    (`<handle:0>` / `<tcp-listener:0>`) and exited 0. These exercise the
-//    full scheduler runtime via InProcessRunner because `task.spawn` and
-//    `tcp.listen` need the real runtime, not a bare `Vm::run`. ───────────
-
-#[test]
-fn polymorphic_interp_of_handle_errors_at_runtime() {
-    // `task.spawn` yields a `Handle`. Interpolating it through the
-    // polymorphic `show` must error at the execution site rather than
-    // silently rendering `val=<handle:0>` and exiting 0 (the round-95
-    // hole this follow-up closes — the original repro in the finding).
-    let src = r#"
-import task
-fn show(x: a) -> String { "val={x}" }
-fn main() {
-  let h = task.spawn(fn() { 42 })
-  println(show(h))
-}
-"#;
-    let outcome = InProcessRunner::new(src)
-        .with_budget(Duration::from_secs(10))
-        .run_trial();
-    let err = outcome
-        .error_message
-        .expect("expected a runtime Display error, got clean exit");
-    assert!(
-        err.contains("does not implement Display") && err.contains("'Handle'"),
-        "expected a Display runtime error naming Handle, got: {err}"
-    );
-}
 
 #[test]
 fn polymorphic_interp_of_tcp_listener_errors_at_runtime() {
@@ -224,61 +118,4 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
             "Display-able value must be accepted by the predicate: {v:?}"
         );
     }
-}
-
-// ── Runtime half: Display-able values still render correctly ────────────
-
-#[test]
-fn polymorphic_interp_of_display_values_still_works() {
-    let src = r#"
-type P { name: String, age: Int }
-fn show(x: a) -> String { "val={x}" }
-fn main() -> String {
-  show(42) + "|" + show("hi") + "|" + show([1, 2, 3]) + "|" + show(P { name: "x", age: 3 })
-}
-"#;
-    let out = run_ok(src);
-    assert!(out.contains("val=42"), "Int interp: {out}");
-    assert!(out.contains("val=hi"), "String interp: {out}");
-    assert!(out.contains("val=[1, 2, 3]"), "List interp: {out}");
-    assert!(out.contains("val=P {"), "record interp: {out}");
-}
-
-// ── Parity half: the runtime-rejected set matches the concrete
-//    compile-time-rejected set, and the accepted set matches too ─────────
-
-#[test]
-fn concrete_interp_of_fn_is_a_compile_error() {
-    // Same `Fn` operand that errors at runtime through the polymorphic
-    // bypass is rejected at compile time when its type is concrete.
-    let src = r#"
-fn helper() -> Int { 5 }
-fn main() { println("val={helper}") }
-"#;
-    let errs = display_typecheck_errors(src);
-    assert!(
-        !errs.is_empty(),
-        "concrete Fn interpolation must be a compile-time Display error"
-    );
-}
-
-#[test]
-fn concrete_interp_of_display_types_typechecks_clean() {
-    // The accepted set (Int/String/List) must NOT trip the Display gate —
-    // proving the runtime fix did not over-reject.
-    let src = r#"
-fn main() -> String {
-  let n = 42
-  let s = "hi"
-  let xs = [1, 2, 3]
-  "a={n} b={s} c={xs}"
-}
-"#;
-    assert!(
-        display_typecheck_errors(src).is_empty(),
-        "Int/String/List interpolation must typecheck without a Display error"
-    );
-    // And it runs, producing the rendered values.
-    let out = run_ok(src);
-    assert!(out.contains("a=42 b=hi c=[1, 2, 3]"), "got: {out}");
 }

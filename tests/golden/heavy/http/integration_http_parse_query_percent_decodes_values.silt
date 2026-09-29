@@ -1,0 +1,10 @@
+-- UTF-8 for U+2713 (check mark).
+import io
+import http
+fn program() {
+  http.parse_query("q=hello%20world&n=%E2%9C%93")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

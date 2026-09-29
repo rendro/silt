@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let x = 3
+  let label = match {
+    x > 10 -> "big"
+    x > 0 -> "positive"
+    _ -> "non-positive"
+  }
+  label
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

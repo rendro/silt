@@ -1,0 +1,14 @@
+import io
+fn describe(xs) {
+  match xs {
+    [] -> "empty"
+    _ -> "not empty"
+  }
+}
+fn program() {
+  describe([])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

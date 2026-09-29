@@ -1,0 +1,11 @@
+-- Writing to a path that is an existing directory fails.
+import fs
+import io
+fn main() {
+  let _ = fs.mkdir("a_directory")
+  let outcome = match io.write_file("a_directory", "oops") {
+    Ok(_) -> "ok"
+    Err(_) -> "err"
+  }
+  println(outcome)
+}

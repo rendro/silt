@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- A bottom-eliminator function next to ordinary code typechecks.
+type Absurd { }
+fn absurd(x: Absurd) -> Int { match x { } }
+fn id(n: Int) -> Int { n }
+fn main() { let _ = id(42) }

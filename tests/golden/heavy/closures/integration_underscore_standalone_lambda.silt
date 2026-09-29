@@ -1,0 +1,10 @@
+-- { _ -> expr } as a standalone lambda expression
+import io
+fn program() {
+  let f = { _ -> 42 }
+  f("ignored")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

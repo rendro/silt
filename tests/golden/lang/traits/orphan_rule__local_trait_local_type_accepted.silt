@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Color { Red, Green, Blue }
+trait Greet { fn greet(self) -> String }
+trait Greet for Color {
+  fn greet(self) -> String { "color" }
+}
+fn main() {}

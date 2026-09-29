@@ -1,0 +1,11 @@
+-- Reading a path that does not exist yields Err(IoNotFound(path)): io/fs
+-- failures surface typed `IoError` variants instead of raw strings.
+import io
+fn main() {
+  let outcome = match io.read_file("missing_file.txt") {
+    Err(IoNotFound(path)) -> "IoNotFound({path})"
+    Err(_) -> "other error"
+    Ok(_) -> "unexpected Ok"
+  }
+  println(outcome)
+}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- `TcpListener` is a valid parameter annotation.
+import tcp
+fn handle(l: TcpListener) -> Int { 1 }
+fn main() {
+  println("ok")
+}

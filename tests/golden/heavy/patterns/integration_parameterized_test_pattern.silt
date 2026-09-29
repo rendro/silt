@@ -1,0 +1,10 @@
+-- exit: 0
+-- Demonstrates the idiomatic parameterized test pattern
+import list
+import test
+fn main() {
+  let cases = [(1, 2, 3), (0, 0, 0), (10, -10, 0)]
+  cases |> list.each { (a, b, expected) ->
+    test.assert_eq(a + b, expected, "{a} + {b}")
+  }
+}

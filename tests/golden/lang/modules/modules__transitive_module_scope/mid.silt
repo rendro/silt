@@ -1,0 +1,3 @@
+import base
+fn helper(x) { base.add(x, 10) }
+pub fn process(x) { helper(x) }

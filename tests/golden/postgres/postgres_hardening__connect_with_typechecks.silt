@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+import postgres
+fn main() {
+  let _ = postgres.connect_with("postgres://x@y/z", #{"max_pool_size": 32})
+}

@@ -1,0 +1,9 @@
+import io
+import list
+fn program() {
+  list.unfold(0) { n -> None }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

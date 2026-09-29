@@ -1,0 +1,9 @@
+error[compile]: module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found {
+ --> main.silt:1:1
+   |
+ 1 | -- cmd: check
+   | ^ module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found {
+  = note:  --> m_inner.silt:1:16
+             |
+           1 | pub fn broken( {
+             |                ^ expected parameter name, found {

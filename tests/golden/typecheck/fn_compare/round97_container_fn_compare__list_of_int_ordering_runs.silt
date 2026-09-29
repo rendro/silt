@@ -1,0 +1,4 @@
+-- Positive control: `<` on Int lists runs and prints true.
+fn main() {
+  print([1, 2, 3] < [4, 5, 6])
+}

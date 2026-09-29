@@ -1,0 +1,9 @@
+import io
+fn id(x: Int) -> Int { x }
+fn program() {
+  (42 |> id()) as Int
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

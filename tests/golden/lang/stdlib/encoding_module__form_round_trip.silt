@@ -1,0 +1,12 @@
+import encoding
+fn main() {
+  let original = [("name", "Ada Lovelace"), ("q", "a & b = c"), ("lit", "1+1")]
+  let body = encoding.form_encode(original)
+  match encoding.form_decode(body) {
+    Ok(pairs) -> match pairs {
+      [(_, v0), (_, v1), (_, v2)] -> println("{v0}|{v1}|{v2}")
+      _ -> println("wrong-shape")
+    }
+    Err(e) -> println(e)
+  }
+}

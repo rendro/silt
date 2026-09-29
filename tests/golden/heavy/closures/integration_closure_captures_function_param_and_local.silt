@@ -1,0 +1,16 @@
+-- A closure captures both a function parameter and a local variable.
+-- param=5, local=10, x=3 => 18
+import io
+fn make(param) {
+  let local = param * 2
+  fn(x) { param + local + x }
+}
+
+fn program() {
+  let f = make(5)
+  f(3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

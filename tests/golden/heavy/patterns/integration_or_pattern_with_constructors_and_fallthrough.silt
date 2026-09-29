@@ -1,0 +1,17 @@
+import io
+type Color { Red, Green, Blue, Yellow }
+
+fn is_primary(c) {
+  match c {
+    Red | Blue | Yellow -> true
+    _ -> false
+  }
+}
+
+fn program() {
+  [is_primary(Red), is_primary(Green), is_primary(Blue)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

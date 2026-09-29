@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- exact stderr: the inner snippet line `1 | pub fn broken( {` must
+-- appear exactly once
+import m_top
+
+fn main() {
+  m_top.top()
+}

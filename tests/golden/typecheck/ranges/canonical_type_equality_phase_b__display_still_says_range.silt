@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch on a range value still spells the type `Range(Int)`.
+-- stderr-contains: error[type]
+-- stderr-contains: Range(Int)
+fn main() {
+  let s: String = 1..10
+  s
+}

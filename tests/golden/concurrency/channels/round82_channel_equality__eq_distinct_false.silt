@@ -1,0 +1,7 @@
+-- Two distinct channels compare unequal.
+import channel
+fn main() {
+    let c1 = channel.new(10)
+    let c2 = channel.new(10)
+    println(c1 == c2)
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The lambda-? rejection is reported exactly once.
+import list
+fn main() {
+  let xs = [Ok(1), Err("bad"), Ok(3)]
+  let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+  println(ys)
+}

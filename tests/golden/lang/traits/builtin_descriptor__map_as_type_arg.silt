@@ -1,0 +1,16 @@
+trait Empty {
+    fn empty() -> Self
+}
+
+trait Empty for Map(k, v) {
+    fn empty() -> Self { #{} }
+}
+
+fn make(type t) -> t where t: Empty {
+    t.empty()
+}
+
+fn main() {
+    let m: Map(String, Int) = make(Map)
+    println(m)
+}

@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: negative count
+import string
+fn main() { string.repeat("x", -1) }

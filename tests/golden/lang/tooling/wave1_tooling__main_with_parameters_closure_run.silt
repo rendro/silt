@@ -1,0 +1,4 @@
+-- cmd: run
+-- exit: 1
+-- stderr-contains: it declares 2 parameters
+let main = { a, b -> a + b }

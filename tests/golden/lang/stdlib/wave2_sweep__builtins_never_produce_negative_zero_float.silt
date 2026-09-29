@@ -1,0 +1,16 @@
+import float
+import math
+fn num(s: String) -> Float {
+  match float.parse(s) {
+    Ok(f) -> f
+    Err(_) -> 1.0
+  }
+}
+fn main() {
+  let a = num("-0.0")
+  println("parse {a} {float.to_string(a)}")
+  let b = num("-1e-400")
+  println("underflow {b} {float.to_string(b)}")
+  let c = math.atan2(num("-1e-300"), num("1e300"))
+  println("atan2 {c} {float.to_string(c)}")
+}

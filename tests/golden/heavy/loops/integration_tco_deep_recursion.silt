@@ -1,0 +1,15 @@
+import io
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn program() {
+  count(200000, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

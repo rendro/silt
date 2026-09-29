@@ -1,0 +1,12 @@
+type Point { x: Int, y: Int }
+type Color { Red, Green(Int) }
+type Meters = Int
+fn grow(m: Meters) -> Meters = m + 1
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let c = Green(3)
+  match c {
+    Red -> println("red")
+    Green(n) -> println("green {n} {p.x} {grow(p.y)}")
+  }
+}

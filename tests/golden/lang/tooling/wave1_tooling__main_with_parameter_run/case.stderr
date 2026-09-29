@@ -1,0 +1,6 @@
+error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+ --> main.silt:7:9
+   |
+ 7 | fn main(x: Int) { x }
+   |         ^ the entry point 'main' must take no parameters, but it declares 1 parameter
+  = help: remove it; the command-line arguments are available from io.args()

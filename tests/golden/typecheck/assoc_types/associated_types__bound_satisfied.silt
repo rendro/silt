@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- `Item: Compare` bound bound to Int (which implements Compare).
+trait Container {
+  type Item: Compare
+  fn first(self) -> Self::Item
+}
+
+type Box { v: Int }
+
+trait Container for Box {
+  type Item = Int
+  fn first(self) -> Int { self.v }
+}
+
+fn main() {}

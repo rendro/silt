@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: orphan impl
+-- stderr-contains: trait 'Display'
+-- stderr-contains: type 'List'
+-- stderr-contains: __builtin__
+-- stderr-contains: current package 'myapp'
+trait Display for List(a) {
+  fn display(self) -> String { "stolen" }
+}
+
+fn main() {
+  ()
+}

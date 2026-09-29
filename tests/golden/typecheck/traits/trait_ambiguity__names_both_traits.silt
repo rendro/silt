@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: ambiguous method 'render'
+-- stderr-contains: 'String'
+-- stderr-contains: Display1
+-- stderr-contains: Display2
+-- The ambiguity diagnostic names the method, the type and both traits.
+trait Display1 { fn render(self) -> String }
+trait Display2 { fn render(self) -> String }
+trait Display1 for String { fn render(self) -> String { "1" } }
+trait Display2 for String { fn render(self) -> String { "2" } }
+fn main() { }

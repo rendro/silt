@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: associated-type defaults are not supported
+trait Stream {
+  type Item = Int
+  fn first(self) -> Self::Item
+}
+
+fn main() { () }

@@ -1,0 +1,25 @@
+-- cmd: test
+-- The test program from docs/language/testing.md. A file passed directly
+-- prints its results without the ./ prefix.
+import test
+import string
+
+fn test_addition() {
+    test.assert_eq(1 + 1, 2)
+}
+
+fn test_string_length() {
+    test.assert_eq(string.length("hello"), 5)
+}
+
+fn skip_test_not_ready_yet() {
+    test.assert(false, "this would fail")
+}
+
+fn helper(x) {
+    x * 2
+}
+
+fn test_with_helper() {
+    test.assert_eq(helper(3), 6)
+}

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 0
+-- A user record type's descriptor dispatches trait methods.
+trait Make {
+    fn make() -> Self
+}
+
+type Point { x: Int, y: Int }
+
+trait Make for Point {
+    fn make() -> Self { Point { x: 0, y: 0 } }
+}
+
+fn use_it() {
+    let _ = Point.make()
+}
+
+fn main() {}

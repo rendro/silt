@@ -1,0 +1,11 @@
+-- repeat: 3
+import io
+import channel
+fn program() {
+  let ch = channel.new(1)
+  channel.try_send(ch, 42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

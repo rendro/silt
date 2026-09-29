@@ -1,0 +1,19 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- The pipeline from the documentation. `take(5)` ends after five
+-- elements and leaves the source, the filter and the map alive.
+import channel
+import stream
+
+fn main() {
+  let squares = stream.from_range(1, 100)
+    |> stream.filter(fn(n) { n % 2 == 1 })
+    |> stream.map(fn(n) { n * n })
+    |> stream.take(5)
+    |> stream.collect
+  println(squares)
+  let fresh = channel.new(0)
+  channel.receive(fresh)
+  println("unreachable")
+}

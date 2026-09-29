@@ -1,0 +1,9 @@
+import io
+fn program() {
+  let xs = [42]
+  [..xs]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

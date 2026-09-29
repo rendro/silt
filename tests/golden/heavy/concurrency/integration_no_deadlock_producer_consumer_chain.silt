@@ -1,0 +1,38 @@
+-- repeat: 3
+-- A chain of producer -> transformer -> consumer should complete without deadlock.
+-- (10*2) + (20*2) = 60
+import io
+import channel
+import task
+fn program() {
+  let input = channel.new(5)
+  let output = channel.new(5)
+
+  let producer = task.spawn(fn() {
+    channel.send(input, 10)
+    channel.send(input, 20)
+    channel.close(input)
+  })
+
+  let transformer = task.spawn(fn() {
+    when let Message(a) = channel.receive(input) else { panic("pattern did not match") }
+    channel.send(output, a * 2)
+    when let Message(b) = channel.receive(input) else { panic("pattern did not match") }
+    channel.send(output, b * 2)
+    channel.close(output)
+  })
+
+  let consumer = task.spawn(fn() {
+    when let Message(x) = channel.receive(output) else { panic("pattern did not match") }
+    when let Message(y) = channel.receive(output) else { panic("pattern did not match") }
+    x + y
+  })
+
+  task.join(producer)
+  task.join(transformer)
+  task.join(consumer)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,5 @@
+error[type]: type 'Ok' shadows variant of builtin enum 'Result'; choose a different name or fully-qualify the variant
+ --> record_shadow_builtin_variant__ok_single_shadow_diagnostic.silt:3:1
+   |
+ 3 | type Ok { x: Int }
+   | ^ type 'Ok' shadows variant of builtin enum 'Result'; choose a different name or fully-qualify the variant

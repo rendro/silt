@@ -1,0 +1,9 @@
+import io
+import list
+fn program() {
+  [1, 2, 3] |> list.filter_map { _ -> None }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

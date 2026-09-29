@@ -1,0 +1,14 @@
+import io
+fn buy(qty, balance, price) {
+  when qty > 0 else { return "out of stock" }
+  when balance >= price else { return "not enough money" }
+  "purchased"
+}
+
+fn program() {
+  buy(3, 100, 50)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

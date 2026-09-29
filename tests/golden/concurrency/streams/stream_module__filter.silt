@@ -1,0 +1,7 @@
+import stream
+fn main() {
+  stream.from_range(1, 10)
+    |> stream.filter(fn(n) { n % 2 == 0 })
+    |> stream.collect
+    |> println
+}

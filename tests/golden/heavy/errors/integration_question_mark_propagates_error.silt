@@ -1,0 +1,16 @@
+import io
+fn process(x) {
+  let val = Err("oops")?
+  Ok(val)
+}
+
+fn program() {
+  match process(1) {
+    Ok(_) -> "ok"
+    Err(e) -> e
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

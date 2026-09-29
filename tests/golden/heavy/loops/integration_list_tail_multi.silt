@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.tail([1, 2, 3]) }
+
+fn main() {
+  println(io.inspect(program()))
+}

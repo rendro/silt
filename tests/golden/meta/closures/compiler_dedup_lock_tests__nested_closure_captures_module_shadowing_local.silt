@@ -1,0 +1,14 @@
+-- A local named like a builtin module, captured transitively by a nested
+-- closure, resolves to the local (10), not the module.
+import math
+
+fn main() {
+  let math = 10
+  let outer = fn() {
+    let inner = fn() {
+      math + 5
+    }
+    inner()
+  }
+  println(outer())
+}

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in `let`
+-- stderr-contains: pin patterns
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- GUARD: a pin pattern in `let` is refutable, also on an opaque builtin type.
+import bytes
+
+fn main() {
+  let a = bytes.from_string("x")
+  let b = bytes.from_string("y")
+  let ^a = b
+  println("bound")
+}

@@ -1,0 +1,2 @@
+-- Positive control: equal tuples and strings hash equal.
+fn main() { println((1, "a").hash() == (1, "a").hash() && "abc".hash() == "abc".hash()) }

@@ -1,0 +1,13 @@
+fn f(opt) {
+  10 + {
+    when let Some(v) = opt else {
+      return -1
+    }
+    v
+  }
+}
+
+fn main() {
+  println(f(Some(5)))
+  println(f(None))
+}

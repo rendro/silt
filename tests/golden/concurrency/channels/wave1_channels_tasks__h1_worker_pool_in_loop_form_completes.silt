@@ -1,0 +1,51 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock on main thread
+-- A worker pool in the documented `loop _ = () { ... loop(()) }`
+-- form: three workers take jobs and send results, both channels are
+-- smaller than the number of jobs. Without the fix two of the three
+-- workers stay parked on the results channel with their results, and
+-- the main thread waits for results that never arrive.
+import channel
+import list
+import task
+
+fn collect(ch, n, acc) {
+  match n {
+    0 -> acc
+    _ -> {
+      match channel.receive(ch) {
+        Message(v) -> collect(ch, n - 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+}
+
+fn main() {
+  let jobs = channel.new(4)
+  let results = channel.new(4)
+
+  let workers = [1, 2, 3] |> list.map { id ->
+    task.spawn(fn() {
+      loop _ = () {
+        match channel.receive(jobs) {
+          Message(n) -> {
+            channel.send(results, n * 2)
+            loop(())
+          }
+          _ -> ()
+        }
+      }
+    })
+  }
+
+  let producer = task.spawn(fn() {
+    1..30 |> list.each { n -> channel.send(jobs, n) }
+    channel.close(jobs)
+  })
+
+  let total = collect(results, 30, 0)
+  task.join(producer)
+  workers |> list.each { w -> task.join(w) }
+  println("total {total}")
+}

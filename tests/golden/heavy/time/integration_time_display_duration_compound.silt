@@ -1,0 +1,10 @@
+import io
+import time
+fn program() {
+  let d = Duration { ns: time.hours(2).ns + time.minutes(30).ns + time.seconds(15).ns }
+  "{d}"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- stderr-contains: main.silt:7:9
+-- stderr-not-contains: error[runtime]
+-- exact stderr: identical for check and run
+fn main(x: Int) { x }

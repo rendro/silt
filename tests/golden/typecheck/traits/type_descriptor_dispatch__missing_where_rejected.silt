@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: no method 'default'
+-- Without `where a: Default` the descriptor method is not in scope.
+trait Default {
+    fn default() -> Self
+}
+
+fn broken(type a) -> a {
+    a.default()
+}
+
+fn main() {}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'qqqqqqqq_unrelated' on List
+-- stderr-not-contains: on type List
+fn main() {
+  let xs = [1, 2, 3]
+  println(xs.qqqqqqqq_unrelated())
+}

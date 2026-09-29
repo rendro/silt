@@ -1,0 +1,5 @@
+import missing_module_xyz
+
+pub fn answer() -> Int {
+  41
+}

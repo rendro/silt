@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+type Box(a) { value: a }
+fn grab_int(b: Box) -> Int { b.value }
+fn grab_str(b: Box) -> String { b.value }
+fn main() {
+  ()
+}

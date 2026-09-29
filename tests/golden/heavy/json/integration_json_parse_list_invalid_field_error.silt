@@ -1,0 +1,14 @@
+import io
+import json
+type Employee { name: String, salary: Int }
+fn program() {
+  match json.parse_list("[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]", Employee) {
+    Ok(_) -> "unexpected"
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

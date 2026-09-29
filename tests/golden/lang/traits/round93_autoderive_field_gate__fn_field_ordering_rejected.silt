@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'H' cannot derive 'Compare'
+-- stderr-contains: field 'f'
+-- stderr-contains: Fn(Int) -> Int
+-- stderr-contains: not comparable
+type H { f: Fn(Int) -> Int }
+fn mk() -> H { H{f: fn(x) { x }} }
+fn main() {
+    let a = mk()
+    let b = mk()
+    println(a < b)
+    println(b < a)
+}

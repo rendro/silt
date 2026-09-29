@@ -1,0 +1,7 @@
+import io
+import float
+fn program() { float.floor(1.7) }
+
+fn main() {
+  println(io.inspect(program()))
+}

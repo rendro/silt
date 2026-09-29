@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-not-contains: overflowed its stack
+trait Deep { fn go(self) -> Int }
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+
+fn main() {
+  println(50000.go())
+}

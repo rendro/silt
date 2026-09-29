@@ -1,0 +1,9 @@
+import list
+fn find_special(xs) {
+  match xs {
+    [x, ..rest] when x > 10 -> x
+    [_, ..rest] -> find_special(rest)
+    [] -> -1
+  }
+}
+fn main() { println(find_special([1, 5, 15, 3])) }

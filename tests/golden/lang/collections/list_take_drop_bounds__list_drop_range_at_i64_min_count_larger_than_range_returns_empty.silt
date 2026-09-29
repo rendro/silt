@@ -1,0 +1,9 @@
+import list
+fn run_main() -> Int {
+  let lo = -9223372036854775807 - 1
+  let r = lo..(lo + 8)
+  let d = list.drop(r, 100)
+  list.length(d)
+}
+
+fn main() { println(run_main()) }

@@ -1,0 +1,13 @@
+-- In (x, ^x), ^x should reference the OUTER x, not the one just bound
+import io
+fn program() {
+  let x = 1
+  match (2, 1) {
+    (x, ^x) -> "matched outer x"
+    _ -> "no match"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

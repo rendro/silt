@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Outer' cannot derive 'Equal'
+-- stderr-contains: field 'i'
+-- stderr-contains: 'Inner'
+type Inner { f: Fn(Int) -> Int }
+type Outer { i: Inner }
+fn main() {
+    let a = Outer{i: Inner{f: fn(x) { x }}}
+    let b = Outer{i: Inner{f: fn(x) { x }}}
+    println(a == b)
+}

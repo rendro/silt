@@ -1,0 +1,5 @@
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(10)
+  println(channel.try_receive(ch))
+}

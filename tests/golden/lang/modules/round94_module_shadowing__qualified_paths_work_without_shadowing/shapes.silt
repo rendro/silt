@@ -1,0 +1,2 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub type Pt { x: Int }

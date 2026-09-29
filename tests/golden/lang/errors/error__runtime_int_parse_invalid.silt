@@ -1,0 +1,8 @@
+import int
+fn main() {
+  match int.parse("not_a_number") {
+    Ok(n) -> println("Ok({n})")
+    Err(ParseInvalidDigit(_)) -> println("Err(ParseInvalidDigit)")
+    Err(_) -> println("Err(other)")
+  }
+}

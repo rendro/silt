@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-contains: helper.silt
+import helper
+
+fn main() {
+  println(helper.good(1))
+}

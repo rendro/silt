@@ -1,0 +1,6 @@
+import sa
+import sb
+
+fn main() {
+  println("ok")
+}

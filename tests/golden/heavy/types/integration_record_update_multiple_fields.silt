@@ -1,0 +1,12 @@
+import io
+type Point { x: Int, y: Int, z: Int }
+
+fn program() {
+  let p = Point { x: 1, y: 2, z: 3 }
+  let p2 = p.{ x: 10, z: 30 }
+  p2.x + p2.y + p2.z
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

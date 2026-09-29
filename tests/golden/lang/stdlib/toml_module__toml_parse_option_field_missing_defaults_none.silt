@@ -1,0 +1,11 @@
+import toml
+type User { name: String, nickname: Option(String) }
+fn run_main() {
+  let input = "name = \"Alice\"\n"
+  match toml.parse(input, User) {
+    Ok(u) -> u.nickname
+    Err(_) -> Some("fail")
+  }
+}
+
+fn main() { println(run_main()) }

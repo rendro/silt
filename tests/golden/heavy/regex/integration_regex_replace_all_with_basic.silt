@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.replace_all_with("\\d+", "abc 12 def 34", fn(m) { "X" })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn ping(x: a) -> Int where a: Display {
+  let _ = pong("string-arg")
+  0
+}
+
+fn pong(x: b) -> Int where b: Display {
+  let _ = ping(42)
+  0
+}
+
+fn main() {
+  ping(true)
+}

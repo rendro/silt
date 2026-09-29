@@ -1,0 +1,14 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- With a scheduler running but no live task able to send, channel.each
+-- on the main thread still reports a deadlock.
+import channel
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() { 1 })
+  task.join(h)
+  channel.each(ch) { msg -> println("{msg}") }
+}

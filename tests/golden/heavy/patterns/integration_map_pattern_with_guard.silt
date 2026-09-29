@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let m = #{"x": 5, "y": 10}
+  match m {
+    #{"x": x} when x > 3 -> "big"
+    #{"x": x} -> "small"
+    _ -> "none"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

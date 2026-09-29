@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'zzzz'
+-- stderr-not-contains: did you mean `zzzz`
+fn main() {
+  let zz = 1
+  zzzz
+}

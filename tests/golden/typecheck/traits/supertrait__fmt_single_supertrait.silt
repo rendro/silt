@@ -1,0 +1,7 @@
+-- cmd: fmt --check
+-- exit: 0
+-- A single supertrait formats as `trait Sub: Sup` (no `+`).
+
+trait Sub: Sup {
+  fn s(self) -> Int
+}

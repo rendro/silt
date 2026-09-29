@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-not-contains: overflowed its stack
+import list
+
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+
+fn main() {
+  println(deep(50000))
+}

@@ -1,0 +1,14 @@
+-- A deadline with generous slack does not fire: fast I/O returns Ok.
+import io
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.seconds(60), fn() {
+    io.read_file("fixture.txt")
+  })
+  match outcome {
+    Ok(content) -> println(content)
+    Err(msg) -> println(msg)
+  }
+}

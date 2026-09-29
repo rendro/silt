@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate top-level definition
+fn foo() = 1
+fn foo() = 2
+fn main() { foo() }

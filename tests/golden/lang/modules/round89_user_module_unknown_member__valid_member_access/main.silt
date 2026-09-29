@@ -1,0 +1,5 @@
+import lib
+
+fn main() {
+  println(lib.divide(10, 2))
+}

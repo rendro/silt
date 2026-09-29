@@ -1,0 +1,12 @@
+-- list.set returns a new list; the original is unchanged
+import io
+import list
+fn program() {
+  let a = [1, 2, 3]
+  let b = list.set(a, 1, 99)
+  (a, b)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

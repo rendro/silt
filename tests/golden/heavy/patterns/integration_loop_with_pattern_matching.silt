@@ -1,0 +1,20 @@
+import io
+fn program() {
+  let items = [Some(1), None, Some(3), None, Some(5)]
+  loop xs = items, acc = 0 {
+    match xs {
+      [] -> acc
+      [head, ..tail] -> {
+        let add = match head {
+          Some(n) -> n
+          None -> 0
+        }
+        loop(tail, acc + add)
+      }
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

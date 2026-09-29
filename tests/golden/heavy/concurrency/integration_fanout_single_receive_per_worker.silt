@@ -1,0 +1,43 @@
+-- repeat: 3
+-- When each worker does a single receive, all workers should get
+-- a message (not just the first worker).
+-- 10*2 + 20*2 + 30*2 = 20 + 40 + 60 = 120
+import io
+import channel
+import task
+fn program() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+
+  channel.send(jobs, 10)
+  channel.send(jobs, 20)
+  channel.send(jobs, 30)
+
+  let w1 = task.spawn(fn() {
+    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    channel.send(results, n * 2)
+  })
+
+  let w2 = task.spawn(fn() {
+    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    channel.send(results, n * 2)
+  })
+
+  let w3 = task.spawn(fn() {
+    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    channel.send(results, n * 2)
+  })
+
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+
+  when let Message(a) = channel.receive(results) else { panic("pattern did not match") }
+  when let Message(b) = channel.receive(results) else { panic("pattern did not match") }
+  when let Message(c) = channel.receive(results) else { panic("pattern did not match") }
+  a + b + c
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

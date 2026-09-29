@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.min_by([]) { x -> x }) }

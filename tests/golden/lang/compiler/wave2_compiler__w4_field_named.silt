@@ -1,0 +1,24 @@
+import json
+import toml
+
+type Inner { tags: List(Set(Int)) }
+type Outer { name: String, inner: Inner }
+
+fn from_json(text: String, type a) -> Result(a, JsonError) {
+  json.parse(text, a)
+}
+
+fn from_toml(text: String, type a) -> Result(a, TomlError) {
+  toml.parse(text, a)
+}
+
+fn main() {
+  match from_json("""{"name": "o", "inner": {"tags": [[1]]}}""", Outer) {
+    Ok(v) -> println(v.name)
+    Err(e) -> println(e.message())
+  }
+  match from_toml("name = \"o\"\n[inner]\ntags = [[1]]\n", Outer) {
+    Ok(v) -> println(v.name)
+    Err(e) -> println(e.message())
+  }
+}

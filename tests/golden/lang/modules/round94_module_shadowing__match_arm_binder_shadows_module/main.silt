@@ -1,0 +1,10 @@
+import other
+type P { year: Int }
+fn main() {
+  let p = P { year: 21 }
+  let got = match p {
+    other -> other.year
+  }
+  println(got)
+  println(other.double(got))
+}

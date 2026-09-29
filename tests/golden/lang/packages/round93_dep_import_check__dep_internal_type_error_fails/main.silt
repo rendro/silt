@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-contains: lib.silt
+import mathutil
+
+fn main() {
+  println(mathutil.double(21))
+}

@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'foo'
+-- stderr-not-contains: `Bool`
+-- stderr-not-contains: did you mean
+fn main() { foo }

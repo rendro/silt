@@ -1,0 +1,7 @@
+fn main() {
+  println(100 + {
+    let y = 10
+    let f = { n -> n + y }
+    f(1)
+  })
+}

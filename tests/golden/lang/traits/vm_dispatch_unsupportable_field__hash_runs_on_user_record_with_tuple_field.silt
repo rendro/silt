@@ -1,0 +1,9 @@
+-- exit: 0
+-- Tuples support Hash, so the auto-derived Pair.hash exists and the call
+-- runs (the value itself is unspecified).
+type Pair { t: (Int, Int) }
+fn h(x: a) -> Int where a: Hash { x.hash() }
+fn main() {
+    let p = Pair { t: (1, 2) }
+    println(h(p))
+}

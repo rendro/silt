@@ -1,0 +1,16 @@
+import io
+fn is_even(n) { n % 2 == 0 }
+fn classify(n) {
+  match n {
+    x when is_even(x) -> "even"
+    _ -> "odd"
+  }
+}
+
+fn program() {
+  [classify(4), classify(7)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

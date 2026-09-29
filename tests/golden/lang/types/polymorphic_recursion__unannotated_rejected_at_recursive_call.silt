@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch
+fn myfn(p) {
+  let x = p + 1
+  let _ = myfn("hello")
+  0
+}
+
+fn main() {
+  myfn(42)
+}

@@ -1,0 +1,23 @@
+import toml
+type Rec { name: String, age: Option(Int), nickname: Option(String) }
+fn main() {
+  let r = Rec { name: "alice", age: None, nickname: Some("bob") }
+  println(match toml.stringify(r) {
+      Ok(s) -> match toml.parse(s, Rec) {
+        Ok(v) -> {
+          let age_part = match v.age {
+            Some(n) -> "age=CORRUPT"
+            None -> "age=None"
+          }
+          let nick_part = match v.nickname {
+            Some(nk) -> "nick={nk}"
+            None -> "nick=MISSING"
+          }
+          "{v.name}|{age_part}|{nick_part}"
+        }
+        Err(e) -> "PARSE ERR"
+      }
+      Err(e) -> "STRINGIFY ERR"
+    }
+  )
+}

@@ -1,0 +1,5 @@
+import map
+fn main() {
+  let m = #{"a": 1}
+  println(map.get(m, "z"))
+}

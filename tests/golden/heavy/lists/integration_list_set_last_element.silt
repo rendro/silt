@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.set([10, 20, 30], 2, 42) }
+
+fn main() {
+  println(io.inspect(program()))
+}

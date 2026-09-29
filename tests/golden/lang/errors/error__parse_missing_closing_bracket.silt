@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected ']' or ',' to continue list literal starting at line 4, found }
+fn main() { [1, 2, 3 }

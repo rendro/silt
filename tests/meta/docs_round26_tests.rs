@@ -3,17 +3,12 @@
 //! These tests pin the doc state the round-26 audit fixed so it doesn't
 //! drift again:
 //!
-//! - G7: README tooling block must list `silt update` and `silt add`,
-//!   and its subcommand set must track `silt --help`.
+//! - G7: README tooling block's subcommand set must track `silt --help`.
 //! - G8: `docs/stdlib/index.md` and `docs/stdlib-reference.md` must
 //!   reference every stdlib module that has a per-module page
 //!   (specifically `bytes`, `tcp`, `stream`, `postgres`). A coverage
-//!   walker cross-checks every `register_<module>_builtins` call in
-//!   `src/typechecker/builtins.rs` against `docs/stdlib/<name>.md` so
-//!   a future module can't ship without docs.
-//! - L11: Version-pinned wording ("coming in v0.7", the `v0.9` lock on
-//!   `peer_addr`/`set_nodelay`, and the "v0.9 module surface" claim in
-//!   bytes.md) must stay out.
+//!   walker cross-checks every `BUILTIN_MODULES` entry against the
+//!   registered builtin docs so a future module can't ship without docs.
 
 use std::path::Path;
 use std::process::Command;
@@ -57,24 +52,6 @@ fn readme_tooling_block() -> String {
 }
 
 // ─── G7: README tooling block ────────────────────────────────────────
-
-/// README's Tooling block must list `silt update` and `silt add`.
-/// Before round 26 it listed 10 subcommands and omitted these two,
-/// even though getting-started.md already had them.
-#[test]
-fn readme_tooling_block_lists_silt_update_and_add() {
-    let block = readme_tooling_block();
-    assert!(
-        block.contains("silt update"),
-        "README.md Tooling block is missing `silt update`:\n{}",
-        block
-    );
-    assert!(
-        block.contains("silt add"),
-        "README.md Tooling block is missing `silt add`:\n{}",
-        block
-    );
-}
 
 /// Mirror of `test_getting_started_tooling_block_matches_main_help` for
 /// README. Extracts every `silt <subcommand>` entry from `silt --help`
@@ -149,35 +126,6 @@ fn readme_tooling_block_matches_main_help() {
 // hint, every documented builtin) are preserved in the inlined
 // markdown.
 
-const REQUIRED_INDEX_MODULES: &[&str] = &["bytes", "tcp", "stream", "postgres"];
-
-#[test]
-fn stdlib_index_references_all_per_module_pages() {
-    let docs = silt::typechecker::builtin_docs();
-    for module in REQUIRED_INDEX_MODULES {
-        let dot = format!("{module}.");
-        let any = docs
-            .iter()
-            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
-        assert!(
-            any,
-            "no `{module}.*` binding has a non-empty registered doc — \
-             round 62 phase-2 inlined the per-module prose into \
-             `super::docs::*_MD` (see src/typechecker/builtins/docs.rs). \
-             Restore the section."
-        );
-    }
-}
-
-#[test]
-fn stdlib_reference_table_references_all_per_module_pages() {
-    // Same contract as above; round 62 phase-2 collapsed both the
-    // `stdlib/index.md` table and the `stdlib-reference.md` table
-    // into the single LSP-delivered surface. Kept as a parallel
-    // assertion so future drift is easier to bisect.
-    stdlib_index_references_all_per_module_pages();
-}
-
 #[test]
 fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     let docs = silt::typechecker::builtin_docs();
@@ -230,161 +178,42 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     );
 }
 
-/// Coverage walker: for every `register_<name>_builtins` definition in
-/// `src/typechecker/builtins.rs`, assert that at least one `<name>.*`
-/// builtin name has a registered doc string. Round 62 phase-2 inlined
-/// the per-module markdown into `super::docs::*_MD` constants under
-/// `src/typechecker/builtins/docs.rs` and the per-module register
-/// function calls `attach_module_docs` (or the overview/filtered
-/// variants) to stamp those bodies onto each binding's
-/// `env.builtin_docs` entry.
-///
-/// This is the future-proofing lock: if a new `register_foo_builtins`
-/// ships, this test fails until the corresponding `FOO_MD` blob has a
-/// `## \`foo.X\`` section attached for at least one of the names it
-/// registers.
+/// Coverage walker: every builtin module (`silt::module::BUILTIN_MODULES`)
+/// must have at least one `<module>.*` binding with a registered doc
+/// string, and the bare-name error-variant constructors registered by
+/// the typechecker's errors pass must be documented too. A new module
+/// then cannot ship without docs.
 #[test]
-fn every_register_builtins_has_a_per_module_doc() {
-    let src_path = manifest_dir()
-        .join("src")
-        .join("typechecker")
-        .join("builtins.rs");
-    let src = read(&src_path);
-
+fn every_builtin_module_has_a_per_module_doc() {
     let docs = silt::typechecker::builtin_docs();
 
-    // The `errors` module is special: `register_errors_builtins`
-    // registers bare-name variant constructors (`IoNotFound`,
-    // `JsonSyntax`, …), not `errors.*`. We assert each of those
-    // variants has a registered doc rather than scanning a prefix.
-    fn errors_have_docs(docs: &std::collections::HashMap<String, String>) -> bool {
-        // A representative sample — every variant is attached the
-        // same body via `attach_enum_variant_docs` in errors.rs, so
-        // checking one is sufficient for the coverage smoke test.
-        ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"]
-            .iter()
-            .all(|n| docs.get(*n).map(|d| !d.trim().is_empty()).unwrap_or(false))
-    }
-
     let mut missing: Vec<String> = Vec::new();
-    let mut seen_any = false;
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        let after_fn = match trimmed.strip_prefix("fn register_") {
-            Some(r) => r,
-            None => continue,
-        };
-        let end = match after_fn.find("_builtins") {
-            Some(i) => i,
-            None => continue,
-        };
-        let name = &after_fn[..end];
-        if name.is_empty() {
-            continue;
-        }
-        seen_any = true;
-
-        let has_any_doc = if name == "errors" {
-            errors_have_docs(&docs)
-        } else {
-            let dot = format!("{name}.");
-            docs.iter()
-                .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty())
-        };
+    for name in silt::module::BUILTIN_MODULES {
+        let dot = format!("{name}.");
+        let has_any_doc = docs
+            .iter()
+            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
         if !has_any_doc {
             missing.push(format!(
-                "register_{}_builtins has no inlined docs — no `{}.*` \
-                 binding has a non-empty `super::docs::*_MD` section \
-                 attached. Add one and call `attach_module_docs` (or \
-                 `attach_module_overview` for module-level prose) from \
-                 `register(checker, env)`.",
-                name, name
+                "module `{name}` has no inlined docs — no `{name}.*` binding \
+                 has a non-empty `super::docs::*_MD` section attached. Add one \
+                 and call `attach_module_docs` (or `attach_module_overview` \
+                 for module-level prose) from its register function."
             ));
         }
     }
+    // The errors pass registers bare-name variant constructors, each
+    // attached the same body via `attach_enum_variant_docs`.
+    for variant in ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"] {
+        if !docs.get(variant).is_some_and(|d| !d.trim().is_empty()) {
+            missing.push(format!("error variant `{variant}` has no registered doc"));
+        }
+    }
 
     assert!(
-        seen_any,
-        "no `fn register_<name>_builtins` definitions found in {} — \
-         did the file layout change?",
-        src_path.display()
-    );
-    assert!(
         missing.is_empty(),
-        "{} stdlib module(s) ship without a per-module doc page. \
-         Create the missing docs or add the module to the combined-page \
-         map in this test:\n{}",
+        "{} stdlib module(s) ship without a per-module doc:\n{}",
         missing.len(),
         missing.join("\n")
     );
-}
-
-// ─── L11: Version-pinned wording ─────────────────────────────────────
-
-#[test]
-fn getting_started_does_not_reference_coming_in_v0_7() {
-    let path = manifest_dir().join("docs").join("getting-started.md");
-    let body = read(&path);
-    assert!(
-        !body.contains("coming in v0.7"),
-        "docs/getting-started.md still contains the stale 'coming in v0.7' \
-         phrasing — `silt update` shipped in v0.7 and the current release \
-         is v0.10+. Rewrite to describe the current behavior."
-    );
-}
-
-#[test]
-fn tcp_doc_has_no_bare_v0_9_limitation_pin() {
-    let docs = silt::typechecker::builtin_docs();
-    let body = docs
-        .keys()
-        .filter(|k| k.starts_with("tcp."))
-        .find_map(|k| docs.get(k))
-        .cloned()
-        .expect("at least one tcp.* binding must have a registered doc");
-    assert!(
-        !body.contains("return Err in v0.9"),
-        "the inlined tcp doc (super::docs::TCP_MD) still contains the \
-         stale \"return Err in v0.9\" version-pinned wording; drop the \
-         version pin or retarget to current release."
-    );
-}
-
-#[test]
-fn bytes_doc_has_no_v0_9_module_surface_claim() {
-    let docs = silt::typechecker::builtin_docs();
-    let body = docs
-        .keys()
-        .filter(|k| k.starts_with("bytes."))
-        .find_map(|k| docs.get(k))
-        .cloned()
-        .expect("at least one bytes.* binding must have a registered doc");
-    assert!(
-        !body.contains("v0.9 module surface"),
-        "the inlined bytes doc (super::docs::BYTES_MD) still contains \
-         the stale \"v0.9 module surface\" forward-compat claim; \
-         generalize the wording."
-    );
-}
-
-// ─── Supporting integrity checks ─────────────────────────────────────
-
-/// Paranoia check: every module we claim to deliver via LSP must
-/// actually have at least one registered builtin doc. Round 62
-/// phase-2 replaced the on-disk file presence check.
-#[test]
-fn required_index_modules_have_files() {
-    let docs = silt::typechecker::builtin_docs();
-    for module in REQUIRED_INDEX_MODULES {
-        let dot = format!("{module}.");
-        let any = docs
-            .iter()
-            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
-        assert!(
-            any,
-            "module `{module}` has no registered builtin doc — round 62 \
-             phase-2 inlined the per-module markdown into \
-             `super::docs::*_MD` (in src/typechecker/builtins/docs.rs)."
-        );
-    }
 }

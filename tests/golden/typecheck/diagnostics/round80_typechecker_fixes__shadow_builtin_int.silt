@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Declaring `type Int` is rejected at the declaration, without the auto-derive cascade.
+-- stderr-contains: shadows builtin type 'Int'
+-- stderr-not-contains: unknown method 'x' on type Int
+type Int { x: String }
+fn main() {}

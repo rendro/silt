@@ -1,0 +1,17 @@
+-- repeat: 3
+-- Receiving on a closed empty channel should return Closed variant.
+import io
+import channel
+fn program() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  match channel.receive(ch) {
+    Closed -> "got_closed"
+    Message(_) -> "unexpected_message"
+    _ -> "unexpected_other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

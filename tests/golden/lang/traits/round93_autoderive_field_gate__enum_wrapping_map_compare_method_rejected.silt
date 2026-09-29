@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'W' cannot derive 'Compare'
+-- stderr-contains: variant 'Wrap'
+type W { Wrap(Map(String, Int)), Empty }
+fn mk() -> W { Wrap(#{"a": 1}) }
+fn main() { println(mk().compare(mk())) }

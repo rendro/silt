@@ -1,0 +1,7 @@
+import shapes
+
+fn main() {
+  let c = shapes.Circle(2.0)
+  print(c == shapes.Circle(2.0))
+  print(c == shapes.Rect(1.0, 2.0))
+}

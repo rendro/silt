@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+type Pair(a, b) { left: a, right: b }
+fn demo() -> Int {
+  match Pair { left: 1, right: 2 } {
+    Pair { left: x, right: y } -> x + y
+  }
+}
+fn main() { println(demo()) }

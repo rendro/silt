@@ -1,0 +1,11 @@
+type Pair(a, b) { left: a, right: b }
+fn demo(p) -> String {
+  match p == Pair { left: 1, right: "x" } {
+    true -> "equal"
+    false -> "not"
+  }
+}
+fn main() {
+  println(demo(Pair { left: 1, right: "x" }))
+  println(demo(Pair { left: 2, right: "x" }))
+}

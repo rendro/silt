@@ -59,29 +59,3 @@ fn fuzz_corpus_root_is_absolute() {
         base
     );
 }
-
-/// Textual lock: the parser fuzz target must exercise both `parse_program`
-/// and `parse_program_recovering` so LSP's recovery entry point gets
-/// libFuzzer corpus-driven exploration.
-#[test]
-fn fuzz_parser_target_invokes_both_entry_points() {
-    let path = std::path::Path::new("fuzz/fuzz_targets/fuzz_parser.rs");
-    assert!(
-        path.exists(),
-        "fuzz_parser.rs missing at {}",
-        path.display()
-    );
-    let src = std::fs::read_to_string(path).unwrap();
-    assert!(
-        src.contains("fuzz_target!"),
-        "fuzz_parser.rs is not a libFuzzer target"
-    );
-    assert!(
-        src.contains("parse_program("),
-        "fuzz_parser.rs must invoke parse_program()"
-    );
-    assert!(
-        src.contains("parse_program_recovering"),
-        "fuzz_parser.rs must invoke parse_program_recovering() — LSP's primary recovery path"
-    );
-}

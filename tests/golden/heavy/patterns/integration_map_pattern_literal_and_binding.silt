@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let m = #{"type": "admin", "level": "5"}
+  match m {
+    #{"type": "admin", "level": l} -> l
+    _ -> "0"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

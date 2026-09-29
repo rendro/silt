@@ -1,0 +1,11 @@
+fn load_data() -> Result(Int, String) {
+  Ok(42)
+}
+
+fn main() {
+  let res = load_data()
+  when let Ok(data) = res else {
+    panic("load failed")
+  }
+  println(data)
+}

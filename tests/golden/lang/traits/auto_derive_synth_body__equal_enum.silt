@@ -1,0 +1,7 @@
+type Color { Red, Green, Blue, }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    println(eq_gen(Red, Red))
+    println(eq_gen(Red, Green))
+    println(eq_gen(Blue, Blue))
+}

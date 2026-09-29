@@ -1,0 +1,7 @@
+import bytes
+fn main() {
+  match bytes.from_hex("deadbeefABCDEF") {
+    Ok(b) -> println(bytes.to_hex(b))
+    Err(e) -> println(e.message())
+  }
+}

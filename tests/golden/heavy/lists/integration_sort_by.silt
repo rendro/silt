@@ -1,0 +1,11 @@
+import io
+import list
+import string
+fn program() {
+  let words = ["banana", "apple", "cherry"]
+  words |> list.sort_by { w -> string.length(w) }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

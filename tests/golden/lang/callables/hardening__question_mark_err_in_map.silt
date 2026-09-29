@@ -1,0 +1,16 @@
+import list
+-- `?` on an Err inside the closure returns the Err from the closure only:
+-- list.map receives Err("fail") as that element's result and the
+-- enclosing function still returns Ok.
+fn try_map() -> Result(List(Result(Int, String)), String) {
+  Ok(list.map([Ok(1), Err("fail"), Ok(3)], fn(x) {
+    let v = x?
+    Ok(v * 10)
+  }))
+}
+fn main() {
+  match try_map() {
+    Ok(xs) -> println(xs)
+    Err(e) -> println("outer Err: {e}")
+  }
+}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- An anonymous record passed to an unconstrained generic function typechecks.
+fn pass_through(x: a) -> a { x }
+fn main() {
+  let r = {x: 1, y: 2}
+  pass_through(r)
+}

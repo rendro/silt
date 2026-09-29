@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- A `Range(Int)` annotation accepts a list literal (Range canonicalises to List).
+fn main() {
+  let r: Range(Int) = [1, 2, 3]
+  r
+}

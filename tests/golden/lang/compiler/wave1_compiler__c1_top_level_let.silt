@@ -1,0 +1,8 @@
+let g = 1 + match 2 {
+  2 -> 10
+  _ -> 0
+}
+
+fn main() {
+  println(g)
+}

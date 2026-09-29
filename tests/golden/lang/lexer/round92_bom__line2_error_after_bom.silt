@@ -1,0 +1,6 @@
+﻿-- exit: 1
+-- stderr-contains: semicolons are not used
+-- stderr-contains: round92_bom__line2_error_after_bom.silt:5:1
+fn main() {
+;
+}

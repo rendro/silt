@@ -1,0 +1,14 @@
+import io
+fn describe(e: IoError) -> String {
+  match e {
+    IoNotFound(p) -> "not found"
+    IoPermissionDenied(p) -> "denied"
+    IoAlreadyExists(p) -> "exists"
+    IoInvalidInput(p) -> "invalid"
+    IoInterrupted -> "interrupted"
+    IoUnexpectedEof -> "eof"
+    IoWriteZero -> "write zero"
+    IoUnknown(m) -> "unknown"
+  }
+}
+fn main() { println(describe(IoNotFound("x"))) }

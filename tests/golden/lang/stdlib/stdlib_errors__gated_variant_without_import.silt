@@ -1,0 +1,3 @@
+-- exit: 1
+-- stderr-contains: requires `import io`
+fn main() { let _ = IoNotFound("x") }

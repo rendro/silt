@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.ends_with("hello world", "hello") }
+
+fn main() {
+  println(io.inspect(program()))
+}

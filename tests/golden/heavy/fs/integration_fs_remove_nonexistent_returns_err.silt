@@ -1,0 +1,9 @@
+import fs
+import io
+fn main() {
+  let outcome = match fs.remove("does_not_exist") {
+    Ok(_) -> "ok"
+    Err(_) -> "err"
+  }
+  println(outcome)
+}

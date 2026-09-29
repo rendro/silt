@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- Associated-type defaults are a parse error in v1.
+-- stderr-contains: error[parse]
+-- stderr-contains: associated-type defaults are not supported
+trait Stream {
+  type Item = Int
+  fn first(self) -> Self::Item
+}
+
+fn main() {}

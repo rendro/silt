@@ -1,0 +1,7 @@
+import other
+type P { year: Int }
+fn f(other: P) -> Int { other.year }
+fn main() {
+  println(f(P { year: 5 }))
+  println(other.double(2))
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: list literal
+-- stderr-contains: ]
+-- stderr-contains: starting at line 7
+fn main() {
+  let x = [1, 2, 3
+  x
+}

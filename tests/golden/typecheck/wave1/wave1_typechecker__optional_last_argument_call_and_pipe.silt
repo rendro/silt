@@ -1,0 +1,64 @@
+-- exit: 0
+-- Every builtin with an optional last argument, with and without it, in call and pipe form (and via import alias / selective import), checks and runs every row in order.
+import test
+import test as t
+import test.{ assert_ne }
+import float
+import channel
+
+fn round_trip(c, value) {
+  channel.send(c, value)
+  channel.receive(c)
+}
+
+fn main() {
+  let yes = true
+  test.assert(true)
+  println("row 0")
+  test.assert(true, "message a")
+  println("row 1")
+  true |> test.assert()
+  println("row 2")
+  yes |> test.assert
+  println("row 3")
+  true |> test.assert("message b")
+  println("row 4")
+  test.assert_eq(1, 1)
+  println("row 5")
+  test.assert_eq(2, 2, "message c")
+  println("row 6")
+  3 |> test.assert_eq(3)
+  println("row 7")
+  4 |> test.assert_eq(4, "message d")
+  println("row 8")
+  test.assert_ne(1, 2)
+  println("row 9")
+  test.assert_ne(3, 4, "message e")
+  println("row 10")
+  5 |> test.assert_ne(6)
+  println("row 11")
+  7 |> test.assert_ne(8, "message f")
+  println("row 12")
+  println(float.to_string(1.5))
+  println("row 13")
+  println(float.to_string(2.5, 3))
+  println("row 14")
+  println(3.5 |> float.to_string())
+  println("row 15")
+  println(4.5 |> float.to_string)
+  println("row 16")
+  println(5.5 |> float.to_string(2))
+  println("row 17")
+  channel.close(channel.new())
+  println("row 18")
+  println(round_trip(channel.new(4), 1))
+  println("row 19")
+  println(round_trip(4 |> channel.new(), 2))
+  println("row 20")
+  println(round_trip(4 |> channel.new, 3))
+  println("row 21")
+  t.assert(yes)
+  println("row 22")
+  assert_ne(9, 10)
+  println("row 23")
+}

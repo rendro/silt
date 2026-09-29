@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: must take no parameters
+pub fn greet() -> String { "hi" }
+pub fn main(x: Int) { x }

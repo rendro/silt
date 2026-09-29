@@ -1,0 +1,11 @@
+-- A two-argument container supertrait arg `Carry(Map(String, b))` is accepted.
+type Bag { n: Int }
+trait Carry(c) { fn carry(self) -> c }
+trait Holds(b): Carry(Map(String, b)) { fn hold(self) -> b }
+trait Carry(Map(String, Int)) for Bag { fn carry(self) -> Map(String, Int) { #{"a": 1} } }
+trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
+fn main() {
+  let b = Bag { n: 1 }
+  println("{b.hold()}")
+  println("{b.carry()}")
+}

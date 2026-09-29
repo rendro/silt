@@ -65,24 +65,3 @@ fn main() { list.product_float([float.max_value, 2.0]) }
          got {result:?}"
     );
 }
-
-/// Sanity: the finite path still returns `Value::Float`. This ensures the
-/// fix didn't over-widen (i.e. always return `ExtFloat`).
-#[test]
-fn sum_float_finite_stays_float() {
-    let result = run(r#"
-import list
-fn main() { list.sum_float([1.0, 2.0, 3.0]) }
-"#);
-    assert_eq!(result, Value::Float(6.0));
-}
-
-/// Same sanity check for `product_float`.
-#[test]
-fn product_float_finite_stays_float() {
-    let result = run(r#"
-import list
-fn main() { list.product_float([2.0, 3.0, 4.0]) }
-"#);
-    assert_eq!(result, Value::Float(24.0));
-}

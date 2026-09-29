@@ -1,0 +1,2 @@
+pub type ColorB { Red, Green }
+pub fn mkb() -> ColorB = Green

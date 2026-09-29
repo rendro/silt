@@ -1,12 +1,6 @@
-//! Semantic-no-op locks for two `src/compiler/mod.rs` cleanups.
-//!
-//! Fix 2 — deleted a dead `if ctx.upvalues.iter().any(|_| false) { }`
-//! block inside `resolve_upvalue_peek`. The predicate was always false
-//! with an empty body, so removing it changes nothing: upvalues always
-//! root at a local that the `locals` scan in the same loop already
-//! catches. The lock below drives `resolve_upvalue_peek` via a nested
-//! closure that captures an outer local whose name *also* names a
-//! builtin module, and asserts the local (not the module) still wins.
+//! Semantic-no-op lock for a `src/compiler/mod.rs` cleanup. (The
+//! companion Fix 2 lock on nested-closure upvalue resolution is now the
+//! golden cases `tests/golden/meta/closures/compiler_dedup_lock_tests__*`.)
 //!
 //! Fix 3 — extracted the shared `Self { .. }` literal of `Compiler::new`
 //! and `Compiler::with_package_roots` into a private `build` constructor.
@@ -92,74 +86,5 @@ fn main() {
     assert!(
         repl_out.contains("42"),
         "repl path (Compiler::new) must compute the same 42; stdout={repl_out}"
-    );
-}
-
-/// Fix 2 lock: `resolve_upvalue_peek` still resolves a captured local
-/// correctly after the dead `if` was removed.
-///
-/// `math` is bound as a *local* in `main` while `math` is ALSO a builtin
-/// module name. The inner closure captures `math` transitively (through
-/// the outer closure) as an upvalue. Correct resolution must treat
-/// `math` as the captured local value (10), yielding 15 — not attempt a
-/// module reference. This drives the exact disambiguation path that the
-/// deleted block pretended (but failed) to handle.
-#[test]
-fn nested_closure_captures_module_shadowing_local() {
-    let src = r#"
-import math
-
-fn main() {
-  let math = 10
-  let outer = fn() {
-    let inner = fn() {
-      math + 5
-    }
-    inner()
-  }
-  println(outer())
-}
-"#;
-    let (stdout, stderr, ok) = run_via_run("upval", src);
-    assert!(
-        ok,
-        "silt run should succeed; stdout={stdout}, stderr={stderr}"
-    );
-    assert!(
-        stdout.contains("15"),
-        "inner closure must resolve the captured local `math` (=10) so \
-         math + 5 == 15, not a module reference; stdout={stdout}, stderr={stderr}"
-    );
-}
-
-/// Companion to the above: when the name is NOT shadowed by a local, a
-/// builtin-module call (`math.sqrt`) inside a nested closure must still
-/// dispatch to the module. Together with the previous test this pins both
-/// sides of the local-vs-module decision that `resolve_upvalue_peek`
-/// informs.
-#[test]
-fn nested_closure_module_call_still_dispatches() {
-    let src = r#"
-import math
-
-fn main() {
-  let outer = fn() {
-    let inner = fn() {
-      math.sqrt(9.0)
-    }
-    inner()
-  }
-  println(outer())
-}
-"#;
-    let (stdout, stderr, ok) = run_via_run("modcall", src);
-    assert!(
-        ok,
-        "silt run should succeed; stdout={stdout}, stderr={stderr}"
-    );
-    assert!(
-        stdout.contains("3"),
-        "inner closure must dispatch math.sqrt(9.0) == 3 when no local \
-         shadows `math`; stdout={stdout}, stderr={stderr}"
     );
 }

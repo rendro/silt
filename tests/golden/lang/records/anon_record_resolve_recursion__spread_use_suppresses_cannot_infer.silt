@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: cannot infer
+fn make() = ({ val: 1 })
+fn main() {
+  let r = make()
+  let r2 = { ...r, extra: 2 }
+  ()
+}

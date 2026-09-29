@@ -1,0 +1,11 @@
+type Status { On, Off }
+fn demo(s: Status) -> Int {
+  match s {
+    On -> 1
+    Off -> 0
+  }
+}
+fn main() {
+  println(demo(On))
+  println(demo(Off))
+}

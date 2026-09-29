@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: list.zip: result length
+-- stderr-contains: exceeds maximum materialized length 10000000
+-- stderr-not-contains: panic
+import list
+fn main() {
+  list.zip(0..9223372036854775807, 0..9223372036854775807)
+}

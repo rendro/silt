@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Box' cannot derive 'Equal'
+-- stderr-contains: field 'v'
+-- stderr-contains: not equatable
+type Box(a) { v: a }
+fn main() {
+    let c = Box{v: fn(x) { x }}
+    let d = Box{v: fn(x) { x }}
+    println(c == d)
+}

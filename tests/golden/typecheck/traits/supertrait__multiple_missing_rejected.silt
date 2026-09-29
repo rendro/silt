@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: implements 'Both'
+-- stderr-contains: supertrait 'Tr2'
+-- `Both: Tr1 + Tr2` with Tr2 missing is an error.
+trait Tr1 {
+  fn t1(self) -> Int
+}
+trait Tr2 {
+  fn t2(self) -> Int
+}
+trait Both: Tr1 + Tr2 {
+  fn both(self) -> Int
+}
+
+type Baz { v: Int }
+
+-- Only Tr1 impl, missing Tr2.
+trait Tr1 for Baz {
+  fn t1(self) -> Int { self.v }
+}
+
+trait Both for Baz {
+  fn both(self) -> Int { self.v }
+}
+
+fn main() {}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- A record field annotated `Range(Int)` accepts a list initializer.
+type R { xs: Range(Int) }
+fn main() -> R {
+  R { xs: [1, 2, 3] }
+}

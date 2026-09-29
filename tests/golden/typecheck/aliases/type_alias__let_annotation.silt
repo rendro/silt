@@ -1,0 +1,7 @@
+-- An alias as a let annotation accepts a list literal.
+import list
+type PhDBytLet = List(Int)
+fn main() {
+    let xs: PhDBytLet = [1, 2, 3]
+    println(list.length(xs))
+}

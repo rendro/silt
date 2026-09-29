@@ -1,0 +1,8 @@
+-- cmd: check --format json
+-- exit: 1
+-- exact stdout: no ANSI escapes (raw or \u001b-encoded) in the JSON
+import badlex
+
+fn main() {
+  badlex.hi()
+}

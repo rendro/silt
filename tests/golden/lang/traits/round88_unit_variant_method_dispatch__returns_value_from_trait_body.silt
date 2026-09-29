@@ -1,0 +1,8 @@
+-- stderr-not-contains: undefined global: Red.display
+type Color { Red, Green, Blue }
+
+trait Display for Color {
+  fn display(self) -> String { "round88-ok" }
+}
+
+fn main() { println(Red.display()) }

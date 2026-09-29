@@ -1,0 +1,20 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- After a stream that the main thread consumed to its end with
+-- `channel.each`, a receive on a different, fresh channel is reported.
+import channel
+import stream
+import time
+
+fn main() {
+  let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
+    time.sleep(time.ms(100))
+    x * 10
+  }
+  channel.each(out) { v -> println(v) }
+  println("stream done")
+  let fresh = channel.new(0)
+  channel.receive(fresh)
+  println("unreachable")
+}

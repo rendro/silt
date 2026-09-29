@@ -1,0 +1,10 @@
+import int
+fn describe(e: ParseError) -> String {
+  match e {
+    ParseEmpty -> "empty"
+    ParseInvalidDigit(off) -> "bad digit"
+    ParseOverflow -> "overflow"
+    ParseUnderflow -> "underflow"
+  }
+}
+fn main() { println(describe(ParseEmpty)) }

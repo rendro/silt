@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+import helper
+
+fn main() {
+  println(helper.double(21))
+}

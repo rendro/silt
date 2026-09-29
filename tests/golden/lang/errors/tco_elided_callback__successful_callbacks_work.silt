@@ -1,0 +1,7 @@
+import list
+fn double_helper(x) { x * 2 }
+fn double_wrapper(x) { double_helper(x) }
+fn main() {
+    let mapped = list.map([1, 2, 3, 4, 5], double_wrapper)
+    print(mapped)
+}

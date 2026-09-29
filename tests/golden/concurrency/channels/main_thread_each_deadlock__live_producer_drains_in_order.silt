@@ -1,0 +1,18 @@
+-- repeat: 3
+-- With a live producer, channel.each drains every rendezvous send in
+-- order and returns when the channel closes.
+import channel
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let producer = task.spawn(fn() {
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.close(ch)
+  })
+  channel.each(ch) { n -> println("{n}") }
+  task.join(producer)
+  println("done")
+}

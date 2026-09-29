@@ -1,0 +1,18 @@
+-- repeat: 3
+-- Select with send to a closed channel should return Closed.
+import io
+import channel
+fn program() {
+  let ch = channel.new(1)
+  channel.close(ch)
+
+  match channel.select([Send(ch, 42)]) {
+    (_, Closed) -> "closed"
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

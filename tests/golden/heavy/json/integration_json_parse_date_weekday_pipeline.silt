@@ -1,0 +1,12 @@
+import io
+import json
+import time
+type Event { name: String, date: Date }
+fn program() {
+  when let Ok(e) = json.parse("\{\"name\": \"x\", \"date\": \"2024-03-15\"\}", Event) else { panic("unexpected Err") }
+  e.date |> time.weekday
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

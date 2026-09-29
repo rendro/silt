@@ -1,0 +1,17 @@
+-- A closure captures a variable defined two scopes up (grandparent).
+import io
+fn outer(x) {
+  let middle = fn(y) {
+    let inner = fn(z) { x + y + z }
+    inner(3)
+  }
+  middle(2)
+}
+
+fn program() {
+  outer(1)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

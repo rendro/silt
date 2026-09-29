@@ -1,0 +1,34 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- B3: a cancelled sender at the head of the waker queue must not starve
+-- a real sender queued behind it (rendezvous channel).
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  -- First sender: will be cancelled. Its waker is HEAD of FIFO.
+  let dead = task.spawn(fn() { channel.send(ch, 999) })
+  time.sleep(time.ms(50))
+  -- Second sender: real, behind `dead` in FIFO.
+  let real = task.spawn(fn() {
+    channel.send(ch, 7)
+  })
+  time.sleep(time.ms(50))
+  task.cancel(dead)
+  time.sleep(time.ms(50))
+  -- Bring a receiver. With the bug, wake_send pops the dead waker
+  -- first (no-op) and `real` never wakes. With the fix, the dead
+  -- waker was deregistered on cancel, so `real` is at the head and
+  -- handshakes normally.
+  let recv = task.spawn(fn() {
+    match channel.receive(ch) {
+      Message(v) -> v
+      _ -> -1
+    }
+  })
+  let r = task.join(recv)
+  let _ = task.join(real)
+  println(r)
+}

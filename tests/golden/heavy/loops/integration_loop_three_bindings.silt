@@ -1,0 +1,13 @@
+import io
+fn program() {
+  loop i = 0, sum = 0, product = 1 {
+    match i >= 4 {
+      true -> (sum, product)
+      _ -> loop(i + 1, sum + i, product * (i + 1))
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,16 @@
+-- A closure returned from a factory function is used as a callback.
+import io
+import list
+
+fn make_adder(n) {
+  fn(x) { x + n }
+}
+
+fn program() {
+  let add10 = make_adder(10)
+  [1, 2, 3] |> list.map(add10)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

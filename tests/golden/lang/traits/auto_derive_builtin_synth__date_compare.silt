@@ -1,0 +1,11 @@
+import time
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    match time.date(2025, 1, 15) {
+        Ok(early) -> match time.date(2025, 6, 30) {
+            Ok(late) -> println(cmp_gen(early, late))
+            Err(_) -> ()
+        }
+        Err(_) -> ()
+    }
+}

@@ -1,0 +1,28 @@
+-- repeat: 3
+import list
+import task
+
+trait Deep { fn go(self) -> Int }
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+
+
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+
+fn main() {
+  let a = task.spawn { -> 6.go() }
+  let b = task.spawn { -> deep(6) }
+  println("method {task.join(a)}")
+  println("fold {task.join(b)}")
+}

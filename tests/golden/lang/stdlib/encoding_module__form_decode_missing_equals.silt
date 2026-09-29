@@ -1,0 +1,10 @@
+import encoding
+fn main() {
+  match encoding.form_decode("flag") {
+    Ok(pairs) -> match pairs {
+      [(k, v)] -> println("{k}={v}")
+      _ -> println("wrong-shape")
+    }
+    Err(_) -> println("err")
+  }
+}

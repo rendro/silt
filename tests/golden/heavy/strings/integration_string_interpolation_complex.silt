@@ -1,0 +1,10 @@
+import io
+fn program() {
+  let name = "world"
+  let n = 42
+  "hello {name}, the answer is {n}"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

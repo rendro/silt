@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 0
+fn foo(x: Self) -> Self { x }
+fn main() { 42 }

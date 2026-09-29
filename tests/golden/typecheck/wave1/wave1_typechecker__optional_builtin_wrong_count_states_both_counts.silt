@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expects 0 or 1 arguments, got 2
+-- stderr-contains: expects 1 or 2 arguments, got 0
+-- stderr-contains: expects 1 or 2 arguments, got 3
+-- stderr-contains: expects 2 or 3 arguments, got 1
+-- stderr-contains: expects 2 or 3 arguments, got 4
+-- stderr-not-contains: error[runtime]
+-- A wrong count for a builtin with an optional last argument states both accepted counts and the actual one, per call (exact stderr).
+import test
+import float
+import channel
+
+fn main() {
+  test.assert()
+  test.assert(true, "m", "extra")
+  test.assert_eq(1)
+  test.assert_ne(1, 2, "m", "extra")
+  println(float.to_string())
+  channel.close(channel.new(1, 2))
+  5 |> test.assert_eq()
+  println(1.5 |> float.to_string(2, 3))
+}

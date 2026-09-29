@@ -1,0 +1,20 @@
+-- repeat: 3
+import channel
+import task
+fn main() {
+  let ch = channel.new(10)
+
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "world")
+  })
+
+  let consumer = task.spawn(fn() {
+    when let Message(msg1) = channel.receive(ch) else { panic("pattern did not match") }
+    when let Message(msg2) = channel.receive(ch) else { panic("pattern did not match") }
+    println("{msg1} {msg2}")
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}

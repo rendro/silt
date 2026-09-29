@@ -1,0 +1,14 @@
+import io
+import time
+fn program() { must_date(2024, 1, 1) |> time.add_days(-1) }
+
+fn must_date(y, m, d) {
+  match time.date(y, m, d) {
+    Ok(date) -> date
+    Err(_) -> panic("invalid date")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

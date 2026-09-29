@@ -1,0 +1,17 @@
+-- repeat: 3
+import io
+import channel
+fn program() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+
+  let result = channel.select([Recv(ch)])
+  match result {
+    (_, Message(val)) -> val
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

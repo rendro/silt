@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type variable 'a' in return type
+-- A return type variable not introduced by any parameter is rejected.
+fn broken() -> a {
+    panic("unreachable")
+}
+
+fn main() {}

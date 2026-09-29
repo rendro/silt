@@ -1,0 +1,10 @@
+-- Equal records hash equal; permuted fields hash differently.
+type Point { x: Int, y: Int, }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let q = Point { x: 1, y: 2 }
+    let r = Point { x: 2, y: 1 }
+    println(h(p) == h(q))
+    println(h(p) != h(r))
+}

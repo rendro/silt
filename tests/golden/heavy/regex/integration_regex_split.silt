@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.split("\\s+", "hello   world   foo")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

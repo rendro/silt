@@ -85,39 +85,6 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
     (stdout, stderr, out.status.success())
 }
 
-/// The supervisor snippet must extract cleanly from the doc.
-#[test]
-fn supervision_snippet_is_extractable_from_concurrency_doc() {
-    let doc = read_concurrency_doc();
-    let snippet = extract_supervision_snippet(&doc);
-    // Pedagogical anchors that the round-88 fix MUST preserve. If the
-    // snippet ever drops any of these, the doc has lost the content the
-    // section is meant to teach.
-    assert!(
-        snippet.contains("type Outcome"),
-        "snippet must still define the `Outcome` enum (Finished/Crashed) — \
-         outcome-channel routing is the section's main lesson. Got:\n{snippet}"
-    );
-    assert!(
-        snippet.contains("Crashed"),
-        "snippet must still demonstrate the restart-on-Crashed branch. Got:\n{snippet}"
-    );
-    assert!(
-        snippet.contains("remaining_restarts"),
-        "snippet must still demonstrate a bounded restart budget \
-         (`remaining_restarts`). Got:\n{snippet}"
-    );
-    assert!(
-        snippet.contains("spawn_worker"),
-        "snippet must still spawn workers via `spawn_worker`. Got:\n{snippet}"
-    );
-    assert!(
-        snippet.contains("task.join(sup)"),
-        "snippet must still `task.join(sup)` to wait for the supervisor. \
-         Got:\n{snippet}"
-    );
-}
-
 /// The supervisor snippet from `docs/concurrency.md` must compile AND
 /// run to completion. The previous (broken) shape exited 1 with a
 /// `deadlock on main thread` error; the fixed shape exits 0 with both

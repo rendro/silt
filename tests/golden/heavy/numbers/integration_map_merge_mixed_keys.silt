@@ -1,0 +1,12 @@
+import io
+import map
+fn program() {
+  let m1 = #{ 1: "a", 2: "b" }
+  let m2 = #{ 2: "B", 3: "c" }
+  let merged = map.merge(m1, m2)
+  map.length(merged)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

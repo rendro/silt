@@ -1,0 +1,18 @@
+import channel
+fn process(v) { println("{v}") }
+fn drain(ch) {
+  match channel.receive(ch) {
+    Message(val) -> {
+      process(val)
+      drain(ch)
+    }
+    Closed -> ()
+    _ -> drain(ch)
+  }
+}
+fn main() {
+  let ch = channel.new(2)
+  channel.send(ch, "x")
+  channel.close(ch)
+  drain(ch)
+}

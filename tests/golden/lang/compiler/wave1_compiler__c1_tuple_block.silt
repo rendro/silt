@@ -1,0 +1,15 @@
+import int
+import list
+
+fn add(a, b) {
+  a + b
+}
+
+fn main() {
+  let x = 5
+  let r = (1, {
+    let y = 10
+    y * 2
+  })
+  println(r)
+}

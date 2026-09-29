@@ -1,0 +1,6 @@
+import stream
+fn main() {
+  let a = stream.from_list([1, 2, 3])
+  let b = stream.from_list(["x", "y", "z"])
+  println(stream.collect(stream.zip(a, b)))
+}

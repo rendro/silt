@@ -1,43 +1,15 @@
-//! Regression lock: every silt *core* keyword listed in
-//! `tests/meta/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS` must
-//! appear in both editor syntax-highlighting grammars. Without this
-//! lock a new keyword added to the lexer + the three Rust surfaces
-//! (src/lsp/completion.rs, src/lsp/rename.rs, src/repl.rs — all
-//! already parity-locked) would still silently fail to highlight in
-//! vim / VS Code.
-//!
-//! This test also rejects stray keywords in either editor file that
-//! are NOT in `EXPECTED_CORE_KEYWORDS` — locking the set both ways.
-//! Removing a keyword from the editor file without updating the
-//! expected list (or vice-versa) trips the regression.
-//!
-//! Mirrors the pattern of:
-//!   - tests/meta/editor_grammar_primitives_tests.rs
-//!   - tests/meta/editor_grammar_constructors_tests.rs
-//!   - tests/meta/editor_grammar_modules_tests.rs
-//!
-//! If this test fails after adding a new keyword to silt's lexer,
-//! add the keyword name to:
-//!   - tests/meta/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS
-//!   - the parallel `EXPECTED_CORE_KEYWORDS` below (duplicated
-//!     intentionally — see comment)
-//!   - editors/vim/syntax/silt.vim           (siltKeyword list)
-//!   - editors/vscode/syntaxes/silt.tmLanguage.json ("keywords" match)
-//!   - src/lsp/completion.rs, src/lsp/rename.rs, src/repl.rs
+//! Regression lock: every silt *core* keyword in `silt::lexer::KEYWORDS`
+//! must appear in both editor syntax-highlighting grammars, and neither
+//! grammar's keyword scope may list a word the lexer does not treat as a
+//! keyword. A keyword added to the lexer without updating
+//! editors/vim/syntax/silt.vim (siltKeyword list) and
+//! editors/vscode/syntaxes/silt.tmLanguage.json ("keywords" match) trips
+//! it, and so does a stray grammar entry.
 
 use std::fs;
 use std::path::PathBuf;
 
-/// Duplicated intentionally from
-/// `tests/meta/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS` to
-/// avoid cross-test-file coupling (integration test files can't
-/// `use super::*` each other). Both copies must be updated together;
-/// if they drift, the editor grammars will not lock against the same
-/// set as the Rust surfaces. Keep strictly in sync.
-const EXPECTED_CORE_KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
-    "when", "where",
-];
+const EXPECTED_CORE_KEYWORDS: &[&str] = silt::lexer::KEYWORDS;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -149,30 +121,6 @@ fn vscode_keyword_tokens(vscode_scope: &str) -> Vec<String> {
 }
 
 #[test]
-fn local_expected_core_keywords_equals_lexer_keywords() {
-    // Round-65 LATENT X1: the parallel copy of EXPECTED_CORE_KEYWORDS
-    // here is duplicated from `tests/meta/keyword_list_parity_tests.rs` to
-    // avoid cross-test-file coupling. If a new keyword is added to
-    // `lexer::KEYWORDS`, this local copy MUST be updated too — else
-    // the editor-grammar checks below silently miss the new keyword.
-    // This test bidirectionally locks the local copy to the lexer
-    // const, mirroring `lexer_keywords_const_equals_expected_core_set`
-    // in the sibling test file.
-    let lexer_set: std::collections::HashSet<&str> =
-        silt::lexer::KEYWORDS.iter().copied().collect();
-    let local_set: std::collections::HashSet<&str> =
-        EXPECTED_CORE_KEYWORDS.iter().copied().collect();
-    assert_eq!(
-        lexer_set, local_set,
-        "EXPECTED_CORE_KEYWORDS in tests/meta/editor_grammar_keywords_tests.rs \
-         drifted from `silt::lexer::KEYWORDS`. Update both this list \
-         AND the parallel copy in tests/meta/keyword_list_parity_tests.rs, \
-         then add the new keyword to editors/vim/syntax/silt.vim and \
-         editors/vscode/syntaxes/silt.tmLanguage.json."
-    );
-}
-
-#[test]
 fn editor_grammars_include_all_core_keywords() {
     let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
     let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
@@ -202,9 +150,9 @@ fn editor_grammars_include_all_core_keywords() {
     assert!(
         missing.is_empty(),
         "Editor syntax grammars are out of sync with \
-         tests/meta/keyword_list_parity_tests.rs::EXPECTED_CORE_KEYWORDS.\n\
+         `silt::lexer::KEYWORDS`.\n\
          Add the following keyword(s) to the grammar file(s) listed:\n  - {}\n\
-         Authoritative source: tests/meta/keyword_list_parity_tests.rs.",
+         Authoritative source: `silt::lexer::KEYWORDS`.",
         missing.join("\n  - ")
     );
 }
@@ -248,8 +196,7 @@ fn editor_grammars_have_no_stray_keywords() {
         "Editor grammars contain keywords not present in \
          EXPECTED_CORE_KEYWORDS. Either remove the stray entries \
          from the grammar files, or (if the keyword is genuinely \
-         new) update tests/meta/keyword_list_parity_tests.rs and the \
-         parallel copy in this file:\n  - {}",
+         new) add it to `silt::lexer::KEYWORDS`:\n  - {}",
         stray.join("\n  - ")
     );
 }

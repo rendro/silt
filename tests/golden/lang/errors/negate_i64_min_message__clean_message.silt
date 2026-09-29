@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: integer overflow: negate -9223372036854775808
+-- stderr-not-contains: --9223372036854775808
+fn main() {
+    let x: Int = 0 - 9223372036854775807 - 1
+    let y = -x
+    println(y)
+}

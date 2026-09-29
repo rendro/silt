@@ -1,0 +1,4 @@
+import list
+fn main() {
+  println(list.zip(0..4, 10..14))
+}

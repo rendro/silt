@@ -1,0 +1,6 @@
+-- `==` on closed-row anonymous records with different values gives false.
+fn main() {
+  let a = {x: 1}
+  let b = {x: 2}
+  println(a == b)
+}

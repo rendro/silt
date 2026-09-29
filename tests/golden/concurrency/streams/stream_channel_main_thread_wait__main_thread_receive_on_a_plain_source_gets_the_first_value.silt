@@ -1,0 +1,12 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- The same without any slow stage: a plain source has not pushed its
+-- first element yet when the main thread receives right after creating
+-- it. This is the race against the start of the stream thread.
+import channel
+import stream
+
+fn main() {
+  let out = stream.from_list([7, 8, 9])
+  println(channel.receive(out))
+}

@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.product_float([])) }

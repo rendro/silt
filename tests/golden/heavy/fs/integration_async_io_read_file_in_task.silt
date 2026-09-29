@@ -1,0 +1,12 @@
+-- repeat: 3
+-- Paths are relative: the harness runs each case in a fresh temporary copy.
+import io
+import task
+
+fn main() {
+  let _ = io.write_file("async.txt", "hello async")
+  let h = task.spawn(fn() {
+    io.read_file("async.txt")
+  })
+  println(io.inspect(task.join(h)))
+}

@@ -1,0 +1,7 @@
+-- A user `trait Greet for Unit` impl dispatches on a `()` receiver.
+trait Greet { fn greet(self) -> String }
+trait Greet for Unit { fn greet(self) -> String = "hi" }
+fn main() {
+  let u = ()
+  println(u.greet())
+}

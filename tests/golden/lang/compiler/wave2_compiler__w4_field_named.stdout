@@ -1,0 +1,2 @@
+cannot decode field `tags` of `Inner`: a value of type List(Set(Int)) cannot be decoded
+cannot decode field `tags` of `Inner`: a value of type List(Set(Int)) cannot be decoded

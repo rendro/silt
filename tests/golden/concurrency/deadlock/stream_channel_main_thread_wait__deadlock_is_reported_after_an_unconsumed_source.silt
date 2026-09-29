@@ -1,0 +1,15 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- A finite source that is never read: 100 elements do not fit its
+-- buffer, so its thread stays alive.
+import channel
+import stream
+
+fn main() {
+  let never_read = stream.from_range(1, 100)
+  println("before")
+  let fresh = channel.new(0)
+  channel.receive(fresh)
+  println("unreachable")
+}

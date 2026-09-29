@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: pad_right
+-- stderr-contains: 1-character
+-- stderr-contains: non-empty
+import string
+fn main() {
+  println(string.pad_right("x", 5, ""))
+}

@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: invalid code point
+-- stderr-contains: 4294967337
+-- Regression: an unchecked `as u32` cast silently wrapped i64 values
+-- outside the u32 range. e.g. 4294967337 (u32::MAX + 42) wraps to 41
+-- and would return ")" instead of erroring, and -4294967256 wraps to
+-- 40 and would return "(". Both must error with a message containing
+-- the original out-of-range value.
+-- Positive value beyond u32::MAX that wraps to 41 = ')'.
+-- Negative value whose low 32 bits equal 40 = '('. Must error, not
+-- silently produce a character.
+-- Guard against overcorrection: valid ASCII codepoints must still work.
+-- And a valid non-BMP codepoint (U+1F600 grinning face) must still work.
+import string
+fn main() { string.from_char_code(4294967337) }

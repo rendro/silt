@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.replace("\\d+", "abc 123 def 456", "NUM")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

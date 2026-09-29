@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: type mismatch
+-- A `()` match arm against a Unit scrutinee has no bogus type mismatch.
+fn main() {
+  let x = ()
+  match x { () -> println("hi") }
+}

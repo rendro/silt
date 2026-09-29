@@ -13,78 +13,14 @@
 //!     iff `na == nb && aa == ab`
 //!
 //! Cross-kind pairs still fall through to `_ => false` as before.
+//!
+//! The end-to-end `h == h` check is the golden case
+//! `tests/golden/lang/tasks/value_partial_eq_round26__handle_reflexivity_via_eq_operator`.
 
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 
 use silt::bytecode::{Function, VmClosure};
 use silt::value::{TaskHandle, Value};
-
-// ── End-to-end silt binary test ────────────────────────────────────
-
-fn silt_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
-        return PathBuf::from(p);
-    }
-    let mut p = std::env::current_exe().unwrap();
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    p.push("silt");
-    p
-}
-
-/// End-to-end: `let h = task.spawn(fn() { 42 }); println(h == h)` must
-/// print `true`. Before the fix, the `_ => false` arm of `PartialEq`
-/// returned `false` for reflexive `Handle` comparison, and the silt
-/// `==` operator surfaced that as the user-visible `false`.
-#[test]
-fn test_handle_reflexivity_via_silt_eq_operator() {
-    let src = r#"
-import task
-
-fn main() {
-  let h = task.spawn { -> 42 }
-  let r = task.join(h)
-  -- `h == h` must be true. Before round-26 L6 fix, this printed false.
-  println(h == h)
-  -- Consume `r` so it's not flagged as unused.
-  match r == 42 {
-    true -> println("joined")
-    false -> println("wrong")
-  }
-}
-"#;
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_vpe26_{}_{}.silt",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::write(&tmp, src).unwrap();
-    let output = Command::new(silt_bin())
-        .arg("run")
-        .arg(&tmp)
-        .output()
-        .expect("failed to run silt binary");
-    let _ = std::fs::remove_file(&tmp);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert!(
-        lines.contains(&"true"),
-        "expected `h == h` to print true; got stdout={stdout:?} stderr={stderr:?}"
-    );
-    assert!(
-        lines.contains(&"joined"),
-        "expected join to return 42; got stdout={stdout:?} stderr={stderr:?}"
-    );
-}
 
 // ── Rust-level unit tests ──────────────────────────────────────────
 

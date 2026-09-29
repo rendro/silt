@@ -1,0 +1,14 @@
+type Wrapped {
+  Box(Int)
+}
+
+fn wrap(n) {
+  let w = Wrapped.Box(n)
+  match w {
+    Box(v) -> v + 1
+  }
+}
+
+fn main() {
+  println("{wrap(41)}")
+}

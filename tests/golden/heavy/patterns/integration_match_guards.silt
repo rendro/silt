@@ -1,0 +1,16 @@
+import io
+fn classify(n) {
+  match n {
+    0 -> "zero"
+    x when x > 0 -> "positive"
+    _ -> "negative"
+  }
+}
+
+fn program() {
+  [classify(-5), classify(0), classify(42)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

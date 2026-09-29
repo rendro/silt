@@ -1,0 +1,10 @@
+-- Form convention: `+` is decoded as a space in values.
+import io
+import http
+fn program() {
+  http.parse_query("greeting=hello+world")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 0
+-- Under `where t: Ord2`, the supertrait's `eq2` is callable.
+trait Eq2 {
+  fn eq2(self, other: Self) -> Bool
+}
+
+trait Ord2: Eq2 {
+  fn lt2(self, other: Self) -> Bool
+}
+
+type Foo { v: Int }
+
+trait Eq2 for Foo {
+  fn eq2(self, other: Foo) -> Bool { self.v == other.v }
+}
+
+trait Ord2 for Foo {
+  fn lt2(self, other: Foo) -> Bool { self.v < other.v }
+}
+
+-- This should typecheck because Eq2 is a supertrait of Ord2.
+fn cmp(a: t, b: t) -> Bool where t: Ord2 {
+  match a.eq2(b) {
+    true -> false
+    false -> a.lt2(b)
+  }
+}
+
+fn main() {
+  let x = Foo { v: 1 }
+  let y = Foo { v: 2 }
+  println(cmp(x, y))
+}

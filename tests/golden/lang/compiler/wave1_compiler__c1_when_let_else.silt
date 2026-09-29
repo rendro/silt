@@ -1,0 +1,24 @@
+fn f(p) {
+  when let (Some(a), 1) = p else {
+    return 1 + match 2 {
+      2 -> 10
+      _ -> 20
+    }
+  }
+  a
+}
+
+fn pick(opt, x) {
+  when let Some(x) = opt else {
+    return x + 100
+  }
+  x
+}
+
+fn main() {
+  println(f((Some(5), 1)))
+  println(f((Some(5), 2)))
+  println(f((None, 1)))
+  println(pick(Some(1), 7))
+  println(pick(None, 7))
+}

@@ -1,0 +1,5 @@
+import map
+fn main() {
+  let m = map.update(map.from_entries([(1, 10)]), 1, 0, fn(v){ v + 5 })
+  println(map.get(m, 1))
+}

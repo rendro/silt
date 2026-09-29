@@ -1,0 +1,12 @@
+import io
+fn program() {
+  match 5 {
+    n when n > 10 -> "big"
+    n when n > 3 -> "medium"
+    _ -> "small"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

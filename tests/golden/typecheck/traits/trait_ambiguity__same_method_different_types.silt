@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- The same method name from two traits on different types is fine.
+trait A { fn show(self) -> String }
+trait B { fn show(self) -> String }
+trait A for Int { fn show(self) -> String { "int" } }
+trait B for String { fn show(self) -> String { self } }
+fn main() {
+  println((5).show())
+  println(("hi").show())
+}

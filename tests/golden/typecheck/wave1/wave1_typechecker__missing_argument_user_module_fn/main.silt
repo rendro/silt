@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expects 2 arguments, got 1
+-- stderr-not-contains: error[runtime]
+-- One argument too few on a user module function is rejected at the call.
+import util
+fn main() {
+  let x: Int = util.add(1)
+  println(x)
+}

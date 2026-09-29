@@ -1,0 +1,8 @@
+import encoding
+import list
+fn main() {
+  match encoding.form_decode("&a=1&&b=2&") {
+    Ok(pairs) -> println(list.length(pairs))
+    Err(_) -> println(-1)
+  }
+}

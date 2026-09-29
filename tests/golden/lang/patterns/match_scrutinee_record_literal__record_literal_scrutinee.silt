@@ -1,0 +1,12 @@
+type Pair(a, b) { left: a, right: b }
+fn demo() -> Int {
+  match Pair { left: 1, right: "hi" } {
+    Pair { left: x, right: y } -> x
+  }
+}
+fn main() {
+  match Pair { left: 1, right: "hi" } {
+    Pair { left: x, right: y } -> println(x)
+  }
+  println(demo())
+}

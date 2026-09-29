@@ -1,0 +1,60 @@
+import list
+import map
+
+type P { a: Int, b: Int }
+
+trait Scale {
+  fn scale(self, by: Int) -> Int
+}
+
+trait Scale for Int {
+  fn scale(self, by: Int) -> Int {
+    self * by
+  }
+}
+
+fn main() {
+  let x = 5
+  println(P { a: 1, b: match x {
+    5 -> 50
+    _ -> 0
+  } })
+  let p = P { a: 1, b: 2 }
+  println(p.{ a: 7, b: {
+    let y = 4
+    y * 2
+  } })
+  let m = #{ "k": match x {
+    5 -> 9
+    _ -> 0
+  } }
+  println(map.get(m, "k"))
+  println(#[1, match x {
+    5 -> 2
+    _ -> 0
+  }])
+  println(list.length(1..match x {
+    5 -> 4
+    _ -> 0
+  }))
+  println(1000 > match x {
+    5 -> 50
+    _ -> 0
+  })
+  println(3.scale(match x {
+    5 -> 10
+    _ -> 0
+  }))
+  let rest = [8, 9]
+  println([1, ..rest, match x {
+    5 -> 10
+    _ -> 0
+  }])
+  println(match x {
+    5 -> 50
+    _ -> 0
+  } + match x {
+    5 -> 1
+    _ -> 0
+  })
+}

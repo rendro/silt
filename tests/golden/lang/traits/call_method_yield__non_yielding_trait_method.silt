@@ -1,0 +1,14 @@
+type Counter { n: Int }
+
+trait Describe { fn describe(self) -> String }
+
+trait Describe for Counter {
+  fn describe(self) -> String {
+    "count={self.n}"
+  }
+}
+
+fn main() {
+  let c = Counter { n: 42 }
+  println(c.describe())
+}
