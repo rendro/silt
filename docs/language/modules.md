@@ -161,7 +161,7 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `uuid` | UUID generation and parsing |
 
 The order of rows matches the order of entries in `BUILTIN_MODULES`; a
-parity-lock test in `tests/round74_modules_doc_lists_all_builtins_tests.rs`
+parity-lock test in `tests/meta/round74_modules_doc_lists_all_builtins_tests.rs`
 asserts that every entry appears in this listing.
 
 ## Circular imports

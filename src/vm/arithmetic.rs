@@ -195,7 +195,7 @@ impl Vm {
     /// function-shaped operands never reach this helper: they fall to
     /// `compare()`'s catch-all arm and keep its "cannot compare Fn and
     /// Fn" wording. Locked by
-    /// tests/container_fn_compare_runtime_gate_tests.rs.
+    /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
         if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
             return Err(VmError::new(

@@ -1,6 +1,6 @@
 //! Top-level help text, usage banners, and the shared signature/description
 //! alignment plumbing. Pulled out of `main.rs` so the banner helpers can
-//! share one source-of-truth and the `tests/cli_round26_tests.rs` lockers
+//! share one source-of-truth and the `tests/cli/cli_round26_tests.rs` lockers
 //! keep passing across refactors.
 
 use crate::cli::features::enabled_features;
@@ -20,8 +20,8 @@ pub(crate) fn usage_text() -> String {
     //
     // Alignment is structural: each row is `  <signature (padded to SIG_WIDTH)>  <desc>`.
     // Widen SIG_WIDTH if a new signature exceeds it — the help-row
-    // alignment tests in tests/cli_test_rendering_tests.rs and
-    // tests/cli_round26_tests.rs will fail otherwise.
+    // alignment tests in tests/cli/cli_test_rendering_tests.rs and
+    // tests/cli/cli_round26_tests.rs will fail otherwise.
     //
     // Round-26 L9.2: SIG_WIDTH widened to fit the full
     // `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`
@@ -110,7 +110,7 @@ pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-
 /// Single source of truth for the `silt check` usage banner line.
 /// Both the `--help` path and the "no arguments given" path render
 /// from this so they can't drift apart. A regression test in
-/// tests/cli.rs asserts the two banners are byte-identical.
+/// tests/cli/cli.rs asserts the two banners are byte-identical.
 ///
 /// Note: `--strict-effects` (Phase D effect-rows opt-in) is omitted
 /// from the banner to keep the row width bounded — it's documented
@@ -124,7 +124,7 @@ pub(crate) fn check_usage_banner() -> &'static str {
 /// Four code paths print this — `--help`, no-args, the watch
 /// dry-validation gate, and the missing-file-after-flags fallback.
 /// Keeping them all rendering from this helper is locked by
-/// `tests/run_banner_consistency_tests.rs::test_silt_run_banner_consistency_all_paths`.
+/// `tests/cli/run_banner_consistency_tests.rs::test_silt_run_banner_consistency_all_paths`.
 ///
 /// We deliberately keep `<file.silt>` (without optional brackets) so the
 /// banner stays byte-identical across paths even though `silt run` now

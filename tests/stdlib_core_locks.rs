@@ -15,7 +15,7 @@ use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
 
-// ── Helpers (mirrors tests/integration.rs) ──────────────────────────
+// ── Helpers (mirrors tests/heavy/integration.rs) ──────────────────────────
 
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
@@ -107,7 +107,7 @@ fn test_option_flat_map_some_applies_callback() {
     // Locks src/builtins/core.rs:163-166 — Some(v) invokes the
     // callback with v and returns its Option result directly (no
     // extra wrapping). The None branch is already covered by
-    // test_option_flat_map_none in tests/integration.rs.
+    // test_option_flat_map_none in tests/heavy/integration.rs.
     let result = run(r#"
 import option
 fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }

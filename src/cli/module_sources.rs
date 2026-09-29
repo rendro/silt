@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 /// package-dependency code fell back to the entry file's source and
 /// rendered "division by zero --> main.silt:<dep line>:<dep col>" with
 /// a caret on an unrelated line. Lock:
-/// tests/round93_dep_error_attribution_tests.rs.
+/// tests/lang/round93_dep_error_attribution_tests.rs.
 ///
 /// This is a *best-effort* mapping used solely to improve runtime-error
 /// rendering when an error propagates out of an imported module. Name

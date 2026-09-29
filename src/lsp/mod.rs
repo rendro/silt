@@ -66,8 +66,8 @@ use state::Document;
 pub use preload::path_to_file_uri;
 
 /// `is_user_renameable` is exposed via this re-export so integration
-/// tests (see `tests/builtin_types_authoritative_parity_tests.rs` and
-/// `tests/builtin_constructor_parity_tests.rs`) can call into the
+/// tests (see `tests/meta/builtin_types_authoritative_parity_tests.rs` and
+/// `tests/meta/builtin_constructor_parity_tests.rs`) can call into the
 /// rename guard without `pub`-ing the whole `rename` submodule.
 pub use rename::is_user_renameable;
 

@@ -652,9 +652,9 @@ pub fn canonical_name(ty: &Type) -> String {
 /// The two copies are hand-maintained duplicates with no automatic
 /// parity guarantee: if the canonicalisation rules ever change, both
 /// MUST be updated together. Doc-comment parity is locked by
-/// `tests/round86_canonicalize_type_name_doc_parity_tests.rs`; see
+/// `tests/meta/round86_canonicalize_type_name_doc_parity_tests.rs`; see
 /// also the architectural lock test in
-/// `tests/canonical_type_arch_lock_tests.rs`.
+/// `tests/meta/canonical_type_arch_lock_tests.rs`.
 pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
     let name_str = resolve(name);
     if name_str.as_str() == "Range" {
@@ -807,11 +807,11 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         //
         // Each arm is written out long-hand (rather than collapsed
         // via `|`-patterns) so the round-71 source-grep lock in
-        // `tests/round71_followup_fn_canonical_name_tests.rs` —
+        // `tests/lang/round71_followup_fn_canonical_name_tests.rs` —
         // which asserts the exact literal
         // `Value::VmClosure(_) => Some("Fn".to_string())` — keeps
         // matching. Round-77 lock:
-        // `tests/round77_for_fn_builtinfn_dispatch_tests.rs`.
+        // `tests/lang/round77_for_fn_builtinfn_dispatch_tests.rs`.
         Value::VmClosure(_) => Some("Fn".to_string()),
         Value::BuiltinFn(_) => Some("Fn".to_string()),
         Value::VariantConstructor(..) => Some("Fn".to_string()),

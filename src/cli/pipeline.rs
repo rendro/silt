@@ -681,7 +681,7 @@ pub(crate) fn compile_file(
     // F14 (audit round 17): print diagnostics with a blank line between
     // consecutive errors so multi-error output doesn't form a solid wall
     // of text. Matches rustc/gcc convention.
-    // Lock: tests/cli_test_rendering_tests.rs
+    // Lock: tests/cli/cli_test_rendering_tests.rs
     // `test_multiple_errors_render_with_blank_separator`.
     silt::errors::eprintln_errors_with_separator(&reportable_diagnostics(&result));
 

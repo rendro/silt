@@ -1,0 +1,38 @@
+//! Test suite: lexer, parser and formatter.
+//!
+//! One test binary; each module was a separate test crate before.
+
+mod annotation_arity_span_tests;
+mod caret_width_tests;
+mod effect_annotation_parse_tests;
+mod examples_fmt_check_tests;
+mod expr_position_keyword_hint_tests;
+mod formatter_examples_roundtrip_tests;
+mod formatter_idempotency_tests;
+mod formatter_line_comment_tests;
+mod formatter_map_set_multiline_tests;
+mod formatter_null_comment_tests;
+mod formatter_round35_tests;
+mod formatter_trailing_comma_extended_tests;
+mod formatter_trailing_comma_tests;
+mod lexer_unknown_escape_span_tests;
+mod module_multi_parse_error_tests;
+mod parse_recovery_tests;
+mod parser_strict_commas_tests;
+mod parser_unclosed_delim_recovery_tests;
+mod pipe_question_precedence_tests;
+mod round100_lexer_control_char_escape_tests;
+mod round101_lexer_string_escape_control_char_tests;
+mod round101_vm_error_prefix_comment_drift_tests;
+mod round75_formatter_trait_params_where_tests;
+mod round79_parser_dup_field_caret_tests;
+mod round81_parser_dup_anon_type_field_caret_tests;
+mod round84_formatter_bracket_interior_comment_preserved_tests;
+mod round85_formatter_inline_record_interior_comment_preserved_tests;
+mod round92_deep_expr_tests;
+mod round92_parser_hint_tests;
+mod round93_parser_hint_tests;
+mod round97_formatter_close_line_comment_tests;
+mod string_token_display_control_escape_tests;
+mod trait_param_diagnostic_span_tests;
+mod type_param_parser_tests;

@@ -5836,7 +5836,7 @@ impl TypeChecker {
             // Option/Result/Tuple/Map/Set, see `non_ordering_traits`),
             // and the gate honours that exclusion — synth would
             // otherwise produce a `Compare:Option` impl that breaks
-            // `tests/trait_init_parity_tests.rs`.
+            // `tests/cli/trait_init_parity_tests.rs`.
             let policy_allows =
                 |trait_sym: Symbol| -> bool { self.trait_impl_set.contains(&(trait_sym, key)) };
 
@@ -8788,7 +8788,7 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
 
 /// Snapshot every nominal record / enum name registered by
 /// `register_builtins`. Used by the round-82 parity test in
-/// `tests/round82_stdlib_types_registry_tests.rs` to lock the central
+/// `tests/typecheck/round82_stdlib_types_registry_tests.rs` to lock the central
 /// registry (`module::BUILTIN_STDLIB_TYPE_NAMES`) against runtime
 /// state. Routes through a fresh `TypeChecker` so the snapshot reflects
 /// every per-module `register` callback's effect on `checker.records`
@@ -9008,7 +9008,7 @@ pub fn builtin_effects() -> std::collections::HashMap<String, crate::types::effe
 
 /// Test-only: iterate `(qualified_name, scheme)` for every built-in
 /// binding registered by `register_builtins`. The Phase C
-/// `tests/effect_stdlib_sweep_lock_tests.rs` lock test consumes this
+/// `tests/meta/effect_stdlib_sweep_lock_tests.rs` lock test consumes this
 /// to assert no builtin remains at `EffectSet::TOP` after the sweep.
 #[doc(hidden)]
 pub fn iter_builtins_for_effects_audit() -> Vec<(String, crate::types::effects::EffectSet)> {
@@ -9027,7 +9027,7 @@ pub fn iter_builtins_for_effects_audit() -> Vec<(String, crate::types::effects::
 
 /// Test-only: iterate `(qualified_name, doc)` for every built-in name
 /// that has a registered doc. Used by the parity walker
-/// (`tests/docs_stdlib_println_parity_tests.rs`) to scan inlined
+/// (`tests/meta/docs_stdlib_println_parity_tests.rs`) to scan inlined
 /// markdown for `\`\`\`silt` fenced blocks with `println(...) --
 /// expected` annotations and run them against `silt run`.
 #[doc(hidden)]
@@ -9039,7 +9039,7 @@ pub fn iter_builtin_docs() -> Vec<(String, String)> {
 
 /// Test-only introspection: collect the auto-derived trait-impl and
 /// method registrations produced by the two init paths so the parity
-/// test under `tests/trait_init_parity_tests.rs` can assert they agree.
+/// test under `tests/cli/trait_init_parity_tests.rs` can assert they agree.
 ///
 /// Returns `(trait_impls, method_keys)` where:
 /// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
@@ -9105,7 +9105,7 @@ pub fn __trait_init_fingerprint_repl() -> (
 ///    supertrait_args_count, default_method_bodies_count,
 ///    params_count, supertraits_count, param_where_clauses_count)
 ///
-/// Used by `tests/typechecker_builtin_trait_registration_parity_tests.rs`
+/// Used by `tests/meta/typechecker_builtin_trait_registration_parity_tests.rs`
 /// to lock the semantics of the round-61 dead-code collapse: the four
 /// near-identical TraitInfo construction blocks were replaced with a
 /// single parameterised helper, and this fingerprint proves the

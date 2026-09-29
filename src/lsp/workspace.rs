@@ -412,7 +412,7 @@ fn qualified_head_span(head_span: Span, name: Symbol, source: &str) -> Option<Sp
     let name_str = resolve_sym(name);
     let off = super::text_utils::qualified_head_name_offset(source, head_span.offset, &name_str)?;
     // Shared offset->Span math — see text_utils::span_at_offset (dedup lock:
-    // tests/lsp_span_at_offset_dedup_lock_tests.rs).
+    // tests/lsp/lsp_span_at_offset_dedup_lock_tests.rs).
     Some(super::text_utils::span_at_offset(source, off))
 }
 
@@ -568,7 +568,7 @@ fn loop_binder_span(init_span: Span, name: Symbol, source: &str) -> Option<Span>
         }
     }
     // Shared offset->Span math — see text_utils::span_at_offset (dedup lock:
-    // tests/lsp_span_at_offset_dedup_lock_tests.rs).
+    // tests/lsp/lsp_span_at_offset_dedup_lock_tests.rs).
     Some(super::text_utils::span_at_offset(source, off))
 }
 

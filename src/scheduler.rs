@@ -102,7 +102,7 @@ const MAX_RECORDED_FAILURES: usize = 64;
 /// `handle.clone()` runs. This widens the F10 race window (a concurrent
 /// `task.cancel(h)` firing the cleanup mid-setup) from nanoseconds to
 /// milliseconds so the regression test in
-/// `tests/scheduler_cancel_setup_race_tests.rs` can deterministically
+/// `tests/concurrency/scheduler_cancel_setup_race_tests.rs` can deterministically
 /// reproduce the panic pre-fix.
 ///
 /// Gated on `cfg(any(test, feature = "test-hooks"))` along with the
@@ -2082,8 +2082,8 @@ mod tests {
     // helper and dropped the decrement) fails exactly that family's
     // test. The Select arm keeps its intentionally-different inline
     // cleanup and is covered end-to-end by
-    // `tests/scheduler_cancel_setup_race_tests.rs` and
-    // `tests/cancel_path_waker_leak_tests.rs`.
+    // `tests/concurrency/scheduler_cancel_setup_race_tests.rs` and
+    // `tests/concurrency/cancel_path_waker_leak_tests.rs`.
 
     /// Submit `src`, wait until the task has parked (unsettled_tasks
     /// drains to 0 — decremented only after the per-arm cleanup +
@@ -2587,6 +2587,6 @@ fn main() {{
     // exercised by that test no longer has a way to declare a deadlock —
     // it requires a main-thread VM that is parked on a primitive. The
     // analogous program-level coverage lives in
-    // `tests/scheduler_deadlock_detector_tests.rs::test_real_deadlock_*`
-    // and the integration tests in `tests/integration.rs`.
+    // `tests/concurrency/scheduler_deadlock_detector_tests.rs::test_real_deadlock_*`
+    // and the integration tests in `tests/heavy/integration.rs`.
 }

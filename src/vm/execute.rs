@@ -171,14 +171,14 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// `is_valid_compare_operand`), keeping the runtime and compile-time
 /// layers in parity. Rust-level collection keying / dedup uses `PartialEq
 /// for Value` directly, not this operator path (see
-/// tests/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
+/// tests/typecheck/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
 /// collection builtins that consume that ordering/equality (list.sort /
 /// unique / contains / index_of, set.from_list / insert / contains /
 /// remove and the set algebra ops) carry their own mirror of this gate:
 /// `ensure_no_fn` in src/builtins/collections.rs, locked by
-/// tests/collection_builtin_fn_gate_tests.rs. Locked by
-/// tests/round96_eq_fn_runtime_tests.rs and
-/// tests/container_fn_compare_runtime_gate_tests.rs.
+/// tests/lang/collection_builtin_fn_gate_tests.rs. Locked by
+/// tests/lang/round96_eq_fn_runtime_tests.rs and
+/// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
     if Vm::value_contains_fn(val) {
         Some("Fn")
@@ -458,7 +458,7 @@ fn apply_callback_result(
             // unbounded (src/typechecker/builtins/list.rs), so the
             // typechecker never rejects Fn keys; the trait name matches
             // the static map-key contract (`k: Hash` on `map.get`/`set`).
-            // Locked by tests/collection_fn_gate_sibling_surfaces_tests.rs.
+            // Locked by tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
             if Vm::value_contains_fn(&result) {
                 return Err(VmError::new(format!(
                     "{}: type 'Fn' does not implement Hash",
@@ -1279,7 +1279,7 @@ impl Vm {
                     // to the builtin dispatch site. (Audit L2 callback-frame
                     // erasure — rounds 1-15 deferred, round 16 fix.)
                     //
-                    // Lock: tests/callback_frame_capture_tests.rs
+                    // Lock: tests/lang/callback_frame_capture_tests.rs
                     // `test_resume_suspended_invoke_preserves_callback_frame`
                     // mutates this line and asserts the callback-body span
                     // disappears (snaps back to the `channel.each` call site).
@@ -1635,7 +1635,7 @@ impl Vm {
                     // `value_implements_display` (below) so the runtime gate
                     // and the surface-name reporting cannot drift from the
                     // `type_name` oracle. Parity is locked by
-                    // tests/round95_interp_display_runtime_tests.rs.
+                    // tests/typecheck/round95_interp_display_runtime_tests.rs.
                     _ if !Self::value_implements_display(&val) => {
                         // Report the canonical surface name so the runtime
                         // message matches the typechecker's compile-time one
@@ -1807,7 +1807,7 @@ impl Vm {
                     // then surfaces the remaining chain with a "... (N more
                     // frames)" marker for long chains.
                     //
-                    // Lock: tests/callback_frame_capture_tests.rs
+                    // Lock: tests/lang/callback_frame_capture_tests.rs
                     // `test_tail_call_chain_preserves_caller_frames_in_call_stack`
                     // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
                     let depth = self.frames.len().saturating_sub(1);

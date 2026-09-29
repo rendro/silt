@@ -24,7 +24,7 @@ use crate::value::Value;
 //
 // The deadness instrumentation (six atomic counters + their
 // reset/snapshot helpers) was removed alongside the arms. The
-// barrage in `tests/auto_derive_dead_arm_proof_tests.rs` now
+// barrage in `tests/meta/auto_derive_dead_arm_proof_tests.rs` now
 // stands as a behavioural lock — every shape (user and built-in)
 // must produce the expected output, which it cannot do via the
 // catch-all error arm that remains in `dispatch_trait_method`.
@@ -101,7 +101,7 @@ type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
 /// in the table — the gate must match the gate on the corresponding
 /// `call_*_error_trait` symbol.
 ///
-/// Lock test: `tests/round73_error_enum_registry_parity_tests.rs`.
+/// Lock test: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
 static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
     ("IoError", builtins::io::call_io_error_trait),
     ("JsonError", builtins::data::call_json_error_trait),
@@ -166,8 +166,8 @@ impl Vm {
         // (the prelude registry mirrors `module::builtin_enum_variants`
         // minus the error enums; the error registry parallels
         // `src/typechecker/builtins/errors.rs::register`), and the
-        // parity tests at `tests/error_enum_dispatch_parity_tests.rs`
-        // and `tests/round71_dispatch_collapse_and_parity_tests.rs`
+        // parity tests at `tests/meta/error_enum_dispatch_parity_tests.rs`
+        // and `tests/meta/round71_dispatch_collapse_and_parity_tests.rs`
         // keep them in lockstep on `(variant, arity)`. Each variant is
         // globally unique (module-prefixed for error enums) so we
         // register every entry as a bare global.
@@ -218,7 +218,7 @@ impl Vm {
         // Round-73 BLOAT-1 fix: derived from
         // `module::builtin_error_enum_variants_with_arity` so adding a
         // new typed-error enum no longer requires editing this list.
-        // Parity lock: `tests/round73_error_enum_registry_parity_tests.rs`.
+        // Parity lock: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
         for (enum_name, _variants) in module::builtin_error_enum_variants_with_arity() {
             let key = format!("{enum_name}.message");
             self.globals
@@ -256,7 +256,7 @@ impl Vm {
         // module.rs is the single source of truth — adding a new free
         // function (e.g. `eprintln`, `assert`) only requires touching
         // the registry plus the typechecker registration site.
-        // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+        // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
         for &name in module::builtin_free_function_names() {
             self.globals
                 .insert(name.into(), Value::BuiltinFn(name.into()));

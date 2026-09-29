@@ -307,7 +307,7 @@ fn format_module_source_error(
     // truncated module files (e.g. `pub fn broken(\n` with an EOF on
     // line 2) produce a header-only error with no caret line — the G1
     // audit finding.
-    // Lock: tests/modules.rs `test_module_parse_error_eof_renders_snippet`.
+    // Lock: tests/lang/modules.rs `test_module_parse_error_eof_renders_snippet`.
     let clamped_span = crate::errors::clamp_span_to_source(span, source);
     let mut out = format!(
         "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
@@ -383,7 +383,7 @@ fn format_module_source_error(
 /// (e.g. a dependency under ~/.silt/deps) we fall back to the raw
 /// path, because any synthetic prefix-stripping there would lie about
 /// where the file actually lives. Lock:
-/// tests/compiler_module_path_norm_round36_tests.rs.
+/// tests/lang/compiler_module_path_norm_round36_tests.rs.
 ///
 /// The result is only ever printed, so it is escaped by the display rule
 /// (`crate::git::escape_for_display`): a directory name holding a control
@@ -1682,7 +1682,7 @@ impl Compiler {
         // confined to a single package render with bare module names
         // (`a -> b -> c -> a`); cross-package cycles use the qualified
         // `pkg::module` form so the boundary is visible in the message.
-        // Lock: tests/modules.rs `test_circular_import_error_includes_full_chain`.
+        // Lock: tests/lang/modules.rs `test_circular_import_error_includes_full_chain`.
         if self.compiling_modules.contains(&resolved.cache_key) {
             let cycle_start = self
                 .compiling_modules_stack
@@ -1949,7 +1949,7 @@ impl Compiler {
             // `compile_file_module_inner` (line ~1466) so the diagnostic
             // would carry a real file path, line, column, and snippet if
             // this function's error path is ever propagated.
-            // Lock: tests/round83_anonrec_spread_eq_tests.rs grep-asserts
+            // Lock: tests/lang/round83_anonrec_spread_eq_tests.rs grep-asserts
             // the old wording never returns.
             let file_display = normalize_module_path(&resolved.file_path);
             let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
@@ -2041,7 +2041,7 @@ impl Compiler {
         //
         // Mirrors the `normalize_path` helper in `src/cli/run.rs` that does
         // the same job for runtime SourceError rendering. Lock:
-        // tests/compiler_module_path_norm_round36_tests.rs.
+        // tests/lang/compiler_module_path_norm_round36_tests.rs.
         let file_display = normalize_module_path(file_path);
 
         let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
@@ -3325,8 +3325,8 @@ impl Compiler {
                     // `Value::Hash` treat `<anon>` as a wildcard on either
                     // side, which closes the equality, ordering, and
                     // hashing surfaces uniformly without a runtime
-                    // rebrand. Locks: tests/round83_anonrec_spread_eq_tests.rs
-                    // (PartialEq), tests/round85_anonrec_hash_ord_contract_tests.rs
+                    // rebrand. Locks: tests/lang/round83_anonrec_spread_eq_tests.rs
+                    // (PartialEq), tests/typecheck/round85_anonrec_hash_ord_contract_tests.rs
                     // (Hash + Ord + Set contract).
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(

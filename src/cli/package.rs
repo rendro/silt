@@ -203,7 +203,7 @@ pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
 /// When the package is lib-only and the caller requires main, the
 /// diagnostic names both ways out (`silt check` works on library-only
 /// packages; add a `main.silt` to run). Lock:
-/// tests/round93_lib_check_tests.rs.
+/// tests/lang/round93_lib_check_tests.rs.
 pub(crate) fn resolve_package_entry_point_for(kind: EntryPointKind) -> Result<Option<PathBuf>, ()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (root, _manifest) = match find_project_root(&cwd) {

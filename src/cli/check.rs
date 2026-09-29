@@ -159,8 +159,8 @@ pub(crate) fn check_file(path: &str, format: OutputFormat, strict_effects: bool)
     // (`cli::source_scan`), the same ones `silt run` and `silt test`
     // consult.
     //
-    // Lock: tests/empty_program_diagnostic_tests.rs and
-    // tests/examples_check.rs (every_example_type_checks_and_has_no_warnings).
+    // Lock: tests/lang/empty_program_diagnostic_tests.rs and
+    // tests/lang/examples_check.rs (every_example_type_checks_and_has_no_warnings).
     let missing_main_err: Option<SourceError> = match &result.program {
         Some(program)
             if errors.is_empty()

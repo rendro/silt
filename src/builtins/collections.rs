@@ -117,7 +117,7 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
 /// src/vm/execute.rs; deliberately NOT enforced as a static `where`
 /// bound on the builtin signatures because that would reject currently
 /// working programs (e.g. sorting tuples or NaN-bearing floats via
-/// `Value::cmp`). Locked by tests/collection_builtin_fn_gate_tests.rs.
+/// `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///
 /// The contains-a-fn walk delegates to `Vm::value_contains_fn`
 /// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
@@ -126,7 +126,7 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
 /// here: a new container `Value` variant added to one copy but not the
 /// other would silently split gate behavior between the operator and
 /// builtin surfaces. Single-definition is pinned by
-/// tests/value_contains_fn_dedup_lock_tests.rs.
+/// tests/meta/value_contains_fn_dedup_lock_tests.rs.
 fn ensure_no_fn(fn_name: &str, trait_name: &str, vals: &[&Value]) -> Result<(), VmError> {
     for v in vals {
         if Vm::value_contains_fn(v) {

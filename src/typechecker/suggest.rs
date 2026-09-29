@@ -129,7 +129,7 @@ mod tests {
         // `foo` → `Bool` is distance 2, max 4. Under the tightened
         // short-pair cap (d <= 1) this must NOT produce a hint — it
         // was the canonical low-signal suggestion the old d<=2 cap
-        // surfaced. Lock: tests/suggest_threshold_tests.rs.
+        // surfaced. Lock: tests/lang/suggest_threshold_tests.rs.
         assert_eq!(suggest_similar("foo", ["Bool"].iter()), None);
     }
 

@@ -943,7 +943,7 @@ impl TypeChecker {
         // Free-function names sourced from
         // `crate::module::builtin_free_function_names()` so adding a
         // new free function automatically attaches its docs here (parity lock:
-        // `tests/builtin_free_function_parity_tests.rs`). The
+        // `tests/meta/builtin_free_function_parity_tests.rs`). The
         // constructor subset below is the specific list documented in
         // `GLOBALS_MD` — NOT the full builtin-constructor universe
         // (Monday/IoNotFound/... have per-module docs); leave this

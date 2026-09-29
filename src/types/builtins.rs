@@ -6,7 +6,7 @@
 //! built-in type was added. This module is the single place to add or
 //! remove a built-in type name; every consumer derives from
 //! [`BUILTIN_TYPES`] (or, for editor-grammar text files, is parity-locked
-//! against it via `tests/builtin_types_authoritative_parity_tests.rs`).
+//! against it via `tests/meta/builtin_types_authoritative_parity_tests.rs`).
 //!
 //! ## Adding a new built-in type
 //!

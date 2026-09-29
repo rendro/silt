@@ -57,7 +57,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // Route through the shared pure helper so the `--help`/`-h` path
     // prints the usage banner (and exits 0) BEFORE the rebuild hint.
     // The disabled-feature regression suite at
-    // tests/round88_disabled_feature_help_tests.rs exercises the
+    // tests/lang/round88_disabled_feature_help_tests.rs exercises the
     // helper directly so this branch is covered regardless of which
     // features the test binary was compiled with.
     let tail: &[String] = if args.len() > 2 { &args[2..] } else { &[] };

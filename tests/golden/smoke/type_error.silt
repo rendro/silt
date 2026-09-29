@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: type_error.silt:6:
+fn main() {
+  let x: Int = "s"
+  println(x)
+}

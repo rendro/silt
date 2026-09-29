@@ -1,0 +1,13 @@
+# nextest configuration (CI runs the tests with cargo-nextest).
+#
+# The `concurrency` suite's tests spawn scheduler threads and assert on
+# deadlock verdicts and timeouts. Running all of them at once oversubscribes
+# the CPU and turns their timing budgets into false failures, so they run in
+# a group with a bounded number of threads.
+
+[test-groups]
+concurrency = { max-threads = 4 }
+
+[[profile.default.overrides]]
+filter = 'binary(=concurrency)'
+test-group = 'concurrency'

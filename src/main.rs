@@ -48,7 +48,7 @@ use crate::cli::watch::maybe_handle_watch;
 // own silt-main gets the same reserve.
 //
 // Expressed as 32 × the historic 8 MiB reserve: the source-grep lock
-// in tests/main_stack_size_lock_tests.rs checks for the
+// in tests/cli/main_stack_size_lock_tests.rs checks for the
 // `8 * 1024 * 1024` factor as the "at least 8 MiB" floor.
 const SILT_STACK_SIZE: usize = 32 * 8 * 1024 * 1024;
 
@@ -201,7 +201,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// List of valid `silt` subcommands, used to power the "did you mean"
 /// hint for unknown commands. Must stay in sync with the match arms in
 /// [`run_main`] — a regression test in
-/// `tests/cli_help_and_unknown_subcommand_tests.rs` exercises a typo of
+/// `tests/cli/cli_help_and_unknown_subcommand_tests.rs` exercises a typo of
 /// each of these to lock them together.
 const SUBCOMMANDS: &[&str] = &[
     "run",

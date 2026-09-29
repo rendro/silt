@@ -124,7 +124,7 @@ fn push(out: &Channel, val: &Value) -> bool {
 /// `count` / `first` / `last`) translate it into the canonical `VmError`.
 /// Same in-band-marker pattern as `__MapMapTypeError__` in
 /// src/builtins/collections.rs. Locked by
-/// tests/collection_fn_gate_sibling_surfaces_tests.rs.
+/// tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
 const STREAM_TYPE_ERROR_TAG: &str = "__StreamTypeError__";
 
 /// Build the in-band error marker for a pump-thread type error.

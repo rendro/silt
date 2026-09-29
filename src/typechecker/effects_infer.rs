@@ -473,7 +473,7 @@ fn scheme_effects_of(name: Symbol, env: &TypeEnv, aliases: &AliasMap) -> EffectS
 
 #[cfg(test)]
 mod tests {
-    //! Public-API exercises live in `tests/effect_inference_phase_a_tests.rs`.
+    //! Public-API exercises live in `tests/typecheck/effect_inference_phase_a_tests.rs`.
     //! This block holds only narrow unit-tests of the effect-walking helpers
     //! that don't need a real `TypeEnv` to be meaningful.
     use super::*;

@@ -296,7 +296,7 @@ fn err(v: Value) -> Value {
 /// Rust callers that need the full un-redacted error can still call
 /// `postgres::Error::as_db_error()` directly on the original error.
 /// The scrub only applies to strings destined for silt-side `PgError`.
-#[doc(hidden)] // Exposed for integration tests (tests/postgres_hardening_tests.rs).
+#[doc(hidden)] // Exposed for integration tests (tests/lang/postgres_hardening_tests.rs).
 pub fn redact_pg_message(s: &str) -> String {
     // Drop follow-on lines that Postgres uses for user-data callouts.
     let mut out = String::with_capacity(s.len());
@@ -2573,7 +2573,7 @@ mod tests {
     }
 
     /// Round-60 L6 behavioural companion to the source-grep lock in
-    /// tests/postgres_poisoned_lock_tests.rs. Force-poisons each of the
+    /// tests/meta/postgres_poisoned_lock_tests.rs. Force-poisons each of the
     /// three module-private registry mutexes (pool / tx / cursor) by
     /// panicking a background thread while it holds the guard, then
     /// exercises the recovery-pattern call sites and asserts they

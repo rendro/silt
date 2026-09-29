@@ -61,8 +61,8 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
 /// share one implementation.
 ///
 /// Locks: unit tests below (`display_path_for_*`), source-grep lock
-/// tests/round101_display_path_helper_lock_tests.rs, plus the
-/// behavioral rendering locks in tests/cli_test_rendering_tests.rs
+/// tests/meta/round101_display_path_helper_lock_tests.rs, plus the
+/// behavioral rendering locks in tests/cli/cli_test_rendering_tests.rs
 /// (`test_run_module_error_paths_consistently_normalized`,
 /// `test_test_setup_error_paths_normalized`,
 /// `test_cross_module_call_stack_uses_consistent_path_style`).

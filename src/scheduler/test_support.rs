@@ -2,8 +2,8 @@
 //!
 //! Phase 2 of the watchdog rewrite: replaces the `cargo run` ×
 //! N-iterations subprocess shape used by
-//! `tests/scheduler_deadlock_detector_tests.rs` and
-//! `tests/scheduler_race_tests.rs` with a thin wrapper that drives the
+//! `tests/concurrency/scheduler_deadlock_detector_tests.rs` and
+//! `tests/concurrency/scheduler_race_tests.rs` with a thin wrapper that drives the
 //! same invariants — exit code, stdout sum, stderr deadlock-or-not —
 //! through the public `Vm` / `Scheduler` API in the calling process.
 //!
