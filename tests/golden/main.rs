@@ -17,6 +17,8 @@ const CASE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One golden case: the program to run and what it must produce.
 struct Case {
+    /// Whether the case is a directory (a multi-file case).
+    is_dir: bool,
     /// The directory the binary runs in.
     dir: PathBuf,
     /// The file name passed to the binary, relative to `dir`.
@@ -122,6 +124,7 @@ fn load_case(path: &Path) -> Result<Case, String> {
     let source = std::fs::read_to_string(&source_path)
         .map_err(|e| format!("cannot read {}: {e}", source_path.display()))?;
     Ok(Case {
+        is_dir: path.is_dir(),
         dir,
         file,
         expected_base,
@@ -136,7 +139,45 @@ struct Output {
     timed_out: bool,
 }
 
+/// A fresh directory holding a copy of the case: the whole directory of a
+/// multi-file case, or the one file of a single-file case. The case runs
+/// there, so nothing it or `silt` writes (a lockfile, an output file)
+/// lands in the source tree.
+fn scratch_copy(case: &Case) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt-golden-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    if case.is_dir {
+        copy_dir(&case.dir, &dir);
+    } else {
+        std::fs::copy(case.dir.join(&case.file), dir.join(&case.file)).expect("copy case file");
+    }
+    dir
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    for entry in std::fs::read_dir(from).expect("read case dir").flatten() {
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if src.is_dir() {
+            std::fs::create_dir_all(&dst).expect("create dir");
+            copy_dir(&src, &dst);
+        } else {
+            std::fs::copy(&src, &dst).expect("copy file");
+        }
+    }
+}
+
 fn run_case(case: &Case) -> Output {
+    let scratch = scratch_copy(case);
+    let out = run_in(case, &scratch);
+    let _ = std::fs::remove_dir_all(&scratch);
+    out
+}
+
+fn run_in(case: &Case, dir: &Path) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
     command.args(&case.directives.cmd);
     // A REPL session reads its input from stdin, not from the file; the
@@ -145,7 +186,7 @@ fn run_case(case: &Case) -> Output {
         command.arg(&case.file);
     }
     command
-        .current_dir(&case.dir)
+        .current_dir(dir)
         .env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")
         .stdin(Stdio::piped())

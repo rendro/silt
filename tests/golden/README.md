@@ -43,7 +43,11 @@ Comparison:
   the exit status itself is the point (say `-- exit: 0` for "this compiles
   and runs").
 
-The harness runs the binary with the case's directory as the working
+The harness copies the case (the file, or the whole case directory) into
+a fresh temporary directory and runs the binary there, so nothing the
+program or `silt` writes (a `silt.lock`, an output file) touches the
+tree. A path dependency of a package case must live inside the case
+directory (`dep = { path = "dep" }`). It runs the binary with that copy as the working
 directory and the file name (or `main.silt`) as the argument, with
 `NO_COLOR=1` and no `FORCE_COLOR`, so paths in diagnostics are relative
 and stable: `--> main.silt:3:5`.
