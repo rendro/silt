@@ -292,12 +292,16 @@ fn portable_paths(text: &str) -> String {
         return text.to_string();
     }
     text.split_inclusive(|c: char| c.is_whitespace() || c == '`' || c == '\'')
-        .map(|token| {
-            if token.contains(".silt") {
-                token.replace('\\', "/")
-            } else {
-                token.to_string()
-            }
+        .map(|token| match token.rfind(".silt") {
+            // Only the path part, before the file name's end: a JSON
+            // string in the same token may hold escapes such as `\\n`.
+            // A path inside JSON has its separators escaped (`\\\\`).
+            Some(end) => format!(
+                "{}{}",
+                token[..end].replace("\\\\", "/").replace('\\', "/"),
+                &token[end..]
+            ),
+            None => token.to_string(),
         })
         .collect()
 }

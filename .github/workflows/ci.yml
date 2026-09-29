@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [heavy, concurrency, rest1, rest2]
+        partition: [heavy, concurrency, rest1, rest2, rest3]
     steps:
       - uses: actions/checkout@v6
 
@@ -118,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [heavy, concurrency, rest1, rest2]
+        partition: [heavy, concurrency, rest1, rest2, rest3]
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust toolchain
@@ -147,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [heavy, concurrency, rest1, rest2]
+        partition: [heavy, concurrency, rest1, rest2, rest3]
     steps:
       - name: Configure git for LF on Windows
         run: |

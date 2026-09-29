@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run one CI partition of the test suite.
 #
-# Usage: run-test-partition.sh <heavy|concurrency|rest1|rest2>
+# Usage: run-test-partition.sh <heavy|concurrency|rest1|rest2|rest3>
 #
 # The integration tests are grouped into suite binaries, one directory
 # each under tests/ (tests/<suite>/main.rs), plus a few standalone files
@@ -11,15 +11,15 @@
 #   - concurrency:  the `concurrency` suite, kept apart because its tests
 #                   spawn scheduler threads and are sensitive to CPU
 #                   contention from other suites.
-#   - rest1/rest2:  everything else, including the lib and bin unit tests,
-#                   split in two by nextest's hash partitioning so the
+#   - rest1..rest3: everything else, including the lib and bin unit tests,
+#                   split in three by nextest's hash partitioning so the
 #                   shards stay balanced as tests are added.
 #
 # A new test goes into the suite whose subject it tests; no list here
 # needs to change.
 set -euo pipefail
 
-partition="${1:?missing partition arg: heavy|concurrency|rest1|rest2}"
+partition="${1:?missing partition arg: heavy|concurrency|rest1|rest2|rest3}"
 runner="${SILT_TEST_RUNNER:-nextest}"
 nextest=false
 if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; then
@@ -46,13 +46,13 @@ case "$partition" in
       exec cargo test --all-features --test concurrency -- --test-threads=4
     fi
     ;;
-  rest1 | rest2)
+  rest1 | rest2 | rest3)
     if $nextest; then
       shard="${partition#rest}"
-      exec cargo nextest run --all-features -E "$rest_filter" --partition "hash:${shard}/2"
+      exec cargo nextest run --all-features -E "$rest_filter" --partition "hash:${shard}/3"
     else
       # Without nextest there is no hash partitioning: rest1 runs
-      # everything outside heavy and concurrency, rest2 nothing.
+      # everything outside heavy and concurrency, rest2 and rest3 nothing.
       if [[ "$partition" == "rest1" ]]; then
         suites=()
         for d in tests/*/; do
@@ -66,7 +66,7 @@ case "$partition" in
     fi
     ;;
   *)
-    echo "unknown partition: $partition (expected: heavy|concurrency|rest1|rest2)" >&2
+    echo "unknown partition: $partition (expected: heavy|concurrency|rest1|rest2|rest3)" >&2
     exit 2
     ;;
 esac
