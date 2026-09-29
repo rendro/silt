@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected <_ as Meta>::U, got <_ as Meta>::T
+trait Meta {
+  type T
+  type U
+  fn t(self) -> Self::T
+  fn u(self) -> Self::U
+}
+
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+fn bad(x: <<a as Meta>::T as Stream>::Item) -> <<a as Meta>::U as Stream>::Item where a: Meta {
+  x
+}
+
+fn main() {
+  println("x")
+}

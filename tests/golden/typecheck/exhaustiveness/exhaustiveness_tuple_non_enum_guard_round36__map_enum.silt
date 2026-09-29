@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match
+-- stderr-contains: not all patterns are covered
+type Color { Red, Green, Blue }
+fn main() {
+  let t = (#{ "k": 1 }, Red)
+  match t {
+    (#{ "k": 0 }, _) -> println("zero-keyed")
+  }
+}

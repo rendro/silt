@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected String
+import json
+type Todo { id: Int, title: String, done: Bool }
+
+fn use_body(body: String) {
+    let _ = json.parse(Todo, body)
+}
+
+fn main() {}

@@ -235,27 +235,6 @@ fn main() {
     );
 }
 
-/// End-to-end silt-level: a List literal and the matching Range must
-/// hash equal at the language level.
-#[test]
-fn silt_level_list_range_hash_eq() {
-    let src = r#"
-fn main() {
-  let a: List(Int) = [1, 2, 3]
-  let b: List(Int) = 1..3
-  println(a == b)
-  println(a.hash() == b.hash())
-}
-"#;
-    let (stdout, stderr, ok) = run_silt(src);
-    assert!(ok, "silt run failed; stderr={stderr}; stdout={stdout}");
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert!(
-        lines.iter().filter(|l| **l == "true").count() >= 2,
-        "expected two `true` lines (a == b AND a.hash() == b.hash()); got stdout={stdout:?}"
-    );
-}
-
 // ── Round 75 lock tightenings: reflexivity arms for opaque values ──
 //
 // The original round-74 contract tests covered Float↔ExtFloat and

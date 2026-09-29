@@ -1,0 +1,6 @@
+-- A body-less signature; `a` comes from a data param, `b` from a type param.
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: in return type is not introduced
+fn tag(x: a, type b) -> (a, b)
+fn main() {}

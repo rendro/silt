@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Box' expects 1 type argument, got 0 in supertrait bound
+type Box(a) { Boxed(a) }
+trait Carry(t) { fn carry(self, x: t) -> t }
+trait Holds: Carry(Box) { fn hold(self) -> Int }
+
+fn use_holds(x: t) -> Int where t: Holds {
+  x.hold()
+}
+
+fn main() { }

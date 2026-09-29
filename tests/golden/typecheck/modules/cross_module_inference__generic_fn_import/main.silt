@@ -1,0 +1,13 @@
+-- A generic fn imported from a sibling user module typechecks at two
+-- types, with no "unknown module" warning.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: unknown module
+-- stderr-not-contains: error
+import a
+
+fn main() {
+  let n = a.id(42)
+  let s = a.id("foo")
+  n
+}

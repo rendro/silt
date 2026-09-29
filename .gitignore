@@ -28,3 +28,7 @@
 /slow-unit-*
 /crash-*
 /timeout-*
+
+# Golden cases run in a temporary copy; a lockfile in a case directory
+# is an artefact of running one by hand.
+tests/golden/**/silt.lock

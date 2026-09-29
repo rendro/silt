@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Display2 {
+  fn display2(self) -> String
+}
+fn g(x: a) -> String where a: Display2 { x.display2() }
+fn main() { }

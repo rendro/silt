@@ -1,0 +1,9 @@
+-- Mutually importing modules: checking terminates (the case timeout is
+-- the real contract) and reports the cycle.
+-- cmd: check
+-- exit: 1
+import a
+
+fn main() {
+  a.fa()
+}

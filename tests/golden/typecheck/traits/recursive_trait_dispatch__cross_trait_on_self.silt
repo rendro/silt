@@ -1,0 +1,11 @@
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+
+trait Combined { fn combined(self) -> String }
+trait Combined for Int {
+  fn combined(self) -> String { "{self.greet()}-{self.loud()}" }
+}
+
+fn main() { println((1).combined()) }

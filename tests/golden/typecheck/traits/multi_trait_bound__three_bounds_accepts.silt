@@ -1,0 +1,18 @@
+trait MyEq { fn my_eq(self, other: Self) -> Bool }
+trait MyOrd { fn my_cmp(self, other: Self) -> Int }
+trait MyShow { fn my_show(self) -> String }
+trait MyEq for Int { fn my_eq(self, other: Int) -> Bool { self == other } }
+trait MyOrd for Int {
+  fn my_cmp(self, other: Int) -> Int {
+    match self < other {
+      true -> -1
+      false -> match self > other { true -> 1, false -> 0 }
+    }
+  }
+}
+trait MyShow for Int { fn my_show(self) -> String { "int" } }
+
+fn use_three(x: a, y: a) -> String where a: MyEq + MyOrd + MyShow {
+  match x.my_eq(y) { true -> x.my_show(), false -> "diff" }
+}
+fn main() { println(use_three(2, 2)) }

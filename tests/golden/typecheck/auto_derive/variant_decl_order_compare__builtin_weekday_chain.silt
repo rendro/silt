@@ -1,0 +1,11 @@
+import time
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Monday, Tuesday))
+    println(cmp_gen(Tuesday, Wednesday))
+    println(cmp_gen(Wednesday, Thursday))
+    println(cmp_gen(Thursday, Friday))
+    println(cmp_gen(Friday, Saturday))
+    println(cmp_gen(Saturday, Sunday))
+    println(cmp_gen(Monday, Saturday))
+}

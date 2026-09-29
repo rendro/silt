@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Color { Red, Green, Blue }
+fn main() {
+  let t = (true, Red)
+  match t {
+    (true, Red) -> println("a")
+    (true, Green) -> println("b")
+    (true, Blue) -> println("c")
+    (false, Red) -> println("d")
+    (false, Green) -> println("e")
+    (false, Blue) -> println("f")
+  }
+}

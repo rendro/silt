@@ -1,0 +1,11 @@
+-- Each call site instantiates the imported scheme freshly.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import a
+
+fn main() {
+  let n = a.id(42)
+  let s = a.id("hello")
+  s
+}

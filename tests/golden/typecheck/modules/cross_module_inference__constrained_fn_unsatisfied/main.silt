@@ -1,0 +1,11 @@
+-- An unsatisfied imported where-bound is a real call-site error, not the
+-- legacy "unknown module" warning.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'Greet'
+-- stderr-not-contains: unknown module
+import a
+
+fn main() {
+  a.announce("foo")
+}

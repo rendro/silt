@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate binding 'a'
+fn main() {
+  let ((a, b), a) = ((1, 2), 3)
+  println(a)
+}

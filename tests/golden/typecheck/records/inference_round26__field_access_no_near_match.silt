@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: no field or method 'completelydifferent'
+-- stderr-not-contains: did you mean
+type User { name: String, age: Int }
+fn main() {
+  let u = User { name: "Ann", age: 30 }
+  println(u.completelydifferent)
+}

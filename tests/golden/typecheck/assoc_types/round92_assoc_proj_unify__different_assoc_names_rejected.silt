@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected <_ as Pair>::First, got <_ as Pair>::Second
+trait Pair {
+  type First
+  type Second
+  fn first(self) -> Self::First
+  fn second(self) -> Self::Second
+}
+
+fn bad(s: a) -> <a as Pair>::First where a: Pair {
+  s.second()
+}
+
+fn main() {
+  println("x")
+}

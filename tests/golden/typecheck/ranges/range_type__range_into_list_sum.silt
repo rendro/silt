@@ -1,0 +1,5 @@
+import list
+fn main() {
+    let n: Int = list.sum(1..10)
+    println(n)
+}

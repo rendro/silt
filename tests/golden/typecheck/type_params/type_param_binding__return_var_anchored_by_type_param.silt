@@ -1,0 +1,6 @@
+-- A body-less signature: `a` is anchored by the `type a` parameter.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: in return type is not introduced
+fn default(type a) -> a
+fn main() {}

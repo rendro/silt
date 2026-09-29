@@ -1,0 +1,8 @@
+type Wrapped(a) { value: a }
+fn main() {
+    let w = Wrapped { value: 7 }
+    let v = Wrapped { value: 7 }
+    let u = Wrapped { value: 8 }
+    println(w.equal(v))
+    println(w.equal(u))
+}

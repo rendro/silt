@@ -1,0 +1,13 @@
+-- Int does not implement MyShow.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'MyShow'
+trait MyEq { fn my_eq(self, other: Self) -> Bool }
+trait MyOrd { fn my_cmp(self, other: Self) -> Int }
+trait MyShow { fn my_show(self) -> String }
+trait MyEq for Int { fn my_eq(self, other: Int) -> Bool { self == other } }
+trait MyOrd for Int { fn my_cmp(self, other: Int) -> Int { 0 } }
+fn use_three(x: a, y: a) -> String where a: MyEq + MyOrd + MyShow {
+  match x.my_eq(y) { true -> x.my_show(), false -> "diff" }
+}
+fn main() { println(use_three(1, 1)) }

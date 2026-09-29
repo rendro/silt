@@ -1,0 +1,14 @@
+-- The unsound program must not run and print "haha" (the empty .stdout
+-- file asserts nothing reaches stdout).
+-- exit: 1
+-- stderr-contains: error[type]
+trait Foo(a) { fn produce(self) -> a }
+trait Foo(Int) for String { fn produce(self) -> String = "haha" }
+fn use_foo(s: a) -> Int where a: Foo(Int) {
+  s.produce()
+}
+fn main() {
+  let s: String = "hi"
+  let r: Int = use_foo(s)
+  println(r)
+}

@@ -1,0 +1,7 @@
+import toml
+type Config { name: String }
+
+fn main() {
+    let content = "name = \"silt\""
+    println(content |> toml.parse(Config))
+}

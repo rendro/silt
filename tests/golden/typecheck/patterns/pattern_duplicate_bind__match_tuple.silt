@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate binding 'x'
+fn main() {
+  match (1, 2) {
+    (x, x) -> println(x)
+  }
+}

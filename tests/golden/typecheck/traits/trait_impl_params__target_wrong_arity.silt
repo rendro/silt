@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch
+-- stderr-contains: 'Box'
+-- stderr-contains: expected 1, got 2
+type Box(T) { Box(T) }
+trait X { fn x(self) -> Int }
+trait X for Box(a, b) {
+  fn x(self) -> Int { 1 }
+}
+fn main() {}

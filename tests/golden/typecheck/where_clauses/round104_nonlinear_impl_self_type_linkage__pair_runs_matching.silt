@@ -1,0 +1,10 @@
+type Pair(a) = (a, a)
+trait Show2 { fn show2(self) -> String }
+trait Show2 for Pair(a) where a: Display {
+  fn show2(self) -> String {
+    let (x, y) = self
+    "{x} and {y}"
+  }
+}
+fn describe(x: p) -> String where p: Show2 { x.show2() }
+fn main() { println(describe((1, 2))) }

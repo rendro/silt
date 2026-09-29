@@ -1,0 +1,5 @@
+type IntOp = Fn(Int) -> Int
+trait Apply1 { fn app(self) -> Int }
+trait Apply1 for IntOp { fn app(self) -> Int = self(41) + 1 }
+fn go(x: a) -> Int where a: Apply1 { x.app() }
+fn main() { println(go({ x -> x + 1 })) }

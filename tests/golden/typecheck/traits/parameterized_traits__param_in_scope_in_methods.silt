@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Box(b) {
+    fn get(self) -> b
+    fn set(self, x: b) -> Self
+}
+
+fn main() {}

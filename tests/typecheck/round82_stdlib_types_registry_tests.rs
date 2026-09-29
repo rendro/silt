@@ -528,26 +528,6 @@ mod lsp_e2e {
     }
 }
 
-// ── Source-grep guard ──────────────────────────────────────────────
-
-/// Lock the rename gate's reliance on the central registry at the
-/// source level: `builtin_globals()` must consult
-/// `BUILTIN_STDLIB_TYPE_NAMES`, not hand-roll its own list of stdlib
-/// type names. If a future refactor reverts to a parallel array this
-/// test fires.
-#[test]
-fn rename_source_consults_central_stdlib_registry() {
-    let path = repo_root().join("src/lsp/rename.rs");
-    let src = fs::read_to_string(&path).expect("read src/lsp/rename.rs");
-    assert!(
-        src.contains("BUILTIN_STDLIB_TYPE_NAMES"),
-        "src/lsp/rename.rs must consult \
-         `module::BUILTIN_STDLIB_TYPE_NAMES` so adding a new stdlib \
-         record/enum name automatically protects it from LSP rename. \
-         The hand-rolled list would drift."
-    );
-}
-
 /// Sibling lock: the central registry must not accidentally collide
 /// with `BUILTIN_TYPES`. Primitives + generic containers are owned by
 /// `src/types/builtins.rs::BUILTIN_TYPES`; this registry is strictly

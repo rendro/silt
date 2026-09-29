@@ -1,0 +1,3 @@
+-- `import list as l` then `l.sum` (a non-curated list function) runs.
+import list as l
+fn main() { println(l.sum([1, 2, 3])) }

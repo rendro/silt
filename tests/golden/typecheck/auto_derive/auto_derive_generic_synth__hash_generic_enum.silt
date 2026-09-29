@@ -1,0 +1,10 @@
+-- Equal generic-enum values hash equal; different payloads and the
+-- Just-vs-Nothing arms hash differently.
+type Maybe(a) { Just(a), Nothing, }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn main() {
+    let n: Maybe(Int) = Nothing
+    println(h(Just(7)) == h(Just(7)))
+    println(h(Just(7)) == h(Just(8)))
+    println(h(Just(7)) == h(n))
+}

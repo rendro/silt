@@ -1,0 +1,10 @@
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int-leaf" } }
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
+    match self { Box(inner) -> "box({inner.greet()})" }
+  }
+}
+
+fn main() { println(Box(7).greet()) }

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'CustomBound'
+trait CustomBound {
+    fn custom(self)
+}
+
+type Target { x: Int }
+
+trait Wrap(a) where a: CustomBound {
+    fn wrap(self)
+}
+
+trait Wrap(Int) for Target {
+    fn wrap(self) { () }
+}
+
+fn main() {}

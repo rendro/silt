@@ -1,0 +1,15 @@
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Greet for Box(a) where a: Greet, a: Loud {
+  fn greet(self) -> String {
+    match self {
+      Box(inner) -> "{inner.greet()}/{inner.loud()}"
+    }
+  }
+}
+fn main() {
+  println(Box(7).greet())
+}

@@ -54,7 +54,11 @@ fn feature_enabled(name: &str) -> Result<bool, String> {
         "tcp-tls" => cfg!(feature = "tcp-tls"),
         "postgres" => cfg!(feature = "postgres"),
         "postgres-tls" => cfg!(feature = "postgres-tls"),
-        other => return Err(format!("unknown feature {other:?} in `-- requires-feature:`")),
+        other => {
+            return Err(format!(
+                "unknown feature {other:?} in `-- requires-feature:`"
+            ));
+        }
     })
 }
 
@@ -367,21 +371,24 @@ fn golden_cases() {
                         }
                     };
                     let mut missing = Vec::new();
-                for feature in &case.directives.requires_features {
-                    match feature_enabled(feature) {
-                        Ok(true) => {}
-                        Ok(false) => missing.push(feature.clone()),
-                        Err(e) => {
-                            failures.lock().unwrap().push(format!("{rel}: {e}"));
-                            missing.push(feature.clone());
+                    for feature in &case.directives.requires_features {
+                        match feature_enabled(feature) {
+                            Ok(true) => {}
+                            Ok(false) => missing.push(feature.clone()),
+                            Err(e) => {
+                                failures.lock().unwrap().push(format!("{rel}: {e}"));
+                                missing.push(feature.clone());
+                            }
                         }
                     }
-                }
-                if !missing.is_empty() {
-                    skipped.lock().unwrap().push(format!("{rel} (needs {})", missing.join(", ")));
-                    continue;
-                }
-                for run in 1..=case.directives.repeat {
+                    if !missing.is_empty() {
+                        skipped
+                            .lock()
+                            .unwrap()
+                            .push(format!("{rel} (needs {})", missing.join(", ")));
+                        continue;
+                    }
+                    for run in 1..=case.directives.repeat {
                         let out = run_case(&case);
                         let problems = judge(&case, &out, bless);
                         if !problems.is_empty() {

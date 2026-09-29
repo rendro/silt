@@ -36,82 +36,9 @@
 //! `if na == nb` widened to admit `<anon>` on either side — same
 //! wildcard logic.
 
-use std::process::Command;
-
-/// Drive the full lex → parse → typecheck → compile → VM pipeline via
-/// the `silt run` CLI and return (stdout, stderr, success).
-fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
-    let tmp = std::env::temp_dir().join(format!("silt_round85_{label}.silt"));
-    std::fs::write(&tmp, src).expect("write temp file");
-    let bin = env!("CARGO_BIN_EXE_silt");
-    let out = Command::new(bin)
-        .arg("run")
-        .arg(&tmp)
-        .output()
-        .expect("spawn silt run");
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    (stdout, stderr, out.status.success())
-}
-
-fn run_silt_ok(label: &str, src: &str) -> String {
-    let (stdout, stderr, ok) = run_silt_raw(label, src);
-    assert!(
-        ok,
-        "silt run should succeed for {label}; stdout={stdout}, stderr={stderr}"
-    );
-    stdout
-}
-
-// ── User-visible silt-level repros ───────────────────────────────────
-
-/// `set.contains(s, r)` must return `true` when `s` was built from a
-/// nominal value `p` and `r` is an anon-typed value PartialEq-equal to
-/// `p`. Without the Hash fix, the anon and nominal land in different
-/// hash buckets and `contains` returns `false`.
-#[test]
-fn set_contains_anon_typed_when_nominal_inserted() {
-    let src = r#"
-import set
-type P { x: Int }
-fn main() {
-  let p: P = P { x: 1 }
-  let r: { x: Int } = { x: 1 }
-  let s = set.from_list([p])
-  println(set.contains(s, r))
-}
-"#;
-    let out = run_silt_ok("set_contains_anon_after_nominal", src);
-    let line = out.lines().next().unwrap_or("").trim_end();
-    assert_eq!(
-        line, "true",
-        "set.contains must agree with == — anon-typed value PartialEq-equal to a nominal must hash to the same bucket; got: {out:?}"
-    );
-}
-
-/// Inserting an anon-typed value that PartialEq-equals an already-
-/// present nominal must dedup (set size stays at 1). Without the Hash
-/// fix, the set grows to 2.
-#[test]
-fn set_dedup_when_inserting_anon_after_nominal() {
-    let src = r#"
-import set
-type P { x: Int }
-fn main() {
-  let p: P = P { x: 1 }
-  let r: { x: Int } = { x: 1 }
-  let s = set.from_list([p])
-  let s2 = set.insert(s, r)
-  println(set.length(s2))
-}
-"#;
-    let out = run_silt_ok("set_dedup_anon_after_nominal", src);
-    let line = out.lines().next().unwrap_or("").trim_end();
-    assert_eq!(
-        line, "1",
-        "set.insert(s, r) where r PartialEq-equals an existing element must dedup; got: {out:?}"
-    );
-}
+// The user-visible silt-level repros (set.contains / set.insert dedup)
+// are golden cases `round85_anonrec_hash_ord_contract__*` under
+// tests/golden/typecheck/hashing/.
 
 // ── Rust-level contract enforcement ─────────────────────────────────
 

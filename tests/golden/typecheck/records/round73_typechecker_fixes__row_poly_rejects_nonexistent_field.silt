@@ -1,0 +1,10 @@
+-- An unannotated row-polymorphic accessor narrows its scheme, so a
+-- closed record without the field is rejected at check time.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: zzznosuchfield
+fn pluck(r) = r.zzznosuchfield
+fn main() {
+    let p = {a: 1, b: 2}
+    let _ = pluck(p)
+}

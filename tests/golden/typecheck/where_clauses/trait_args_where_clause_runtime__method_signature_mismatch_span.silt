@@ -1,0 +1,12 @@
+-- The signature mismatch points at the method (line 10), not the impl
+-- header (line 9).
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-contains: --> trait_args_where_clause_runtime__method_signature_mismatch_span.silt:10:
+-- stderr-not-contains: --> trait_args_where_clause_runtime__method_signature_mismatch_span.silt:9:
+trait Foo(a) { fn bar(self: a) -> Int }
+trait Foo(String) for String {
+  fn bar(self) -> String { let x = "hello" x }
+}
+fn main() { println("x".bar()) }

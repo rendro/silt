@@ -1,0 +1,18 @@
+-- The formatter keeps `for Pair(a, b)` and is idempotent on this file.
+-- cmd: fmt --check
+
+type Pair(A, B) {
+  Pair(A, B)
+}
+
+trait First {
+  fn first(self) -> Int
+}
+
+trait First for Pair(a, b) {
+  fn first(self) -> Int {
+    match self {
+      Pair(x, y) -> 1
+    }
+  }
+}

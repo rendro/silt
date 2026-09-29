@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires
+-- stderr-contains: got 'Bool'
+fn add(a: Bool, b: Bool) -> Bool { a + b }
+fn main() { let _ = add(true, false) }

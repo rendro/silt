@@ -1,0 +1,2 @@
+trait Hasher(k) where k: Hash { fn hash_with(self, key: k) -> Int }
+fn main() { println(1) }

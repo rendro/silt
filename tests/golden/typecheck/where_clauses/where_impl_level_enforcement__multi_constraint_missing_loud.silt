@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'Loud'
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Box(a) where a: Greet + Loud {
+  fn greet(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() {
+  let b = Box(5)
+  println(b.greet())
+}

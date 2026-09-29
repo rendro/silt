@@ -1,0 +1,7 @@
+import list
+trait Sum { fn sum_of(self) -> Int }
+trait Sum for List(a) { fn sum_of(self) -> Int = list.sum(self) }
+fn main() {
+    let r = 1..5
+    println(r.sum_of())
+}

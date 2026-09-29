@@ -1,0 +1,6 @@
+-- Exactly one error: the builtin-redefinition diagnostic (exact .stderr).
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Display' is a builtin trait and cannot be redefined
+trait Display { fn show(self) -> String }
+fn main() { println(1) }

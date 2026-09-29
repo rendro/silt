@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Describe { fn describe(self) -> String }
+trait Describe for Option(a) { fn describe(self) -> String = "opt" }
+fn main() { }

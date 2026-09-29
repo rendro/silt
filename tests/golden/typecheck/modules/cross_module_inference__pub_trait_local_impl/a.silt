@@ -1,0 +1,3 @@
+trait Describe {
+    fn describe(self) -> String
+}

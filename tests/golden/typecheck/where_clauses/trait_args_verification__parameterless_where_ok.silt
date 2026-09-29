@@ -1,0 +1,4 @@
+trait MyDisplay { fn my_display(self) -> String }
+trait MyDisplay for Int { fn my_display(self) -> String { "int" } }
+fn show(x: a) -> String where a: MyDisplay { x.my_display() }
+fn main() { println(show(42)) }

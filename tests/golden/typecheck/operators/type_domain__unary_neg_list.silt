@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unary '-'
+fn main() {
+  let xs = [1, 2, 3]
+  let _ = -xs
+  0
+}

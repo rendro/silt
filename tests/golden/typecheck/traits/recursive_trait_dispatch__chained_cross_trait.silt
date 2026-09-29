@@ -1,0 +1,9 @@
+trait Halve { fn halve(self) -> Int }
+trait Double { fn double(self) -> Int }
+trait Quadruple { fn quad(self) -> Int }
+
+trait Halve for Int { fn halve(self) -> Int { self / 2 } }
+trait Double for Int { fn double(self) -> Int { self * 2 } }
+trait Quadruple for Int { fn quad(self) -> Int { self.double().double() } }
+
+fn main() { println((5).quad()) }

@@ -1,0 +1,6 @@
+-- A `type a` parameter puts `a` in scope for the return type.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: 'a'
+fn identity_desc(type a) -> List(a) { [] }
+fn main() {}

@@ -1,0 +1,20 @@
+-- A Fn map value does not satisfy `where a: Display` on the alias's value
+-- slot; rejected at check time naming 'Fn', not the key type 'String'.
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Display'
+-- stderr-not-contains: 'String' does not implement
+-- stderr-not-contains: error[runtime]
+import map
+
+type Named(a) = Map(String, a)
+
+trait Keys { fn k(self) -> Int }
+trait Keys for Named(a) where a: Display {
+  fn k(self) -> Int = map.length(self)
+}
+
+fn go(x: b) -> Int where b: Keys { x.k() }
+
+fn main() {
+  println(go(#{ "a": { x -> x + 1 } }))
+}

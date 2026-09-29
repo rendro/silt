@@ -1,0 +1,7 @@
+-- A List literal and the matching Range are equal and hash equal.
+fn main() {
+  let a: List(Int) = [1, 2, 3]
+  let b: List(Int) = 1..3
+  println(a == b)
+  println(a.hash() == b.hash())
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in `let`
+fn main() {
+  let true = false
+  println("silent")
+}

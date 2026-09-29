@@ -1,0 +1,4 @@
+fn main() {
+    let r: Range(Int) = 1..10
+    println(r)
+}

@@ -1,0 +1,6 @@
+fn takes_range(r: Range(Int)) -> Range(Int) { r }
+
+fn main() {
+    let r = 1..10
+    println(takes_range(r))
+}

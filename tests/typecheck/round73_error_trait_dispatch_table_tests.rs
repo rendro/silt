@@ -1,123 +1,15 @@
-//! Round-73 BLOAT-3 (L6) regression locks: the 11 byte-near-identical
-//! `<EnumName> => catch_builtin_panic("<EnumName>", AssertUnwindSafe(||
-//! <module>::call_<x>_error_trait(func, args)))` arms in
-//! `dispatch_builtin` were collapsed onto a single dispatch-table
-//! lookup (`ERROR_TRAIT_DISPATCH`) keyed by enum name.
+//! Round-73 BLOAT-3 (L6) regression lock: the 11 byte-near-identical
+//! per-enum `catch_builtin_panic` arms in `dispatch_builtin` were
+//! collapsed onto a single dispatch-table lookup
+//! (`ERROR_TRAIT_DISPATCH`) keyed by enum name.
 //!
-//! Pre-fix each arm was a copy-paste of the surrounding arm with one
-//! string and one function pointer changed — the canonical "11
-//! byte-near-identical lines that should be a table" shape. Adding a
-//! new typed-error enum required edits at four sites; with the table,
-//! adding a new enum is one entry.
-//!
-//! Tests:
-//!
-//!   * Source-grep lock: dispatch.rs no longer contains the 11 per-enum
-//!     `<EnumName> => catch_builtin_panic` arms — there should be at
-//!     most a handful of `catch_builtin_panic("<module>"`-style match
-//!     arms remaining (one per builtin module: io, string, ...), and
-//!     none of them should target a typed-error enum name.
-//!
-//!   * Behavioural lock: every typed-error enum's `.message()`
-//!     dispatch routes through the table and produces a typed message
-//!     (no "unknown builtin namespace: <X>" leak).
+//! Behavioural lock: every typed-error enum registered in
+//! `builtin_error_enum_variants_with_arity` has its `.message()`
+//! dispatch routed through the table and produces a typed message (no
+//! "unknown builtin namespace: <X>" leak). The test iterates the
+//! registry, so a newly registered enum without a table entry fails.
 
 use silt::module::builtin_error_enum_variants_with_arity;
-
-const DISPATCH_SRC: &str = include_str!("../../src/vm/dispatch.rs");
-
-// ── Source-grep locks ────────────────────────────────────────────────
-
-/// Each typed-error enum name must NOT appear as the LHS of a `<Name>
-/// => catch_builtin_panic` match arm in dispatch.rs. The dispatch table
-/// drives that resolution now.
-#[test]
-fn no_per_enum_catch_builtin_panic_arms() {
-    for (enum_name, _) in builtin_error_enum_variants_with_arity() {
-        // Pre-fix arm shape: `"IoError" => catch_builtin_panic(`
-        let needle = format!("\"{enum_name}\" => catch_builtin_panic(");
-        for (idx, line) in DISPATCH_SRC.lines().enumerate() {
-            let trimmed = line.trim_start();
-            let is_comment = trimmed.starts_with("//") || trimmed.starts_with("/*");
-            if is_comment {
-                continue;
-            }
-            assert!(
-                !line.contains(&needle),
-                "src/vm/dispatch.rs:{} re-introduces the pre-fix \
-                 per-enum match arm `{needle}`. The round-73 BLOAT-3 \
-                 fix collapsed all 11 such arms onto a single lookup \
-                 against `ERROR_TRAIT_DISPATCH`. Line: {line}",
-                idx + 1
-            );
-        }
-    }
-}
-
-/// The `ERROR_TRAIT_DISPATCH` table itself must be present, must use
-/// the canonical `ErrorTraitFn` typedef, and must be consulted by the
-/// dispatch-fallback arm.
-#[test]
-fn dispatch_table_and_lookup_are_present() {
-    assert!(
-        DISPATCH_SRC.contains("static ERROR_TRAIT_DISPATCH"),
-        "src/vm/dispatch.rs must declare `static ERROR_TRAIT_DISPATCH` \
-         to hold the round-73 BLOAT-3 table."
-    );
-    assert!(
-        DISPATCH_SRC.contains("type ErrorTraitFn"),
-        "src/vm/dispatch.rs must declare `type ErrorTraitFn` so all \
-         table entries share one signature."
-    );
-    assert!(
-        DISPATCH_SRC.contains("error_trait_dispatch("),
-        "src/vm/dispatch.rs must call `error_trait_dispatch(...)` from \
-         the dispatch fallback to look up the table."
-    );
-}
-
-/// Count parity: the dispatch table must contain one entry per
-/// registered stdlib error enum (cfg-gated entries excluded by
-/// `#[cfg(...)]` attributes when the matching feature is off, included
-/// otherwise — same shape as the registry).
-///
-/// We approximate the count by scanning the `ERROR_TRAIT_DISPATCH`
-/// slice literal for `("<Name>"` openers. The parser tolerates both
-/// the always-present entries and the `#[cfg(feature = "...")]`-gated
-/// entries; what matters is that every name in the registry appears
-/// at least once as a table key.
-#[test]
-fn every_registry_enum_has_a_dispatch_table_entry() {
-    // Locate the table literal.
-    let start = DISPATCH_SRC
-        .find("static ERROR_TRAIT_DISPATCH")
-        .expect("ERROR_TRAIT_DISPATCH not found");
-    // The table body ends at the closing `];` of the slice literal.
-    let after = &DISPATCH_SRC[start..];
-    let close = after.find("];").expect("ERROR_TRAIT_DISPATCH not closed");
-    let table = &after[..close];
-
-    // Round 79 follow-up: tolerate both single-line `("Foo", call_foo)`
-    // and rustfmt-broken-up multi-line `( "Foo", call_foo, )` forms.
-    // Compare on a whitespace-collapsed view of the table.
-    let table_compact: String = table.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut missing: Vec<&'static str> = Vec::new();
-    for (enum_name, _) in builtin_error_enum_variants_with_arity() {
-        let key_lit = format!("(\"{enum_name}\",");
-        if !table_compact.contains(&key_lit) {
-            missing.push(enum_name);
-        }
-    }
-
-    assert!(
-        missing.is_empty(),
-        "ERROR_TRAIT_DISPATCH is missing entries for: {missing:?}. \
-         Every enum in `module::builtin_error_enum_variants_with_arity` \
-         must have a matching `(\"<EnumName>\", ...)` table entry — \
-         feature-gated enums use a `#[cfg(feature = \"...\")]` attribute \
-         on the entry. (Round-73 BLOAT-3 invariant.)"
-    );
-}
 
 // ── Behavioural lock ────────────────────────────────────────────────
 

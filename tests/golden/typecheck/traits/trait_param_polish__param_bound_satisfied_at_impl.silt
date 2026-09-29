@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Store { data: Int }
+
+trait HashTable(k) where k: Hash + Equal {
+    fn noop(self)
+}
+
+trait HashTable(String) for Store {
+    fn noop(self) { () }
+}
+
+fn main() {}

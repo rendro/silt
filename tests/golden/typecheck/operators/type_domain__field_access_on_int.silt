@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'foo'
+fn main() {
+  let x = 42
+  let _ = x.foo
+  0
+}

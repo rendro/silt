@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate binding 'a'
+fn pair(a: Int, a: Int) -> Int { a }
+fn main() { println(pair(1, 2)) }

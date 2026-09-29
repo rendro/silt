@@ -1,0 +1,5 @@
+import json
+fn main() {
+    let body = """{"a": 1, "b": 2}"""
+    println(json.parse_map(body, Int))
+}

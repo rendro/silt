@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undeclared type parameter 'a' in alias target
+-- stderr-contains: type AnyList(a)
+type AnyList = List(a)
+fn main() {
+    let xs: AnyList = [1, 2, 3]
+    let ys: AnyList = ["a", "b"]
+    println(xs)
+    println(ys)
+}

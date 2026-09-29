@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'missing'
+-- stderr-contains: --> inference_round26__pin_undefined_variable_span.silt:8:5
+fn main() {
+  let v = 1
+  match v {
+    ^missing -> println("a")
+    _ -> println("b")
+  }
+}

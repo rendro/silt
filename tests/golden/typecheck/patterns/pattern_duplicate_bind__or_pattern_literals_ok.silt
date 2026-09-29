@@ -1,0 +1,8 @@
+fn main() {
+  let result = match 2 {
+    1 | 2 -> "small"
+    3 -> "three"
+    _ -> "big"
+  }
+  println(result)
+}

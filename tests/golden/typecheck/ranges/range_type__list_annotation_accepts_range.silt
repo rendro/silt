@@ -1,0 +1,4 @@
+fn main() {
+    let r: List(Int) = 1..10
+    println(r)
+}

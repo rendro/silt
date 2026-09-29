@@ -1,0 +1,7 @@
+import geometry as g
+import geometry
+
+fn main() {
+  println(g.area(3, 4))
+  println(geometry.area(2, 5))
+}

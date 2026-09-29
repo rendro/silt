@@ -1,0 +1,7 @@
+type Color { Red, Green, Blue, }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Red, Green))
+    println(cmp_gen(Green, Red))
+    println(cmp_gen(Red, Red))
+}

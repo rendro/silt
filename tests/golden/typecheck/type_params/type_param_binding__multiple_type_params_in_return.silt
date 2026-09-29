@@ -1,0 +1,7 @@
+-- A body-less signature (so the empty body mismatches the tuple); the
+-- point is that both `a` and `b` count as introduced.
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: in return type is not introduced
+fn make_pair(type a, type b) -> (a, b)
+fn main() {}

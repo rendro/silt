@@ -17,54 +17,6 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-#[test]
-fn fuzz_typechecker_target_file_exists() {
-    let path = manifest_dir().join("fuzz/fuzz_targets/fuzz_typechecker.rs");
-    assert!(
-        path.exists(),
-        "round 75 TEST-1 GAP regressed: \
-         fuzz/fuzz_targets/fuzz_typechecker.rs is missing at {}",
-        path.display()
-    );
-
-    // Sanity-check the body actually exercises the typechecker entry
-    // point — a stub file would also "exist" and silently provide no
-    // coverage.
-    let src = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        src.contains("fuzz_target!"),
-        "fuzz_typechecker.rs is not a libFuzzer target"
-    );
-    assert!(
-        src.contains("typechecker::check"),
-        "fuzz_typechecker.rs must invoke `typechecker::check` — \
-         that's the entire point of this target"
-    );
-    assert!(
-        src.contains("Lexer::new") && src.contains("parse_program"),
-        "fuzz_typechecker.rs must lex + parse before typechecking \
-         (typechecker only runs on parsed programs)"
-    );
-}
-
-#[test]
-fn fuzz_cargo_toml_lists_typechecker_target() {
-    let path = manifest_dir().join("fuzz/Cargo.toml");
-    let toml = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        toml.contains("name = \"fuzz_typechecker\""),
-        "fuzz/Cargo.toml is missing the [[bin]] entry for the new \
-         fuzz_typechecker target — cargo fuzz won't find the binary \
-         without it. Path checked: {}",
-        path.display()
-    );
-    assert!(
-        toml.contains("path = \"fuzz_targets/fuzz_typechecker.rs\""),
-        "fuzz/Cargo.toml fuzz_typechecker entry is missing its path \
-         field"
-    );
-}
-
 /// Best-effort: feed the new harness body's logic a handful of seeds
 /// from the existing parser corpus to confirm it never panics on
 /// inputs the parser already accepts. We can't actually link

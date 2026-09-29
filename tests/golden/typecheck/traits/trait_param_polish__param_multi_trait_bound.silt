@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait HashTable(k) where k: Hash + Equal {
+    fn noop(self)
+}
+
+fn main() {}

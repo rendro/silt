@@ -1,0 +1,7 @@
+import json
+type Todo { id: Int, title: String, done: Bool }
+
+fn main() {
+    let body = """{"id": 1, "title": "a", "done": true}"""
+    println(json.parse(body, Todo))
+}

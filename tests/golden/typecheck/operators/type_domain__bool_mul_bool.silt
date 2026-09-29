@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '*' requires
+-- stderr-contains: got 'Bool'
+fn main() {
+  let x = true * false
+  x
+}

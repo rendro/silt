@@ -1,0 +1,11 @@
+-- An anon-record trait argument in a where-bound matches a structurally
+-- equal impl argument.
+trait Convert(other) { fn convert(self) -> other }
+trait Convert({a: Int, b: String}) for Int {
+  fn convert(self) -> {a: Int, b: String} { {a: self, b: "x"} }
+}
+fn use_it(x: a) -> Int where a: Convert({a: Int, b: String}) {
+  let r = x.convert()
+  r.a
+}
+fn main() { println(use_it(7)) }

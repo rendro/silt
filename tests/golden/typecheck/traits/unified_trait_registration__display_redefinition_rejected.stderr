@@ -1,0 +1,5 @@
+error[type]: trait 'Display' is a builtin trait and cannot be redefined
+ --> unified_trait_registration__display_redefinition_rejected.silt:5:1
+   |
+ 5 | trait Display { fn show(self) -> String }
+   | ^ trait 'Display' is a builtin trait and cannot be redefined

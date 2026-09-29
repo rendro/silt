@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Pair { a: Int, b: Int }
+fn main() {
+  let t = (Pair { a: 1, b: 2 }, 99)
+  match t {
+    (Pair { a, b }, _) -> println("any pair")
+  }
+}

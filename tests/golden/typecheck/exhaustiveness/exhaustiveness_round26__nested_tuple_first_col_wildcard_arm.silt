@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn main() {
+  let t = ((1, 2), 99)
+  match t {
+    ((0, 0), _) -> println("origin")
+    _ -> println("other")
+  }
+}

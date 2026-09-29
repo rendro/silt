@@ -1,0 +1,11 @@
+-- The caret sits on the pattern column, not the let.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined constructor 'Unknown'
+-- stderr-contains: --> inference_round26__undefined_ctor_span_in_let.silt:9:7
+type Circle { radius: Int }
+fn main() {
+  let c = Circle { radius: 5 }
+  let Unknown(x) = c
+  println(x)
+}

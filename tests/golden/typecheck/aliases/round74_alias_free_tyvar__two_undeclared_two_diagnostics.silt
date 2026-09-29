@@ -1,0 +1,7 @@
+-- One diagnostic per missing name.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undeclared type parameter 'k'
+-- stderr-contains: undeclared type parameter 'v'
+type Pairish = Map(k, v)
+fn main() {}

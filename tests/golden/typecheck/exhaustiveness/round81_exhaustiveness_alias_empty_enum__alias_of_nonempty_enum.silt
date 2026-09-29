@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive
+type Color { Red, Blue }
+type C2 = Color
+fn pick(x: C2) -> Int { match x { } }
+fn main() { let _ = pick(Red) }

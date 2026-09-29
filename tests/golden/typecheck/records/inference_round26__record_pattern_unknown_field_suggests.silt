@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: has no field 'nam'
+-- stderr-contains: did you mean `name`?
+type User { name: String, age: Int }
+fn main() {
+  let u = User { name: "Ann", age: 30 }
+  let User { nam, age } = u
+  println(age)
+}

@@ -1,0 +1,7 @@
+fn main() {
+  let result = match (5, 2) {
+    (1, _) | (_, 2) -> "found"
+    _ -> "nope"
+  }
+  println(result)
+}

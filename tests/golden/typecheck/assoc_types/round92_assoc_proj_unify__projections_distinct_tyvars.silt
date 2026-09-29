@@ -1,0 +1,20 @@
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Stream for Wrap {
+  type Item = Int
+  fn first(self) -> Int { self.v }
+}
+
+fn pick(x: a, y: b) where a: Stream, b: Stream {
+  let xs = [x.first(), y.first()]
+  xs
+}
+
+fn main() {
+  println(pick(Wrap { v: 1 }, Wrap { v: 2 }))
+}
