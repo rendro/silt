@@ -11,24 +11,15 @@
 //! `sqlite = []` under `[features]` — every existing test stays green;
 //! this lock fails.
 //!
-//! Strategy (source-scan; `toml` is a [dependencies] crate, not a
-//! dev-dependency, so integration tests parse the table with a small
-//! deterministic line scanner):
-//!   * Parse the `[features]` table keys out of `include_str!`'d
-//!     Cargo.toml.
-//!   * Subtract the documented-internal set (see
-//!     `INTERNAL_FEATURES` below — excluding a future feature from the
-//!     footer must be a deliberate act of editing that list).
-//!   * Assert each remaining key appears as the literal
-//!     `cfg!(feature = "<key>")` AND `feats.push("<key>")` in
-//!     src/cli/features.rs.
-//!   * Conversely, assert every `cfg!(feature = "...")` string and
-//!     every `feats.push("...")` string in features.rs is a declared
-//!     Cargo feature — a stale row for a deleted/renamed feature also
-//!     reds.
+//! Strategy: parse the `[features]` table keys out of `include_str!`'d
+//! Cargo.toml (line scanner; `toml` is not a dev-dependency), subtract
+//! the documented-internal set, and compare with the footer that the
+//! built `silt --help` actually prints. Each user-facing key must be
+//! listed exactly when this build enables it; a key this test does not
+//! know yet fails until it is added to `feature_enabled` (and to the
+//! footer).
 
 const CARGO_TOML: &str = include_str!("../../Cargo.toml");
-const FEATURES_SRC: &str = include_str!("../../src/cli/features.rs");
 
 /// Features deliberately NOT shown in the `silt --help` footer.
 ///
@@ -72,32 +63,6 @@ fn cargo_feature_keys() -> Vec<String> {
     keys
 }
 
-/// Extract every string literal that follows `needle` in code lines of
-/// `src`, i.e. for needle `cfg!(feature = "` it returns each feature
-/// name quoted there. Comment lines (`//`, `///`, `//!`) are skipped so
-/// the `cfg!(feature = "...")` placeholder in the module doc-comment is
-/// not mistaken for a row. Panics if a match is not closed by a `"` on
-/// the same line (would mean the source drifted from the simple literal
-/// form this lock greps for).
-fn quoted_strings_after(src: &str, needle: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for line in src.lines() {
-        if line.trim_start().starts_with("//") {
-            continue;
-        }
-        let mut rest = line;
-        while let Some(idx) = rest.find(needle) {
-            let after = &rest[idx + needle.len()..];
-            let end = after
-                .find('"')
-                .unwrap_or_else(|| panic!("unterminated string after `{needle}` in features.rs"));
-            found.push(after[..end].to_string());
-            rest = &after[end..];
-        }
-    }
-    found
-}
-
 /// Canary: the table parser itself must not silently degrade. If a
 /// Cargo.toml reformat ever broke `cargo_feature_keys()`, an empty
 /// result would make the parity checks below vacuously pass — so pin
@@ -117,71 +82,65 @@ fn cargo_features_table_parser_sees_known_keys() {
     );
 }
 
-/// Forward direction: every user-facing Cargo feature must have a
-/// literal `cfg!(feature = "<key>")` row AND a `feats.push("<key>")`
-/// in src/cli/features.rs. This is the lock that reds when a new
-/// `[features]` key lands without a footer row.
-#[test]
-fn every_user_facing_cargo_feature_has_a_footer_row() {
-    let keys = cargo_feature_keys();
-    let user_facing: Vec<&String> = keys
-        .iter()
-        .filter(|k| !INTERNAL_FEATURES.contains(&k.as_str()))
-        .collect();
-    assert!(
-        !user_facing.is_empty(),
-        "no user-facing features left after exclusions — exclusion set or parser is wrong"
-    );
-    for key in user_facing {
-        let cfg_row = format!("cfg!(feature = \"{key}\")");
-        assert!(
-            FEATURES_SRC.contains(&cfg_row),
-            "Cargo.toml declares feature `{key}` but src/cli/features.rs has no \
-             `{cfg_row}` row — the `silt --help` footer would silently omit it. \
-             Add the row to enabled_features(), or (for a genuinely internal \
-             feature) add `{key}` to INTERNAL_FEATURES in this test with a \
-             justification."
-        );
-        let push_row = format!("feats.push(\"{key}\")");
-        assert!(
-            FEATURES_SRC.contains(&push_row),
-            "src/cli/features.rs checks `cfg!(feature = \"{key}\")` but never \
-             pushes \"{key}\" — footer row for `{key}` is broken (missing \
-             `{push_row}`)."
-        );
+/// Is `key` compiled into this build? `cfg!` needs a literal, so every
+/// user-facing Cargo feature is spelled out here.
+fn feature_enabled(key: &str) -> bool {
+    match key {
+        "repl" => cfg!(feature = "repl"),
+        "lsp" => cfg!(feature = "lsp"),
+        "watch" => cfg!(feature = "watch"),
+        "local-clock" => cfg!(feature = "local-clock"),
+        "http" => cfg!(feature = "http"),
+        "tcp" => cfg!(feature = "tcp"),
+        "tcp-tls" => cfg!(feature = "tcp-tls"),
+        "postgres" => cfg!(feature = "postgres"),
+        "postgres-tls" => cfg!(feature = "postgres-tls"),
+        other => panic!(
+            "Cargo.toml declares feature `{other}` that this test does not know. \
+             Add a row for it to enabled_features() in src/cli/features.rs and to \
+             feature_enabled() here, or (for a genuinely internal feature) add it \
+             to INTERNAL_FEATURES with a justification."
+        ),
     }
 }
 
-/// Reverse direction: every feature string mentioned in
-/// src/cli/features.rs (both the `cfg!` guard and the pushed label)
-/// must be a declared Cargo feature. Reds on a stale row after a
-/// feature is deleted or renamed in Cargo.toml, and on a
-/// guard/label typo (pushing a string that isn't a feature).
+/// The comma-separated entries of the `Enabled features:` line printed
+/// by `silt --help`.
+fn footer_features() -> Vec<String> {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("--help")
+        .output()
+        .expect("spawn silt --help");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let line = stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Enabled features:"))
+        .unwrap_or_else(|| panic!("no `Enabled features:` line in silt --help:\n{stdout}"))
+        .trim();
+    if line == "(none)" {
+        return Vec::new();
+    }
+    line.split(',').map(|f| f.trim().to_string()).collect()
+}
+
+/// Both directions: every user-facing Cargo feature this build enables
+/// is in the footer, and every footer entry is an enabled, declared,
+/// user-facing Cargo feature.
 #[test]
-fn every_footer_row_is_a_declared_cargo_feature() {
+fn help_footer_lists_exactly_the_enabled_cargo_features() {
     let keys = cargo_feature_keys();
-    let cfg_feats = quoted_strings_after(FEATURES_SRC, "cfg!(feature = \"");
-    assert!(
-        !cfg_feats.is_empty(),
-        "found no cfg!(feature = \"...\") rows in src/cli/features.rs — grep needle drifted?"
+    let mut expected: Vec<String> = keys
+        .iter()
+        .filter(|k| !INTERNAL_FEATURES.contains(&k.as_str()))
+        .filter(|k| feature_enabled(k))
+        .cloned()
+        .collect();
+    let mut footer = footer_features();
+    expected.sort();
+    footer.sort();
+    assert_eq!(
+        footer, expected,
+        "`silt --help` footer disagrees with the Cargo features enabled in \
+         this build (left: footer, right: enabled user-facing features)"
     );
-    for feat in &cfg_feats {
-        assert!(
-            keys.iter().any(|k| k == feat),
-            "src/cli/features.rs checks `cfg!(feature = \"{feat}\")` but Cargo.toml \
-             declares no such feature — stale or misspelled footer row."
-        );
-    }
-    let pushed = quoted_strings_after(FEATURES_SRC, "feats.push(\"");
-    assert!(
-        !pushed.is_empty(),
-        "found no feats.push(\"...\") rows in src/cli/features.rs — grep needle drifted?"
-    );
-    for feat in &pushed {
-        assert!(
-            keys.iter().any(|k| k == feat),
-            "src/cli/features.rs pushes footer label \"{feat}\" but Cargo.toml \
-             declares no such feature — label/guard mismatch or stale row."
-        );
-    }
 }

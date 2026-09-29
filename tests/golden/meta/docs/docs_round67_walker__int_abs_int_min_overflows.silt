@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: integer overflow: abs(-9223372036854775808)
+import int
+
+fn main() {
+  let min = -9223372036854775807 - 1
+  let _y = int.abs(min)
+  ()
+}

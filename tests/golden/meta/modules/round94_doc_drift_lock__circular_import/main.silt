@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: circular import detected: a -> b -> a
+import a
+fn main() { println(a.f()) }

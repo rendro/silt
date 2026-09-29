@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: unknown field 'nonexistent'
+type Config { host: String, port: Int }
+fn update(c: Config) -> Config { c.{ nonexistent: "bogus", port: 9090 } }
+fn main() {
+  let c = Config { host: "h", port: 80 }
+  let c2 = update(c)
+  println("{c2.port} {c2.host}")
+}

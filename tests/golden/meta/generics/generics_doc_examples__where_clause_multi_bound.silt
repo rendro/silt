@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+fn dedup(xs: List(a)) -> List(a) where a: Equal + Hash {
+    xs
+}
+
+fn main() { let _ = dedup([1, 2, 3]) }

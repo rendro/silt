@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected `:` after record field 'name'
+type User { name, age }
+fn main() { () }

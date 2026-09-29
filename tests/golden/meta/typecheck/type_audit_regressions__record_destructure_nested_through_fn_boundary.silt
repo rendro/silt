@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+type Inner { x: Int }
+type Outer { inner: Inner, tag: Int }
+fn g(o: Outer) -> Int {
+  let Outer { inner, tag } = o
+  let Inner { x } = inner
+  x + tag
+}
+fn mk() -> Outer { Outer { inner: Inner { x: 5 }, tag: 3 } }
+fn main() { println(g(mk())) }

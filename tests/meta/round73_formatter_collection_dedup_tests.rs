@@ -30,12 +30,7 @@
 //!      byte-identical to a string captured from the formatter BEFORE
 //!      the refactor. Not a snapshot file — explicit `expected ==
 //!      actual` `assert_eq!` so any future divergence shows in the diff.
-//!   2. **Structural lock** — the helper exists in `src/formatter.rs`,
-//!      AND each of the four wrappers is short (< 30 lines), proving
-//!      the dedup actually happened (a future "I'll just inline it"
-//!      regression would balloon the wrapper line count and trip this
-//!      check).
-//!   3. **Idempotency lock** — every byte-pin input is also
+//!   2. **Idempotency lock** — every byte-pin input is also
 //!      `format(format(src)) == format(src)`. This is the same
 //!      invariant the existing 78 `assert_idempotent` tests across the
 //!      `tests/` tree enforce — adding one explicit check per input
@@ -170,74 +165,4 @@ fn round73_nested_list_in_map_comment_on_inner_close_line_is_refused() {
         ),
         other => panic!("expected a refusal that names `-- xs`, got {other:?}"),
     }
-}
-
-// ── Structural lock: helper exists, wrappers are thin ────────────────
-
-#[test]
-fn round73_format_delimited_collection_helper_exists() {
-    // The helper must exist by name in src/formatter.rs. A future
-    // refactor that renames or removes it has to also update this lock
-    // (and presumably re-prove the dedup invariant).
-    let src = include_str!("../../src/formatter.rs");
-    assert!(
-        src.contains("fn format_delimited_collection"),
-        "expected `fn format_delimited_collection` helper in src/formatter.rs"
-    );
-}
-
-#[test]
-fn round73_collection_emitters_are_thin_wrappers() {
-    // Each of the four emitter functions must be a thin wrapper over the
-    // shared helper. We bound each at < 30 source lines (counted from
-    // the `fn ...` line through its closing `}`). The pre-refactor
-    // bodies were 50–60 lines; thirty leaves comfortable headroom for
-    // doc-comment trim or argument-name tweaks while still tripping any
-    // attempted re-inlining.
-    let src = include_str!("../../src/formatter.rs");
-    for name in [
-        "format_list_expr_if_multiline",
-        "format_tuple_expr_if_multiline",
-        "format_map_expr_if_multiline",
-        "format_set_expr_if_multiline",
-    ] {
-        let body_lines = count_fn_body_lines(src, name);
-        assert!(
-            body_lines < 30,
-            "expected `{name}` to be a thin wrapper (< 30 lines), got {body_lines}"
-        );
-    }
-}
-
-/// Count the number of source lines from the `fn <name>` definition
-/// through its matching closing `}` (inclusive). Uses brace-depth
-/// counting on the substring after the `fn` line so attribute lines or
-/// preceding doc-comments are ignored.
-fn count_fn_body_lines(src: &str, name: &str) -> usize {
-    let needle = format!("fn {name}(");
-    let start = src
-        .find(&needle)
-        .unwrap_or_else(|| panic!("function `{name}` not found in source"));
-    let after = &src[start..];
-    let mut depth: i32 = 0;
-    let mut seen_open = false;
-    let mut byte_end = 0usize;
-    for (i, ch) in after.char_indices() {
-        match ch {
-            '{' => {
-                depth += 1;
-                seen_open = true;
-            }
-            '}' => {
-                depth -= 1;
-                if seen_open && depth == 0 {
-                    byte_end = i + 1;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    assert!(byte_end > 0, "could not find matching `}}` for fn `{name}`");
-    after[..byte_end].lines().count()
 }

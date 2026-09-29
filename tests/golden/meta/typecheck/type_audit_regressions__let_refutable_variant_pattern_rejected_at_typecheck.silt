@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: refutable pattern in `let`: constructor 'Square' is only one of 2 variants of enum 'Shape'
+type Shape { Circle(Int), Square(String) }
+fn main() {
+  let s = Circle(5)
+  let Square(n) = s
+  println(n)
+}

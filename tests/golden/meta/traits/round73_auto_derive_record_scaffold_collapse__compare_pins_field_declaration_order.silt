@@ -1,0 +1,10 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type R { z: Int, a: Int, m: Int }
+fn main() {
+    println(cmp_gen(R { z: 1, a: 9, m: 9 }, R { z: 2, a: 0, m: 0 }))
+    println(cmp_gen(R { z: 1, a: 1, m: 9 }, R { z: 1, a: 2, m: 0 }))
+    println(cmp_gen(R { z: 1, a: 1, m: 1 }, R { z: 1, a: 1, m: 2 }))
+}

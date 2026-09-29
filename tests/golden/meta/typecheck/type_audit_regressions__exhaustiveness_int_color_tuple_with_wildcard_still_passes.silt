@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+type Color { Red, Green, Blue }
+fn classify(t: (Int, Color)) -> String {
+  match t {
+    (0, Red) -> "zero red"
+    (_, Red) -> "other red"
+    (_, Green) -> "green"
+    (_, Blue) -> "blue"
+  }
+}
+fn main() { println(classify((1, Red))) }

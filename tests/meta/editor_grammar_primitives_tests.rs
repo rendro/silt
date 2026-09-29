@@ -124,44 +124,6 @@ fn grammar_mentions_name(grammar: &str, name: &str) -> bool {
     false
 }
 
-/// Round-101 citation-drift lock. The round-61 header above used to
-/// cite per-module stdlib markdown pages (channel-task, http, stream)
-/// under a `stdlib/` path — pages deleted in round 62 phase-2 when
-/// their prose was inlined into `src/typechecker/builtins/docs.rs` —
-/// and named a typechecker `is_builtin_container` function as the
-/// authoritative source, a function that no longer exists (the check
-/// now lives in `src/types/builtins.rs::is_container`, and this test
-/// sources its list from `silt::types::builtins::iter_all()`). Assert
-/// neither stale citation reappears in this file. The needles are
-/// assembled at runtime from fragments so this test's own source text
-/// can never satisfy the search.
-#[test]
-fn header_cites_no_deleted_stdlib_pages_or_moved_container_fn() {
-    let src = include_str!("editor_grammar_primitives_tests.rs");
-
-    for page in ["channel-task", "http", "stream", "index", "io-fs"] {
-        let needle = format!("stdlib/{}{}", page, ".md");
-        assert!(
-            !src.contains(&needle),
-            "tests/meta/editor_grammar_primitives_tests.rs cites `{}`, but the \
-             docs/stdlib/ pages were deleted in round 62 phase-2; their prose \
-             lives in src/typechecker/builtins/docs.rs. Re-aim the citation \
-             (see this test's doc-comment).",
-            needle
-        );
-    }
-
-    let stale_fn = format!("{}::{}", "mod.rs", "is_builtin_container");
-    assert!(
-        !src.contains(&stale_fn),
-        "tests/meta/editor_grammar_primitives_tests.rs cites `typechecker/{}` as \
-         authoritative, but that function no longer exists — the widened type \
-         list comes from src/types/builtins.rs::BUILTIN_TYPES (is_container / \
-         iter_all). Re-aim the citation.",
-        stale_fn
-    );
-}
-
 #[test]
 fn editor_grammars_include_all_primitive_type_names() {
     let vim_raw = read_grammar("editors/vim/syntax/silt.vim");

@@ -1,0 +1,15 @@
+trait Show {
+  fn show(self) -> String { "default" }
+  fn debug(self) -> String
+}
+
+type Item { v: Int }
+
+trait Show for Item {
+  fn debug(self) -> String { "item-debug" }
+}
+
+fn main() {
+  println(Item { v: 1 }.show())
+  println(Item { v: 1 }.debug())
+}

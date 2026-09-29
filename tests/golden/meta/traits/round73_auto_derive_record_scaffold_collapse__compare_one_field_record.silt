@@ -1,0 +1,13 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type One { x: Int }
+fn main() {
+    let a = One { x: 1 }
+    let b = One { x: 2 }
+    let c = One { x: 1 }
+    println(cmp_gen(a, b))
+    println(cmp_gen(b, a))
+    println(cmp_gen(a, c))
+}

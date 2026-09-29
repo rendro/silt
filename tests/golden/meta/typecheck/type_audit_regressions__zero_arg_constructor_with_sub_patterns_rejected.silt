@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: expects 0 fields
+type Color { Red, Green, Blue }
+fn main() {
+  let x: Color = Red
+  match x {
+    Red(y) -> "red"
+    Green -> "green"
+    Blue -> "blue"
+  }
+}

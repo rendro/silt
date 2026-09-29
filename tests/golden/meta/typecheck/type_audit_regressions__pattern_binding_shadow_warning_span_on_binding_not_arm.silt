@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 0
+-- stderr-contains: warning[compile]: variable 'result' shadows the builtin 'result' module
+-- stderr-contains: type_audit_regressions__pattern_binding_shadow_warning_span_on_binding_not_arm.silt:9:14
+import result
+type Outcome { Wrap(Int), Finish }
+fn run(o) {
+  match (1, o) {
+    (_, Wrap(result)) -> result
+    (_, Finish) -> 0
+  }
+}
+fn main() { run(Finish) }

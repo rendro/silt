@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+type Pair { a: Int, b: Int }
+fn mkpair() -> Pair { Pair { a: 1, b: 2 } }
+fn main() {
+  let p = mkpair()
+  let Pair { a, b } = p
+  println(a + b)
+}

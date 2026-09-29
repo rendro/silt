@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+fn swap(pair: (a, b)) -> (b, a) {
+    let (x, y) = pair
+    (y, x)
+}
+
+fn main() { let _ = swap((1, "a")) }

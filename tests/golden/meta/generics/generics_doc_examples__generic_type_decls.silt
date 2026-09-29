@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+type Option(a) { Some(a), None }
+type Result(a, e) { Ok(a), Err(e) }
+type Pair(a, b) { first: a, second: b }
+
+fn main() { () }

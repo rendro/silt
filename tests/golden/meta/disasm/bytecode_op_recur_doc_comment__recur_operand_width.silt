@@ -1,0 +1,17 @@
+-- cmd: disasm
+-- stdout-contains: Recur                2  slot 2
+-- stdout-contains: 0087  Recur
+-- stdout-contains: 0091  JumpBack
+-- Op::Recur carries a u8 arg_count and a u16 first_slot (3 operand
+-- bytes): the next instruction starts 4 bytes after Recur.
+fn main() {
+  let a = 1
+  let b = 2
+  let total = loop i = 0, acc = 0 {
+    match i >= 3 {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+  println(total + a + b)
+}

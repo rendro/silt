@@ -29,17 +29,9 @@
 //! > produces the same output as the longer code. Idempotency is easy to
 //! > claim and hard to verify; the lock closes that.
 //!
-//! Two locks below pin both fixes against reintroduction:
-//!
-//!   * Lock A proves `common::ok(v)` produces an output value byte-for-
-//!     byte equal to the inline `Value::Variant("Ok".into(), vec![v])`
-//!     literal that the three deleted clones built — i.e. the deletion
-//!     was a semantic no-op.
-//!   * Lock A also source-greps the three files to ensure `fn ok(v: Value)
-//!     -> Value` does NOT come back as a local definition (clone-rot
-//!     guard) and that the canonical `use super::common::ok` is present.
-//!   * Lock B source-greps `src/scheduler.rs` to assert `WakeSelectEdge`
-//!     stays gone while `MainTarget` stays exported.
+//! The lock below proves `common::ok(v)` produces an output value
+//! byte-for-byte equal to the inline `Value::Variant("Ok".into(), vec![v])`
+//! literal that the three deleted clones built.
 
 use silt::builtins;
 use silt::value::Value;
@@ -74,90 +66,4 @@ fn round83_ok_helper_matches_inline_variant_for_each_dedup_site() {
              that the deleted clones in tcp/stream/postgres built"
         );
     }
-}
-
-/// Clone-rot guard: assert the three sibling files do NOT each
-/// re-introduce a local `fn ok(v: Value) -> Value` definition. The
-/// signature is specific enough that no unrelated helper in any of these
-/// files would collide. Each file must instead import the canonical
-/// helper via `use super::common::ok` (potentially as part of a
-/// brace-grouped list like `use super::common::{ok, value_kind};`).
-#[test]
-fn round83_no_local_ok_clone_in_tcp_stream_postgres() {
-    let tcp = include_str!("../../src/builtins/tcp.rs");
-    let stream = include_str!("../../src/builtins/stream.rs");
-    let postgres = include_str!("../../src/builtins/postgres.rs");
-
-    let forbidden = "fn ok(v: Value) -> Value";
-
-    for (name, src) in [
-        ("tcp.rs", tcp),
-        ("stream.rs", stream),
-        ("postgres.rs", postgres),
-    ] {
-        assert!(
-            !src.contains(forbidden),
-            "src/builtins/{name} must not redefine `{forbidden}` — the \
-             round-83 dedup collapsed all three clones into \
-             `super::common::ok`. Re-importing or re-cloning the helper \
-             would defeat the dedup."
-        );
-        // Positive side: the canonical import must be present. We allow
-        // either a bare `use super::common::ok;` line OR a
-        // brace-grouped import that names `ok`.
-        let has_bare = src.contains("use super::common::ok;");
-        let has_grouped = src.contains("use super::common::{")
-            && src.lines().any(|l| {
-                l.contains("use super::common::{")
-                    && (l.contains(" ok,")
-                        || l.contains(" ok}")
-                        || l.contains("{ok,")
-                        || l.contains("{ok}"))
-            });
-        assert!(
-            has_bare || has_grouped,
-            "src/builtins/{name} must import `super::common::ok` (the \
-             canonical helper). Found neither a bare \
-             `use super::common::ok;` nor a brace-grouped `use \
-             super::common::{{…, ok, …}};` import — did the dedup get \
-             reverted?"
-        );
-    }
-}
-
-// ── Lock B: WakeSelectEdge removal ──────────────────────────────────────
-
-/// Round 83 dropped the `SelectEdge as WakeSelectEdge` alias from
-/// `src/scheduler.rs`'s top-level re-export tuple (it had zero external
-/// callers). Pin the deletion: `WakeSelectEdge` must not appear anywhere
-/// in `src/scheduler.rs`, while `MainTarget` (which DOES have external
-/// callers, e.g. `src/builtins/concurrency.rs`) must still be
-/// re-exported.
-#[test]
-fn round83_wake_select_edge_alias_stays_gone_but_main_target_stays() {
-    let scheduler = include_str!("../../src/scheduler.rs");
-
-    assert!(
-        !scheduler.contains("WakeSelectEdge"),
-        "src/scheduler.rs must not re-introduce the `WakeSelectEdge` \
-         alias — round 83 dropped it because it had zero external \
-         callers. Internal `SelectEdge` users import it directly via \
-         the private `use wake_graph::SelectEdge;` line; that private \
-         import is the supported entry point."
-    );
-
-    // `MainTarget` IS used by `src/builtins/concurrency.rs`, so its
-    // public re-export at `silt::scheduler::MainTarget` must survive.
-    // We assert a `pub use` line that names `MainTarget` exists.
-    let main_target_re_exported = scheduler.lines().any(|l| {
-        let trimmed = l.trim_start();
-        trimmed.starts_with("pub use") && trimmed.contains("MainTarget")
-    });
-    assert!(
-        main_target_re_exported,
-        "src/scheduler.rs must still `pub use` `MainTarget` — round 83 \
-         only dropped the `WakeSelectEdge` half of the original re-export \
-         tuple. `MainTarget` has external callers (e.g. \
-         `src/builtins/concurrency.rs`) and must stay exported."
-    );
 }

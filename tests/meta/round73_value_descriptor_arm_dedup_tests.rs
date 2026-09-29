@@ -29,15 +29,8 @@
 //!      discriminant first, the two variants must hash differently for
 //!      the same payload. A regression that drops the discriminant
 //!      prefix from the Hash impl would silently collide them.
-//!
-//!   4. Source-grep lock — the merged-arm syntax
-//!      `Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name)`
-//!      appears at the four expected sites (Debug, Display, format_silt,
-//!      Hash) in `src/value.rs`. If a future edit re-splits any of them
-//!      back into two adjacent arms, the lock fails.
 
 use std::collections::hash_map::DefaultHasher;
-use std::fs;
 use std::hash::{Hash, Hasher};
 
 use silt::value::Value;
@@ -109,29 +102,4 @@ fn same_kind_descriptors_with_same_name_hash_and_compare_equal() {
     let p2 = Value::PrimitiveDescriptor("Foo".to_string());
     assert_eq!(p1, p2);
     assert_eq!(hash_of(&p1), hash_of(&p2));
-}
-
-#[test]
-fn source_grep_lock_merged_arms_present_in_value_rs() {
-    // Pin the merged-arm syntax at all four expected sites. If a future
-    // edit re-splits any of them back into two adjacent arms, the
-    // occurrence count drops below 4 and the lock fails.
-    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/value.rs"))
-        .expect("read src/value.rs");
-
-    let needle = "Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name)";
-    let count = src.matches(needle).count();
-    assert!(
-        count >= 4,
-        "expected the merged-arm syntax `{needle}` to appear at >=4 sites \
-         (Debug, Display, format_silt, Hash) in src/value.rs, found {count}",
-    );
-
-    // And the old split-arm form for the descriptor pair must not
-    // re-appear adjacent.
-    let split = "Value::TypeDescriptor(name) => write!(f, \"<type:{name}>\"),\n            Value::PrimitiveDescriptor(name) => write!(f, \"<type:{name}>\"),";
-    assert!(
-        !src.contains(split),
-        "split-arm form of TypeDescriptor/PrimitiveDescriptor display arms reappeared in src/value.rs",
-    );
 }

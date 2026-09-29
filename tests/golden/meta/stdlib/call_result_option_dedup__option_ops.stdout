@@ -1,0 +1,12 @@
+7
+42
+true
+false
+true
+false
+Some(6)
+None
+Some(13)
+None
+Ok(5)
+Err(err)

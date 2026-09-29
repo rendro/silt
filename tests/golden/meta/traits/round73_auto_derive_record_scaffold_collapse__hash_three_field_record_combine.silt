@@ -1,0 +1,16 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type R { a: Int, b: Int, c: Int }
+fn main() {
+    let h1 = h(R { a: 1, b: 2, c: 3 })
+    let h2 = h(R { a: 1, b: 2, c: 3 })
+    let h3 = h(R { a: 9, b: 2, c: 3 })
+    let h4 = h(R { a: 1, b: 9, c: 3 })
+    let h5 = h(R { a: 1, b: 2, c: 9 })
+    println(eq_gen(h1, h2))
+    println(eq_gen(h1, h3))
+    println(eq_gen(h1, h4))
+    println(eq_gen(h1, h5))
+}

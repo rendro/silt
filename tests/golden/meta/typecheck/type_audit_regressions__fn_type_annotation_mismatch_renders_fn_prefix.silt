@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: Fn(Int) -> Int
+fn main() {
+  let f: Fn(Int) -> Int = "hello"
+  println(f)
+}

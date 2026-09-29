@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: constructor 'Just' expects 1 field, but pattern has 2
+-- stderr-contains: type_audit_regressions__let_destructure_constructor_arity_caret_lands_on_pattern.silt:8:7
+type Maybe { Just(Int), Nothing }
+fn main() {
+  let some_int_value = Just(1)
+  let Just(x, y) = some_int_value
+  println(x)
+}

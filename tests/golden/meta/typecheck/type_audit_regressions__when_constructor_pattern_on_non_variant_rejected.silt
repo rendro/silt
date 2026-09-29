@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: got Int
+fn main() {
+  when let Ok(x) = 42 else { return }
+  println("{x}")
+}

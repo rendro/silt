@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+import map
+
+type Cache(k, v) {
+    store: Map(k, v),
+    capacity: Int,
+}
+
+fn get(c: Cache(k, v), key: k) -> Option(v) where k: Hash + Equal {
+    map.get(c.store, key)
+}
+
+fn main() { () }

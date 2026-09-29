@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: type mismatch: expected Float, got Int
+fn main() {
+  let n = 42 as Float
+  ()
+}

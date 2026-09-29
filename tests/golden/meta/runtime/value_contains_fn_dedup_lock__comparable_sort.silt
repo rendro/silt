@@ -1,0 +1,4 @@
+import list
+fn main() {
+  println(list.sort([3, 1, 2]))
+}

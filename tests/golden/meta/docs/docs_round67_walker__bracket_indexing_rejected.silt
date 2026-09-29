@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: postfix indexing is not supported
+-- stderr-contains: list.get
+-- stderr-contains: string.slice
+fn main() {
+  let xs = [1, 2, 3]
+  let r = xs[0]
+  ()
+}

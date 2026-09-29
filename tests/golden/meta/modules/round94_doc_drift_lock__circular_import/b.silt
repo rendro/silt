@@ -1,0 +1,2 @@
+import a
+pub fn g() -> Int { 1 }

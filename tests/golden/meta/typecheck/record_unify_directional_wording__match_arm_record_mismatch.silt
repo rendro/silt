@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-not-contains: record is missing field
+type Smaller { a: Int }
+type Bigger  { a: Int, b: Int }
+
+fn pick(flag: Bool) -> Smaller {
+  match flag {
+    true  -> Smaller { a: 1 },
+    false -> Bigger { a: 1, b: 2 }
+  }
+}

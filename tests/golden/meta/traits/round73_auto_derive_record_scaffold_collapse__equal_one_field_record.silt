@@ -1,0 +1,9 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type One { x: Int }
+fn main() {
+    println(eq_gen(One { x: 1 }, One { x: 1 }))
+    println(eq_gen(One { x: 1 }, One { x: 2 }))
+}

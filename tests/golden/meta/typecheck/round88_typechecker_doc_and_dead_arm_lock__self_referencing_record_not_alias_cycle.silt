@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: forms a cycle
+type Node {
+  next: Node,
+  value: Int,
+}
+fn main() -> Int { 0 }

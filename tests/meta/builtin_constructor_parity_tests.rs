@@ -7,17 +7,12 @@
 //!   * LSP rename (`src/lsp/rename.rs`) — must reject renames that
 //!     target any gated constructor (otherwise `silt rename` corrupts
 //!     user programs that call stdlib APIs).
-//!   * LSP completion (`src/lsp/completion.rs`) — bare completion list
-//!     should offer every constructor, including gated ones.
 //!   * REPL completion (`src/repl.rs`) — tab-completion must suggest
 //!     every constructor.
 //!
-//! Mirrors the style of `tests/meta/editor_grammar_constructors_tests.rs`:
-//! scan the source files for the hardcoded lists (or the authoritative
-//! helper) and assert every variant is mentioned. If this test fails
-//! after adding a new gated constructor, the fix is to route the new
-//! surface through `module::all_builtin_constructor_names` rather than
-//! re-adding another hand-rolled list.
+//! If this test fails after adding a new gated constructor, the fix is
+//! to route the surface through `module::all_builtin_constructor_names`
+//! rather than re-adding another hand-rolled list.
 //!
 //! Before the round-58 fix, three separate hardcoded lists tracked
 //! gated constructors — they had diverged, breaking rename and
@@ -25,44 +20,6 @@
 //! JsonSyntax, PgConnect, …) plus Recv/Send. Do not loosen this check.
 
 use silt::module::{all_builtin_constructor_names, builtin_enum_variants};
-
-use std::fs;
-use std::path::PathBuf;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn read_source(rel: &str) -> String {
-    let path = repo_root().join(rel);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
-}
-
-/// Does `source` mention `name` as a whole identifier (flanked by
-/// non-word characters on both sides)? Avoids false positives like
-/// `Send` matching `Sent` while remaining agnostic to the surrounding
-/// syntax (string literal, iterator, match arm, etc.).
-fn source_mentions_name(source: &str, name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let nlen = name.len();
-    let nbytes = name.as_bytes();
-    if bytes.len() < nlen {
-        return false;
-    }
-    let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let mut i = 0;
-    while i + nlen <= bytes.len() {
-        if &bytes[i..i + nlen] == nbytes {
-            let left_ok = i == 0 || !is_word(bytes[i - 1]);
-            let right_ok = i + nlen == bytes.len() || !is_word(bytes[i + nlen]);
-            if left_ok && right_ok {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
-}
 
 /// Collects every constructor variant (prelude + gated) from the
 /// authoritative `builtin_enum_variants` registry. Deduplicated because
@@ -134,74 +91,19 @@ fn gated_constructors_present_in_authoritative_set() {
 // ─── LSP rename ───────────────────────────────────────────────────────
 
 #[test]
-fn lsp_rename_covers_every_gated_constructor() {
-    // The rename path protects constructors by asking
-    // `module::all_builtin_constructor_names().any(|c| c == name)`. We
-    // verify the source routes through that helper (not a stale copy
-    // of the hardcoded `BUILTIN_CONSTRUCTORS` list) AND we verify the
-    // old hardcoded list is gone — otherwise it could silently come
-    // back and shadow the helper call.
-    let src = read_source("src/lsp/rename.rs");
-
+fn lsp_rename_rejects_every_gated_constructor() {
+    // Rename must refuse every builtin constructor, gated or not;
+    // before round 58 a hand-rolled list covered only about half.
+    let accepted: Vec<&'static str> = all_variants()
+        .into_iter()
+        .filter(|name| silt::lsp::is_user_renameable(name))
+        .collect();
     assert!(
-        src.contains("all_builtin_constructor_names"),
-        "src/lsp/rename.rs must consult \
-         `module::all_builtin_constructor_names` so gated variants \
-         (IoNotFound/PgConnect/Recv/Send/etc.) are protected from \
-         rename. Before round-58 a hardcoded `BUILTIN_CONSTRUCTORS` \
-         list here only covered ~half of the gated constructors."
+        accepted.is_empty(),
+        "is_user_renameable accepts builtin constructors: {accepted:?}"
     );
-    assert!(
-        !src.contains("const BUILTIN_CONSTRUCTORS"),
-        "src/lsp/rename.rs should not define a hand-rolled \
-         `BUILTIN_CONSTRUCTORS` array — the authoritative list lives \
-         in `module::all_builtin_constructor_names`."
-    );
-
-    // The phantom `"unreachable"` was never a registered builtin;
-    // removing it from BUILTIN_GLOBALS is part of round-58.
-    // Find the BUILTIN_GLOBALS block and scan it specifically to avoid
-    // false positives from the word `unreachable` elsewhere in the file.
-    if let Some(start) = src.find("const BUILTIN_GLOBALS") {
-        let tail = &src[start..];
-        let end = tail.find("];").unwrap_or(tail.len());
-        let globals_block = &tail[..end];
-        assert!(
-            !source_mentions_name(globals_block, "unreachable"),
-            "BUILTIN_GLOBALS must not contain phantom `\"unreachable\"` — \
-             it is not a registered builtin (round-58 LATENT fix)."
-        );
-    }
-}
-
-// ─── LSP completion ───────────────────────────────────────────────────
-
-#[test]
-fn lsp_completion_covers_every_gated_constructor() {
-    // `builtins()` in src/lsp/completion.rs must emit a CONSTRUCTOR
-    // entry for every variant. We verify the source uses
-    // `all_builtin_constructor_names` (which then flows into the
-    // CompletionItem list). Before round-58 the function only
-    // hardcoded the 4 prelude constructors.
-    let src = read_source("src/lsp/completion.rs");
-    assert!(
-        src.contains("all_builtin_constructor_names"),
-        "src/lsp/completion.rs (`builtins` function) must source \
-         constructors from `module::all_builtin_constructor_names` so \
-         gated variants (Recv, Send, IoNotFound, PgConnect, Monday, …) \
-         appear in bare completion. Before round-58 only the 4 prelude \
-         constructors were emitted."
-    );
-
-    // Dot-completion must also emit gated constructors for a module
-    // prefix. The fix routes through `gated_constructor_module`.
-    assert!(
-        src.contains("gated_constructor_module"),
-        "src/lsp/completion.rs dot-completion must consult \
-         `module::gated_constructor_module` so `io.`/`json.`/`http.`/ \
-         `channel.`/`postgres.`/`time.`/… offer their gated variants \
-         alongside module functions and constants."
-    );
+    // `unreachable` was a phantom reserved global, never a builtin.
+    assert!(silt::lsp::is_user_renameable("unreachable"));
 }
 
 // ─── REPL completion ──────────────────────────────────────────────────

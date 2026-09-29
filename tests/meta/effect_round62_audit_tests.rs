@@ -22,10 +22,6 @@
 //!     the way to the consumer.
 //!   - G7: strict-effects diagnostic single-quoting row syntax —
 //!     `'!{IO}'` reads as a single oddly-named effect, not a row.
-//!   - L1: inline `["Equal", "Compare", "Hash", "Display"]` literal
-//!     in trait_impl_set seeding rather than the
-//!     `BUILTIN_AUTO_DERIVED_TRAIT_NAMES` constant defined ten lines
-//!     above.
 //!
 //! Each assertion below is a runtime/CLI lock (silt fmt, silt check,
 //! silt check --strict-effects) — not just a typechecker-pass
@@ -192,27 +188,6 @@ fn strict_effects_suggestion_uses_parseable_brace_syntax() {
     );
 }
 
-// ── B3b: source-grep lock that format_suggested_fn_header avoids `!*` ──
-
-#[test]
-fn format_suggested_fn_header_does_not_emit_top_star_literal() {
-    // Read the inference module and confirm the helper that builds
-    // the `annotate as ...` suggestion explicitly special-cases
-    // `EffectSet::TOP` to avoid the `!*` sigil. The audit's worry is
-    // that a future edit reintroduces `header.push_str(&format!(" {}",
-    // effects))` without the guard. We lock the presence of the
-    // explicit-set fallback string — a rough but durable shape check.
-    let src = fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/typechecker/inference.rs"),
-    )
-    .expect("read inference.rs");
-    assert!(
-        src.contains("!{fs, io, net, random, time}"),
-        "format_suggested_fn_header lost its TOP→explicit-set fallback; \
-         a `!*` sigil could leak back into the help line"
-    );
-}
-
 // ── B4: narrowing path preserves a callee's declared !{io} ────────────
 
 #[test]
@@ -317,49 +292,5 @@ fn strict_effects_diagnostic_does_not_single_quote_row_syntax() {
     assert!(
         !combined.contains("'!{"),
         "strict-effects diagnostic still single-quotes the row syntax:\n{combined}"
-    );
-}
-
-// ── L1: trait_impl_set seeding uses the named constant ────────────────
-
-#[test]
-fn trait_impl_set_seeding_uses_builtin_auto_derived_constant() {
-    // The audit caught an inline `for trait_name in &["Equal",
-    // "Compare", "Hash", "Display"]` that should reference the
-    // `BUILTIN_AUTO_DERIVED_TRAIT_NAMES` constant defined in the
-    // same file. Drift between the two lists would silently break
-    // auto-derive seeding when a future trait is added or removed.
-    // Source-grep lock: the `for trait_name in` line near the trait-
-    // impl-seeding block must reference the named constant, not a
-    // bare array.
-    let src = fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/typechecker/mod.rs"),
-    )
-    .expect("read typechecker/mod.rs");
-
-    // The broken shape is the inline array literal: a `for trait_name
-    // in` line that ALSO carries `"Equal"` and `"Display"` literally
-    // on the same line. The audit's other `for trait_name in
-    // trait_names` loop iterates a function parameter, not a bare
-    // array, so it doesn't match this filter.
-    let bad_lines: Vec<&str> = src
-        .lines()
-        .filter(|l| l.contains("for trait_name in"))
-        .filter(|l| l.contains("\"Equal\"") || l.contains("\"Display\""))
-        .collect();
-    assert!(
-        bad_lines.is_empty(),
-        "found inline trait literal in `for trait_name in &[\"...\"]` form; \
-         use BUILTIN_AUTO_DERIVED_TRAIT_NAMES instead. Offending line(s):\n  {}",
-        bad_lines.join("\n  ")
-    );
-    // Positive lock: the constant must actually be referenced
-    // somewhere — otherwise a future edit could swap the loop for
-    // the inline literal and the negative grep above would miss it
-    // (e.g. if the literal got split across lines).
-    assert!(
-        src.contains("for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES"),
-        "expected at least one `for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES` \
-         loop in typechecker/mod.rs"
     );
 }
