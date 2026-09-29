@@ -54,7 +54,7 @@ fn collect_cases(root: &Path, out: &mut Vec<PathBuf>) {
     entries.sort();
     for path in entries {
         if path.is_dir() {
-            if path.join("main.silt").is_file() {
+            if path.join("main.silt").is_file() || is_package_case(&path) {
                 out.push(path);
             } else {
                 collect_cases(&path, out);
@@ -65,7 +65,20 @@ fn collect_cases(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// A package case: a directory with a `silt.toml` and `src/main.silt`
+/// and no `main.silt` of its own. It runs as `silt <cmd>` with no file,
+/// the way a user runs a package, and its directives are read from
+/// `src/main.silt`.
+fn is_package_case(dir: &Path) -> bool {
+    !dir.join("main.silt").is_file()
+        && dir.join("silt.toml").is_file()
+        && dir.join("src/main.silt").is_file()
+}
+
 fn parse_directives(source: &str) -> Result<Directives, String> {
+    // A byte-order mark at the start of the file is not part of the first
+    // directive.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut d = Directives {
         cmd: vec!["run".to_string()],
         repeat: 1,
@@ -114,7 +127,14 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
 }
 
 fn load_case(path: &Path) -> Result<Case, String> {
-    let (dir, file, source_path, expected_base) = if path.is_dir() {
+    let (dir, file, source_path, expected_base) = if path.is_dir() && is_package_case(path) {
+        (
+            path.to_path_buf(),
+            String::new(),
+            path.join("src/main.silt"),
+            path.join("case"),
+        )
+    } else if path.is_dir() {
         (
             path.to_path_buf(),
             "main.silt".to_string(),
@@ -190,7 +210,7 @@ fn run_in(case: &Case, dir: &Path) -> Output {
     command.args(&case.directives.cmd);
     // A REPL session reads its input from stdin, not from the file; the
     // file holds only the directives and the session's description.
-    if case.directives.cmd.first().map(String::as_str) != Some("repl") {
+    if case.directives.cmd.first().map(String::as_str) != Some("repl") && !case.file.is_empty() {
         command.arg(&case.file);
     }
     command

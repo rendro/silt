@@ -12,6 +12,9 @@ tests/golden/<area>/<case>.stderr        expected stderr (optional)
 tests/golden/<area>/<case>/main.silt     multi-file case: a directory;
 tests/golden/<area>/<case>/*.silt        the other files beside it;
 tests/golden/<area>/<case>/silt.toml     a package, if the case needs one
+tests/golden/<area>/<case>/src/main.silt a package case: silt.toml plus src/main.silt and
+                                         no main.silt; it runs as `silt run` with no
+                                         file, directives are read from src/main.silt
 tests/golden/<area>/<case>/case.stdout   expected output of a directory case
 tests/golden/<area>/<case>/case.stderr
 ```
@@ -22,7 +25,8 @@ tests/golden/<area>/<case>/case.stderr
 ## Directives
 
 Leading comment lines of the `.silt` file (for a directory case, of
-`main.silt`), before any code, each `-- key: value`:
+`main.silt`; for a package case, of `src/main.silt`), after an optional
+byte-order mark and before any code, each `-- key: value`:
 
 | Directive | Meaning | Default |
 |---|---|---|
