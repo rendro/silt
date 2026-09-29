@@ -73,20 +73,43 @@ pub(crate) fn display_path_for(
 ) -> String {
     if user_path_is_absolute {
         if candidate.is_absolute() {
-            candidate.display().to_string()
+            without_verbatim_prefix(candidate)
         } else if let Some(cwd) = cwd {
-            cwd.join(candidate).display().to_string()
+            without_verbatim_prefix(&cwd.join(candidate))
         } else {
-            candidate.display().to_string()
+            without_verbatim_prefix(candidate)
         }
     } else if let Some(cwd) = cwd {
-        match candidate.strip_prefix(cwd) {
-            Ok(rel) => rel.display().to_string(),
-            Err(_) => candidate.display().to_string(),
+        if let Ok(rel) = candidate.strip_prefix(cwd) {
+            return rel.display().to_string();
         }
+        // Module paths are canonicalized upstream; on Windows that gives
+        // the extended-length form (`\\?\C:\...`) while `cwd` is `C:\...`,
+        // so the literal strip misses. Canonicalizing both sides makes
+        // them comparable; any failure falls through to the raw path.
+        if let (Ok(candidate_canon), Ok(cwd_canon)) =
+            (std::fs::canonicalize(candidate), std::fs::canonicalize(cwd))
+            && let Ok(rel) = candidate_canon.strip_prefix(&cwd_canon)
+        {
+            return rel.display().to_string();
+        }
+        without_verbatim_prefix(candidate)
     } else {
-        candidate.display().to_string()
+        without_verbatim_prefix(candidate)
     }
+}
+
+/// `path` for display, without the Windows extended-length prefix
+/// `\\?\` that `canonicalize` adds; unchanged elsewhere.
+fn without_verbatim_prefix(path: &Path) -> String {
+    let s = path.display().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+    }
+    s
 }
 
 /// Express `target` as a path relative to `base`, using `..` segments

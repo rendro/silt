@@ -284,8 +284,32 @@ fn run_in(case: &Case, dir: &Path) -> Output {
     }
 }
 
+/// On Windows, the backslashes inside paths to `.silt` files become `/`,
+/// so one expected file serves every platform. Elsewhere the text is
+/// unchanged.
+fn portable_paths(text: &str) -> String {
+    if !cfg!(windows) {
+        return text.to_string();
+    }
+    text.split_inclusive(|c: char| c.is_whitespace() || c == '`' || c == '\'')
+        .map(|token| {
+            if token.contains(".silt") {
+                token.replace('\\', "/")
+            } else {
+                token.to_string()
+            }
+        })
+        .collect()
+}
+
 /// The problems with `out` for `case`, empty when it passes.
 fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
+    let out = &Output {
+        code: out.code,
+        stdout: portable_paths(&out.stdout),
+        stderr: portable_paths(&out.stderr),
+        timed_out: out.timed_out,
+    };
     let d = &case.directives;
     let mut problems = Vec::new();
     if out.timed_out {

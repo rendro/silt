@@ -393,6 +393,27 @@ fn normalize_module_path(p: &std::path::Path) -> String {
     crate::git::escape_for_display(&module_path_for_display(p))
 }
 
+/// `p` canonicalized, also when `p` itself does not exist (a module that
+/// was looked for and not found): the nearest existing ancestor is
+/// canonicalized and the rest of the path appended. On Windows this also
+/// resolves short (8.3) directory names, so a path under a short-named
+/// working directory still compares with its long form.
+fn canonicalize_existing_prefix(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut rest = Vec::new();
+    let mut current = p;
+    loop {
+        if let Ok(canon) = std::fs::canonicalize(current) {
+            let mut out = canon;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return Some(out);
+        }
+        rest.push(current.file_name()?.to_os_string());
+        current = current.parent()?;
+    }
+}
+
 /// The unescaped text of [`normalize_module_path`].
 fn module_path_for_display(p: &std::path::Path) -> String {
     if let Ok(cwd) = std::env::current_dir() {
@@ -407,8 +428,8 @@ fn module_path_for_display(p: &std::path::Path) -> String {
         // comparable. `canonicalize` can fail (e.g. no filesystem access
         // in some sandboxes); any failure falls through to the raw
         // display.
-        if let (Ok(p_canon), Ok(cwd_canon)) =
-            (std::fs::canonicalize(p), std::fs::canonicalize(&cwd))
+        if let (Some(p_canon), Ok(cwd_canon)) =
+            (canonicalize_existing_prefix(p), std::fs::canonicalize(&cwd))
             && let Ok(rel) = p_canon.strip_prefix(&cwd_canon)
         {
             return rel.display().to_string();
