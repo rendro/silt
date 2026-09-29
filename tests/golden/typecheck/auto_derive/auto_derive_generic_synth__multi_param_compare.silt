@@ -1,0 +1,7 @@
+type Pair(a, b) { Tup(a, b), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Tup(1, "z"), Tup(2, "a")))   -- first differs: 1 < 2
+    println(cmp_gen(Tup(1, "a"), Tup(1, "b")))   -- tie on first, second differs
+    println(cmp_gen(Tup(5, "x"), Tup(5, "x")))   -- equal
+}

@@ -1,0 +1,11 @@
+-- `P(x, _) | Q(_, x)`: P(1, 2) binds 1, Q(1, 2) binds 2.
+type T { P(Int, Int), Q(Int, Int) }
+fn get(t: T) -> Int {
+  match t {
+    P(x, _) | Q(_, x) -> x
+  }
+}
+fn main() {
+  println(get(P(1, 2)))
+  println(get(Q(1, 2)))
+}

@@ -1,0 +1,15 @@
+import io
+fn check(x, y) {
+  match (x, y) {
+    (1 | 2, "a" | "b") -> "match"
+    _ -> "no"
+  }
+}
+
+fn program() {
+  [check(1, "a"), check(2, "b"), check(1, "c"), check(3, "a")]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

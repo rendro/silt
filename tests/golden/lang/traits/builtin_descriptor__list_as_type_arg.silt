@@ -1,0 +1,16 @@
+trait Empty {
+    fn empty() -> Self
+}
+
+trait Empty for List(a) {
+    fn empty() -> Self { [] }
+}
+
+fn make(type t) -> t where t: Empty {
+    t.empty()
+}
+
+fn main() {
+    let xs: List(Int) = make(List)
+    println(xs)
+}

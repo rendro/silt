@@ -1,0 +1,5 @@
+import string as s
+
+fn main() {
+  println(("hello world" |> s.split(" ")) == ["hello", "world"])
+}

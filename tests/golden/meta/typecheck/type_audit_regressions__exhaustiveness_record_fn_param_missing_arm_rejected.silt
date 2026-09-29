@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: non-exhaustive match
+type Pair { a: Int, b: Int }
+fn check(p: Pair) -> String {
+  match p {
+    Pair { a: 1, b: 1 } -> "one"
+  }
+}
+fn main() { println(check(Pair { a: 1, b: 2 })) }

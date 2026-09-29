@@ -1,0 +1,2 @@
+pub fn kaboom() = 1 / 0
+pub fn wrapper() = kaboom()

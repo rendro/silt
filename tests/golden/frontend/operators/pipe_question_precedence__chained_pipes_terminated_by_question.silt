@@ -1,0 +1,26 @@
+import result
+
+type Wrapped {
+  Wrap(Int),
+}
+
+fn wrap(n: Int) -> Wrapped { Wrap(n) }
+
+fn produce() -> Result(Int, Int) {
+  Ok(1)
+}
+
+fn outcome() {
+  let r = produce()
+          |> result.map_ok { n -> n + 1 }
+          |> result.map_ok { n -> n * 10 }
+          |> result.map_err(wrap)
+  match r {
+    Ok(v) -> v
+    Err(Wrap(_)) -> -1
+  }
+}
+
+fn main() {
+  println(outcome())
+}

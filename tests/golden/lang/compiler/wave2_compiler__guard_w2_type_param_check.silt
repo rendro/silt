@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+import json
+
+fn decode_list(text: String, type a) -> Result(List(a), JsonError) {
+  json.parse_list(text, a)
+}
+
+fn main() {
+  println(decode_list("[1]", Int))
+}

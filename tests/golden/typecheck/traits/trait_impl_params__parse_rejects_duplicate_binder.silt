@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate type variable 'a'
+type Pair(A, B) { Pair(A, B) }
+trait X { fn x(self) -> Int }
+trait X for Pair(a, a) {
+  fn x(self) -> Int { 1 }
+}
+fn main() {}

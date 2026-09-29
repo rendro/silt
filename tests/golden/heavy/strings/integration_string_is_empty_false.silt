@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.is_empty("hi") }
+
+fn main() {
+  println(io.inspect(program()))
+}

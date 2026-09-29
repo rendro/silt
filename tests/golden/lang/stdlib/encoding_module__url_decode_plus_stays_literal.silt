@@ -1,0 +1,7 @@
+import encoding
+fn main() {
+  match encoding.url_decode("a+b") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+}

@@ -1,0 +1,6 @@
+import list
+type Color { Red, Green, Blue, }
+fn main() {
+    let xs = list.sort([Green, Red, Blue])
+    println(xs)
+}

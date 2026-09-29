@@ -1,0 +1,7 @@
+type Person { name: String, age: Int }
+
+fn name(p: {name: String, ...r}) -> String = p.name
+
+fn main() {
+  println(name(Person { name: "Bob", age: 42 }))
+}

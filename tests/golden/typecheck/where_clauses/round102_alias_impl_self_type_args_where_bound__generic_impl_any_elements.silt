@@ -1,0 +1,5 @@
+import list
+trait Total { fn total(self) -> Int }
+trait Total for List(a) { fn total(self) -> Int = list.length(self) }
+fn sum_it(x: a) -> Int where a: Total { x.total() }
+fn main() { println(sum_it(["a", "b", "c"])) }

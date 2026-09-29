@@ -1,0 +1,5 @@
+1.0..10.0: no yes yes no
+-1.5..1.5: no yes yes no
+-2.5..-1.5: no yes yes no
+1.5..-1.5: no no no
+-3.5..7.5: no yes yes no

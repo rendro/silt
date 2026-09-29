@@ -1,0 +1,6 @@
+trait Foo { fn bar(self) -> Int }
+trait Foo for Range(a) { fn bar(self) -> Int = 7 }
+fn main() {
+    let xs = [1, 2, 3]
+    println(xs.bar())
+}

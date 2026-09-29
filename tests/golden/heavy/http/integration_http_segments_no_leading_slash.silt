@@ -1,0 +1,9 @@
+import io
+import http
+fn program() {
+  http.segments("foo/bar")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

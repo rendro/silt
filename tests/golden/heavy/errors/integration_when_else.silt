@@ -1,0 +1,25 @@
+import io
+fn safe_div(a, b) {
+  when let Ok(divisor) = if_nonzero(b) else {
+    return Err("division by zero")
+  }
+  Ok(a / divisor)
+}
+
+fn if_nonzero(n) {
+  match n {
+    0 -> Err("zero")
+    _ -> Ok(n)
+  }
+}
+
+fn program() {
+  match safe_div(10, 0) {
+    Ok(n) -> "got {n}"
+    Err(e) -> e
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

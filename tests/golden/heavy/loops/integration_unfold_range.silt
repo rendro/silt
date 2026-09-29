@@ -1,0 +1,14 @@
+import io
+import list
+fn program() {
+  list.unfold(1) { n ->
+    match n > 5 {
+      true -> None
+      _ -> Some((n, n + 1))
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

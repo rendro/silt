@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: does not implement Compare
+import set
+fn main() {
+  println(set.contains(set.new(), fn(y){ y }))
+}

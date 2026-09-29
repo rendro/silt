@@ -1,0 +1,9 @@
+import uuid
+fn main() {
+  println(uuid.is_valid("550e8400-e29b-41d4-a716-446655440000"))
+  println(uuid.is_valid("550E8400-e29b-41D4-A716-446655440000"))
+  println(uuid.is_valid("00000000-0000-0000-0000-000000000000"))
+  println(uuid.is_valid("not-a-uuid"))
+  println(uuid.is_valid(""))
+  println((uuid.is_valid(uuid.v4()), uuid.is_valid(uuid.v7())))
+}

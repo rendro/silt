@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: takes no `self`
+trait Default {
+    fn default() -> Self
+}
+
+trait Default for Int {
+    fn default() -> Self { 0 }
+}
+
+fn use_it() {
+    let _ = 5.default()
+}
+
+fn main() { use_it() }

@@ -1,0 +1,41 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock on main thread
+-- r1 waits for `a` or `b`, r2 waits for `a` behind r1. One value goes
+-- to each channel. The value in `a` wakes r1. If r1 then takes the
+-- value of `b`, the value in `a` is r2's, but r2's wake-up was used up
+-- by r1: without the fix r2 stays parked next to its value and the
+-- join is told "deadlock" (about half of the runs). If r1 takes the
+-- value of `a`, the program sends another one, so that r2 can finish
+-- in both cases.
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new(4)
+  let b = channel.new(4)
+  let r1 = task.spawn(fn() {
+    match channel.select([Recv(a), Recv(b)]) {
+      (^a, Message(_)) -> "a"
+      (^b, Message(_)) -> "b"
+      _ -> "other"
+    }
+  })
+  time.sleep(time.ms(50))
+  let r2 = task.spawn(fn() {
+    match channel.receive(a) {
+      Message(v) -> v
+      _ -> 0 - 1
+    }
+  })
+  time.sleep(time.ms(50))
+  channel.send(a, 1)
+  channel.send(b, 2)
+  let took = task.join(r1)
+  match took {
+    "a" -> channel.send(a, 1)
+    _ -> ()
+  }
+  let got = task.join(r2)
+  println("r2 got {got}")
+}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+fn main() {
+  let (a, b) = (1, "hi")
+  let i: Int = a
+  let s: String = b
+  println("{i} {s}")
+}

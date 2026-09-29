@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected type _, got
+-- An enum shadowed by its same-named variant cannot be passed as a type argument.
+type Box(T) { Box(T) }
+
+fn tag(type a) -> String { "ok" }
+
+fn use_it() {
+    let _ = tag(Box)
+}
+
+fn main() {}

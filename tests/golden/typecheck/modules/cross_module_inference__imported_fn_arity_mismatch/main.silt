@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: argument
+-- stderr-not-contains: unknown module
+import a
+
+fn main() {
+  a.add(1, 2, 3)
+}

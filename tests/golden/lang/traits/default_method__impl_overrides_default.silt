@@ -1,0 +1,14 @@
+trait Greeter {
+  fn greet(self) -> String { "default-hello" }
+}
+
+type Item { v: Int }
+
+trait Greeter for Item {
+  fn greet(self) -> String { "explicit-impl" }
+}
+
+fn main() {
+  let it = Item { v: 1 }
+  println(it.greet())
+}

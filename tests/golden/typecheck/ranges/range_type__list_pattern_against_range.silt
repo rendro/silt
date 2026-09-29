@@ -1,0 +1,7 @@
+fn main() {
+    let n = match 1..3 {
+        [a, b, c] -> a + b + c,
+        _ -> 0
+    }
+    println(n)
+}

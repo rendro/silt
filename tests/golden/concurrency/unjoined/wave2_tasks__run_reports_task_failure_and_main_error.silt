@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 3
+-- The failures are reported before the error of `main`, and the run
+-- fails once, with status 1.
+import channel
+import task
+import time
+fn main() {
+  let about_to_fail = channel.new(1)
+  let _ = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    panic("worker failed")
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  panic("main failed")
+}

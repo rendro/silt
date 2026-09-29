@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: invalid regex
+import regex
+fn main() { regex.is_match("[invalid(", "test") }

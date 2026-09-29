@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 0
+-- A trait impl method with `type a` accepts a descriptor argument at the call site.
+import json
+
+type Todo { id: Int, title: String }
+
+trait Decodable {
+    fn decode(self, type a) -> Result(a, JsonError)
+}
+
+trait Decodable for String {
+    fn decode(self, type a) -> Result(a, JsonError) {
+        json.parse(self, a)
+    }
+}
+
+fn use_it(body: String) {
+    let _ = body.decode(Todo)
+}
+
+fn main() {}

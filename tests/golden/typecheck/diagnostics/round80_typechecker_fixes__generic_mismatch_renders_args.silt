@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch between two parametric types renders their arguments.
+-- stderr-contains: Bag(String)
+-- stderr-contains: Box(Int)
+-- stderr-not-contains: expected Box, got Bag
+type Bag(a) { Wrap(a) }
+type Box(a) { Pack(a) }
+fn want_box(b: Box(Int)) -> Int { 0 }
+fn main() -> Int {
+  let b: Bag(String) = Wrap("x")
+  want_box(b)
+}

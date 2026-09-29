@@ -1,0 +1,22 @@
+import float
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+  Triangle(Float, Float),
+}
+
+fn area(s) {
+  match s {
+    Circle(r) -> 3.14 * r * r
+    Rect(w, h) -> w * h
+    Triangle(b, h) -> 0.5 * b * h
+  }
+}
+
+fn program() {
+  area(Rect(3.0, 4.0))
+}
+
+fn main() {
+  println(float.to_string(program(), 1))
+}

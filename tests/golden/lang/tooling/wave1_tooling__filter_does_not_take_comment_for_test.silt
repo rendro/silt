@@ -1,0 +1,11 @@
+-- cmd: test --filter commented
+-- exit: 0
+-- stdout-contains: no matching test files found
+-- stderr-not-contains: 0 tests
+import test
+{-
+fn test_commented() { 1 }
+-}
+fn test_real() {
+  test.assert_eq(1, 1)
+}

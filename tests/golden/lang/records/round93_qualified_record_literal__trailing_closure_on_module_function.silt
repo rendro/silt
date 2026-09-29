@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: error[parse]
+import list
+
+fn main() {
+  let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+  print(doubled)
+  let r = util.f { x -> x }
+  ()
+}

@@ -1,0 +1,16 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- A stage that ends without ever delivering: the receive must see
+-- `Closed`.
+import channel
+import stream
+import time
+
+fn main() {
+  let out = stream.from_list([1, 2]) |> stream.filter { x ->
+    time.sleep(time.ms(200))
+    false
+  }
+  println(channel.receive(out))
+  println("end")
+}

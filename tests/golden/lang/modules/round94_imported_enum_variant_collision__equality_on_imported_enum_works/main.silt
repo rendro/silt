@@ -1,0 +1,10 @@
+import sa
+import sb
+
+fn main() {
+  let x = sa.mka()
+  let y = sb.mkb()
+  println(x == sa.mka())
+  println(y == sb.mkb())
+  println(x.hash() == sa.mka().hash())
+}

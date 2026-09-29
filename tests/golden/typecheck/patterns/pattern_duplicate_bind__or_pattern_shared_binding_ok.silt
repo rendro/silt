@@ -1,0 +1,8 @@
+type E { A(Int), B(Int) }
+fn main() {
+  let e = A(3)
+  let result = match e {
+    A(x) | B(x) -> x
+  }
+  println(result)
+}

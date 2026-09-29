@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: pad_left
+-- stderr-contains: 1-character
+-- stderr-contains: "ab"
+-- stderr-contains: 2 characters
+import string
+fn main() {
+  println(string.pad_left("x", 5, "ab"))
+}

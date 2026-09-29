@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.starts_with("hello", "") }
+
+fn main() {
+  println(io.inspect(program()))
+}

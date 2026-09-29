@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Spaced slashes are not a comment attempt: generic error, no hint.
+-- stderr-contains: expected expression
+-- stderr-not-contains: silt line comments use '--', not '//'
+fn main() {
+  / / x
+  ()
+}

@@ -1,0 +1,3 @@
+head: yes yes no
+tail: no no
+both: yes no

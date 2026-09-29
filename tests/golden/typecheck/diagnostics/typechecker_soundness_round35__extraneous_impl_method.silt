@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: method 'secret' is not declared in trait 'Greeter'
+-- An impl method not declared in the trait is rejected.
+trait Greeter {
+  fn greet(self) -> String
+}
+trait Greeter for Int {
+  fn greet(self) -> String { "hi" }
+  fn secret(self) -> Int { 42 }
+}
+fn main() {
+  println((1).greet())
+}

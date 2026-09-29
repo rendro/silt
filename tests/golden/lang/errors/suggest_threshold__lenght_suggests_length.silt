@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown function 'lenght'
+-- stderr-contains: did you mean `length`?
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  list.lenght(xs)
+}

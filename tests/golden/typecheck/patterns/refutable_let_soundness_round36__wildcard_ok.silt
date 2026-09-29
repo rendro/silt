@@ -1,0 +1,4 @@
+fn main() {
+  let _ = 42
+  println("ok")
+}

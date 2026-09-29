@@ -1,0 +1,13 @@
+import io
+import int
+fn program() {
+  let r = int.parse("42") as Result(Int, ParseError)
+  match r {
+    Ok(n) -> n
+    Err(_) -> -1
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

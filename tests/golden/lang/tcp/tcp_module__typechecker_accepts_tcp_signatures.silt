@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import bytes
+import tcp
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(l) -> match tcp.accept(l) {
+      Ok(s) -> {
+        let _ = tcp.write(s, bytes.empty())
+        let _ = tcp.read(s, 1024)
+        tcp.close(s)
+      }
+      Err(_) -> ()
+    }
+    Err(_) -> ()
+  }
+}

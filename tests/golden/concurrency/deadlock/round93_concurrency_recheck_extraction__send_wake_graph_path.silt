@@ -1,0 +1,13 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread: channel send with no counterparty
+-- A scheduler exists but its only task finished without receiving: the
+-- send goes through the wait loop and still reports the deadlock.
+import channel
+import task
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() { 1 })
+  task.join(h)
+  channel.send(ch, 2)
+}

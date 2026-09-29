@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Size { fn size(self) -> Int }
+trait Size for List(a) { fn size(self) -> Int = 0 }
+fn main() { }

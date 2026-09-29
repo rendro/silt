@@ -1,0 +1,10 @@
+-- Non-division Float arithmetic still returns Float
+import float
+
+-- Non-division Float arithmetic returns Float; float.to_string rejects
+-- any other type and prints the decimal.
+fn main() {
+  println(float.to_string(1.5 + 2.5, 1))
+  println(float.to_string(5.0 - 3.0, 1))
+  println(float.to_string(2.0 * 3.0, 1))
+}

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn myfn(p: a) -> Int where a: Display {
+  let s = "{p}"
+  let _ = myfn("hello")
+  let _ = myfn(42)
+  0
+}
+
+fn main() {
+  myfn(("a", "b"))
+}

@@ -1,0 +1,6 @@
+-- cmd: fmt --check
+-- exit: 2
+-- stderr-contains: -->
+-- stderr-not-contains: cli__check_parse_error_no_redundant_path_prefix.silt: error[
+fn broken( {
+}

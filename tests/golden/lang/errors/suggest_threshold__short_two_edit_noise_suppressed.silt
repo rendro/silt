@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'cup'
+-- stderr-not-contains: `cat`
+fn main() {
+  let cat = 1
+  cup
+}

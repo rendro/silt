@@ -1,0 +1,8 @@
+import fs
+import list
+fn main() {
+    match fs.glob("*.txt") {
+        Ok(paths) -> println(list.length(paths))
+        Err(_) -> println(-1)
+    }
+}

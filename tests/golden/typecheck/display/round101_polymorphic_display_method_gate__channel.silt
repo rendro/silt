@@ -1,0 +1,11 @@
+-- Polymorphic `.display()` on a channel fails at run time, prints nothing, and has no interpolation suffix.
+-- exit: 1
+-- stderr-contains: does not implement Display
+-- stderr-contains: 'Channel'
+-- stderr-not-contains: required for string interpolation
+import channel
+fn show(x: a) -> String { x.display() }
+fn main() {
+  let c = channel.new(1)
+  println(show(c))
+}

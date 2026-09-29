@@ -1,0 +1,10 @@
+-- cmd: check
+-- stderr-not-contains: polymorphic recursion
+fn myfn(p: a) -> Int where a: Display {
+  let _ = myfn("nested")
+  0
+}
+
+fn main() {
+  myfn(0)
+}

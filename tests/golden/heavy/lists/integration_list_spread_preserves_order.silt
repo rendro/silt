@@ -1,0 +1,11 @@
+import io
+import list
+fn program() {
+  let xs = [3, 1, 2]
+  let ys = [6, 4, 5]
+  list.length([..xs, ..ys])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

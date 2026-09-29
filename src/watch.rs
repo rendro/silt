@@ -109,7 +109,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     // the initial compile is not silently dropped. The rerun branches
     // below set these timestamps before running the subprocess for the
     // same reason; the initial branch must match that ordering. See
-    // `tests/round77_watch_initial_mtime_ordering_tests.rs` for the lock.
+    // `tests/cli/round77_watch_initial_mtime_ordering_tests.rs` for the lock.
     let mut last_run = Instant::now();
     // Wall-clock timestamp of the most recent rerun (or startup). Used
     // to reject false-positive watcher events whose paths don't
@@ -211,7 +211,7 @@ mod tests {
     // `cargo test` stderr is captured (not a terminal), so the helper
     // must return "" — never the raw escape. This complements the
     // source-grep lock in
-    // `tests/round91_watch_clear_tty_guard_tests.rs`.
+    // `tests/cli/round91_watch_clear_tty_guard_tests.rs`.
     #[test]
     fn clear_screen_seq_empty_when_not_terminal() {
         // stderr is not a TTY under the test harness; the sequence must

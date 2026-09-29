@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- No task was ever spawned: a receive with no sender is an immediate
+-- deadlock.
+import channel
+fn main() {
+  let ch = channel.new(0)
+  let _ = channel.receive(ch)
+  ()
+}

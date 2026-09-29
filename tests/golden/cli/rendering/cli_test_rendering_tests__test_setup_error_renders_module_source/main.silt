@@ -1,0 +1,10 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: bad_init.silt
+-- stderr-contains: 1 / 0
+-- stderr-not-contains: --> main.silt
+import bad_init
+import test
+fn test_add() {
+  test.assert_eq(bad_init.add(1, 2), 3)
+}

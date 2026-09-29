@@ -1,0 +1,28 @@
+import bytes
+import crypto
+fn main() {
+  match crypto.random_bytes(0) {
+    Ok(b) -> println(bytes.length(b))
+    Err(_) -> println(-1)
+  }
+  match crypto.random_bytes(32) {
+    Ok(b) -> println(bytes.length(b))
+    Err(_) -> println(-1)
+  }
+  -- two 32-byte draws collide with probability ~2^-256
+  match crypto.random_bytes(32) {
+    Ok(a) -> match crypto.random_bytes(32) {
+      Ok(b) -> println("equal draws: {bytes.eq(a, b)}")
+      Err(_) -> println("error")
+    }
+    Err(_) -> println("error")
+  }
+  match crypto.random_bytes(-1) {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e)
+  }
+  match crypto.random_bytes(2000000) {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e)
+  }
+}

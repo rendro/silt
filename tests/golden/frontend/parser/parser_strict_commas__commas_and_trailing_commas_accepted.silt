@@ -1,0 +1,35 @@
+-- Every comma-separated construct parses with commas, and with a
+-- trailing comma.
+import list.{ map, filter }
+import string.{ length, split, }
+
+type User { name: String, age: Int }
+type P { x: Int, y: Int, }
+type S { Foo(Int, Int,), Bar, }
+
+fn f(a, b, c) { a + b + c }
+fn g(a, b,) { a * b }
+
+fn main() {
+  println(f(1, 2, 3))
+  println(g(2, 3,))
+  println([1, 2, 3])
+  println([1, 2, 3,])
+  println((1, 2, 3))
+  println((1, 2, 3,))
+  println(#{"a": 1, "b": 2})
+  println(#{"a": 1,})
+  println(#[1, 2, 3])
+  println(#[1, 2, 3,])
+  let u = User { name: "a", age: 30 }
+  println(u.name)
+  let p = P { x: 1, y: 2 }
+  println(p.x + p.y)
+  match Foo(1, 2) {
+    Foo(x, y) -> println(x + y)
+    Bar -> println("bar")
+  }
+  println([1, 2, 3] |> map { x -> x * 2 } |> filter { x -> x > 2 })
+  println(length("abc"))
+  println(split("a,b", ","))
+}

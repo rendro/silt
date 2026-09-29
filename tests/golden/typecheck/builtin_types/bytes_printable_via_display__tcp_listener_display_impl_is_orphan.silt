@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A user Display impl for builtin TcpListener hits the orphan rule, not "not a declared type".
+-- stderr-contains: orphan impl
+-- stderr-not-contains: not a declared type
+
+trait Display for TcpListener {
+  fn display(b) -> String = "x"
+}
+fn main() {}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: unknown module
+import a
+
+fn main() {
+  42
+}

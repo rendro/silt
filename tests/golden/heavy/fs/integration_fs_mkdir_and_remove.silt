@@ -1,0 +1,10 @@
+import fs
+import io
+fn main() {
+  let dir = "made_dir"
+  let _ = fs.mkdir(dir)
+  let exists = fs.is_dir(dir)
+  let _ = fs.remove(dir)
+  let gone = fs.is_dir(dir)
+  println(io.inspect((exists, gone)))
+}

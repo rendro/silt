@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in `let`
+-- stderr-contains: of enum 'Coin'
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- GUARD: a `let` or-pattern that leaves a variant out stays refutable.
+type Coin { Penny(Int), Dime(Int), Note(Int) }
+fn main() {
+  let v = Note(5)
+  let Penny(n) | Dime(n) = v
+  println(n)
+}

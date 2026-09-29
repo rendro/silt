@@ -1,0 +1,15 @@
+fn find_positive(x: Int) -> Option(Int) {
+  match x > 0 {
+    true -> Some(x),
+    false -> None,
+  }
+}
+
+fn bump() -> Option(Int) {
+  let v = find_positive(5)?
+  Some(v + 1)
+}
+
+fn main() {
+  println(bump())
+}

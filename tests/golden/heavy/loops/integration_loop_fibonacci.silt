@@ -1,0 +1,13 @@
+import io
+fn program() {
+  loop n = 10, a = 0, b = 1 {
+    match n == 0 {
+      true -> a
+      _ -> loop(n - 1, b, a + b)
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

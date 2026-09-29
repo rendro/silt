@@ -1,0 +1,10 @@
+-- cmd: test
+-- exit: 0
+-- stderr-contains: test_answer
+-- stderr-contains: 1 passed
+import test
+import helper
+
+fn test_answer() {
+    test.assert_eq(helper.answer() + 1, 42)
+}

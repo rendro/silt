@@ -1,0 +1,14 @@
+import io
+import list
+fn program() {
+  list.unfold(1) { n ->
+    match n > 32 {
+      true -> None
+      _ -> Some((n, n * 2))
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

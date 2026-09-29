@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: error[parse]
+fn main() {
+  let t = util.Pt
+  { x: 1, y: 2 }
+  ()
+}

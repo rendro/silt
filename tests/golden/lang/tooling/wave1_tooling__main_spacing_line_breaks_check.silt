@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: program has no main() function
+fn
+main
+() {
+  println("ran")
+}

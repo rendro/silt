@@ -1,0 +1,6 @@
+-- A line starting with `-` is a new unary-negation statement.
+fn main() {
+  let y = 10
+    - 20
+  println("{y}")
+}

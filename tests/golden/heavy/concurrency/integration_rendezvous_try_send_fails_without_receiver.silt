@@ -1,0 +1,12 @@
+-- repeat: 3
+-- try_send on rendezvous should fail when no receiver is waiting
+import io
+import channel
+fn program() {
+  let ch = channel.new()
+  channel.try_send(ch, 42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

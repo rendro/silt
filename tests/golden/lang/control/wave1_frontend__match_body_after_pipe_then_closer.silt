@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 0
+-- The match is an argument and a list element: a `)` or a `,` follows
+-- its body.
+import list
+fn main() {
+  let xs = [4, 5]
+  let shown = string_of(match xs |> list.length {
+    n -> n + 1
+  })
+  let both = [match xs |> list.head {
+    Some(x) -> x
+    None -> 0
+  }, 9]
+  println("{shown} {both}")
+}
+fn string_of(n: Int) -> String = "{n}"

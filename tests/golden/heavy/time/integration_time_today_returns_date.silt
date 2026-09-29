@@ -1,0 +1,10 @@
+import io
+import time
+fn program() {
+  let d = time.today()
+  d.year > 2020
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

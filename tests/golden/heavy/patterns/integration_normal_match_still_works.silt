@@ -1,0 +1,11 @@
+import io
+fn program() {
+  match 42 {
+    0 -> "zero"
+    _ -> "nonzero"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,14 @@
+import io
+import list
+fn program() {
+  loop i = 0, acc = [] {
+    match i >= 5 {
+      true -> acc
+      _ -> loop(i + 1, list.append(acc, i * i))
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

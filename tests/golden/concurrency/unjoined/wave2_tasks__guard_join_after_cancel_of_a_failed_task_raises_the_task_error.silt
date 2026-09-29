@@ -1,0 +1,23 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: joined task failed
+-- stderr-contains: worker failed
+-- stderr-not-contains: failed and was never joined
+-- A join after the cancel still raises the task's own error: the
+-- handle keeps the result that came first. Passes with and without
+-- the fix.
+import channel
+import task
+import time
+fn main() {
+  let about_to_fail = channel.new(1)
+  let h = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    panic("worker failed")
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  task.cancel(h)
+  let v = task.join(h)
+  println("not reached {v}")
+}

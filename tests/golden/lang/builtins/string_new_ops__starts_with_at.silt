@@ -1,0 +1,21 @@
+import string
+fn main() {
+  -- test_starts_with_at_zero_is_starts_with
+  println(string.starts_with_at("hello", 0, "hel"))
+  -- test_starts_with_at_middle_match
+  println(string.starts_with_at("hello", 2, "ll"))
+  -- test_starts_with_at_middle_no_match
+  println(string.starts_with_at("hello", 2, "lx"))
+  -- test_starts_with_at_negative_offset_returns_false
+  println(string.starts_with_at("hello", -1, "h"))
+  -- test_starts_with_at_past_end_returns_false
+  println(string.starts_with_at("hello", 99, "h"))
+  -- test_starts_with_at_empty_prefix_true
+  println(string.starts_with_at("hello", 3, ""))
+  -- test_starts_with_at_unicode: char index 4 is the cup
+  println(string.starts_with_at("café☕!", 4, "☕!"))
+  -- test_starts_with_at_at_length_empty_prefix_true
+  println(string.starts_with_at("hi", 2, ""))
+  -- test_starts_with_at_at_length_nonempty_prefix_false
+  println(string.starts_with_at("hi", 2, "x"))
+}

@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse
+-- stderr-contains: Bag
+-- stderr-contains: items
+-- stderr-contains: Set(Int)
+import json.{ parse }
+
+type Bag { name: String, items: Set(Int) }
+
+fn main() {
+  match parse("""{"name": "b", "items": [1]}""", Bag) {
+    Ok(b) -> println(b.name)
+    Err(e) -> println(e.message())
+  }
+}

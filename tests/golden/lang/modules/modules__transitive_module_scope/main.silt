@@ -1,0 +1,2 @@
+import mid
+fn main() { println(mid.process(5)) }

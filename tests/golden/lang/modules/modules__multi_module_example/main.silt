@@ -1,0 +1,9 @@
+import calc
+import utils.{ double }
+
+fn main() {
+  let x = calc.add(3, 4)
+  let y = calc.square(x)
+  -- x = 7, y = 49, double(49) = 98
+  println(double(y))
+}

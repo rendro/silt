@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+type Ok { x: Int }
+fn main() = ()

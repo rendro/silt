@@ -252,7 +252,7 @@ fn render_type_expr(ty: &TypeExpr) -> String {
 /// passes the suggest-similar threshold, we emit the plain error.
 ///
 /// Closes round-17 deferred finding #4: see `src/typechecker/suggest.rs`.
-/// Lock: tests/diagnostic_suggestion_tests.rs.
+/// Lock: tests/lang/diagnostic_suggestion_tests.rs.
 pub(super) fn format_undefined_variable_message(
     name: Symbol,
     env: &TypeEnv,
@@ -5812,7 +5812,7 @@ impl TypeChecker {
     /// preserved on the replacement (`opt + 1` still explains `?` /
     /// `flat_map`). Exactly one diagnostic is emitted either way,
     /// preserving the round-67 single-diagnostic invariant
-    /// (tests/binop_single_diagnostic_round67_tests.rs).
+    /// (tests/lang/binop_single_diagnostic_round67_tests.rs).
     ///
     /// Returns `true` if a diagnostic was emitted; callers skip their
     /// follow-up operand-domain check and return `Type::Error` so outer

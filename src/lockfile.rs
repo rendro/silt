@@ -705,7 +705,7 @@ fn resolve_dep_path_offline(
 /// exactly the same rules lockfile resolution applies when it later
 /// resolves that dep path. Audit round 101 LATENT: this body used to
 /// be mirrored in src/cli/paths.rs; keep it unmirrored — a lock test
-/// (tests/round101_normalize_path_dedup_tests.rs) asserts the
+/// (tests/meta/round101_normalize_path_dedup_tests.rs) asserts the
 /// `Component::ParentDir` pop-or-push loop appears exactly once under
 /// src/.
 pub fn normalize_path(p: &Path) -> PathBuf {

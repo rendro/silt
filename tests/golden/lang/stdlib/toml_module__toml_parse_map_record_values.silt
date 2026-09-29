@@ -1,0 +1,12 @@
+import toml
+import map
+type Item { qty: Int, unit: String }
+fn run_main() {
+  let input = "[apples]\nqty = 5\nunit = \"kg\"\n\n[bananas]\nqty = 7\nunit = \"each\"\n"
+  match toml.parse_map(input, Item) {
+    Ok(m) -> map.length(m)
+    Err(_) -> -1
+  }
+}
+
+fn main() { println(run_main()) }

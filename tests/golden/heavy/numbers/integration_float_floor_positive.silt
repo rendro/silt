@@ -1,0 +1,8 @@
+-- float.to_string prints the result with a decimal, so an Int result
+-- would not pass: it does not typecheck.
+import float
+fn program() { float.floor(1.7) }
+
+fn main() {
+  println(float.to_string(program(), 1))
+}

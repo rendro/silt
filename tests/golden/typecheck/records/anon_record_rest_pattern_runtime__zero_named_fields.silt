@@ -1,0 +1,7 @@
+-- Only `...rest`: rest captures every field.
+fn main() {
+  let p = {a: 1}
+  match p {
+    {...r} -> println(r.a)
+  }
+}

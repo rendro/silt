@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: cannot compare non-finite float values
+-- stderr-not-contains: cannot compare NaN values
+-- stderr-not-contains: compare() cannot compare
+fn cmp(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+  let x: Float = 0.0
+  let y: Float = 0.0
+  let nan = x / y
+  println(cmp(nan, nan))
+}

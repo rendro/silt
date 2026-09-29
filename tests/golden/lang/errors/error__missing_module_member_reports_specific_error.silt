@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown function 'range' on module 'list'
+-- stderr-not-contains: undefined variable 'list'
+import list
+fn main() { list.range(1, 5) }

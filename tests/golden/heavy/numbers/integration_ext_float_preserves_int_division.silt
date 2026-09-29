@@ -1,0 +1,8 @@
+-- Int division is unchanged
+import io
+
+-- Int division is unchanged: it truncates and stays Int.
+fn main() {
+  println(io.inspect(10 / 3))
+  println(io.inspect(7 / 2))
+}

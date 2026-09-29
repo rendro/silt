@@ -1,0 +1,21 @@
+import result
+
+fn double(n: Int) -> Int { n * 2 }
+
+fn produce() -> Result(Int, Int) { Ok(21) }
+
+fn do_it() -> Result(Int, Int) {
+  let n = produce()? |> double
+  Ok(n)
+}
+
+fn outcome() {
+  match do_it() {
+    Ok(n) -> n
+    Err(_) -> -1
+  }
+}
+
+fn main() {
+  println(outcome())
+}

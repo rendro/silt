@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: division by zero
+fn main() { let x = 0
+100 / x }

@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: does not implement Compare
+import set
+fn main() {
+  let s = set.insert(set.new(), fn(y){ y })
+  println(set.length(s))
+}

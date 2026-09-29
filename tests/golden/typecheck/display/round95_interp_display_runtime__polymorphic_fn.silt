@@ -1,0 +1,7 @@
+-- Interpolating a function through a polymorphic function fails at run time.
+-- exit: 1
+-- stderr-contains: does not implement Display
+-- stderr-contains: 'Fn'
+fn show(x: a) -> String { "val={x}" }
+fn helper() -> Int { 5 }
+fn main() { println(show(helper)) }

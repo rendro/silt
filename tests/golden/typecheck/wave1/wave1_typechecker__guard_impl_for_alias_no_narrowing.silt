@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-not-contains: error[runtime]
+-- GUARD: the alias impl in a program with no narrowed scheme still reports its body error.
+trait Foo { fn foo(self) -> Int }
+type Ints = List(Int)
+trait Foo for Ints {
+  fn foo(self) -> Int { "not an int" }
+}
+fn main() -> () { println([1, 2].foo()) }

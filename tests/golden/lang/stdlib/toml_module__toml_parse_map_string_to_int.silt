@@ -1,0 +1,11 @@
+import toml
+import map
+fn run_main() {
+  let input = "x = 10\ny = 20\n"
+  match toml.parse_map(input, Int) {
+    Ok(m) -> map.length(m)
+    Err(_) -> -1
+  }
+}
+
+fn main() { println(run_main()) }

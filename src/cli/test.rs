@@ -256,14 +256,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         // for both setup errors and per-test errors.  Moved above the
         // vm.run() call so setup-error rendering can also benefit.
         //
-        // Lock: tests/cli_test_rendering_tests.rs
+        // Lock: tests/cli/cli_test_rendering_tests.rs
         // `test_test_setup_error_paths_normalized`.
         //
         // Round-101: the normalization body lives in the shared
         // `crate::cli::paths::display_path_for` helper — `silt run`
         // (src/cli/run.rs) builds the same closure from it, so the two
         // subcommands can never drift. Lock:
-        // tests/round101_display_path_helper_lock_tests.rs.
+        // tests/meta/round101_display_path_helper_lock_tests.rs.
         let user_path_is_absolute = Path::new(path.as_str()).is_absolute();
         let cwd = std::env::current_dir().ok();
         let normalize_path = |candidate: &Path| -> String {

@@ -1,0 +1,8 @@
+import json
+type Dummy { x: Int }
+fn main() {
+  match json.parse("not json at all", Dummy) {
+    Ok(_) -> println("Ok")
+    Err(_) -> println("Err")
+  }
+}

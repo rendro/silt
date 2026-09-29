@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: record Point has no field or method 'z'
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let _ = p.z
+  0
+}

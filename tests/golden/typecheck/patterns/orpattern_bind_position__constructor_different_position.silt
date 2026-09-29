@@ -1,0 +1,11 @@
+-- `A(x) | B(_, x)` binds x from the matched alternative's own position (10, then 20).
+type E { A(Int), B(Int, Int) }
+fn pick(e: E) -> Int {
+  match e {
+    A(x) | B(_, x) -> x
+  }
+}
+fn main() {
+  println(pick(A(10)))
+  println(pick(B(99, 20)))
+}

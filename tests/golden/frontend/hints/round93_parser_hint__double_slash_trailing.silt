@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The first slash parses as division; the hint still fires on the second.
+-- stderr-contains: silt line comments use '--', not '//'
+fn main() {
+  let a = 1 // hello
+  ()
+}

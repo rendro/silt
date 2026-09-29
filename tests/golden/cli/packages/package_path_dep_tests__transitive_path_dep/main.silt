@@ -1,0 +1,3 @@
+-- timeout: 60
+import mid
+fn main() { println(mid.foo()) }

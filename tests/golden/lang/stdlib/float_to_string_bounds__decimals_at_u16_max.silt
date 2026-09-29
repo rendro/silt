@@ -1,0 +1,8 @@
+-- "1." plus 65535 fractional digits is 65537 characters.
+import float
+import string
+fn main() {
+  let s = float.to_string(1.5, 65535)
+  println(string.length(s))
+  println(string.slice(s, 0, 3))
+}

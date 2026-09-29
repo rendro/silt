@@ -1,0 +1,6 @@
+import stream
+fn main() {
+  let f = stream.first(stream.from_range(1, 10))
+  let l = stream.last(stream.from_range(1, 10))
+  println((f, l))
+}

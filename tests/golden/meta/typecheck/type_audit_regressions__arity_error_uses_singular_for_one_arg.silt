@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: 1 argument, got 2
+fn takes_one(x) { x + 1 }
+fn main() { takes_one(1, 2) }

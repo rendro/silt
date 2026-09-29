@@ -1,0 +1,5 @@
+import list
+fn double(x) = x * 2
+fn main() {
+  println(list.map([1, 2, 3], fn(x) { double(x) + 1 }))
+}

@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate top-level
+fn greet() { "hi" }
+fn greet() { "bye" }
+fn main() { greet() }

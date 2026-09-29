@@ -1,0 +1,2 @@
+fn a(a: Int) -> Int { a + 1 }
+fn main() { println(a(41)) }

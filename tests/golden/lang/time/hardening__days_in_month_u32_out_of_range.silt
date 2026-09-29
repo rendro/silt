@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: time.days_in_month: month
+-- stderr-contains: out of range for u32
+import time
+fn main() {
+  println(time.days_in_month(2024, 4294967298))
+}

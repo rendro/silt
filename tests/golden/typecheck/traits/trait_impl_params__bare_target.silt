@@ -1,0 +1,3 @@
+trait Double { fn double(self) -> Int }
+trait Double for Int { fn double(self) -> Int { self * 2 } }
+fn main() { println((5).double()) }

@@ -1,0 +1,21 @@
+-- Multiple levels with locals at each level; the innermost closure
+-- captures from several ancestors while intermediate scopes have
+-- their own locals that should not interfere.
+import io
+fn program() {
+  let a = 1
+  let f = fn() {
+    let b = 10
+    let g = fn() {
+      let c = 100
+      let h = fn() { a + b + c }
+      h()
+    }
+    g()
+  }
+  f()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

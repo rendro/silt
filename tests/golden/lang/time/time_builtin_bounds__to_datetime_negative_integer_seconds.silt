@@ -1,0 +1,12 @@
+import time
+fn main() {
+  -- 1.5s before the epoch is 1969-12-31T23:59:58.500
+  let dt = time.to_datetime(Instant { epoch_ns: -1500000000 }, 0)
+  println(dt.date.year == 1969
+    && dt.date.month == 12
+    && dt.date.day == 31
+    && dt.time.hour == 23
+    && dt.time.minute == 59
+    && dt.time.second == 58
+    && dt.time.ns == 500000000)
+}

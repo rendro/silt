@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 0
+-- A generic function body uses descriptor methods under its where clause.
+import list
+
+trait Monoid {
+    fn empty() -> Self
+    fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+    fn empty() -> Self { 0 }
+    fn combine(a: Self, b: Self) -> Self { a + b }
+}
+
+fn reduce(xs: List(a), type a) -> a where a: Monoid {
+    list.fold(xs, a.empty()) { acc, x -> a.combine(acc, x) }
+}
+
+fn use_it() {
+    let _ = reduce([1, 2, 3], Int)
+}
+
+fn main() {}

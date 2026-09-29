@@ -1,0 +1,20 @@
+import toml
+import map
+
+type M { m: Map(String, Int), t: (Int, String) }
+
+fn main() {
+  match toml.parse("t = [7, \"seven\"]\n[m]\na = 1\nb = 2\n", M) {
+    Ok(v) -> {
+      println(map.length(v.m))
+      let (n, s) = v.t
+      println(n + 1)
+      println(s)
+    }
+    Err(e) -> println("err: {e.message()}")
+  }
+  match toml.parse("m = \"oops\"\nt = \"also\"\n", M) {
+    Ok(v) -> println(v)
+    Err(e) -> println("err: {e.message()}")
+  }
+}

@@ -1,0 +1,12 @@
+-- Zero duration on an empty channel is a try-receive: Err(ChannelTimeout).
+import channel
+import time
+fn main() {
+  let ch = channel.new(4)
+  let r = match channel.recv_timeout(ch, time.ms(0)) {
+    Ok(_) -> "ok"
+    Err(ChannelTimeout) -> "timeout"
+    Err(ChannelClosed) -> "closed"
+  }
+  println(r)
+}

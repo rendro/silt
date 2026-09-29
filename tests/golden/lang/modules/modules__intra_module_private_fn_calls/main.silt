@@ -1,0 +1,2 @@
+import helpers
+fn main() { println(helpers.quadruple(5)) }

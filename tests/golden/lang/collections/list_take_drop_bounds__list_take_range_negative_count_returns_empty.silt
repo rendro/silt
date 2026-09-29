@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: list.take
+-- stderr-contains: negative
+import list
+fn main() -> Int {
+  let r = 1..10
+  list.length(list.take(r, -1))
+}

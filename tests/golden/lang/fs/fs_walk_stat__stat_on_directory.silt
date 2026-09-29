@@ -1,0 +1,12 @@
+import fs
+fn main() {
+    match fs.stat(".") {
+        Ok(s) -> {
+            println(s.is_file)
+            println(s.is_dir)
+            println(s.is_symlink)
+            println(s.size >= 0)
+        }
+        Err(e) -> println("err: {e.message()}")
+    }
+}

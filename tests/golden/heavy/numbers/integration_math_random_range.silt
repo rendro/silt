@@ -1,0 +1,10 @@
+import io
+import math
+fn program() {
+    let r = math.random()
+    r >= 0.0 && r < 1.0
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

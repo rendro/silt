@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Cast' expects 1 type argument in bound, got 0
+trait Cast(to) {
+  fn cast(self) -> to
+}
+fn g(x: a) -> Float where a: Cast { 1.0 }
+fn main() { }

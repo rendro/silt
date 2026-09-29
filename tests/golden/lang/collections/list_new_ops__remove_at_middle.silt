@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.remove_at([10, 20, 30, 40], 1)) }

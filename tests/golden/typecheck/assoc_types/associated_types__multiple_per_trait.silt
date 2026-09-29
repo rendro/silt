@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 0
+-- Two associated types in one trait.
+trait Pair {
+  type First
+  type Second
+  fn first(self) -> Self::First
+  fn second(self) -> Self::Second
+}
+
+type IntStringPair { a: Int, b: String }
+
+trait Pair for IntStringPair {
+  type First = Int
+  type Second = String
+
+  fn first(self) -> Int { 1 }
+  fn second(self) -> String { "x" }
+}
+
+fn main() {}

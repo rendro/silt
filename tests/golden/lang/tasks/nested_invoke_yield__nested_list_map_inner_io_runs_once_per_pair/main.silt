@@ -1,0 +1,20 @@
+-- The inner callback runs once per (outer, inner) pair: 6 times.
+import task
+import io
+import list
+
+fn main() {
+  let h = task.spawn(fn() {
+    let outer = [10, 20]
+    let inner = [1, 2, 3]
+    let _ = list.map(outer, fn(o) {
+      list.map(inner, fn(i) {
+        let _ = io.read_file("data.txt")
+        println("pair")
+        o + i
+      })
+    })
+    println("done")
+  })
+  task.join(h)
+}

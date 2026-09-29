@@ -1,0 +1,8 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: assertion failed: false
+import test
+
+fn test_false_renders() {
+  test.assert(false)
+}

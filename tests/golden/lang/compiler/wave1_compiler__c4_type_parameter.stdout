@@ -1,0 +1,2 @@
+err: cannot decode field `items` of `Bag`: a value of type Set(Int) cannot be decoded
+err: cannot decode field `items` of `Bag`: a value of type Set(Int) cannot be decoded

@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A record type used as a constructor pattern points at record-pattern syntax.
+-- stderr-contains: is a record type
+-- stderr-contains: Circle
+-- stderr-not-contains: expects 0 fields
+type Circle { radius: Int }
+fn main() {
+  let c = Circle { radius: 5 }
+  match c { Circle(r) -> println(r) }
+}

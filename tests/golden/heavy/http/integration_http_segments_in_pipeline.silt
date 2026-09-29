@@ -1,0 +1,12 @@
+import io
+import http
+import list
+fn program() {
+  "/api/v2/users/123"
+  |> http.segments()
+  |> list.length()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,8 @@
+fn unwrap_plus(r) -> Result(Int, String) {
+  let v = r?
+  Ok(v + 1)
+}
+
+fn main() {
+  println(unwrap_plus(Ok(1)))
+}

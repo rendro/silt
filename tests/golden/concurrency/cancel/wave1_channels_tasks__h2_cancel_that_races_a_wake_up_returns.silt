@@ -1,0 +1,36 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock on main thread
+-- A task is parked in `channel.receive`; a second task wakes it while
+-- the main thread cancels it. Without the fix about two of three runs
+-- hang inside `task.cancel`.
+import channel
+import task
+import time
+
+fn spin(n) {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1)
+  }
+}
+
+fn go(i, n) {
+  match i < n {
+    true -> {
+      let ch = channel.new(1)
+      let t = task.spawn(fn() { channel.receive(ch) })
+      time.sleep(time.ms(2))
+      let s = task.spawn(fn() { channel.try_send(ch, i) })
+      let _ = spin(i % 30)
+      task.cancel(t)
+      let _ = task.join(s)
+      go(i + 1, n)
+    }
+    false -> ()
+  }
+}
+
+fn main() {
+  go(0, 100)
+  println("completed 100 rounds")
+}

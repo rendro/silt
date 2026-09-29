@@ -1,0 +1,7 @@
+-- exit: 0
+-- A valid call through the lambda wrapper still runs.
+trait Greetable { fn greet(self) -> String }
+trait Greetable for String { fn greet(self) -> String { self } }
+fn use_g(x: a) -> String where a: Greetable { x.greet() }
+let f = fn(x) { use_g(x) }
+fn main() { println(f("hello")) }

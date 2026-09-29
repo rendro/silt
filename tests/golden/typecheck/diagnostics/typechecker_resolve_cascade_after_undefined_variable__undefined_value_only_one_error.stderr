@@ -1,0 +1,5 @@
+error[type]: undefined variable 'nonExistent'
+ --> typechecker_resolve_cascade_after_undefined_variable__undefined_value_only_one_error.silt:7:11
+   |
+ 7 |   let x = nonExistent
+   |           ^ undefined variable 'nonExistent'

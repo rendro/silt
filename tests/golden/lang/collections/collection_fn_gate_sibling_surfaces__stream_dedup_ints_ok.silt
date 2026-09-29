@@ -1,0 +1,4 @@
+import stream
+fn main() {
+  println(stream.collect(stream.dedup(stream.from_list([1, 1, 2, 2, 1]))))
+}

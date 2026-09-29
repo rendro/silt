@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: joined task failed: division by zero
+import task
+fn main() {
+  let h = task.spawn(fn() {
+    let x = 1 / 0
+    x
+  })
+  task.join(h)
+}

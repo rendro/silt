@@ -1,0 +1,9 @@
+fn main() {
+  let x = Ok(Some(42))
+  let r = match x {
+    Ok(Some(n)) -> n
+    Ok(None) -> 0
+    Err(_) -> -1
+  }
+  println(r)
+}

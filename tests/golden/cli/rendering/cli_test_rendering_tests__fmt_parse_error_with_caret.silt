@@ -1,0 +1,7 @@
+-- cmd: fmt
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: -->
+-- stderr-contains: fn main() { let x
+-- stderr-contains: ^
+fn main() { let x

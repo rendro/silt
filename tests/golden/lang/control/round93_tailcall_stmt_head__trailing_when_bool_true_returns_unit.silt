@@ -1,0 +1,14 @@
+fn check(n) {
+  n > 0
+}
+
+fn f(n) {
+  when check(n) else {
+    panic("negative input")
+  }
+}
+
+fn main() {
+  let y = f(5)
+  println("{y}")
+}

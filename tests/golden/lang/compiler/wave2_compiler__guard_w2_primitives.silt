@@ -1,0 +1,9 @@
+import json
+import toml
+
+fn main() {
+  println(json.parse("1", Int))
+  println(json.parse("2.5", ExtFloat))
+  println(json.parse_map("""{"a": 1}""", Int))
+  println(toml.parse_map("a = 1", Int))
+}

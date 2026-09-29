@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+import io
+fn main() {
+  let e: HttpError = IoNotFound("x")
+  println("unreachable")
+}

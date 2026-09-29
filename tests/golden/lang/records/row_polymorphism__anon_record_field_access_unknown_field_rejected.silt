@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+fn main() {
+    let p = {name: "A"}
+    let _ = p.age
+}

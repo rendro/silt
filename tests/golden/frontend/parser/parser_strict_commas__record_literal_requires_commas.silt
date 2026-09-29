@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: record literal fields
+-- stderr-contains: ','
+type User { name: String, age: Int }
+fn main() { User { name: "a" age: 30 } }

@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-not-contains: overflowed its stack
+import list
+import task
+
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([1], 0) { acc, x -> acc + x + deep(n - 1) }
+  }
+}
+
+fn main() {
+  let t = task.spawn { -> deep(50000) }
+  println(task.join(t))
+}

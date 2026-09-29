@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+fn main() {
+  loop i = 0, s = "hello" {
+    match i > 3 {
+      true -> s
+      false -> loop(true, 42)
+    }
+  }
+}

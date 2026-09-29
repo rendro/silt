@@ -1,0 +1,15 @@
+type Color { Red, Green, Blue, }
+fn main() {
+    let lt = Red < Green
+    let gt = Blue > Red
+    let lt_label = match lt {
+        true -> "red_lt_green"
+        false -> "green_lte_red"
+    }
+    let gt_label = match gt {
+        true -> "blue_gt_red"
+        false -> "red_gte_blue"
+    }
+    println(lt_label)
+    println(gt_label)
+}

@@ -1,0 +1,3 @@
+-- Positive control: equal Int lists hash equal.
+fn h(a: x) -> Int where x: Hash { a.hash() }
+fn main() { println(h([1, 2, 3]) == h([1, 2, 3])) }

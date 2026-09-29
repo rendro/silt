@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: a local binding named 'shapes' shadows module 'shapes'
+import shapes
+fn f(shapes: Int) -> Int {
+  match 1 {
+    shapes.Circle(r) -> r,
+    _ -> 0
+  }
+}
+fn main() { println(f(0)) }

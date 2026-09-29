@@ -1,0 +1,7 @@
+fn has_name(m) {
+  match m {
+    #{"name": n} -> n
+    _ -> "unknown"
+  }
+}
+fn main() { println(has_name(#{"name": "alice", "age": "30"})) }

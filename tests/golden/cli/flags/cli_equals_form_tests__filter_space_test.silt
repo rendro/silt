@@ -1,0 +1,3 @@
+-- cmd: test --filter alpha
+fn test_alpha() {}
+fn test_beta() {}

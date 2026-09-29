@@ -1,0 +1,4 @@
+-- Needs the 8 MiB main-thread stack reserve in src/main.rs: on Windows the
+-- default 1 MiB stack overflowed typechecking this aliased-import program.
+import list as l
+fn main() { println(l.sum([1,2,3])) }

@@ -1,0 +1,5 @@
+error[runtime]: joined task failed: division by zero
+ --> callback_frame_capture__resume_suspended_invoke.silt:9:5
+   |
+ 9 |     1 / 0
+   |     ^ joined task failed: division by zero

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: undefined variable 'a'
+-- stderr-not-contains: undefined variable 'b'
+fn a(x) {
+  let p = 1 +
+}
+
+fn b(y) {
+  let q = 2 +
+}
+
+fn main() {
+  let r = a(1)
+  let s = b(2)
+  r
+}

@@ -1,0 +1,4 @@
+-- Within the cap, a range hashes equal to the equal list.
+fn main() {
+  println((1..5).hash() == [1, 2, 3, 4, 5].hash())
+}

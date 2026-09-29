@@ -16,7 +16,7 @@
 //! fences, and `println(...)  -- expected` annotations the doc files
 //! used to carry — so the LSP can render exactly the same prose users
 //! were reading on the website, and the parity walker
-//! (`tests/docs_stdlib_println_parity_tests.rs`) can keep locking
+//! (`tests/meta/docs_stdlib_println_parity_tests.rs`) can keep locking
 //! `println` annotations against `silt run` stdout.
 //!
 //! The helper here parses a module's full markdown blob into per-name
@@ -161,7 +161,7 @@ pub(super) fn attach_module_overview(env: &mut TypeEnv, md: &str, prefix: &str) 
 /// `src/typechecker/builtins.rs::register_builtins` — would otherwise
 /// leak it into LSP hover markdown, where editors render it as a
 /// stray horizontal rule followed by raw `title: "…"` text
-/// (regression lock: `tests/builtin_docs_frontmatter_tests.rs`).
+/// (regression lock: `tests/meta/builtin_docs_frontmatter_tests.rs`).
 ///
 /// Input without a leading `---\n` line (or with an unterminated
 /// block) is returned unchanged.
@@ -380,7 +380,7 @@ mod tests {
 // channel-task, encoding+json) and store each section body on
 // `env.builtin_docs` so the LSP can render the same prose users
 // were reading on the website. Keep the markdown body verbatim:
-// the parity walker (`tests/docs_stdlib_println_parity_tests.rs`)
+// the parity walker (`tests/meta/docs_stdlib_println_parity_tests.rs`)
 // runs every `\u200b` (no-op) plus every `\`\`\`silt` snippet
 // here against `silt run` and locks `println(x) -- expected`
 // annotations against actual stdout.

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- `let () = work()` on a unit-returning call typechecks.
+fn work() { }
+fn main() {
+  let () = work()
+  println("done")
+}

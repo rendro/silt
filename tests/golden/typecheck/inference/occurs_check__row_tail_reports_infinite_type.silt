@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: infinite type: the type variable appears inside {y:
+fn same(a: t, b: t) -> t {
+  a
+}
+
+fn g(r) {
+  let a = r.x
+  same(r, { x: a, y: r })
+}
+
+fn main() {
+}

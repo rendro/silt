@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: ambiguous method 'make'
+-- Two bound traits providing `make` on a descriptor is ambiguous.
+trait A {
+    fn make() -> Self
+}
+
+trait B {
+    fn make() -> Self
+}
+
+fn broken(type x) -> x where x: A + B {
+    x.make()
+}
+
+fn main() {}

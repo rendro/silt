@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: cannot load module 'nosuchmod'
+-- stderr-contains: looked for `src
+-- stderr-contains: nosuchmod.silt`
+-- Imports in a package resolve against src/ (separator left open for Windows).
+import nosuchmod
+
+fn main() {
+  println("x")
+}

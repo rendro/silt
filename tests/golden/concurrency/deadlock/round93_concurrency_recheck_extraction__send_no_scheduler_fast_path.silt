@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: channel send with no counterparty
+-- No task was ever spawned: a rendezvous send with no receiver is an
+-- immediate deadlock.
+import channel
+fn main() {
+  let ch = channel.new(0)
+  channel.send(ch, 1)
+}

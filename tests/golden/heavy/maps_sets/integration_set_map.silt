@@ -1,0 +1,10 @@
+import io
+import set
+fn program() {
+  let s = #[1, 2, 3]
+  set.to_list(set.map(s) { x -> x * 10 })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

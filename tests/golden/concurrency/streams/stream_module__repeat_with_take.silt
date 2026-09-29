@@ -1,0 +1,2 @@
+import stream
+fn main() { println(stream.collect(stream.take(stream.repeat("x"), 3))) }

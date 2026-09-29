@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate binding 'x'
+type Pair(a, b) { P(a, b) }
+fn main() {
+  match P(1, 2) {
+    P(x, x) -> println(x)
+  }
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch for enum 'Box': expected 2, got 1
+-- stderr-contains: annotation_arity_span__ascription_arity_mismatch.silt:7:17
+type Box(a, b) { Two(a, b) }
+fn main() {
+  let x = 42 as Box(Int)
+  println(x)
+}

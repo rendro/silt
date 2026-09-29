@@ -1,0 +1,10 @@
+-- `match u { () -> ... }` on a Unit scrutinee is exhaustive.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn main() {
+  let u: () = ()
+  match u {
+    () -> println("done")
+  }
+}

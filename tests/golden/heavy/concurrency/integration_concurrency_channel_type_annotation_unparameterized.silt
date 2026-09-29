@@ -1,0 +1,20 @@
+-- repeat: 3
+-- Locks in 3a4edd6 G1: bare `Channel` (no type arg) must also be
+-- recognized as `Type::Channel(fresh_var)` so that partial annotations
+-- remain valid. Covers the other branch of the G1 fix.
+import io
+import channel
+fn program() {
+  let ch: Channel = channel.new(10)
+  channel.send(ch, 7)
+  match channel.receive(ch) {
+    Message(v) -> v
+    Sent -> 0
+    Closed -> 0
+    Empty -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

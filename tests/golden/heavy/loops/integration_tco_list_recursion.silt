@@ -1,0 +1,14 @@
+import io
+fn sum_helper(xs, acc) {
+  match xs {
+    [] -> acc
+    [h, ..t] -> sum_helper(t, acc + h)
+  }
+}
+fn program() {
+  sum_helper(1..1000, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

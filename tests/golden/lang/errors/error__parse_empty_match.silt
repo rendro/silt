@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: not all patterns are covered
+fn main() { match 42 { } }

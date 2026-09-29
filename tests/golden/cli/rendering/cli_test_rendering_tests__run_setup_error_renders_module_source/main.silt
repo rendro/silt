@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: bad_mod.silt
+-- stderr-contains: 1 / 0
+import bad_mod
+fn main() {
+  println(bad_mod.x)
+}

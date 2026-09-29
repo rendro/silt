@@ -1,0 +1,5 @@
+import string
+fn main() {
+  let s = string.repeat("ab", 5000000)
+  println(string.length(string.replace(s, "ab", "xy")))
+}

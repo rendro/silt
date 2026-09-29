@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: 1 + 2\n:quit\n

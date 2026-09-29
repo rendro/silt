@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn main() {
+    let a: Int = 1
+    let n: Int = a + 2
+    println(n)
+}

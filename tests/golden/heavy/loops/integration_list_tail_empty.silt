@@ -1,0 +1,8 @@
+-- Verified in src/builtins/collections.rs: list.tail([]) returns an empty list
+import io
+import list
+fn program() { list.tail([]) }
+
+fn main() {
+  println(io.inspect(program()))
+}

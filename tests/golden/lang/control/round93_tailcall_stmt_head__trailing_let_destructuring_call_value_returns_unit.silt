@@ -1,0 +1,11 @@
+fn pair(n) {
+  (n, n + 1)
+}
+
+fn f() {
+  let (a, b) = pair(1)
+}
+
+fn main() {
+  println("{f()}")
+}

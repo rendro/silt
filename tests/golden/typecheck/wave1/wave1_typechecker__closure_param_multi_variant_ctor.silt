@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-contains: constructor 'Dollars' is only one of 2 variants of enum 'Money'
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- A refutable constructor pattern in a closure parameter is rejected by `silt check`.
+import list
+type Money { Dollars(Int), Cents(Int) }
+fn main() {
+  println([Dollars(5), Cents(250)] |> list.map { Dollars(n) -> n * 100 })
+}

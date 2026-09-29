@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected List(Int), got String
+-- A wrong-typed value against an alias annotation reports the mismatched types.
+type PhDBytErr = List(Int)
+fn main() {
+    let x: PhDBytErr = "hello"
+    x
+}

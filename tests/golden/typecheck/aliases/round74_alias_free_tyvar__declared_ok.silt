@@ -1,0 +1,5 @@
+type AnyList(a) = List(a)
+fn main() {
+    let xs: AnyList(Int) = [1, 2, 3]
+    println(xs)
+}

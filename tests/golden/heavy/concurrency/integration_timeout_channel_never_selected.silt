@@ -1,0 +1,15 @@
+-- repeat: 3
+-- Create a timeout channel but never select on it — should not panic or leak.
+import io
+import channel
+fn program() {
+  let _ = channel.timeout(10)
+  let _ = channel.timeout(50)
+  let _ = channel.timeout(100)
+  -- Just let them go out of scope without selecting
+  42
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,7 @@
+import io
+import option
+fn program() { option.flat_map(None, { x -> Some(x) }) }
+
+fn main() {
+  println(io.inspect(program()))
+}

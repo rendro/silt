@@ -1,0 +1,31 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock on main thread
+-- Two values are buffered and four senders are parked when the main
+-- thread starts to receive. Without the fix the run stops after three
+-- or four values, every time.
+import channel
+import task
+import time
+import list
+
+fn main() {
+  let ch = channel.new(2)
+  let senders = [1, 2, 3, 4, 5, 6] |> list.map { i ->
+    task.spawn(fn() { channel.send(ch, i) })
+  }
+  time.sleep(time.ms(200))
+  loop n = 0 {
+    match n < 6 {
+      true -> {
+        match channel.receive(ch) {
+          Message(_) -> println("got one")
+          _ -> println("got none")
+        }
+        loop(n + 1)
+      }
+      false -> ()
+    }
+  }
+  senders |> list.each { s -> task.join(s) }
+  println("done")
+}

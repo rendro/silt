@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+import test
+fn test_a() {
+  test.assert_eq(1, 1)
+}

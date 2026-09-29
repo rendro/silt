@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: ChannelOp
+-- channel.select takes ChannelOp(a) elements; a bare channel is rejected.
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  let _ = channel.select([ch])
+  ()
+}

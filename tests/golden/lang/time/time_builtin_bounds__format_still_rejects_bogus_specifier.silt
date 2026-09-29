@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: invalid format specifier
+import time
+fn main() {
+  println(match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%Q")
+    Err(_) -> "err"
+  })
+}

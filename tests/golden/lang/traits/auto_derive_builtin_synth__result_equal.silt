@@ -1,0 +1,5 @@
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    println(eq_gen(Ok(1), Ok(1)))
+    println(eq_gen(Ok(1), Ok(2)))
+}

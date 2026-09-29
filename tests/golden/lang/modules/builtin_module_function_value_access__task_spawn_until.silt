@@ -1,0 +1,7 @@
+import task
+import time
+fn main() {
+  let f = task.spawn_until
+  let h = f(time.seconds(1), fn() { 42 })
+  println(task.join(h))
+}

@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: overflow
+import time
+fn main() {
+  -- i64::MAX / 1000 + 1 fits in an Int but overflows once scaled
+  println(time.micros(9223372036854776))
+}

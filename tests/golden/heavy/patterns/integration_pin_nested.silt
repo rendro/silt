@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let x = 1
+  let y = 2
+  match (1, (2, 3)) {
+    (^x, (^y, z)) -> z
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

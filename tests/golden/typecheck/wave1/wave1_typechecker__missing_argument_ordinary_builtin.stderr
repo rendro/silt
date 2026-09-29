@@ -1,0 +1,29 @@
+error[type]: function expects 2 arguments, got 1
+ --> wave1_typechecker__missing_argument_ordinary_builtin.silt:15:11
+    |
+ 15 |   println(list.map([1, 2]))
+    |           ^ function expects 2 arguments, got 1
+
+error[type]: function expects 1 argument, got 0
+ --> wave1_typechecker__missing_argument_ordinary_builtin.silt:16:11
+    |
+ 16 |   println(string.trim())
+    |           ^ function expects 1 argument, got 0
+
+error[type]: function expects 2 arguments, got 1
+ --> wave1_typechecker__missing_argument_ordinary_builtin.silt:17:11
+    |
+ 17 |   println(map.get(#{ "a": 1 }))
+    |           ^ function expects 2 arguments, got 1
+
+error[type]: function expects 3 arguments, got 2
+ --> wave1_typechecker__missing_argument_ordinary_builtin.silt:18:11
+    |
+ 18 |   println(string.replace("aXb", "X"))
+    |           ^ function expects 3 arguments, got 2
+
+error[type]: function expects 3 arguments, got 2
+ --> wave1_typechecker__missing_argument_ordinary_builtin.silt:19:11
+    |
+ 19 |   println(list.fold([1, 2], 0))
+    |           ^ function expects 3 arguments, got 2

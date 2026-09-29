@@ -1,0 +1,11 @@
+pub type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+pub fn area(shape) {
+  match shape {
+    Circle(r) -> 3.14 * r * r
+    Rect(w, h) -> w * h
+  }
+}

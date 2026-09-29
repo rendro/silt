@@ -1,0 +1,9 @@
+type M { m: Map(String, Int) }
+fn main() {
+    let a = M{m: #{"a": 1}}
+    let b = M{m: #{"a": 1}}
+    let c = M{m: #{"a": 2}}
+    println(a == b)
+    println(a == c)
+    println(a.hash() == b.hash())
+}

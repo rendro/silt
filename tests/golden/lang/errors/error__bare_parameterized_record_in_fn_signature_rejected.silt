@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+type Box(a) { value: a }
+fn grab(b: Box) -> Int { b.value }
+fn main() {
+  let _ = grab(Box { value: "hi" })
+}

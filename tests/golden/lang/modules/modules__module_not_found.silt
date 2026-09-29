@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: cannot load module
+import nonexistent
+
+fn main() {
+  nonexistent.foo()
+}

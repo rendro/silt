@@ -1,0 +1,15 @@
+import io
+import list
+fn program() {
+  list.unfold((0, 1)) { state ->
+    let (a, b) = state
+    match a > 20 {
+      true -> None
+      _ -> Some((a, (b, a + b)))
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

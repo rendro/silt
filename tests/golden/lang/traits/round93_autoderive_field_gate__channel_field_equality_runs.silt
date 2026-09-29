@@ -1,0 +1,8 @@
+import channel
+type C { ch: Channel(Int) }
+fn main() {
+    let a = C{ch: channel.new(1)}
+    let b = C{ch: channel.new(1)}
+    println(a == b)
+    println(a == a)
+}

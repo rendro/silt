@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected `:` after record field 'red'
+-- stderr-contains: variant names start with an uppercase letter
+-- stderr-contains: `Red`
+-- stderr-not-contains: error[runtime]
+type Color { red, Green }
+fn main() {
+  println(Green)
+}

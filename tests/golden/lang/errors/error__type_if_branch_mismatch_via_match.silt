@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: mismatch
+fn foo(x: Bool) -> Int {
+  match x {
+    true -> 42
+    false -> "hello"
+  }
+}
+fn main() { foo(true) }

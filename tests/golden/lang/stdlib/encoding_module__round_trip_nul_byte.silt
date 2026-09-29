@@ -1,0 +1,11 @@
+import encoding
+import string
+fn main() {
+  let nul = string.from_char_code(0)
+  let s = "a{nul}b"
+  let encoded = encoding.url_encode(s)
+  match encoding.url_decode(encoded) {
+    Ok(back) -> println(string.byte_length(back))
+    Err(_) -> println(-1)
+  }
+}

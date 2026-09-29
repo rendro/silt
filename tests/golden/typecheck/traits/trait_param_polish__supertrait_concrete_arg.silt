@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Parent(a) {
+    fn p(self) -> a
+}
+
+trait Child: Parent(Int) {
+    fn c(self) -> Int
+}
+
+fn main() {}

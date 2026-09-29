@@ -1,0 +1,15 @@
+import bytes
+import encoding
+import list
+fn main() {
+  let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+  list.each(digits) { d ->
+    match bytes.from_hex("0{d}") {
+      Ok(b) -> match bytes.to_string(b) {
+        Ok(s) -> println(encoding.form_encode([("k", s)]))
+        Err(e) -> println(e.message())
+      }
+      Err(e) -> println(e.message())
+    }
+  }
+}

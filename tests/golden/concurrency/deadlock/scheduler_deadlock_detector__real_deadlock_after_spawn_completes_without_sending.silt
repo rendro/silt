@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: no counterparty
+-- A spawned task that returns without sending does not permanently
+-- suppress detection: once it completes, main's receive is a deadlock.
+import channel
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _h = task.spawn(fn() { 1 })
+  match channel.receive(ch) {
+    Message(_) -> println("unreachable")
+    _ -> println("unreachable")
+  }
+}

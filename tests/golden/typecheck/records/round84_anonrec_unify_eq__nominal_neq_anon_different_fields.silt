@@ -1,0 +1,7 @@
+-- Different field values stay unequal across nominal and anon.
+type P { x: Int }
+fn main() {
+  let p: P = P { x: 1 }
+  let r: { x: Int } = { x: 2 }
+  println(p == r)
+}

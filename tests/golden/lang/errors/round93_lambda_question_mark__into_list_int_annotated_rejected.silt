@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: ? operator can only be used inside a function that returns Result or Option
+import list
+fn main() {
+  let xs = [Ok(1), Err("bad"), Ok(3)]
+  let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+  println(ys)
+}

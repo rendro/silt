@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern
+import shapes
+
+fn main() {
+  let shapes.Circle(r) = shapes.Circle(1.0)
+  print(r)
+}

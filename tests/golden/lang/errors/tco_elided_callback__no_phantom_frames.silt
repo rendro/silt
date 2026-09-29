@@ -1,0 +1,10 @@
+-- exit: 1
+import list
+fn helper(x) {
+  match x == 0 {
+    true -> 1 / 0,
+    false -> x
+  }
+}
+fn wrapper(x) { helper(x) }
+fn main() { list.map([1, 2, 0], wrapper) }

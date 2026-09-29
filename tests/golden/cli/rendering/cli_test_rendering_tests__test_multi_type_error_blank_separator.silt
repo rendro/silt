@@ -1,0 +1,6 @@
+-- cmd: test
+-- exit: 1
+fn test_types() {
+  let a: Int = "hello"
+  let b: String = 42
+}

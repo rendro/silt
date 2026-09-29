@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: only valid inside a trait
+fn bad(x: Self::Item) -> Int { 0 }
+
+fn main() {}

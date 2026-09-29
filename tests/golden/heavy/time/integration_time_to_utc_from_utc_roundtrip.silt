@@ -1,0 +1,12 @@
+import io
+import time
+fn program() {
+  let now = time.now()
+  let dt = now |> time.to_utc
+  let back = dt |> time.from_utc
+  back.epoch_ns == now.epoch_ns
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

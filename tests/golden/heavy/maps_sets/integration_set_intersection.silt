@@ -1,0 +1,12 @@
+import io
+import set
+fn program() {
+  let a = #[1, 2, 3, 4]
+  let b = #[3, 4, 5, 6]
+  let c = set.intersection(a, b)
+  set.to_list(c)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

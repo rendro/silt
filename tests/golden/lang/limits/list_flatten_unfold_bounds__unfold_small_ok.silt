@@ -1,0 +1,9 @@
+import list
+fn main() {
+  println(list.unfold(1) { n ->
+    match n > 5 {
+      true -> None
+      _ -> Some((n, n + 1))
+    }
+  })
+}

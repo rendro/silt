@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: no field 'z'
+type Point { x: Int, y: Int }
+fn check(p: Point) -> String {
+  match p {
+    Point { z: 5 } -> "matched z"
+    _ -> "fallback"
+  }
+}
+fn main() { println(check(Point { x: 1, y: 2 })) }

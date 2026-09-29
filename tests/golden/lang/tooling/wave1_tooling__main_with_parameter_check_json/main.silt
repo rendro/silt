@@ -1,0 +1,4 @@
+-- cmd: check --format json
+-- exit: 1
+-- exact stdout: one compile error at 1:9
+fn main(x: Int) { x }

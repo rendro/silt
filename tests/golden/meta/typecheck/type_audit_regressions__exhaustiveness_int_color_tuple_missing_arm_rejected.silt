@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: non-exhaustive match
+type Color { Red, Green, Blue }
+fn classify(t: (Int, Color)) -> String {
+  match t {
+    (0, Red) -> "zero red"
+    (_, Green) -> "green"
+    (_, Blue) -> "blue"
+  }
+}
+fn main() { println(classify((1, Red))) }

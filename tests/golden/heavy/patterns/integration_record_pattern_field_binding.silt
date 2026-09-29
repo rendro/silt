@@ -1,0 +1,14 @@
+import io
+type Person { name: String, age: Int }
+
+fn program() {
+  let p = Person { name: "Alice", age: 30 }
+  match p {
+    Person { name, age } -> "{name} is {age}"
+    _ -> "unknown"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

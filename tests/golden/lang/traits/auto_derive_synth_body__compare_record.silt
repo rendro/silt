@@ -1,0 +1,11 @@
+type Point { x: Int, y: Int, }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let q = Point { x: 1, y: 3 }
+    let r = Point { x: 2, y: 0 }
+    println(cmp_gen(p, q))
+    println(cmp_gen(q, p))
+    println(cmp_gen(p, p))
+    println(cmp_gen(p, r))
+}

@@ -1,0 +1,15 @@
+-- the callback's io.read_file suspends the task mid-iteration
+import task
+import io
+import list
+fn main() {
+  let xs: List(Int) = [3, 1, 2]
+  let h = task.spawn(fn() {
+    list.min_by(xs, fn(x) {
+      let _ = io.read_file("vm_higher_order_yield__list_min_by_callback_yield.silt")
+      x
+    })
+  })
+  let v = task.join(h)
+  println(v)
+}

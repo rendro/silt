@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: does not implement trait 'Doublable'
+trait Doublable { fn doubled(self) -> Int }
+trait Doublable for Int { fn doubled(self) -> Int { self * 2 } }
+fn use_doublable(x: t) where t: Doublable { x.doubled() }
+fn main() {
+  let s = "text"
+  let r = use_doublable(s)
+  println(r)
+}

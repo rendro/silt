@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: non-exhaustive match
+-- stderr-contains: Blue
+-- stderr-not-contains: panicked
+type Color { Red, Green, Blue }
+fn main() {
+  let c = Red
+  match c {
+    Red -> println("red")
+    Green -> println("green")
+  }
+}

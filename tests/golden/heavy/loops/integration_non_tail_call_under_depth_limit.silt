@@ -1,0 +1,15 @@
+-- Non-tail recursion within the frame limit should work fine.
+import io
+fn factorial(n) {
+  match n {
+    0 -> 1
+    _ -> n * factorial(n - 1)
+  }
+}
+fn program() {
+  factorial(10)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

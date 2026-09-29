@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Convertible(b) {
+    fn convert(self) -> b
+}
+
+fn main() {}

@@ -1,0 +1,7 @@
+-- cmd: run --bogus
+-- exit: 1
+-- stderr-contains: silt run: unknown flag '--bogus'
+-- stderr-contains: Run 'silt run --help' for usage.
+fn main() {
+  println("hello")
+}

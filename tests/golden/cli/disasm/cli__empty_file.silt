@@ -1,0 +1,4 @@
+-- A program with no code: only these directive comments.
+-- cmd: disasm
+-- stdout-contains: == <script>
+-- stderr-not-contains: panicked at

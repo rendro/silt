@@ -1,0 +1,10 @@
+import io
+import list
+fn program() {
+  let xs = [1, 2]
+  list.length([..xs, 3, 4, 5])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

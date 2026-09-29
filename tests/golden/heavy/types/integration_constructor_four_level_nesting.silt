@@ -1,0 +1,16 @@
+import io
+type C { WrapC(Int) }
+type B { WrapB(C) }
+type A { WrapA(B) }
+
+fn program() {
+  let val = WrapA(WrapB(WrapC(42)))
+  match val {
+    WrapA(WrapB(WrapC(n))) -> n
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

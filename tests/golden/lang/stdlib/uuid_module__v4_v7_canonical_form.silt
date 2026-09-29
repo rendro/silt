@@ -1,0 +1,24 @@
+import list
+import string
+import uuid
+
+-- 8-4-4-4-12 groups of lowercase hex
+fn canonical(s: String) -> Bool {
+  let groups = list.map(string.split(s, "-")) { g -> string.length(g) }
+  let hex = "0123456789abcdef-"
+  let all_hex = list.all(string.chars(s)) { c -> string.contains(hex, c) }
+  string.length(s) == 36 && groups == [8, 4, 4, 4, 12] && all_hex
+}
+
+fn main() {
+  let a = uuid.v4()
+  let b = uuid.v4()
+  println(canonical(a) && canonical(b))
+  -- collision probability ~2^-122
+  println(a != b)
+  let c = uuid.v7()
+  let d = uuid.v7()
+  println(canonical(c) && canonical(d))
+  -- v7 sorts in generation order (non-decreasing within one millisecond)
+  println(c <= d)
+}

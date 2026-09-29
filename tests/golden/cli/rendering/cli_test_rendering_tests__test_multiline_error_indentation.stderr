@@ -1,0 +1,8 @@
+  FAIL cli_test_rendering_tests__test_multiline_error_indentation.silt::test_division_error
+    error[runtime]: division by zero
+     --> cli_test_rendering_tests__test_multiline_error_indentation.silt:6:11
+       |
+     6 |   let r = 1 / 0
+       |           ^ division by zero
+
+1 test: 0 passed, 1 failed, 0 skipped

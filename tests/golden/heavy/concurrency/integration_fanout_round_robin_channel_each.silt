@@ -1,0 +1,73 @@
+-- repeat: 3
+-- Verify that when multiple workers use channel.each on the same
+-- channel, messages are distributed across workers rather than all
+-- going to the first one.
+--
+-- The jobs channel uses capacity 1, which forces each `channel.send`
+-- in `main` to block until some worker has actually taken the prior
+-- message. That back-pressure is what makes the distribution
+-- statistically stable across workers — without it, one eager worker
+-- could drain a fully-buffered channel before the others even start.
+-- Extract the result list
+-- Count messages per worker (100-series = w1, 200-series = w2, 300-series = w3)
+-- All 6 messages must be processed; fan-out means more than one
+-- worker must actually participate. If a single worker drained the
+-- channel, the "round-robin" claim would be false and this test would
+-- previously have silently passed.
+import io
+import channel
+import list
+import set
+import task
+fn program() {
+  let jobs = channel.new(1)
+  let results = channel.new(32)
+
+  let w1 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 100 + n)
+    }
+  })
+
+  let w2 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 200 + n)
+    }
+  })
+
+  let w3 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 300 + n)
+    }
+  })
+
+  channel.send(jobs, 1)
+  channel.send(jobs, 2)
+  channel.send(jobs, 3)
+  channel.send(jobs, 4)
+  channel.send(jobs, 5)
+  channel.send(jobs, 6)
+  channel.close(jobs)
+
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+
+  -- Collect all results into a list
+  when let Message(a) = channel.receive(results) else { panic("expected a result") }
+  when let Message(b) = channel.receive(results) else { panic("expected a result") }
+  when let Message(c) = channel.receive(results) else { panic("expected a result") }
+  when let Message(d) = channel.receive(results) else { panic("expected a result") }
+  when let Message(e) = channel.receive(results) else { panic("expected a result") }
+  when let Message(f) = channel.receive(results) else { panic("expected a result") }
+
+  let values = [a, b, c, d, e, f]
+  -- Results are tagged by worker: 1xx from w1, 2xx from w2, 3xx from w3.
+  -- Fan-out means more than one worker took a job.
+  let active_workers = values |> list.map { v -> v / 100 } |> set.from_list |> set.length
+  (list.length(values), active_workers >= 2)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

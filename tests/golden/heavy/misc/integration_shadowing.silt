@@ -1,0 +1,11 @@
+import io
+fn program() {
+  let x = 1
+  let x = x + 1
+  let x = x * 3
+  x
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

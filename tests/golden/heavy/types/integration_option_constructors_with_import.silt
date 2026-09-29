@@ -1,0 +1,13 @@
+import io
+import option
+
+fn program() {
+  match Some(42) {
+    Some(x) -> x
+    None -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

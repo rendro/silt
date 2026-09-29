@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Backslash + U+0001 is named as \\u{1} in the unknown-escape message.
+-- stderr-contains: unknown escape sequence: \\u{1}
+fn main() {
+  let s = "a\b"
+}

@@ -1,0 +1,5 @@
+pub type Pt { x: Int, y: Int }
+pub type Shape {
+  Circle(Float),
+  Rect(Float, Float)
+}

@@ -1,0 +1,3 @@
+-- `.hash()` through a Hash bound runs on an Option variant.
+fn h(v: a) -> Int where a: Hash { v.hash() }
+fn main() { println(h(Some(1)) == h(Some(1))) }

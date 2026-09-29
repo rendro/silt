@@ -1,0 +1,6 @@
+import calc
+import calc.{ add }
+
+fn main() {
+  println(add(calc.add(1, 2), 3))
+}

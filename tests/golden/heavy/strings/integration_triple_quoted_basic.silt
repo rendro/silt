@@ -1,0 +1,8 @@
+import io
+fn program() {
+  """hello world"""
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

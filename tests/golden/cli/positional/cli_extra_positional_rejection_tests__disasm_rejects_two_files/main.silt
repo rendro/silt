@@ -1,0 +1,5 @@
+-- cmd: disasm a.silt
+-- exit: 1
+-- stderr-contains: silt disasm
+-- stderr-contains: unexpected extra argument
+fn main() { print("hi") }

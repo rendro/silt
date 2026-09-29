@@ -1,0 +1,27 @@
+-- `<ErrorEnum>.message` is a qualified-method BuiltinFn reached through
+-- Op::CallMethod; calling it from inside a spawned task and interleaving
+-- with a channel hand-off must leave the task's stack intact.
+import channel
+import int
+import io
+import task
+fn main() {
+  let ch = channel.new(1)
+  let h = task.spawn(fn() {
+    let a = match int.parse("x") {
+      Ok(_) -> "ok"
+      Err(e) -> e.message()
+    }
+    channel.send(ch, a)
+    let b = match io.read_file("round87_missing_file.txt") {
+      Ok(_) -> "ok"
+      Err(e) -> e.message()
+    }
+    "{a} | {b}"
+  })
+  match channel.receive(ch) {
+    Message(m) -> println(m)
+    _ -> println("no message")
+  }
+  println(task.join(h))
+}

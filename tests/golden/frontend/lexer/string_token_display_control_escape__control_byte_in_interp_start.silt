@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- The interpolated-string start segment escapes a U+0001 too.
+-- stderr-contains: "a\u{1}{
+"a{x}"

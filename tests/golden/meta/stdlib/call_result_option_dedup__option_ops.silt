@@ -1,0 +1,16 @@
+import option
+
+fn main() {
+  println(option.unwrap_or(Some(7), 0))
+  println(option.unwrap_or(None, 42))
+  println(option.is_some(Some(1)))
+  println(option.is_some(None))
+  println(option.is_none(None))
+  println(option.is_none(Some(1)))
+  println(option.map(Some(3), fn(x) { x * 2 }))
+  println(option.map(None, fn(x) { x * 2 }))
+  println(option.flat_map(Some(3), fn(x) { Some(x + 10) }))
+  println(option.flat_map(None, fn(x) { Some(x) }))
+  println(option.to_result(Some(5), "err"))
+  println(option.to_result(None, "err"))
+}

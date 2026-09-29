@@ -1,0 +1,7 @@
+-- float.to_string takes one argument (shortest round-trip form) or two
+-- (fixed decimal places); the docs list both.
+import float
+fn main() {
+  println(float.to_string(1.5))
+  println(float.to_string(3.14159, 2))
+}

@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected <_ as A>::Item, got <_ as B>::Item
+trait A {
+  type Item
+  fn ai(self) -> Self::Item
+}
+
+trait B {
+  type Item
+  fn bi(self) -> Self::Item
+}
+
+fn bad(s: a) -> <a as A>::Item where a: A + B {
+  s.bi()
+}
+
+fn main() {
+  println("x")
+}

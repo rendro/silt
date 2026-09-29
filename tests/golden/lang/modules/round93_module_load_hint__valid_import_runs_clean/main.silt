@@ -1,0 +1,7 @@
+-- stderr-not-contains: cannot load module
+-- stderr-not-contains: did you mean
+import util
+
+fn main() {
+  println(util.answer() + 1)
+}

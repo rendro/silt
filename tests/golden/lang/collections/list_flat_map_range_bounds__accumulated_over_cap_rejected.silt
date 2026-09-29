@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: list.flat_map: accumulated result exceeds maximum list length of 10000000 elements
+import list
+fn main() {
+  println([1, 2] |> list.flat_map { _ -> 0..5999999 })
+}

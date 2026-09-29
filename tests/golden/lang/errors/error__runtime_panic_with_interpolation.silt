@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: bad value: 42
+fn main() {
+  let x = 42
+  panic("bad value: {x}")
+}

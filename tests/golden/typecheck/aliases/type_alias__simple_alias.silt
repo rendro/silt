@@ -1,0 +1,5 @@
+-- A simple alias parameter accepts a value of its target type (prints 3).
+import list
+type PhDByt = List(Int)
+fn f(x: PhDByt) -> Int { list.length(x) }
+fn main() { println(f([1, 2, 3])) }

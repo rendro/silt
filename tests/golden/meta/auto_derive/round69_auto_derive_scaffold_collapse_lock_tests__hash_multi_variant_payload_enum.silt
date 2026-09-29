@@ -1,0 +1,14 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type Tagged { Foo(Int), Bar(Int, String), }
+fn main() {
+    let a = h(Foo(7))
+    let b = h(Foo(7))
+    let c = h(Foo(8))
+    let dh = h(Bar(7, "x"))
+    println(eq_gen(a, b))
+    println(eq_gen(a, c))
+    println(eq_gen(a, dh))
+}

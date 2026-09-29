@@ -1,0 +1,7 @@
+import util.{ triple }
+import util
+
+fn main() {
+  println(triple.baz())
+  println(util.triple(2))
+}

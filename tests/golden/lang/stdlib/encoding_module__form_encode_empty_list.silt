@@ -1,0 +1,7 @@
+import encoding
+import list
+fn main() {
+  let seeded = [("k", "v")]
+  let pairs = list.tail(seeded)
+  println("[{encoding.form_encode(pairs)}]")
+}

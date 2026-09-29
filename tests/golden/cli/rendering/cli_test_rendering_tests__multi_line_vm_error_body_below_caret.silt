@@ -1,0 +1,6 @@
+-- exit: 1
+import regex
+fn main() {
+  let r = regex.is_match("[unclosed", "hello")
+  r
+}

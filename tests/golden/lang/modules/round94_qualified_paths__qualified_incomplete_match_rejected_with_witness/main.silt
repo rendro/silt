@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive
+-- stderr-contains: Rect
+import shapes
+
+fn main() {
+  let m = match shapes.Circle(1.0) {
+    shapes.Circle(r) -> 1,
+  }
+  print(m)
+}

@@ -1,0 +1,5 @@
+import calc as m
+
+fn main() {
+  println(m.add(m.mul(2, 3), m.mul(4, 5)))
+}

@@ -1,0 +1,4 @@
+import encoding
+fn main() {
+  println(encoding.form_encode([("k", "«»íï")]))
+}

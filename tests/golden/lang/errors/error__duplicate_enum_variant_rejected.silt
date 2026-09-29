@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate variant 'Red' in enum 'Color'
+type Color { Red, Green, Red }
+fn main() { println("ok") }

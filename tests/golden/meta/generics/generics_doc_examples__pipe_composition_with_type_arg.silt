@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+import json
+
+type Todo { id: Int, title: String }
+
+fn use_it(body: String) {
+    let _ = body |> json.parse(Todo)
+}
+
+fn main() { use_it("") }

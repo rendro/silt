@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: anon record has no field 'zzznosuchfield'
+fn pluck(r: {a: Int, b: Int}) = r.zzznosuchfield
+fn main() {
+    let p = {a: 1, b: 2}
+    println(pluck(p))
+}

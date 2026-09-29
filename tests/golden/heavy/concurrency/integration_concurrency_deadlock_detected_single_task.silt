@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: deadlock
+-- repeat: 3
+-- A spawned task blocks on receive from a channel that nobody sends to.
+-- The main thread joins the task. Deadlock detection should fire and
+-- report an error rather than hanging forever.
+import channel
+import task
+fn main() {
+  let ch = channel.new(1)
+  let h = task.spawn(fn() {
+    channel.receive(ch)
+  })
+  task.join(h)
+}

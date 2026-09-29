@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: got Int
+fn helper() -> Int {
+  let Ok(x) = 99
+  x
+}
+fn main() { println("{helper()}") }

@@ -1,0 +1,20 @@
+-- A closure created inside a loop body captures a variable from
+-- outside the loop.
+import io
+import list
+fn program() {
+  let factor = 5
+  loop i = 1, acc = [] {
+    match i > 4 {
+      true -> acc
+      _ -> {
+        let f = fn() { i * factor }
+        loop(i + 1, list.append(acc, f()))
+      }
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

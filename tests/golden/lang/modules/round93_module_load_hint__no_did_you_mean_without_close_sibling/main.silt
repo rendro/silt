@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-not-contains: did you mean
+-- stderr-contains: [dependencies]
+import zzz
+
+fn main() {
+  println("x")
+}

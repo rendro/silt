@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: silt line comments use '--', not '//'
+
+// hello
+fn main() {
+  ()
+}

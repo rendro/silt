@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.take([1, 2, 3, 4, 5], 3) }
+
+fn main() {
+  println(io.inspect(program()))
+}

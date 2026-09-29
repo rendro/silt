@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: helper.silt:
+-- stderr-contains: --> helper.silt:
+-- stderr-not-contains: /home/
+-- stderr-not-contains: /tmp/
+-- stderr-not-contains: C:\
+import helper
+
+fn main() {
+  helper.oops(1, 2, 3)
+}

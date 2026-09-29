@@ -1,0 +1,4 @@
+-- Positive control: polymorphic `<` on fn-free variants (declaration order).
+type Shape { Dot, Line(Int) }
+fn lt(a: t, b: t) -> Bool { a < b }
+fn main() { println(lt(Dot, Line(1))) }

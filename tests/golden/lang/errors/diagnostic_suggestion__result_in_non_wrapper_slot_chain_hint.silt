@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-contains: Result
+-- stderr-contains: help: to chain through a `Result`
+-- stderr-contains: result.flat_map
+import io
+import json
+
+type Data { a: Int }
+
+fn load(path: String) {
+  io.read_file(path)
+  |> json.parse(Data)
+}
+
+fn main() { () }

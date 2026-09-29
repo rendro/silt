@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive
+-- Refinement in both columns leaves `(Yes(false), Yes(_))` uncovered.
+type Maybe { Nope, Yes(Bool) }
+fn f(x: Maybe, y: Maybe) -> Int {
+  match (x, y) {
+    (Nope, _) -> 0
+    (Yes(a), Nope) -> 1
+    (Yes(true), Yes(b)) -> 2
+  }
+}
+fn main() { print(f(Yes(false), Yes(true))) }

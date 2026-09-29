@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 0
+pub fn add(a, b) { a + b }
+fn helper(x) { x * 2 }
+
+pub type Point { x: Int, y: Int }
+pub type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+fn main() {
+  let _p = Point { x: 1, y: 2 }
+  let _s = Circle(5)
+  let _q = Square(3)
+  let _h = helper(add(1, 2))
+  ()
+}

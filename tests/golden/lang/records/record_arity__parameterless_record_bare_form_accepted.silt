@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+type Point { x: Int, y: Int }
+fn read(p: Point) -> Int { p.x }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let _ = read(p)
+}

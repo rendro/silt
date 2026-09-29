@@ -1,0 +1,11 @@
+import io
+fn program() {
+  let a = [1]
+  let b = [2]
+  let c = [3]
+  [..a, ..b, ..c]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

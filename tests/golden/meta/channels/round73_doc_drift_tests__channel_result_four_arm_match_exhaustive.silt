@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 0
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.close(ch)
+  match channel.receive(ch) {
+    Message(_) -> ()
+    Closed -> ()
+    Empty -> ()
+    Sent -> ()
+  }
+}

@@ -1,0 +1,21 @@
+-- repeat: 3
+-- If data arrives before timeout, select should return the data
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new(1)
+  let timer = channel.timeout(5000)
+
+  channel.send(ch, "fast")
+
+  match channel.select([Recv(ch), Recv(timer)]) {
+    (_, Message(val)) -> val
+    (_, Closed) -> "timeout"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

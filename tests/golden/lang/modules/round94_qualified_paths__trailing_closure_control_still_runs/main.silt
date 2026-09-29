@@ -1,0 +1,6 @@
+import helpers
+
+fn main() {
+  let r = helpers.f { x -> x + 1 }
+  print(r)
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+import bytes
+fn main() {
+  let a = bytes.from_string("x")
+  let b = bytes.concat(a, bytes.empty())
+  let n = bytes.length(b)
+  let _ = bytes.eq(a, b)
+  let _ = n + 1
+}

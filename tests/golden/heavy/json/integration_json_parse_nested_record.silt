@@ -1,0 +1,14 @@
+import io
+import json
+type Address { city: String, zip: String }
+type User { name: String, address: Address }
+fn program() {
+  match json.parse("\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}", User) {
+    Ok(user) -> user.address.city
+    Err(_) -> "fail"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: type argument count mismatch for record 'Box': expected 1, got 2
+type Box(a) { value: a }
+fn takes(b: Box(Int, String)) -> Int { b.value + 1 }
+fn main() { println(takes(Box { value: 5 })) }

@@ -1,0 +1,9 @@
+-- cmd: test
+-- stderr-contains: 2 tests:
+import test
+fn test_a() {
+  test.assert_eq(1, 1)
+}
+fn test_b() {
+  test.assert_eq(2, 2)
+}

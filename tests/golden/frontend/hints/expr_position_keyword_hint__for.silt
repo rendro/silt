@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'for'
+-- stderr-contains: silt has no 'while'/'for' keywords
+-- stderr-contains: use tail-recursive 'loop'
+fn main() {
+    let r = for x { 1 }
+    println(r)
+}

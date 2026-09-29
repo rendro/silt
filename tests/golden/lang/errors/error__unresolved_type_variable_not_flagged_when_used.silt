@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 0
+-- x's type is an unresolved type variable (the element type of `[]`).
+-- Left unused, the same binding is rejected with "cannot infer the type
+-- of `x`"; used later, it is not flagged.
+-- stderr-not-contains: cannot infer
+-- stderr-not-contains: type annotation
+import list
+fn main() {
+  let x = match list.head([]) {
+    Some(v) -> v
+    None -> panic("no value")
+  }
+  x
+}

@@ -1,0 +1,7 @@
+-- Equal over-cap ranges are equal and hash equal.
+fn main() {
+  let a = 0..4000000000
+  let b = 0..4000000000
+  println(a == b)
+  println(a.hash() == b.hash())
+}

@@ -1,0 +1,7 @@
+import encoding
+fn main() {
+  match encoding.url_decode("%C3%28") {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e)
+  }
+}

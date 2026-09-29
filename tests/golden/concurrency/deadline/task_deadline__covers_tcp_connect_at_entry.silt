@@ -1,0 +1,16 @@
+-- A past deadline short-circuits tcp.connect at entry with the tcp
+-- module's own typed timeout, TcpTimeout.
+import tcp
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(0), fn() {
+    tcp.connect("127.0.0.1:1")
+  })
+  match outcome {
+    Ok(_) -> println("unexpected ok")
+    Err(TcpTimeout) -> println("tcp-timeout")
+    Err(other) -> println("other: {other.message()}")
+  }
+}

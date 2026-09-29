@@ -1,0 +1,7 @@
+-- exit: 0
+-- true || panic() should NOT panic — right side not evaluated
+import test
+fn main() {
+  let result = true || panic("should not reach")
+  test.assert_eq(result, true)
+}

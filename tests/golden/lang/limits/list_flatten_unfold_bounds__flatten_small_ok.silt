@@ -1,0 +1,4 @@
+import list
+fn main() {
+  println(list.flatten([[1, 2], [3, 4], [5]]))
+}

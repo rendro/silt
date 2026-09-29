@@ -1,0 +1,8 @@
+-- cmd: check --format json
+import shapes.{Circle, area}
+
+fn main() {
+  let s = Circle(5)
+  let a = area(s)
+  println(a)
+}

@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { (string.is_alpha("a"), string.is_alpha("5"), string.is_alpha("")) }
+
+fn main() {
+  println(io.inspect(program()))
+}

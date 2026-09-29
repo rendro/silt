@@ -1,0 +1,25 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- The same with `channel.recv_timeout`, which parks the task on a
+-- select with a timer arm.
+import channel
+import task
+import time
+
+fn main() {
+  let quiet = channel.new(1)
+  let x = channel.new(0)
+  let h = task.spawn(fn() {
+    let waited = match channel.recv_timeout(quiet, time.ms(600)) {
+      Ok(_) -> "value"
+      Err(ChannelTimeout) -> "timed out"
+      Err(ChannelClosed) -> "closed"
+    }
+    channel.send(x, waited)
+  })
+  match channel.receive(x) {
+    Message(v) -> println("main got: {v}")
+    _ -> println("main got no message")
+  }
+  task.join(h)
+}

@@ -1,0 +1,14 @@
+-- exit: 0
+-- repeat: 3
+-- The docs/concurrency.md cancel-with-sentinel-channel snippet runs
+-- cleanly: cancelling an unjoined task is not an error.
+import channel
+import task
+fn main() {
+  let done = channel.new(1)
+  let h = task.spawn(fn() {
+    -- long-running work
+    channel.send(done, 42)
+  })
+  task.cancel(h)
+}

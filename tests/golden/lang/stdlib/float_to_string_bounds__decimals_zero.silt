@@ -1,0 +1,5 @@
+-- 1.5 rounds half to even: "2".
+import float
+fn main() {
+  println(float.to_string(1.5, 0))
+}

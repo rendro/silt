@@ -646,19 +646,19 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 
 // `KEYWORDS` is sourced from `crate::lexer::KEYWORDS` — the authoritative
 // list maintained alongside the lexer's keyword match arms. Re-introducing
-// a hand-rolled list here is guarded by `tests/lexer_keyword_parity_tests.rs`.
+// a hand-rolled list here is guarded by `tests/meta/lexer_keyword_parity_tests.rs`.
 
 /// Build the builtins completion list dynamically from the module registry
 /// so it never falls out of sync with `module.rs`.
 ///
-/// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
+/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
 /// can assert every gated constructor from
 /// `module::all_builtin_constructor_names` is emitted here.
 pub fn builtins() -> Vec<(String, CompletionItemKind)> {
     // Globals (not part of any module). Sourced from
     // `module::builtin_free_function_names()` so adding a new free
     // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
     let mut items: Vec<(String, CompletionItemKind)> = module::builtin_free_function_names()
         .iter()
         .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
@@ -668,7 +668,7 @@ pub fn builtins() -> Vec<(String, CompletionItemKind)> {
     // `crate::lexer::KEYWORD_LITERALS` so additions there flow through
     // automatically — mirrors the round-63 pattern used for `KEYWORDS`
     // above and the round-64 G4 fix in `src/repl.rs`. Parity lock:
-    // `tests/lexer_keyword_parity_tests.rs`.
+    // `tests/meta/lexer_keyword_parity_tests.rs`.
     for kw in KEYWORD_LITERALS {
         items.push((kw.to_string(), CompletionItemKind::CONSTANT));
     }

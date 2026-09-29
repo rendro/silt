@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: does not implement trait 'Doubler'
+trait Doubler { fn double(self) -> Int }
+trait Doubler for Int { fn double(self) -> Int { self * 2 } }
+fn run_callback(f) { f("hello") }
+fn needs_doubler(x: a) where a: Doubler { x.double() }
+fn main() {
+  let r = run_callback({ x -> needs_doubler(x) })
+  println(r)
+}

@@ -186,7 +186,7 @@ pub(crate) fn clamp_span_to_source(span: Span, source: &str) -> Span {
     // Past EOF — clamp onto the last real line, caret just after its last char.
     // Also clamp the byte offset so it doesn't dangle past the end of `source`;
     // downstream consumers (e.g. LSP byte-offset → UTF-16 column conversion)
-    // assume `offset <= source.len()`. Lock: tests/round77_errors_clamp_offset_tests.rs.
+    // assume `offset <= source.len()`. Lock: tests/lang/round77_errors_clamp_offset_tests.rs.
     let last_line = source.lines().last().unwrap_or("");
     let last_col = last_line.chars().count().saturating_add(1);
     let clamped_offset = span.offset.min(source.len());
@@ -279,7 +279,7 @@ impl fmt::Display for SourceError {
         // orphan the body text above the `-->` locator, breaking the
         // clean rustc-style layout.
         //
-        // Lock: tests/cli_test_rendering_tests.rs
+        // Lock: tests/cli/cli_test_rendering_tests.rs
         // `test_multi_line_vm_error_renders_body_below_caret`.
         let (header_msg, note_body): (&str, Option<&str>) = match self.message.split_once('\n') {
             Some((head, rest)) => (head, Some(rest)),
@@ -353,7 +353,7 @@ impl fmt::Display for SourceError {
             // that embeds a nested `--> file | ^` snippet into its
             // message text — continue as `  = note:` lines below the
             // caret block, so the nested snippet doesn't render twice.
-            // Lock: tests/modules.rs
+            // Lock: tests/lang/modules.rs
             // `test_module_parse_error_inner_snippet_rendered_once`.
             write!(
                 f,
@@ -379,7 +379,7 @@ impl fmt::Display for SourceError {
         // `= note: help: ...`. This lets diagnostics (e.g. the type
         // checker's "did you mean ...?" hint) opt into rustc-style
         // `help:` continuation without reshaping SourceError.
-        // Lock: tests/diagnostic_suggestion_tests.rs
+        // Lock: tests/lang/diagnostic_suggestion_tests.rs
         // `test_undefined_variable_suggests_close_match`.
         if let Some(body) = note_body {
             let mut first = true;
@@ -416,7 +416,7 @@ impl fmt::Display for SourceError {
 /// text. A trailing newline after the last error is NOT emitted — callers
 /// that need one should add it themselves.
 ///
-/// Lock: tests/cli_test_rendering_tests.rs
+/// Lock: tests/cli/cli_test_rendering_tests.rs
 /// `test_multiple_errors_render_with_blank_separator`.
 pub fn eprintln_errors_with_separator(errors: &[&SourceError]) {
     for (i, err) in errors.iter().enumerate() {
@@ -431,7 +431,7 @@ pub fn eprintln_errors_with_separator(errors: &[&SourceError]) {
 ///
 /// Exposed at `pub(crate)` so `compiler::format_module_source_error`
 /// can share the same gutter-width math instead of inlining a
-/// hand-rolled loop. Lock: tests/round72_bloat_cleanup_lock_tests.rs.
+/// hand-rolled loop. Lock: tests/meta/round72_bloat_cleanup_lock_tests.rs.
 pub(crate) fn line_num_width(n: usize) -> usize {
     if n == 0 {
         return 1;
@@ -478,8 +478,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> (String, usize) {
 /// chars with no defined Unicode width (e.g. unassigned / control).
 ///
 /// Exposed at `pub(crate)` so `compiler::format_module_source_error`
-/// can share the same alignment logic, and so `tests/caret_width_tests.rs`
-/// can exercise it directly. Lock: tests/caret_width_tests.rs.
+/// can share the same alignment logic, and so `tests/frontend/caret_width_tests.rs`
+/// can exercise it directly. Lock: tests/frontend/caret_width_tests.rs.
 pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let mut out = String::new();

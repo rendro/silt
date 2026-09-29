@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: module 'shapes' has no variant 'Circl'
+-- stderr-contains: did you mean `Circle`?
+import shapes
+
+fn main() {
+  let m = match shapes.Circle(1.0) {
+    shapes.Circl(r) -> 1,
+    _ -> 2,
+  }
+  print(m)
+}

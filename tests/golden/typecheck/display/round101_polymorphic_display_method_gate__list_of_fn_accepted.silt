@@ -1,0 +1,6 @@
+-- A list of functions is Display (top-level shape is List); elements render as `<fn:...>`.
+-- stdout-contains: [<fn:
+fn main() {
+  let f = fn(y) { y }
+  println([f].display())
+}

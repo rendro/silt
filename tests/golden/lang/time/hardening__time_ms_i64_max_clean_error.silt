@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: time arithmetic overflow
+import time
+fn main() {
+  println(time.ms(9223372036854775807))
+}

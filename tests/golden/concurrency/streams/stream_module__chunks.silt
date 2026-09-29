@@ -1,0 +1,7 @@
+import stream
+fn main() {
+  stream.from_range(1, 7)
+    |> stream.chunks(3)
+    |> stream.collect
+    |> println
+}

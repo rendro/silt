@@ -1,0 +1,6 @@
+trait Pretty { fn pretty(self) -> String }
+trait Pretty for List { fn pretty(self) -> String = "list" }
+fn main() {
+  println([1, 2].pretty())
+  println(["a", "b"].pretty())
+}

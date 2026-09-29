@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: invalid code point
+-- Negative i64 wraps to invalid u32 via `as u32`, char::from_u32 returns None
+import string
+fn main() { string.from_char_code(-1) }

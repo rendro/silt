@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: send on closed channel
+-- repeat: 3
+-- Sending on closed channel should error
+import channel
+fn main() {
+  let ch = channel.new(10)
+  channel.close(ch)
+  channel.send(ch, 42)
+}

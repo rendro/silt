@@ -1,0 +1,12 @@
+import time
+fn main() {
+  println(time.hours(5).ns)
+  println(time.minutes(5).ns)
+  println(time.seconds(5).ns)
+  println(time.ms(5).ns)
+  println(time.micros(5).ns)
+  println(time.nanos(5).ns)
+  -- multiplier 1: nanos never overflows
+  println(time.nanos(9223372036854775807).ns)
+  println(time.nanos(-9223372036854775807).ns)
+}

@@ -1,0 +1,8 @@
+fn main() {
+  println(1 + loop i = 0 {
+    match i >= 200000 {
+      true -> i
+      _ -> loop(i + 1)
+    }
+  })
+}

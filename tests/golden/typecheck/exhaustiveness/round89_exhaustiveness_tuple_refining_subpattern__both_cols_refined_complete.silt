@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 0
+-- Adding `(Yes(false), Yes(b))` closes the gap.
+type Maybe { Nope, Yes(Bool) }
+fn f(x: Maybe, y: Maybe) -> Int {
+  match (x, y) {
+    (Nope, _) -> 0
+    (Yes(a), Nope) -> 1
+    (Yes(true), Yes(b)) -> 2
+    (Yes(false), Yes(b)) -> 3
+  }
+}
+fn main() { print(f(Yes(false), Yes(true))) }

@@ -1,0 +1,6 @@
+-- A Bytes value prints through Display as a hex preview plus length.
+import bytes
+fn main() {
+  let b = bytes.from_string("hi")
+  println(b)
+}

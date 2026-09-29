@@ -1,0 +1,5 @@
+fn pluck(r) = r.a
+fn main() {
+    let p = {a: 1, b: 2}
+    println(pluck(p))
+}

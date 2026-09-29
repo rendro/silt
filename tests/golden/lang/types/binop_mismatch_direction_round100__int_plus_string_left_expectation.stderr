@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected Int, got String
+ --> binop_mismatch_direction_round100__int_plus_string_left_expectation.silt:4:15
+   |
+ 4 |   let x = 1 + "hi"
+   |               ^ type mismatch: expected Int, got String

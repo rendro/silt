@@ -1,0 +1,6 @@
+import list
+fn run_main() {
+  list.scan([1, 2, 3, 4], 0) { acc, x -> acc + x }
+}
+
+fn main() { println(run_main()) }

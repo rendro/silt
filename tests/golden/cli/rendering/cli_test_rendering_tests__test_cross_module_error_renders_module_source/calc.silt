@@ -1,0 +1,1 @@
+pub fn divide(a, b) = a / b

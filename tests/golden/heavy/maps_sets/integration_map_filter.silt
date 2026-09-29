@@ -1,0 +1,11 @@
+import io
+import map
+fn program() {
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+  let big = map.filter(m) { k, v -> v > 1 }
+  map.length(big)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

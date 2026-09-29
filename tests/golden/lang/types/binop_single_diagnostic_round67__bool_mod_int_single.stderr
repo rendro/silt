@@ -1,0 +1,5 @@
+error[type]: operator '%' requires Int, Float, or ExtFloat, got 'Bool'
+ --> binop_single_diagnostic_round67__bool_mod_int_single.silt:4:13
+   |
+ 4 |     let x = true % 1
+   |             ^ operator '%' requires Int, Float, or ExtFloat, got 'Bool'

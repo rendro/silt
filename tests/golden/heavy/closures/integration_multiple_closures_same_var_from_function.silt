@@ -1,0 +1,18 @@
+-- Two closures returned via a tuple-like structure both capture
+-- the same parameter from their enclosing function.
+-- inc() = 11, dec() = 9, total = 20
+import io
+fn make_pair(n) {
+  let inc = fn() { n + 1 }
+  let dec = fn() { n - 1 }
+  (inc, dec)
+}
+
+fn program() {
+  let (inc, dec) = make_pair(10)
+  inc() + dec()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

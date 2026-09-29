@@ -1,0 +1,6 @@
+type Wrapped(a) { value: a }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    let w = Wrapped { value: 42 }
+    println(d(w))
+}

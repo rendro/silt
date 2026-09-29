@@ -1,0 +1,34 @@
+import bytes
+fn main() {
+  match bytes.index_of(bytes.from_string("hello world"), bytes.from_string("world")) {
+    Some(i) -> println(i)
+    None -> println(-1)
+  }
+  match bytes.index_of(bytes.from_string("hello"), bytes.from_string("xyz")) {
+    Some(_) -> println("found")
+    None -> println("not found")
+  }
+  -- empty needle matches at 0
+  match bytes.index_of(bytes.from_string("hello"), bytes.empty()) {
+    Some(i) -> println(i)
+    None -> println(-1)
+  }
+  -- first occurrence
+  match bytes.index_of(bytes.from_string("abcabc"), bytes.from_string("b")) {
+    Some(i) -> println(i)
+    None -> println(-1)
+  }
+  println(bytes.starts_with(bytes.from_string("hello world"), bytes.from_string("hello")))
+  println(bytes.starts_with(bytes.from_string("hello"), bytes.from_string("world")))
+  println([
+    bytes.starts_with(bytes.from_string("hello"), bytes.empty()),
+    bytes.starts_with(bytes.empty(), bytes.empty()),
+  ])
+  println(bytes.starts_with(bytes.from_string("hi"), bytes.from_string("hi there")))
+  println(bytes.ends_with(bytes.from_string("hello world"), bytes.from_string("world")))
+  println(bytes.ends_with(bytes.from_string("hello"), bytes.from_string("world")))
+  println([
+    bytes.ends_with(bytes.from_string("hello"), bytes.empty()),
+    bytes.ends_with(bytes.empty(), bytes.empty()),
+  ])
+}

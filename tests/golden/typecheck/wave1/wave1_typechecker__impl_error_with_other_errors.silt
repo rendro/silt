@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: type mismatch: expected String, got Int
+-- stderr-not-contains: error[runtime]
+-- An impl-body error is reported alongside an error in an ordinary function (exact stderr).
+trait Foo { fn foo(self) -> Int }
+type Ints = List(Int)
+trait Foo for Ints {
+  fn foo(self) -> Int { "not an int" }
+}
+fn helper(x) { x + 1 }
+fn main() {
+  let n: String = helper(1)
+  println([1, 2].foo())
+}

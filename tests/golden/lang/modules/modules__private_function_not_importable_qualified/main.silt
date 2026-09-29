@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: `secret` exists in module `calc` but is not `pub`
+import calc
+
+fn main() {
+  println(calc.secret(5))
+}

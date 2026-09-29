@@ -1,0 +1,30 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: FAIL wave2_tasks__test_failure_of_a_nested_task_fails_the_test_that_spawned_its_parent_test.silt::test_nested
+-- stderr-contains: failed and was never joined
+-- stderr-contains: 2 tests: 1 passed, 1 failed, 0 skipped
+-- A task spawned by a task of a test belongs to that test too.
+import channel
+import task
+import test
+import time
+
+fn test_nested() {
+  let about_to_fail = channel.new(1)
+  let outer = task.spawn(fn() {
+    let _ = task.spawn(fn() {
+      channel.send(about_to_fail, 1)
+      let zero = 0
+      10 / zero
+    })
+    42
+  })
+  test.assert_eq(task.join(outer), 42)
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+}
+
+fn test_other() {
+  test.assert_eq(2, 2)
+}

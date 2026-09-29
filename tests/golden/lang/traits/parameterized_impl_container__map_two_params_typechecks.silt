@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+trait MyDisplay { fn my_display(self) -> String }
+trait MyDisplay for Map(k, v) {
+  fn my_display(self) -> String { "map" }
+}
+fn main() { }

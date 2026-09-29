@@ -1,0 +1,8 @@
+fn classify(n) {
+  match n {
+    1 | 2 | 3 -> "low"
+    4 | 5 | 6 -> "mid"
+    _ -> "high"
+  }
+}
+fn main() { println(classify(5)) }

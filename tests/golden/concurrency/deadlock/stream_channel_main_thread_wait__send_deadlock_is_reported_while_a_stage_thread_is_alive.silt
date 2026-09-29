@@ -1,0 +1,13 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- The same for `channel.send`: the fix does not touch sends at all.
+import channel
+import stream
+
+fn main() {
+  println(stream.repeat("x") |> stream.take(3) |> stream.collect)
+  let fresh = channel.new(0)
+  channel.send(fresh, 1)
+  println("unreachable")
+}

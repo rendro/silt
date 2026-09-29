@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: zzz_sibling_undefined
+import helper
+
+fn unused() {
+  zzz_sibling_undefined(1)
+}
+
+fn main() {
+  println(helper.double(21))
+}

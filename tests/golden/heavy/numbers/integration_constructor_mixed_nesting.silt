@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let val = Some((1, [2, 3]))
+  match val {
+    Some((a, [b, c])) -> a + b + c
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

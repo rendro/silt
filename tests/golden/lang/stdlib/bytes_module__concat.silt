@@ -1,0 +1,21 @@
+import bytes
+fn main() {
+  let a = bytes.from_string("hello ")
+  let b = bytes.from_string("world")
+  match bytes.to_string(bytes.concat(a, b)) {
+    Ok(s) -> println(s)
+    Err(e) -> println(e.message())
+  }
+  let h = bytes.from_string("hello")
+  println(bytes.eq(bytes.concat(h, bytes.empty()), h))
+  println(bytes.length(bytes.concat_all([])))
+  let parts = [
+    bytes.from_string("a"),
+    bytes.from_string("bb"),
+    bytes.from_string("ccc"),
+  ]
+  match bytes.to_string(bytes.concat_all(parts)) {
+    Ok(s) -> println(s)
+    Err(e) -> println(e.message())
+  }
+}

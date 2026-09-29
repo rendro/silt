@@ -1,0 +1,10 @@
+import io
+fn program() {
+  let a = []
+  let b = []
+  [..a, ..b]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

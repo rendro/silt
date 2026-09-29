@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- exact stdout (empty): the rejected program must not have run
+let x = println("side effect")

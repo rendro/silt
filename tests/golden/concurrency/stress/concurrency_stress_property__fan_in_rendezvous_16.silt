@@ -1,0 +1,29 @@
+-- repeat: 8
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: panicked
+-- Fan-in: 16 senders hand off to one receiver over a rendezvous channel
+-- (1+..+16 = 136); no false deadlock, no scheduler panic.
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let senders = 1..16
+    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+  let sum = loop c = 0, acc = 0 {
+    match c >= 16 {
+      true -> acc
+      _ -> {
+        match channel.receive(ch) {
+          Message(v) -> loop(c + 1, acc + v)
+          Closed -> acc
+          Empty -> acc
+          Sent -> acc
+        }
+      }
+    }
+  }
+  senders |> list.each { h -> task.join(h) }
+  println("sum={sum}")
+}

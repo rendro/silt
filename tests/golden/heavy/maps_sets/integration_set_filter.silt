@@ -1,0 +1,10 @@
+import io
+import set
+fn program() {
+  let s = #[1, 2, 3, 4, 5]
+  set.to_list(set.filter(s) { x -> x > 3 })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

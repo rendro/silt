@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate top-level
+let x = 1
+let x = 2
+fn main() { x }

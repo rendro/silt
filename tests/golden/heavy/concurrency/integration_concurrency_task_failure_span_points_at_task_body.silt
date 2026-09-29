@@ -1,0 +1,18 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: division
+-- stderr-contains: integration_concurrency_task_failure_span_points_at_task_body.silt:14:
+-- stderr-not-contains: integration_concurrency_task_failure_span_points_at_task_body.silt:17:
+-- Regression test for commit d9dd98b: when a spawned closure fails, the
+-- user-visible error's source span must point at the failing instruction
+-- inside the closure (line 14, the division by zero), not at the
+-- `task.join` site in the parent (line 17).
+import task
+fn main() {
+  let h = task.spawn(fn() {
+    let y = 10
+    let x = y / 0
+    x
+  })
+  task.join(h)
+}

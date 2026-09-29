@@ -1,0 +1,13 @@
+import io
+fn check(n) {
+  when n > 0 else { return "not positive" }
+  "positive"
+}
+
+fn program() {
+  check(-3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

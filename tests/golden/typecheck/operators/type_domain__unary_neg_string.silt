@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unary '-'
+fn main() {
+  let s = "hello"
+  let _ = -s
+  0
+}

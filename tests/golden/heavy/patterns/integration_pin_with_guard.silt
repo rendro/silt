@@ -1,0 +1,13 @@
+import io
+fn program() {
+  let x = 10
+  match 10 {
+    n when n == x -> "guard match"
+    ^x -> "pin match"
+    _ -> "no match"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

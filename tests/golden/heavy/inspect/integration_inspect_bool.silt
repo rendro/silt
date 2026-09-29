@@ -1,0 +1,8 @@
+import io
+fn program() {
+  io.inspect(true)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,13 @@
+import io
+import json
+type User { name: String, email: Option(String) }
+fn program() {
+  match json.parse("\{\"name\": \"Alice\", \"email\": null\}", User) {
+    Ok(user) -> user.email
+    Err(_) -> Some("fail")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

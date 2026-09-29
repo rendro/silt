@@ -1,0 +1,4 @@
+-- cmd: test --filter=
+-- exit: 1
+-- stderr-contains: --filter requires a pattern
+fn test_alpha() {}

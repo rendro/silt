@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: got Int
+fn main() {
+  let (a, b) = 42
+  let y: Int = a
+  println(y)
+}

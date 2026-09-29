@@ -1,0 +1,54 @@
+-- repeat: 10
+-- stderr-not-contains: deadlock on main thread
+-- A producer counts the sends that the channel accepted, a consumer
+-- counts the values it received until `Closed`, and the main thread
+-- closes the channel in the middle. Every accepted value must arrive.
+-- Without the fix a send can be accepted after the consumer has seen
+-- `Closed`; that is rare (about one run in ten loses a value).
+import channel
+import task
+
+fn spin(n) {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1)
+  }
+}
+
+fn consume(ch, n) {
+  match channel.receive(ch) {
+    Message(_) -> consume(ch, n + 1)
+    _ -> n
+  }
+}
+
+fn produce(ch, n) {
+  match channel.select([Send(ch, n)]) {
+    (_, Sent) -> produce(ch, n + 1)
+    _ -> n
+  }
+}
+
+fn go(i, rounds, lost) {
+  match i < rounds {
+    true -> {
+      let ch = channel.new(8)
+      let c = task.spawn(fn() { consume(ch, 0) })
+      let s = task.spawn(fn() { produce(ch, 0) })
+      let _ = spin(200 + i % 97)
+      channel.close(ch)
+      let sent = task.join(s)
+      let received = task.join(c)
+      match sent > received {
+        true -> go(i + 1, rounds, lost + sent - received)
+        false -> go(i + 1, rounds, lost)
+      }
+    }
+    false -> lost
+  }
+}
+
+fn main() {
+  let lost = go(0, 100, 0)
+  println("values accepted and never delivered: {lost}")
+}

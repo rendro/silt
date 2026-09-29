@@ -1,0 +1,8 @@
+import io
+fn program() {
+  """she said "hello" to me"""
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

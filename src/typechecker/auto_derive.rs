@@ -412,7 +412,7 @@ fn trait_impl(
 //   1. **Uninhabited fast path.** When `variants.is_empty()`, the body
 //      is the empty match `match self { }`. The exhaustiveness checker
 //      has a documented short-circuit for uninhabited scrutinees
-//      (see tests/empty_type_match_tests.rs).
+//      (see tests/typecheck/empty_type_match_tests.rs).
 //
 //   2. **Inhabited body.** A match expression — over the tuple
 //      `(self, other)` for binop-shaped traits (Compare, Equal) and
@@ -715,7 +715,7 @@ pub(super) fn synth_equal_impl_for_enum(
 ///   - consistent with our synthesized `Equal`.
 ///
 /// Tests that compare against the old `Value::hash` numeric output
-/// must be updated. See tests/auto_derive_synth_body_tests.rs for the
+/// must be updated. See tests/lang/auto_derive_synth_body_tests.rs for the
 /// new locked values.
 pub(super) fn synth_hash_impl_for_enum(
     type_name: Symbol,

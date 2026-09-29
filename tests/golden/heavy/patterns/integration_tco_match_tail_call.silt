@@ -1,0 +1,16 @@
+-- Tail call inside match arm — should use constant stack space.
+-- 200_000 exceeds the 100_000 frame limit, proving TCO is active.
+import io
+fn count_down(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count_down(n - 1, acc + 1)
+  }
+}
+fn program() {
+  count_down(200000, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

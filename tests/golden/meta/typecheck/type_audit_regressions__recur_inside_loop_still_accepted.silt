@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+fn main() {
+  loop n = 0 {
+    match n > 5 {
+      true -> n
+      false -> loop(n + 1)
+    }
+  }
+}

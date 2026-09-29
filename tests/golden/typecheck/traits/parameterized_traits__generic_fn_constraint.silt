@@ -1,0 +1,23 @@
+import int
+
+trait Convertible(b) {
+    fn convert(self) -> b
+}
+
+trait Convertible(Int) for String {
+    fn convert(self) -> Int {
+        match int.parse(self) {
+            Ok(n) -> n
+            Err(_) -> 0
+        }
+    }
+}
+
+fn unpack(x: a, type b) -> b where a: Convertible(b) {
+    x.convert()
+}
+
+fn main() {
+    let n: Int = unpack("42", Int)
+    println(n)
+}

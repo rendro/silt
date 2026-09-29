@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: division by zero
+-- stderr-contains: main.silt
+-- stderr-contains: y / 0
+-- stderr-not-contains: mod1.silt
+-- stderr-not-contains: let z = 99
+import mod1
+
+fn run() {
+  let y = 5
+  y / 0
+}
+
+fn main() { run() }

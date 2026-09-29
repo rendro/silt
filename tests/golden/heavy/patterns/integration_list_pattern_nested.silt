@@ -1,0 +1,11 @@
+import io
+fn program() {
+  match [Some(1), Some(2), None] {
+    [Some(a), Some(b), ..rest] -> a + b
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,5 @@
+-- cmd: check --format json
+-- exit: 1
+import broken
+
+fn main() {}

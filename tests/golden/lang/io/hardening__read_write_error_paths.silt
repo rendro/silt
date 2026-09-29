@@ -1,0 +1,18 @@
+import io
+import result
+fn main() {
+  -- test_read_file_nonexistent_returns_err
+  println(result.is_err(io.read_file("silt_test_nonexistent_file_12345.txt")))
+  -- test_read_file_nonexistent_error_message
+  println(match io.read_file("silt_test_nonexistent_file_12345.txt") {
+    Ok(_) -> "unexpected success"
+    Err(e) -> match {
+      e.message() == "" -> "empty error"
+      _ -> "has error message"
+    }
+  })
+  -- test_write_file_bad_path_returns_err
+  println(result.is_err(io.write_file("nonexistent_dir_12345/file.txt", "data")))
+  -- test_read_file_empty_path_returns_err
+  println(result.is_err(io.read_file("")))
+}

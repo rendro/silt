@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch for builtin 'Map' in trait impl: expected 2, got 1
+trait MyDisplay { fn my_display(self) -> String }
+trait MyDisplay for Map(a) {
+  fn my_display(self) -> String { "bad" }
+}
+fn main() { }

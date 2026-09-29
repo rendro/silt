@@ -1,0 +1,11 @@
+import io
+import set
+fn program() {
+  let a = #[1, 2]
+  let b = #[1, 2, 3]
+  (set.is_subset(a, b), set.is_subset(b, a))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

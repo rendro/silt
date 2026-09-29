@@ -1,0 +1,18 @@
+-- The formatter keeps `for Box(a)` and is idempotent on this file.
+-- cmd: fmt --check
+
+type Box(T) {
+  Box(T)
+}
+
+trait Wrap {
+  fn unwrap(self) -> Int
+}
+
+trait Wrap for Box(a) {
+  fn unwrap(self) -> Int {
+    match self {
+      Box(inner) -> 1
+    }
+  }
+}

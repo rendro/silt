@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: requires impl Carry(Int) for Bag
+-- stderr-contains: found impl Carry(String) for Bag
+-- `Holds(Int): Carry(b)` with only `Carry(String)` implemented is rejected at the impl.
+trait Carry(b) { fn carry(self, x: b) -> b }
+trait Holds(b): Carry(b) { fn take(self, x: b) -> b }
+type Bag { v: Int }
+trait Carry(String) for Bag { fn carry(self, x: String) -> String { x + "!" } }
+trait Holds(Int) for Bag { fn take(self, x: Int) -> Int { x } }
+fn main() { }

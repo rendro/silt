@@ -1,0 +1,11 @@
+import io
+import set
+fn program() {
+  let s = #[1, 2]
+  let s2 = set.insert(s, 3)
+  (set.length(s2), set.contains(s2, 3))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

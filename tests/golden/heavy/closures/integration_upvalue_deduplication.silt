@@ -1,0 +1,10 @@
+import io
+fn program() {
+  let x = 10
+  let f = fn() { x + x + x }
+  f()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

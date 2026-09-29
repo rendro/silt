@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Backslash + CR (CRLF line ending) is named as \\r in the unknown-escape message.
+-- stderr-contains: unknown escape sequence: \\r
+fn main() {
+  let s = "abc\
+}

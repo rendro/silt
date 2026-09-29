@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: maximum string size
+-- "ab" (2 bytes) repeated 5_000_001 times = 10_000_002 bytes > limit.
+import string
+fn main() { string.repeat("ab", 5000001) }

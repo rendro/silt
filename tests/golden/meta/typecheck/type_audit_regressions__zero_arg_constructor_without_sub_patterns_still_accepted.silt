@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+type Color { Red, Green, Blue }
+fn main() {
+  let x: Color = Red
+  match x {
+    Red -> "red"
+    Green -> "green"
+    Blue -> "blue"
+  }
+}

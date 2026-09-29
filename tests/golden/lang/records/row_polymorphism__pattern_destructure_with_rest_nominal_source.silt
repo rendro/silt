@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- An anon-record pattern over a nominal record scrutinee.
+type Person { name: String, age: Int }
+fn main() {
+    let p = Person { name: "A", age: 30 }
+    let n = match p {
+        {name: nm, ...rest} -> nm
+    }
+    let _ = n
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+-- `list.sum` is registered by the list submodule but is not in the
+-- curated builtin_module_functions list
+import list as l
+fn main() -> Int {
+    l.sum([1, 2, 3])
+}

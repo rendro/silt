@@ -797,7 +797,7 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         // hover / inlay-hints / selection-range / folding. Round-85
         // G3 fix: removed the prior wildcard catch-all arm; the
         // source-grep parity-lock in
-        // `tests/round85_visit_expr_children_parity_lock_tests.rs`
+        // `tests/meta/round85_visit_expr_children_parity_lock_tests.rs`
         // is now belt-and-suspenders behind compiler exhaustiveness.
         ExprKind::Int(_)
         | ExprKind::Float(_)

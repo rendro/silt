@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'xyzzy_completely_unrelated'
+-- stderr-not-contains: did you mean
+fn main() { xyzzy_completely_unrelated() }

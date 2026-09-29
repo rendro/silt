@@ -1,0 +1,14 @@
+import json.{ parse, parse_list }
+
+type Point { x: Int, y: Int }
+
+fn main() {
+  match parse("""{"x": 1, "y": 2}""", Point) {
+    Ok(p) -> println(p.x + p.y)
+    Err(e) -> println(e.message())
+  }
+  match parse_list("""[{"x": 3, "y": 4}]""", Point) {
+    Ok(ps) -> println(ps)
+    Err(e) -> println(e.message())
+  }
+}

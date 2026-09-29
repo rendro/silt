@@ -1,0 +1,6 @@
+fn first_name(p: {name: String, ...r}) -> String = p.name
+
+fn main() {
+  println(first_name({name: "Alice", age: 30}))
+  println(first_name({name: "Bob"}))
+}

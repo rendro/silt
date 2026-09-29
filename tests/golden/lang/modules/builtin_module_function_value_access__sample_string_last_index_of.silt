@@ -1,0 +1,5 @@
+import string
+fn main() {
+  let f = string.last_index_of
+  println(f("abcabc", "b"))
+}

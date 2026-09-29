@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+fn identity(x: a) -> a { x }
+
+fn main() { let _ = identity(1) }

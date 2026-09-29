@@ -1,0 +1,13 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: FAIL wave1_tooling__test_err_question_mark_fails.silt::test_returns_err
+-- stderr-not-contains: PASS wave1_tooling__test_err_question_mark_fails.silt::test_returns_err
+-- stderr-contains: test_returns_err returned Err: 
+-- stderr-contains: 1 test: 0 passed, 1 failed, 0 skipped
+import test
+import int
+fn test_returns_err() {
+  let n = int.parse("not a number")?
+  test.assert_eq(n, 999)
+  Ok(())
+}

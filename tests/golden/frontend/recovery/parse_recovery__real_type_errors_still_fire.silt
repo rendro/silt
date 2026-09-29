@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: type mismatch: expected Int, got String
+fn broken(x) {
+  let p = 1 +
+}
+
+fn good() -> Int {
+  let v: Int = "hi"
+  v
+}
+
+fn main() {
+  good()
+}

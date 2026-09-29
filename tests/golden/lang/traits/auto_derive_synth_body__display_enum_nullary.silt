@@ -1,0 +1,7 @@
+type Color { Red, Green, Blue, }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(d(Red))
+    println(d(Green))
+    println(d(Blue))
+}

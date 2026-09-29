@@ -1,0 +1,20 @@
+-- exit: 1
+-- stderr-contains: division by zero
+-- The call stack shows `wrapper` and `helper` once each, with no phantom
+-- tail-call frames left over from earlier iterations.
+import list
+import task
+
+fn helper(x) {
+  match x == 0 {
+    true -> 1 / 0,
+    false -> x
+  }
+}
+fn wrapper(x) { helper(x) }
+fn main() {
+  let h = task.spawn(fn() {
+    list.map([1, 2, 0], wrapper)
+  })
+  task.join(h)
+}

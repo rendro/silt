@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// which prevents the round-74 BROKEN bug where `fn main()` defined in
 /// the REPL would shadow the wrapper and cause infinite self-recursion
 /// on every subsequent expression. See
-/// `tests/round74_repl_main_no_hang_tests.rs`.
+/// `tests/cli/round74_repl_main_no_hang_tests.rs`.
 static REPL_EVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Prefix of the synthetic per-expression wrapper function name. Named
@@ -312,7 +312,7 @@ pub fn builtin_names() -> Vec<String> {
     // additions there flow through automatically — mirrors the post-
     // round-63 pattern in `src/lsp/completion.rs` and
     // `src/lsp/rename.rs`. Parity lock:
-    // `tests/repl_keyword_parity_with_lexer_tests.rs`.
+    // `tests/cli/repl_keyword_parity_with_lexer_tests.rs`.
     let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h"]
         .into_iter()
         .map(String::from)
@@ -324,7 +324,7 @@ pub fn builtin_names() -> Vec<String> {
     // Free-function names (`print`/`println`/`panic`) come from
     // `module::builtin_free_function_names()` so adding a new free
     // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/builtin_free_function_parity_tests.rs`.
+    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
     for name in crate::module::builtin_free_function_names() {
         names.push((*name).to_string());
     }
@@ -342,7 +342,7 @@ pub fn builtin_names() -> Vec<String> {
     // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
     // every gated variant. Sourced from `module::all_builtin_constructor_names`
     // so additions to `builtin_enum_variants` flow through automatically.
-    // Parity lock: `tests/builtin_constructor_parity_tests.rs`.
+    // Parity lock: `tests/meta/builtin_constructor_parity_tests.rs`.
     for name in crate::module::all_builtin_constructor_names() {
         names.push(name.to_string());
     }
@@ -511,7 +511,7 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 /// `starts_with_named_fn` mirrors the parser's rule instead.
 ///
 /// Exposed at crate-root visibility for the integration test at
-/// `tests/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
+/// `tests/cli/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
 pub fn is_declaration(input: &str) -> bool {
     let trimmed = input.trim();
     starts_with_named_fn(trimmed)
@@ -836,7 +836,7 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
 /// from the original REPL input buffer (or the wrapped input for
 /// `eval_expression`) and don't carry usable positions here.
 ///
-/// `pub` so the regression lock (tests/repl_wrapper_frame_leak_tests.rs)
+/// `pub` so the regression lock (tests/cli/repl_wrapper_frame_leak_tests.rs)
 /// can exercise the exact production rendering path.
 pub fn repl_call_stack_lines(call_stack: &[(String, Span)]) -> Vec<String> {
     let display_stack: Vec<(String, Span)> = call_stack
@@ -1145,7 +1145,7 @@ fn span_fits_input(span: Span, input: &str) -> bool {
 /// the locator as `  = note: …` / `  = help: …` continuation, matching
 /// the layout emitted by `SourceError::Display` (see src/errors.rs).
 ///
-/// Public so `tests/repl_error_render_and_keywords_tests.rs` can lock
+/// Public so `tests/cli/repl_error_render_and_keywords_tests.rs` can lock
 /// the output shape directly rather than round-tripping through a
 /// subprocess.
 pub fn render_runtime_error_without_source(

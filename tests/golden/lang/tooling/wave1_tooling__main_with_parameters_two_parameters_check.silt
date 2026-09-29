@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: it declares 2 parameters
+fn main(a: Int, b: Int) { a + b }

@@ -1,0 +1,26 @@
+-- exit: 1
+-- stderr-contains: failed and was never joined: division by zero
+import channel
+import list
+import task
+fn main() {
+  let ch = channel.new(10)
+
+  -- Spawn a mix of good and bad tasks
+  let good1 = task.spawn(fn() { channel.send(ch, 1) })
+  let bad = task.spawn(fn() { 1 / 0 })
+  let good2 = task.spawn(fn() { channel.send(ch, 2) })
+
+  task.join(good1)
+  task.join(good2)
+
+  let a = match channel.receive(ch) {
+    Message(v) -> v
+    _ -> 0
+  }
+  let b = match channel.receive(ch) {
+    Message(v) -> v
+    _ -> 0
+  }
+  println(a + b)
+}

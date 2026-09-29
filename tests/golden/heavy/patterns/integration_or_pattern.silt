@@ -1,0 +1,15 @@
+import io
+fn classify(n) {
+  match n {
+    0 | 1 -> "binary"
+    2 | 3 | 5 | 7 -> "small prime"
+    _ -> "other"
+  }
+}
+fn program() {
+  [classify(0), classify(3), classify(9)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

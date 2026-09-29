@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: missing variants
+-- stderr-contains: Sent
+-- stderr-contains: Empty
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.close(ch)
+  match channel.receive(ch) {
+    Message(_) -> ()
+    Closed -> ()
+  }
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Void81 { }
+type Aliased = Void81
+fn elim(x: Aliased) -> Int { match x { } }
+fn main() {}

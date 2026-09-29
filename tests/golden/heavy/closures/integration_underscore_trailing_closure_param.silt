@@ -1,0 +1,10 @@
+-- { _ -> expr } as a trailing closure — the core fix
+import io
+import list
+fn program() {
+  [1, 2, 3] |> list.map { _ -> 0 }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

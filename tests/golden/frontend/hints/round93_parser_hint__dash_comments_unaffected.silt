@@ -1,0 +1,7 @@
+-- Real silt comments (line and block) are unaffected by the // hint.
+{- block
+   comment -}
+fn main() {
+  -- inner
+  println("ok")
+}

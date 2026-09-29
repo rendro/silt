@@ -1,0 +1,12 @@
+import bytes
+fn main() {
+  -- separately constructed Bytes with identical content are equal
+  let a = bytes.from_string("hello")
+  let b = bytes.from_string("hello")
+  let c = bytes.from_string("world")
+  println(bytes.eq(a, b))
+  -- == has the same structural semantics
+  println([a == b, a == c])
+  println(bytes.eq(bytes.from_string("hi"), bytes.from_string("hello")))
+  println(bytes.eq(bytes.empty(), bytes.empty()))
+}

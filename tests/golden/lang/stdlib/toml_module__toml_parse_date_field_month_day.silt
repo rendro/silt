@@ -1,0 +1,12 @@
+import toml
+import time
+type Event { name: String, date: Date }
+fn run_main() {
+  let input = "name = \"launch\"\ndate = 1979-05-27\n"
+  match toml.parse(input, Event) {
+    Ok(e) -> e.date.month * 100 + e.date.day
+    Err(_) -> -1
+  }
+}
+
+fn main() { println(run_main()) }

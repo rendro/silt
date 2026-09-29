@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { (Monday < Friday, Sunday > Monday, Wednesday == Wednesday) }
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,21 @@
+-- exit: 0
+-- GUARD: ordinary builtins with all their arguments, in call and pipe form.
+import list
+import string
+import map
+import int
+import math
+
+fn main() {
+  println(list.map([1, 2]) { x -> x + 1 })
+  println(string.trim("  a  "))
+  println(map.get(#{ "a": 1 }, "a"))
+  println(int.to_string(7))
+  println(math.pow(2.0, 3.0))
+  println(list.fold([1, 2], 0) { acc, x -> acc + x })
+  println(string.replace("aXb", "X", "-"))
+  println([1, 2] |> list.map { x -> x + 1 })
+  println("  a  " |> string.trim)
+  println("  a  " |> string.trim())
+  println("aXb" |> string.replace("X", "-"))
+}

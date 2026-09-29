@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- Adding the `(Yes(false), _)` arm makes the match exhaustive.
+type Maybe { Nope, Yes(Bool) }
+fn f(x: Maybe, y: Int) -> Int {
+  match (x, y) {
+    (Nope, _) -> 0
+    (Yes(true), _) -> 1
+    (Yes(false), _) -> 2
+  }
+}
+fn main() { print(f(Yes(false), 99)) }

@@ -1,0 +1,16 @@
+import toml
+type Rec { name: String, age: Option(Int) }
+fn main() {
+  let r = Rec { name: "x", age: None }
+  println(match toml.stringify(r) {
+      Ok(s) -> match toml.parse(s, Rec) {
+        Ok(v) -> match v.age {
+          Some(n) -> "CORRUPT"
+          None -> "None ok"
+        }
+        Err(e) -> "PARSE ERR"
+      }
+      Err(e) -> "STRINGIFY ERR"
+    }
+  )
+}

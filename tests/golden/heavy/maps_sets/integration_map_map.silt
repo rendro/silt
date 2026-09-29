@@ -1,0 +1,11 @@
+import io
+import map
+fn program() {
+  let m = #{ "x": 1, "y": 2 }
+  let doubled = map.map(m) { k, v -> (k, v * 2) }
+  map.get(doubled, "x")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

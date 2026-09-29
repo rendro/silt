@@ -1,0 +1,16 @@
+-- repeat: 3
+-- try_receive on a closed empty channel returns Closed variant.
+import io
+import channel
+fn program() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  match channel.try_receive(ch) {
+    Closed -> "closed"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

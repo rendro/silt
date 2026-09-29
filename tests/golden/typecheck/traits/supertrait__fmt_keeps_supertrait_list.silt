@@ -1,0 +1,7 @@
+-- cmd: fmt --check
+-- exit: 0
+-- The formatter keeps a two-supertrait list in source order (the source is its own formatted form).
+
+trait X: A + B {
+  fn x(self) -> Int
+}

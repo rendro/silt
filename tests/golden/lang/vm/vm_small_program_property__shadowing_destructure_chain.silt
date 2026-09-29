@@ -1,0 +1,8 @@
+fn main() {
+  let (a, b) = (1, 2)
+  let (a, b) = (b, a + b)
+  let (a, b) = (b, a + b)
+  let (a, b) = (b, a + b)
+  let (_a, b) = (b, a + b)
+  println(b)
+}

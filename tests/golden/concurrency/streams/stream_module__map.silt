@@ -1,0 +1,7 @@
+import stream
+fn main() {
+  stream.from_range(1, 4)
+    |> stream.map(fn(n) { n * 10 })
+    |> stream.collect
+    |> println
+}

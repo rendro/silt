@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { (time.is_leap_year(2024), time.is_leap_year(1900), time.is_leap_year(2000), time.is_leap_year(2023)) }
+
+fn main() {
+  println(io.inspect(program()))
+}

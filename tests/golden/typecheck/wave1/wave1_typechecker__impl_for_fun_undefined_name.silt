@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'undefined_name'
+-- stderr-not-contains: error[runtime]
+-- An undefined name in an impl written against `Fun` is reported.
+trait Foo { fn foo(self) -> Int }
+trait Foo for Fun {
+  fn foo(self) -> Int { undefined_name + 1 }
+}
+fn main() { println("x") }

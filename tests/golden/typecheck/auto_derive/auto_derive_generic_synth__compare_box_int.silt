@@ -1,0 +1,9 @@
+type Box(a) { Foo(a), Bar(a, a), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Foo(1), Foo(2)))
+    println(cmp_gen(Foo(2), Foo(1)))
+    println(cmp_gen(Foo(7), Foo(7)))
+    println(cmp_gen(Bar(1, 2), Bar(1, 3)))
+    println(cmp_gen(Foo(99), Bar(0, 0)))
+}

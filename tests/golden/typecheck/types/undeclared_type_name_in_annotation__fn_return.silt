@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown type 'Frobnitz'
+fn foo() -> Frobnitz { 0 }
+fn main() { }

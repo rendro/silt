@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown type 'Frobnitz'
+-- stderr-not-contains: does not implement
+fn foo(x: Frobnitz) -> Int { 0 }
+fn main() { }

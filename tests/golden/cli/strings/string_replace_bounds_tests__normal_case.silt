@@ -1,0 +1,4 @@
+import string
+fn main() {
+  println(string.replace("hello world", "world", "silt"))
+}

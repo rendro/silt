@@ -1,0 +1,4 @@
+-- A program with no code: only these directive comments.
+-- cmd: test
+-- stderr-contains: 0 tests:
+-- stderr-not-contains: panicked at

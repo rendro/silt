@@ -1,0 +1,11 @@
+-- A local module importing a path dependency: the typechecker cannot see
+-- into the dependency, and the resulting import cascade stays suppressed.
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: unknown module
+-- stderr-not-contains: undefined
+import shapes
+
+fn main() {
+  println(shapes.nine(1))
+}

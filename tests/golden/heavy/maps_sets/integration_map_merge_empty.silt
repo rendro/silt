@@ -1,0 +1,7 @@
+import io
+import map
+fn program() { map.merge(#{}, #{}) }
+
+fn main() {
+  println(io.inspect(program()))
+}

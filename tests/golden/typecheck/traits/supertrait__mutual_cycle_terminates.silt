@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: panicked
+-- A mutual supertrait cycle does not hang or crash the checker (the verdict itself is unspecified).
+trait Cyc1: Cyc2 {
+  fn c1(self) -> Int
+}
+trait Cyc2: Cyc1 {
+  fn c2(self) -> Int
+}
+
+fn main() {}

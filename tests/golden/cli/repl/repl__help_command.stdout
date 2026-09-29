@@ -1,0 +1,8 @@
+Silt REPL (type :quit to exit, :help for commands)
+Commands:
+  :help, :h    Show this help
+  :quit, :q    Exit the REPL
+  <Tab>        Autocomplete builtins and user-defined names
+
+Enter expressions to evaluate, or declarations (fn, type, trait, import).
+Multi-line input: unclosed braces/parens/brackets continue on the next line.

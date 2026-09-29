@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: lowercase
+trait Bad(B) {
+    fn m(self) -> B
+}

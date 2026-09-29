@@ -1,0 +1,8 @@
+type Tagged { Foo(Int), Bar(Int), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Foo(1), Bar(1)))
+    println(cmp_gen(Foo(1), Foo(2)))
+    println(cmp_gen(Foo(2), Foo(1)))
+    println(cmp_gen(Foo(7), Foo(7)))
+}

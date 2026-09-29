@@ -1,0 +1,5 @@
+import string.{ split }
+
+fn main() {
+  println(("a,b,c" |> split(",")) == ["a", "b", "c"])
+}

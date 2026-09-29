@@ -1,0 +1,8 @@
+-- A constructor or-pattern whose first alternative partially matches falls through cleanly.
+fn main() {
+  let r = match Some(42) {
+    Some(1) | Some(42) -> "found"
+    _ -> "nope"
+  }
+  println(r)
+}

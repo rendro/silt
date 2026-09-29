@@ -1,0 +1,3 @@
+A 3 1.5 true [x] None B 2024
+err: json type mismatch: expected String, got number
+A 3 1.5 true [x] None B 2024

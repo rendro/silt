@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+import list
+import map
+
+fn group_by(xs: List(a), key: Fn(a) -> k) -> Map(k, List(a))
+    where k: Hash + Equal
+{
+    #{}
+}
+
+fn main() { () }

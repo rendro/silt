@@ -1,0 +1,15 @@
+import io
+import json
+import list
+type Employee { name: String, department: String, salary: Int }
+fn program() {
+  let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
+  match json.parse_list(json_str, Employee) {
+    Ok(employees) -> list.length(employees)
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

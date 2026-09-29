@@ -1,0 +1,16 @@
+trait Container {
+  type Item: Compare
+  fn first(self) -> Self::Item
+}
+
+type Box { v: Int }
+
+trait Container for Box {
+  type Item = Int
+  fn first(self) -> Int { self.v }
+}
+
+fn main() {
+  let b = Box { v: 5 }
+  println(b.first())
+}

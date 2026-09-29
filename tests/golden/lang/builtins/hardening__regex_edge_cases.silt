@@ -1,0 +1,11 @@
+import regex
+fn main() {
+  -- test_regex_find_no_match
+  println(regex.find("xyz", "hello"))
+  -- test_regex_find_all_no_matches
+  println(regex.find_all("xyz", "hello") == [])
+  -- test_regex_is_match_empty_pattern
+  println(regex.is_match("", "hello"))
+  -- test_regex_split_no_match
+  println(regex.split("xyz", "hello") == ["hello"])
+}

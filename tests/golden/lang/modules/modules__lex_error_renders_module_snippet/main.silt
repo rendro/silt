@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: lex error at badlex.silt:2:
+-- stderr-contains: --> badlex.silt:2:
+-- stderr-contains:  2 | @@@
+import badlex
+
+fn main() {
+  badlex.hi()
+}

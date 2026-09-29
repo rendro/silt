@@ -1,0 +1,9 @@
+fn describe(xs) {
+  match xs {
+    [] -> "empty"
+    [_] -> "one"
+    [_, _] -> "two"
+    _ -> "many"
+  }
+}
+fn main() { println(describe([])) }

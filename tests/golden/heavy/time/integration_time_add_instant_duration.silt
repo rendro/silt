@@ -1,0 +1,12 @@
+import io
+import time
+fn program() {
+  let start = time.now()
+  let later = start |> time.add(time.seconds(60))
+  let elapsed = time.since(start, later)
+  elapsed.ns == time.seconds(60).ns
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

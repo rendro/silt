@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Redeclaring builtin trait Hash is one clean error with no "missing method" cascade (exact stderr).
+-- stderr-contains: trait 'Hash' is a builtin trait and cannot be redefined
+-- stderr-not-contains: missing method
+trait Hash { fn foo(self) -> Bool }
+fn main() { println(1) }

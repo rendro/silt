@@ -1,0 +1,10 @@
+import io
+fn program() {
+  let x = 3
+  let y = 4
+  "sum: {x + y}, product: {x * y}"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

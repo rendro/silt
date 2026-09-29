@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: time.to_datetime
+-- stderr-contains: out of range
+-- stderr-not-contains: panicked
+import time
+fn main() {
+  let inst = Instant { epoch_ns: 0 }
+  println(time.to_datetime(inst, 9223372036854775807))
+}

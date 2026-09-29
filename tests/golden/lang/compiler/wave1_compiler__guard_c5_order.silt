@@ -1,0 +1,13 @@
+fn twice(n) {
+  n * 2
+}
+
+let a = 1
+let b = a + 1
+let c = twice(b)
+
+fn main() {
+  println(a)
+  println(b)
+  println(c)
+}

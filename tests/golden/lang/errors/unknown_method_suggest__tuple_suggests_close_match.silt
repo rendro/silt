@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'dispaly' on Tuple
+-- stderr-contains: = help: did you mean `display`?
+fn main() {
+  let t = (1, 2)
+  println(t.dispaly())
+}

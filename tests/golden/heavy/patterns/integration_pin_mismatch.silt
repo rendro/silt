@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let x = 42
+  match 99 {
+    ^x -> "matched"
+    _ -> "no match"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

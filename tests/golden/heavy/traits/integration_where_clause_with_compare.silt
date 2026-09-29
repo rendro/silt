@@ -1,0 +1,13 @@
+import io
+fn is_less(a: t, b: t) where t: Compare {
+  a < b
+}
+
+fn program() {
+  is_less(1, 2)
+  is_less("a", "b")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,7 @@
+-- stderr-not-contains: orphan impl
+type Tag { A, B }
+
+fn main() {
+  let xs: List(Tag) = [A, B]
+  println(xs)
+}

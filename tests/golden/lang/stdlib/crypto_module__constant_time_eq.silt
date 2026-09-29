@@ -1,0 +1,9 @@
+import bytes
+import crypto
+fn main() {
+  println(crypto.constant_time_eq(bytes.from_string("secret-token-123"), bytes.from_string("secret-token-123")))
+  println(crypto.constant_time_eq(bytes.from_string("secret-token-123"), bytes.from_string("secret-token-124")))
+  -- different lengths compare unequal (length may leak via timing)
+  println(crypto.constant_time_eq(bytes.from_string("short"), bytes.from_string("muchlonger")))
+  println(crypto.constant_time_eq(bytes.empty(), bytes.empty()))
+}

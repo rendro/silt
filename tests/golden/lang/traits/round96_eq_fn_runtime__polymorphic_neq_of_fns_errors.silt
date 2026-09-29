@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: does not implement Equal
+-- stderr-contains: 'Fn'
+fn neq(x: a, y: a) -> Bool { x != y }
+fn f() { 1 }
+fn main() { println(neq(f, f)) }

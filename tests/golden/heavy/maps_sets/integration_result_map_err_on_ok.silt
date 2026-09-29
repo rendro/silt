@@ -1,0 +1,7 @@
+import io
+import result
+fn program() { result.map_err(Ok(42), { e -> e }) }
+
+fn main() {
+  println(io.inspect(program()))
+}

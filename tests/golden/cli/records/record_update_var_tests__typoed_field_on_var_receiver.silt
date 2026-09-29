@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown field
+-- stderr-contains: aeg
+type Rec { name: String, age: Int }
+fn update_age(r, new_age) { r.{ aeg: new_age } }
+fn main() {
+  let r = Rec { name: "alice", age: 30 }
+  println(update_age(r, 31).age)
+}

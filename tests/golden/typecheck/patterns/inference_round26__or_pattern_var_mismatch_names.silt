@@ -1,0 +1,12 @@
+-- The or-pattern binding-set mismatch renders resolved names, not Symbol(..).
+-- cmd: check
+-- exit: 1
+-- stderr-contains: or-pattern alternatives must bind the same variables; first alternative binds {x}, alternative 2 binds {}
+-- stderr-not-contains: Symbol(
+type Shape { Circle(Int), Empty }
+fn main() {
+  let s = Circle(5)
+  match s {
+    Circle(x) | Empty -> println("ok")
+  }
+}

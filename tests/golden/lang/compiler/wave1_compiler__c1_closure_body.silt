@@ -1,0 +1,11 @@
+import list
+
+fn main() {
+  let r = [1, 2] |> list.map { n ->
+    10 + match n {
+      1 -> 1
+      _ -> 2
+    }
+  }
+  println(r)
+}

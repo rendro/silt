@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected else, found =
+fn main() {
+  when Some(x) = Some(42) else { return }
+}

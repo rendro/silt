@@ -1,0 +1,5 @@
+import encoding
+import string
+fn main() {
+  println(encoding.url_encode(string.from_char_code(0)))
+}

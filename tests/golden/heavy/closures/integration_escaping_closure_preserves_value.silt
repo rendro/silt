@@ -1,0 +1,15 @@
+-- A closure escapes its defining function and is called later.
+-- The captured value must survive after the enclosing function returns.
+import io
+fn make_greeter(name) {
+  fn(greeting) { "{greeting}, {name}!" }
+}
+
+fn program() {
+  let greet = make_greeter("Alice")
+  greet("Hello")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

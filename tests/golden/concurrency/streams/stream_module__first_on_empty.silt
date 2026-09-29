@@ -1,0 +1,5 @@
+import stream
+fn main() {
+  let e: List(Int) = []
+  println(stream.first(stream.from_list(e)))
+}

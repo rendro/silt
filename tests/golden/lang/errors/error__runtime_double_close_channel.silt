@@ -1,0 +1,7 @@
+-- exit: 0
+import channel
+fn main() {
+  let ch = channel.new(10)
+  channel.close(ch)
+  channel.close(ch)
+}

@@ -1,0 +1,15 @@
+import io
+import list
+fn program() {
+  [1, 3, 5, 4, 6]
+  |> list.fold_until(None) { acc, x ->
+    match x % 2 == 0 {
+      true -> Stop(Some(x))
+      _ -> Continue(None)
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

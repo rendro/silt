@@ -1,0 +1,6 @@
+-- exit: 1
+import list
+fn bad_each(x) {
+  let _ = 1 / 0
+}
+fn main() { list.each([1, 2, 3], bad_each) }

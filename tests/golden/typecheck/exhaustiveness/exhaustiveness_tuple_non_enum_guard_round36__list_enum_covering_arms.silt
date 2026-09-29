@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+type Color { Red, Green, Blue }
+fn main() {
+  let t = ([1, 2, 3], Red)
+  match t {
+    (_, Red) -> println("red")
+    (_, Green) -> println("green")
+    (_, Blue) -> println("blue")
+  }
+}

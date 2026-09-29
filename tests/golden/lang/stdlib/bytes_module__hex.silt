@@ -1,0 +1,21 @@
+import bytes
+fn main() {
+  match bytes.from_hex("48656c6c6f") {
+    Ok(b) -> println(bytes.to_hex(b))
+    Err(e) -> println(e.message())
+  }
+  -- uppercase input is accepted, output is lowercase
+  match bytes.from_hex("DEADBEEF") {
+    Ok(b) -> println(bytes.to_hex(b))
+    Err(e) -> println(e.message())
+  }
+  match bytes.from_hex("abc") {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e.message())
+  }
+  match bytes.from_hex("xyzz") {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e.message())
+  }
+  println("[{bytes.to_hex(bytes.empty())}]")
+}

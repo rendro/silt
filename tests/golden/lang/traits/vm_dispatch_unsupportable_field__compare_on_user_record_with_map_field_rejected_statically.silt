@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: type 'Doc' does not implement trait 'Compare'
+type Doc { meta: Map(String, Int) }
+fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
+fn main() {
+    let d = Doc { meta: #{"a": 1} }
+    println(cmp_gen(d, d))
+}

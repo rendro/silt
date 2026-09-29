@@ -1,0 +1,9 @@
+import shapes
+fn main() {
+  let p = shapes.Pt { x: 7 }
+  println(p.x)
+  match shapes.Circle(3) {
+    shapes.Circle(r) -> println(r),
+    _ -> println(0)
+  }
+}

@@ -1,0 +1,15 @@
+fn check(p) {
+  match p {
+    (0, _) | (_, 0) -> "zero"
+    (1, 1) -> "ones"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  let r1 = check((0, 5))
+  let r2 = check((5, 0))
+  let r3 = check((1, 1))
+  let r4 = check((2, 2))
+  println("{r1},{r2},{r3},{r4}")
+}

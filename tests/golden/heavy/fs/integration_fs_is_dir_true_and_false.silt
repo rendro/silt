@@ -1,0 +1,8 @@
+-- True for a directory, false for a regular file and for missing paths.
+import fs
+import io
+fn main() {
+  let _ = fs.mkdir("a_dir")
+  let _ = io.write_file("a_file.txt", "x")
+  println(io.inspect((fs.is_dir("a_dir"), fs.is_dir("a_file.txt"), fs.is_dir("missing"))))
+}

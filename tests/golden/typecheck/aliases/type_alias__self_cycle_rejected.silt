@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: forms a cycle
+-- stderr-contains: PhDSelf
+-- A self-referential alias is rejected as a cycle.
+type PhDSelf = PhDSelf
+fn main() {}

@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: does not implement Compare
+import list
+type Box {
+  item: Fn(Int) -> Int,
+}
+fn main() {
+  let a = Box { item: fn(y){ y } }
+  let b = Box { item: fn(z){ z + 1 } }
+  let sorted = list.sort([a, b])
+  println(list.length(sorted))
+}

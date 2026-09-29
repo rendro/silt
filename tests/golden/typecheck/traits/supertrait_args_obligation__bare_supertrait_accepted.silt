@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- A supertrait without args still chains through.
+trait Eq2 { fn eq2(self, other: Self) -> Bool }
+trait Ord2: Eq2 { fn lt2(self, other: Self) -> Bool }
+type Foo { v: Int }
+trait Eq2 for Foo { fn eq2(self, other: Foo) -> Bool { self.v == other.v } }
+trait Ord2 for Foo { fn lt2(self, other: Foo) -> Bool { self.v < other.v } }
+fn main() { }

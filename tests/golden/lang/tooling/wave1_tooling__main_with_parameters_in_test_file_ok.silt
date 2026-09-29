@@ -1,0 +1,6 @@
+-- cmd: test
+-- exit: 0
+-- stderr-contains: PASS
+-- stderr-not-contains: must take no parameters
+fn main(args: List(String)) { () }
+fn test_a() { 1 }

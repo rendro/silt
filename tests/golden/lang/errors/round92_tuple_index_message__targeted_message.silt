@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: tuple indexing ('t.0') is not supported
+-- stderr-contains: destructure instead: 'let (a, b) = t'
+-- stderr-not-contains: unknown method '0'
+fn main() {
+  let t = (1, 2)
+  println(t.0)
+}

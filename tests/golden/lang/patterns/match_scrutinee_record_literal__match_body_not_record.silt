@@ -1,0 +1,7 @@
+type Thing { Foo, Bar }
+fn demo(t: Thing) -> Int {
+  match t {
+    x -> 1
+  }
+}
+fn main() { println(demo(Foo)) }

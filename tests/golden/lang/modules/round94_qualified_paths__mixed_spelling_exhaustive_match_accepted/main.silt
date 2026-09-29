@@ -1,0 +1,9 @@
+import shapes
+
+fn main() {
+  let m = match shapes.Rect(1.0, 2.0) {
+    shapes.Circle(r) -> "circle",
+    Rect(w, h) -> "rect",
+  }
+  print(m)
+}

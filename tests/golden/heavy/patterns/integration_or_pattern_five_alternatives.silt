@@ -1,0 +1,15 @@
+import io
+fn classify(n) {
+  match n {
+    1 | 2 | 3 | 4 | 5 -> "small"
+    _ -> "big"
+  }
+}
+
+fn program() {
+  [classify(1), classify(3), classify(5), classify(6), classify(100)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

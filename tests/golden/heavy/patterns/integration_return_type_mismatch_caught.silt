@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch
+-- The typechecker should catch return type mismatches
+fn add(a: Int, b: Int) -> String {
+  a + b
+}
+
+fn main() {
+  add(1, 2)
+}

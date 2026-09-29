@@ -1,0 +1,19 @@
+-- repeat: 5
+import channel
+import task
+import time
+fn outer(g, y) { "outer called with {y}" }
+fn inner(c, y) { "INNER called instead" }
+fn main() {
+  let a = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+  }
+  let worker = task.spawn { ->
+    let r = { recv: channel.receive }
+    outer(inner, r.recv(a))
+  }
+  println(task.join(worker))
+  task.join(sender)
+}

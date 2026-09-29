@@ -1,0 +1,3 @@
+type _Meters = Int
+fn f(m: _Meters) -> Int { m + 1 }
+fn main() { println(f(3)) }

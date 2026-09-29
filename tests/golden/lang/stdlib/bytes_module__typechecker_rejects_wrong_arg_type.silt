@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Bytes, got String
+import bytes
+fn main() {
+  bytes.length("not bytes")
+}

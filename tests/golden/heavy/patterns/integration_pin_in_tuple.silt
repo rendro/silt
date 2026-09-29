@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let expected = "hello"
+  match ("hello", 42) {
+    (^expected, n) -> n
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

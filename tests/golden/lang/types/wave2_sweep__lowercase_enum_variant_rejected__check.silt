@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: enum variant 'green' must start with an uppercase letter
+-- stderr-contains: `Green`
+-- stderr-not-contains: error[runtime]
+-- stderr-contains: wave2_sweep__lowercase_enum_variant_rejected__check.silt:8:19
+type Color { Red, green }
+fn main() {
+  let c = Red
+  match c {
+    Red -> println("red")
+    green -> println("green")
+  }
+}

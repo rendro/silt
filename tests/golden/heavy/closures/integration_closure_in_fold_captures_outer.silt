@@ -1,0 +1,12 @@
+-- Closure capturing an outer variable used in list.fold.
+import io
+import list
+fn program() {
+  let bonus = 100
+  let result = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+  result + bonus
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

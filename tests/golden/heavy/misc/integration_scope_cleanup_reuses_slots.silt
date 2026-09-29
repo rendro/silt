@@ -1,0 +1,18 @@
+import io
+fn program() {
+  {
+    let a = 1
+    let b = 2
+    let c = 3
+    a + b + c
+  }
+  {
+    let x = 10
+    let y = 20
+    x + y
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

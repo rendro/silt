@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The did-you-mean hint picks the close field among several.
+-- stderr-contains: 'nam'
+-- stderr-contains: did you mean `name`?
+fn main() {
+  let p = {name: "x", age: 30}
+  println(p.nam)
+}

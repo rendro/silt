@@ -1,0 +1,22 @@
+-- exit: 1
+-- repeat: 3
+-- A task fails, nobody joins it, `main` returns normally: the failure
+-- is reported and the run exits with status 1.
+--
+-- The task tells `main` that it is about to fail, and fails in its
+-- next step; `main` sleeps after that message, so the failure has
+-- happened when `main` returns.
+import channel
+import task
+import time
+fn main() {
+  let about_to_fail = channel.new(1)
+  let _ = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    let zero = 0
+    10 / zero
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  println("main done")
+}

@@ -1,0 +1,5 @@
+-- A standalone fn named like a trait-impl method keeps its own body.
+trait Showable { fn show(self) -> String }
+trait Showable for Int { fn show(self) -> String = "int" }
+fn show(x) = x + 1
+fn main() { println(show(41)) }

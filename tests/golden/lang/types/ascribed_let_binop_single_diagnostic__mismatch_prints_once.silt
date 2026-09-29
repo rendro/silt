@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+fn main() {
+    let s: String = "hello"
+    let n: Int = s + 1
+    println(n)
+}

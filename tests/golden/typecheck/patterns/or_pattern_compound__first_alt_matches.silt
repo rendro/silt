@@ -1,0 +1,8 @@
+-- A compound or-pattern whose first alternative matches.
+fn main() {
+  let r = match (1, 2) {
+    (1, _) | (_, 2) -> "found"
+    _ -> "nope"
+  }
+  println(r)
+}

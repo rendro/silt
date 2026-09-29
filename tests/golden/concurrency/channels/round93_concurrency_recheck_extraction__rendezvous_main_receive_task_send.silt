@@ -1,0 +1,27 @@
+-- repeat: 3
+-- Main-thread receive from a spawned sender over a rendezvous channel
+-- completes, 20 times in a row (the receive wait loop's re-check path).
+import channel
+import task
+fn main() {
+  loop i = 0 {
+    match i >= 20 {
+      true -> println("done")
+      _ -> {
+        let ch = channel.new(0)
+        let producer = task.spawn(fn() {
+          channel.send(ch, 7)
+        })
+        let v = match channel.receive(ch) {
+          Message(v) -> v
+          _ -> -1
+        }
+        task.join(producer)
+        match v == 7 {
+          true -> loop(i + 1)
+          _ -> println("iteration {i}: rendezvous receive lost, got {v}")
+        }
+      }
+    }
+  }
+}

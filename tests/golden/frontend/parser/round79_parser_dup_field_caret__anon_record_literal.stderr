@@ -1,0 +1,5 @@
+error[parse]: duplicate field 'a' in anon record literal
+ --> round79_parser_dup_field_caret__anon_record_literal.silt:5:19
+   |
+ 5 |   let r = { a: 1, a: 2 }
+   |                   ^ duplicate field 'a' in anon record literal

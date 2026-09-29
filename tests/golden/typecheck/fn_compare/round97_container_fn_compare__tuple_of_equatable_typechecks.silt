@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- Positive control: tuple equality of equatable components typechecks.
+fn main() {
+  print((1, "a") == (1, "b"))
+}

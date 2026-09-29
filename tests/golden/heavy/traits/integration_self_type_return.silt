@@ -1,0 +1,17 @@
+-- Trait method that returns Self, verify the return type matches
+import io
+trait Default {
+  fn default() -> Self
+}
+
+trait Default for String {
+  fn default() -> Self { "" }
+}
+
+fn program() {
+  String.default()
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

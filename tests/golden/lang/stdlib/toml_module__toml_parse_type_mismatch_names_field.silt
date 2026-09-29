@@ -1,0 +1,13 @@
+import toml
+type User { name: String, age: Int }
+fn run_main() {
+  -- 'name' is provided as an integer instead of a string.
+  let input = "name = 42\nage = 30\n"
+  match toml.parse(input, User) {
+    Ok(_) -> "unexpected"
+    Err(TomlTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
+  }
+}
+
+fn main() { println(run_main()) }

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expects 3 arguments, got 2
+-- stderr-not-contains: error[runtime]
+-- GUARD: the pipe form with one argument too few is rejected, per call (exact stderr).
+import list
+import string
+
+fn main() {
+  println([1, 2] |> list.fold(0))
+  println("aXb" |> string.replace("X"))
+}

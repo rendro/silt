@@ -1,0 +1,10 @@
+import io
+import set
+fn program() {
+  let s = #["hello", "world", "hello"]
+  (set.length(s), set.contains(s, "hello"))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

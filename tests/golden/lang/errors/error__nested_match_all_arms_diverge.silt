@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: nonzero
+fn process(x) {
+  match x {
+    0 -> panic("zero")
+    _ -> panic("nonzero")
+  }
+}
+fn main() { process(1) }

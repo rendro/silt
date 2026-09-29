@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 0
+-- `Both: Tr1 + Tr2` with every impl present typechecks.
+trait Tr1 {
+  fn t1(self) -> Int
+}
+trait Tr2 {
+  fn t2(self) -> Int
+}
+trait Both: Tr1 + Tr2 {
+  fn both(self) -> Int
+}
+
+type Baz { v: Int }
+
+trait Tr1 for Baz {
+  fn t1(self) -> Int { self.v }
+}
+trait Tr2 for Baz {
+  fn t2(self) -> Int { self.v + 1 }
+}
+trait Both for Baz {
+  fn both(self) -> Int { self.t1() + self.t2() }
+}
+
+fn main() {
+  let b = Baz { v: 5 }
+  println(b.both())
+}

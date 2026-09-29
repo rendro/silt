@@ -1,0 +1,10 @@
+-- A named field plus `...rest` in a match arm: rest holds the other fields.
+fn main() {
+  let p = {age: 30, city: "X"}
+  match p {
+    {age: a, ...rest} -> {
+      println(a)
+      println(rest.city)
+    }
+  }
+}

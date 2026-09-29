@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import encoding
+fn main() {
+  let e = encoding.url_encode("hello world")
+  let _ = encoding.url_decode(e)
+}

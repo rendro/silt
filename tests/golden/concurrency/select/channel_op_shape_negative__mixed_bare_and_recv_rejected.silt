@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: ChannelOp
+-- A bare channel alongside Recv(ch) is still rejected.
+import channel
+fn main() {
+  let ch1: Channel(Int) = channel.new(1)
+  let ch2: Channel(Int) = channel.new(1)
+  let _ = channel.select([Recv(ch1), ch2])
+  ()
+}

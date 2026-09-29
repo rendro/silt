@@ -1,0 +1,36 @@
+-- repeat: 5
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: panicked
+-- 32 senders hand off to one receiver over a rendezvous channel; every
+-- value arrives (1+..+32 = 528) and no false deadlock fires.
+import channel
+import list
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  let done = channel.new(32)
+  let senders = 1..32
+    |> list.map { i -> task.spawn(fn() {
+      channel.send(ch, i)
+      let _ = channel.try_send(done, i)
+    }) }
+  -- Receiver drains 32 values.
+  let sum = loop c = 0, acc = 0 {
+    match c >= 32 {
+      true -> acc
+      _ -> {
+        match channel.receive(ch) {
+          Message(v) -> loop(c + 1, acc + v)
+          Closed -> acc
+          Empty -> acc
+          Sent -> acc
+        }
+      }
+    }
+  }
+  senders |> list.each { h -> task.join(h) }
+  -- 1+2+...+32 == 32*33/2 == 528
+  println("sum={sum}")
+}

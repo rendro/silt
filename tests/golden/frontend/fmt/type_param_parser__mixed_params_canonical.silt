@@ -1,0 +1,7 @@
+-- cmd: fmt --check
+-- exit: 0
+-- A data parameter followed by a `type a` parameter is already canonical.
+
+fn parse(body: String, type a) -> a {
+  a
+}

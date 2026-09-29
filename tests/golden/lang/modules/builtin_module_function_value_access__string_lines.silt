@@ -1,0 +1,6 @@
+import string
+import list
+fn main() {
+  let f = string.lines
+  list.each(f("a\nb"), fn(line) { println(line) })
+}

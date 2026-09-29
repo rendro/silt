@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot load module 'nosuchmod'
+-- stderr-not-contains: undefined variable
+import nosuchmod
+
+fn main() {
+  nosuchmod.foo(1)
+  nosuchmod.bar(2)
+}

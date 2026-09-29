@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: division by zero
+-- stderr-not-contains: VM error:
+fn main() -> Int {
+    let x: Int = 1 / 0
+    x
+}

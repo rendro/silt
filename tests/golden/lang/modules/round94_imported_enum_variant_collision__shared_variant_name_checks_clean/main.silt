@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: type mismatch
+-- stderr-not-contains: ColorA
+-- stderr-not-contains: ColorB
+-- Two imported packages whose enums share the variant name `Red`.
+import sa
+import sb
+
+fn main() {
+  println("hi")
+}

@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Zero { fn zero() -> Self }
+trait Zero for Int { fn zero() -> Int = 0 }
+fn main() { }

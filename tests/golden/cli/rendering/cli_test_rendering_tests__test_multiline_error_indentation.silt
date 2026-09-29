@@ -1,0 +1,8 @@
+-- cmd: test
+-- exit: 1
+import test
+
+fn test_division_error() {
+  let r = 1 / 0
+  r
+}

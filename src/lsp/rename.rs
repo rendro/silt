@@ -214,7 +214,7 @@ fn is_symbol_user_renameable_at_cursor(
 /// helper falls back to this one only when the symbol has no user
 /// binding in scope.
 ///
-/// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
+/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
 /// can assert every gated constructor is protected from rename.
 pub fn is_user_renameable(name: &str) -> bool {
     if name.is_empty() {
@@ -263,7 +263,7 @@ fn is_valid_silt_ident(name: &str) -> bool {
 /// tokens (`KEYWORDS`) and reserved-word-shaped boolean literals
 /// (`KEYWORD_LITERALS`). Sourced from `crate::lexer` so a future keyword
 /// addition flows through automatically; guarded by
-/// `tests/lexer_keyword_parity_tests.rs`.
+/// `tests/meta/lexer_keyword_parity_tests.rs`.
 fn is_silt_keyword(name: &str) -> bool {
     lexer::KEYWORDS.contains(&name) || lexer::KEYWORD_LITERALS.contains(&name)
 }
@@ -271,7 +271,7 @@ fn is_silt_keyword(name: &str) -> bool {
 // Builtin constructor rejection consults `module::all_builtin_constructor_names`
 // so new gated variants (e.g. `IoNotFound`, `PgConnect`, `Recv`/`Send`) are
 // picked up automatically. Parity-lock test in
-// `tests/builtin_constructor_parity_tests.rs` guards the coupling.
+// `tests/meta/builtin_constructor_parity_tests.rs` guards the coupling.
 
 /// Combined list of every reserved global identifier — built-in
 /// free functions plus every name in [`builtin_types::BUILTIN_TYPES`]
@@ -293,7 +293,7 @@ fn is_silt_keyword(name: &str) -> bool {
 /// feature-gated entries (`PgError`, `TcpError`) are always rejected
 /// regardless of the active feature set: a build without `postgres`
 /// still rejects renaming `PgError` since the user may flip features.
-/// Parity lock: `tests/round82_stdlib_types_registry_tests.rs`.
+/// Parity lock: `tests/typecheck/round82_stdlib_types_registry_tests.rs`.
 pub(crate) fn builtin_globals() -> &'static [&'static str] {
     static GLOBALS: OnceLock<Vec<&'static str>> = OnceLock::new();
     GLOBALS

@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: http.parse_query
+import http
+fn main() {
+  http.parse_query("a=%ZZ")
+}

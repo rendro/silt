@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot infer the type
+-- A top-level let whose type cannot be determined and which is never
+-- referenced anywhere should still be reported as an error.
+fn id(x) { x }
+
+let a = id(5)

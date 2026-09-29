@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: time.format_date
+-- stderr-contains: invalid format specifier
+-- stderr-not-contains: panicked
+import time
+fn main() {
+  let d = Date { year: 2024, month: 1, day: 1 }
+  println(time.format_date(d, "%Q"))
+}

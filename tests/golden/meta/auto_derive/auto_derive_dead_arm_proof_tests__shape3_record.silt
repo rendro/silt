@@ -1,0 +1,16 @@
+type Point { x: Int, y: Int, }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let q = Point { x: 1, y: 3 }
+    println(cmp_gen(p, q))
+    println(eq_gen(p, q))
+    println(h(p) == p.hash())
+    println(d(p))
+    println(p.compare(q))
+    println(p.equal(q))
+    println(p.display())
+}

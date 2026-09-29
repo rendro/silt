@@ -9,7 +9,7 @@ use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Build the canonical closed-channel-send VmError (message wording is
-/// pinned by tests in `tests/error_tests.rs` and `tests/integration.rs`,
+/// pinned by tests in `tests/lang/error_tests.rs` and `tests/heavy/integration.rs`,
 /// and the round86 regression-lock test asserts the `format!` literal for
 /// it appears in exactly one place in this file). Route every
 /// closed-channel try_send branch through this helper so the message
@@ -274,7 +274,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
 
             // Fresh entry: validate the duration up front. Negative duration
             // is a construction error even when a value is already buffered
-            // (pinned by tests/channel_timeout_tests.rs).
+            // (pinned by tests/concurrency/channel_timeout_tests.rs).
             let mut fresh_dur_ns: i64 = 0;
             if resume_timer.is_none() {
                 fresh_dur_ns = crate::builtins::data::extract_duration(&args[1])?;
@@ -518,7 +518,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         // select/join all report "deadlock on main thread"
                         // (same class as the round-2 `channel.select` fix —
                         // `each` was the arm left behind). Locked by
-                        // `tests/main_thread_each_deadlock_tests.rs`.
+                        // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
                         match main_thread_wait_for_receive(&ch, vm)? {
                             Value::Variant(tag, mut vals) if tag == "Message" => {
                                 let val = vals.pop().unwrap_or(Value::Unit);
@@ -1328,7 +1328,7 @@ fn main_thread_wait_for_send(
     // rounds 90-92; a future edit to one copy that missed the siblings
     // would silently reopen lost-wakeup / deadlock-false-positive
     // bugs). Locked by
-    // `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    // `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
     //
     // Semantics (load-bearing, must not change):
     //   Sent   -> drop the waker-registration guard FIRST (deregisters
@@ -1509,7 +1509,7 @@ fn main_thread_wait_for_receive(
     // same rationale as ROUND93-RECHECK(send) in
     // `main_thread_wait_for_send` (four formerly byte-identical copies;
     // see that comment for the full story). Locked by
-    // `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    // `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
     //
     // Semantics (load-bearing, must not change):
     //   Value(v) -> drop the waker-registration guard FIRST, THEN
@@ -1802,7 +1802,7 @@ fn main_thread_wait_for_join(
     // ROUND93-RECHECK(join): the single in-loop race-point re-check —
     // same rationale as ROUND93-RECHECK(send) in
     // `main_thread_wait_for_send` (three formerly identical copies).
-    // Locked by `tests/round93_concurrency_recheck_extraction_tests.rs`.
+    // Locked by `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
     //
     // Semantics (load-bearing, must not change): if the joinee's result
     // is available, unpark MAIN and return it; otherwise None and the

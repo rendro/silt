@@ -1,0 +1,11 @@
+type T { V(Int, Int, Int) }
+fn cmp_gen(x: t, y: t) -> Int where t: Compare { x.compare(y) }
+fn eq_gen(x: t, y: t) -> Bool where t: Equal { x.equal(y) }
+fn main() {
+  println(cmp_gen(V(1, 9, 9), V(2, 0, 0)))
+  println(cmp_gen(V(1, 2, 9), V(1, 3, 0)))
+  println(cmp_gen(V(1, 2, 5), V(1, 2, 3)))
+  println(cmp_gen(V(1, 2, 3), V(1, 2, 3)))
+  println(eq_gen(V(1, 2, 3), V(1, 2, 3)))
+  println(eq_gen(V(1, 2, 3), V(1, 2, 4)))
+}

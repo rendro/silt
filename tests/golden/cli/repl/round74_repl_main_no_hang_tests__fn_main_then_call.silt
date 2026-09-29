@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: fn main() { 42 }\nmain()\n:quit\n

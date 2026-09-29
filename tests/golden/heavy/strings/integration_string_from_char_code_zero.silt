@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.from_char_code(0) }
+
+fn main() {
+  println(io.inspect(program()))
+}

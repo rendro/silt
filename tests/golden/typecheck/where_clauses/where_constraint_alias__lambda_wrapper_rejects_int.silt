@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'Greetable'
+-- A where-constraint survives a lambda wrapper: calling f(42) is rejected.
+trait Greetable { fn greet(self) -> String }
+trait Greetable for String { fn greet(self) -> String { self } }
+fn use_g(x: a) -> String where a: Greetable { x.greet() }
+let f = fn(x) { use_g(x) }
+fn main() { f(42) }

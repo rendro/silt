@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: load failed: boom
+-- stderr-not-contains: must diverge
+-- When the `when let` pattern fails, the fitting arm of the diverging else match runs (and the program type checks).
+fn load_data() -> Result(Int, String) { Err("boom") }
+fn main() {
+  let res = load_data()
+  when let Ok(data) = res else {
+    match res {
+      Err(e) -> panic("load failed: {e}")
+      Ok(_)  -> panic("unreachable")
+    }
+  }
+  println(data)
+}

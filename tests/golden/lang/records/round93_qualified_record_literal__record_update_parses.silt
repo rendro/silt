@@ -1,0 +1,7 @@
+type Pt { x: Int, y: Int }
+
+fn main() {
+  let p = Pt { x: 1, y: 2 }
+  let q = p.{ x: 9 }
+  print(q.x)
+}

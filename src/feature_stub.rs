@@ -18,7 +18,7 @@
 //!
 //! Returning `(exit_code, message)` rather than calling `process::exit`
 //! directly is what makes this branch testable from
-//! `tests/round88_disabled_feature_help_tests.rs` without having to
+//! `tests/lang/round88_disabled_feature_help_tests.rs` without having to
 //! build a side binary with a different feature set.
 
 /// Compute the response a feature-gated subcommand should emit when
@@ -38,7 +38,7 @@
 /// The "feature is not enabled" wording is kept stable so that
 /// existing user muscle memory and downstream tooling that greps for
 /// it (and the regression test at
-/// `tests/round88_disabled_feature_help_tests.rs`) continue to work.
+/// `tests/lang/round88_disabled_feature_help_tests.rs`) continue to work.
 pub fn disabled_feature_response(
     args: &[String],
     feature: &str,

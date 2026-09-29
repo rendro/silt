@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- Printable non-ASCII in a found-token is not escaped.
+-- stderr-contains: "héllo—wörld"
+-- stderr-not-contains: \u{
+"héllo—wörld"

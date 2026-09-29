@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let cmd = "quit"
+  match "quit" {
+    ^cmd -> "exit"
+    _ -> "continue"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

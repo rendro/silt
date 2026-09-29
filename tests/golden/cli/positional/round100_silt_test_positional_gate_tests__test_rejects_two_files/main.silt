@@ -1,0 +1,5 @@
+-- cmd: test a_test.silt
+-- exit: 1
+-- stderr-contains: silt test
+-- stderr-contains: extra argument
+fn test_b() { let x = 2 }

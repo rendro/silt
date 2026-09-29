@@ -1,0 +1,14 @@
+import io
+import json
+import list
+type Employee { name: String }
+fn program() {
+  match json.parse_list("[]", Employee) {
+    Ok(employees) -> list.length(employees)
+    Err(_) -> -1
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

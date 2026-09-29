@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 0
+-- Multi-argument trait methods invoked on a descriptor.
+trait Monoid {
+    fn empty() -> Self
+    fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+    fn empty() -> Self { 0 }
+    fn combine(a: Self, b: Self) -> Self { a + b }
+}
+
+fn use_it() {
+    let e = Int.empty()
+    let c = Int.combine(1, 2)
+}
+
+fn main() {}

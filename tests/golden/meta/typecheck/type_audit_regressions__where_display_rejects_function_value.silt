@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: Display
+fn show(x: a) -> String where a: Display { "{x}" }
+fn main() {
+  let f = fn() { 42 }
+  println(show(f))
+}

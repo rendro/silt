@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: undefined variable 'f'
+-- stderr-not-contains: function expects
+-- stderr-not-contains: function arity mismatch
+fn f(a, b) {
+  let x = 1 +
+}
+
+fn main() {
+  f(1)
+  f(1, 2, 3)
+  f("not", "int")
+}

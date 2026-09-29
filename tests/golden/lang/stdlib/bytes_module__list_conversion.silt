@@ -1,0 +1,15 @@
+import bytes
+fn main() {
+  match bytes.from_list([72, 105, 33]) {
+    Ok(b) -> println(bytes.to_list(b))
+    Err(_) -> println("wrong")
+  }
+  match bytes.from_list([10, 256, 30]) {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e.message())
+  }
+  match bytes.from_list([0, -1, 0]) {
+    Ok(_) -> println("wrong: should error")
+    Err(e) -> println(e.message())
+  }
+}

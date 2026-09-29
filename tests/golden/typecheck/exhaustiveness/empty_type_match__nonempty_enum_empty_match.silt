@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- An empty match on an inhabited enum is still non-exhaustive.
+-- stderr-contains: non-exhaustive
+type NonEmpty { A, B }
+fn elim(x: NonEmpty) -> Int { match x { } }
+fn main() { let _ = elim(A) }

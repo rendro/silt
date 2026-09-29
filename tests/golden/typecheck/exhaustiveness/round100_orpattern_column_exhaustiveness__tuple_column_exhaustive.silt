@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- An or-pattern in a non-trailing tuple column covers both variants.
+type T { A, B }
+fn f(x) {
+  match x {
+    (A | B, true) -> 1
+    (A | B, false) -> 2
+  }
+}
+fn main() { print(f((A, true))) }

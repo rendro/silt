@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: record update
+fn main() { let y = (42).{ bogus: 1 } println("{y}") }

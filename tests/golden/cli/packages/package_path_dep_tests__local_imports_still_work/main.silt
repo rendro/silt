@@ -1,0 +1,2 @@
+import helpers
+fn main() { println(helpers.shout(7)) }

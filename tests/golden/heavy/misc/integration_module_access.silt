@@ -1,0 +1,10 @@
+import io
+import string
+fn program() {
+  let parts = "hello world" |> string.split(" ")
+  parts
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

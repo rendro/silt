@@ -1,0 +1,15 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: no counterparty
+-- A main-thread select whose only arm can never become ready reports a
+-- deadlock instead of spinning forever.
+import channel
+
+fn main() {
+  let ch = channel.new(0)
+  match channel.select([Recv(ch)]) {
+    (_, Message(_)) -> println("unreachable")
+    _ -> println("unreachable")
+  }
+}

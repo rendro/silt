@@ -1,0 +1,8 @@
+import set
+fn main() {
+  let a = set.from_list([1, 2])
+  let b = set.insert(set.from_list([2, 3]), 4)
+  println(set.length(set.union(a, b)))
+  println(set.length(set.intersection(a, b)))
+  println(set.contains(set.remove(a, 1), 2))
+}

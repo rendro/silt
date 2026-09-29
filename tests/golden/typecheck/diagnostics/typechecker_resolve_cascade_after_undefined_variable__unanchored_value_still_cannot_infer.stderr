@@ -1,0 +1,11 @@
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> typechecker_resolve_cascade_after_undefined_variable__unanchored_value_still_cannot_infer.silt:5:1
+   |
+ 5 | fn default() -> a { panic("no value") }
+   | ^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+
+error[type]: cannot infer the type of `x` — add an annotation, e.g. `let x: SomeType = ...`
+ --> typechecker_resolve_cascade_after_undefined_variable__unanchored_value_still_cannot_infer.silt:7:11
+   |
+ 7 |   let x = default()
+   |           ^ cannot infer the type of `x` — add an annotation, e.g. `let x: SomeType = ...`

@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+import string
+fn main() {
+  println(string.length("hi"))
+}

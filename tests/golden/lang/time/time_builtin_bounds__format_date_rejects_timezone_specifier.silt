@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: time.format_date
+-- stderr-contains: timezone specifier
+-- stderr-not-contains: panicked
+-- stderr-not-contains: a Display implementation returned an error
+import time
+fn main() {
+  println(match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%z")
+    Err(_) -> "date err"
+  })
+}

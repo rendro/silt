@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: zzz_totally_undefined
+import mathutil
+
+fn unused() {
+  zzz_totally_undefined(1)
+}
+
+fn main() {
+  println(mathutil.double(21))
+}

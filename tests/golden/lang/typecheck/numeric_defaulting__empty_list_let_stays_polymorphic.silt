@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import list
+fn main() {
+  let xs = []
+  let n = list.length(xs)
+  n
+}

@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- Top-level let bindings whose inferred type still contains a type variable
+-- should NOT be rejected when a later decl (e.g., main) actually consumes
+-- them, since the downstream use fixes the type.
+fn id(x) { x }
+
+let a = id(5)
+let b = id("hello")
+
+fn main() {
+  print(a)
+  print(b)
+}

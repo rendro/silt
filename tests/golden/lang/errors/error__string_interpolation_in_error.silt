@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: hello world!
+fn main() {
+  let name = "world"
+  panic("hello {name}!")
+}

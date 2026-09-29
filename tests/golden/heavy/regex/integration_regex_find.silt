@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.find("\\d+", "abc 123 def 456")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

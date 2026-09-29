@@ -1,0 +1,7 @@
+-- Qualified `Box.compare` matches the trait-bound call form.
+type Box(a) { Foo(a), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Foo(1), Foo(2)))
+    println(Box.compare(Foo(1), Foo(2)))
+}

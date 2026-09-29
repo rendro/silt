@@ -1,0 +1,6 @@
+error[runtime]: task <handle:0> failed and was never joined: panic: worker failed
+ --> wave1_channels_tasks__h5_failed_task_that_is_never_joined_is_reported.silt:16:29
+    |
+ 16 |   let _ = task.spawn(fn() { panic("worker failed") })
+    |                             ^ task <handle:0> failed and was never joined: panic: worker failed
+  = help: join the task with task.join to handle its error, or cancel it with task.cancel

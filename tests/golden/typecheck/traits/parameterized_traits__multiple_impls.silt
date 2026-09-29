@@ -1,0 +1,18 @@
+trait Wrap(b) {
+    fn wrap(self) -> b
+}
+
+trait Wrap(Int) for Int {
+    fn wrap(self) -> Int { self }
+}
+
+trait Wrap(String) for String {
+    fn wrap(self) -> String { self }
+}
+
+fn main() {
+    let a: Int = 1.wrap()
+    let b: String = "x".wrap()
+    println(a)
+    println(b)
+}

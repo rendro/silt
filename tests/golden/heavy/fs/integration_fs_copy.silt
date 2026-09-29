@@ -1,0 +1,7 @@
+import fs
+import io
+fn main() {
+  let _ = io.write_file("copy_src.txt", "data")
+  let _ = fs.copy("copy_src.txt", "copy_dst.txt")
+  println(io.inspect(io.read_file("copy_dst.txt")))
+}

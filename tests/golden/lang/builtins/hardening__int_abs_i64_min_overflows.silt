@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: integer overflow
+-- stderr-contains: abs(
+import int
+fn main() {
+  let x = -9223372036854775807 - 1
+  println(int.abs(x))
+}

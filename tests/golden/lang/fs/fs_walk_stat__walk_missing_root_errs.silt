@@ -1,0 +1,7 @@
+import fs
+fn main() {
+    match fs.walk("nope") {
+        Ok(_) -> println("unexpected Ok")
+        Err(e) -> println(e.message())
+    }
+}

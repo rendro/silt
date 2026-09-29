@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: decimals must be non-negative
+import float
+fn main() { float.to_string(3.14159, -1) }

@@ -1,0 +1,4 @@
+-- cmd: check --format json
+-- exit: 1
+-- A program with no main: the note "add one as the entry point" is a
+-- JSON hint, not part of the message.

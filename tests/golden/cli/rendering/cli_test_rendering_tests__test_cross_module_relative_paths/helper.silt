@@ -1,0 +1,4 @@
+import test
+pub fn do_check(x) {
+  test.assert_eq(x, 999)
+}

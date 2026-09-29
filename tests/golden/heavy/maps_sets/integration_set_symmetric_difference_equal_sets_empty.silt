@@ -1,0 +1,10 @@
+-- a ⊕ a = ∅
+import io
+import set
+fn program() {
+  set.length(set.symmetric_difference(#[1, 2, 3], #[1, 2, 3]))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

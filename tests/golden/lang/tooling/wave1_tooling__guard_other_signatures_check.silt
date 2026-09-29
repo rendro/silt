@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- exact (empty) stderr
+fn main_helper(x: Int) { x }
+fn main() {
+  println(main_helper(1))
+}

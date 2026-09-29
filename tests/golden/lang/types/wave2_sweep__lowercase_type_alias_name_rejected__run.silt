@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: type name 'meters' must start with an uppercase letter
+-- stderr-not-contains: error[runtime]
+type meters = Int
+fn grow(m: meters) -> meters = m + 1
+fn main() {
+  println(grow(1))
+}

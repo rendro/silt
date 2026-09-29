@@ -1,0 +1,16 @@
+type Tree {
+  Leaf(Int),
+  Node(Tree, Tree),
+}
+
+fn sum(t) {
+  match t {
+    Leaf(n) -> n
+    Node(l, r) -> sum(l) + sum(r)
+  }
+}
+
+fn main() {
+  let t = Node(Node(Leaf(1), Leaf(2)), Leaf(3))
+  println(sum(t))
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: type variable 'a' in return type is not introduced
+fn make() -> a { panic("unreachable") }
+
+fn main() { () }

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- An or-pattern inside a constructor payload covers both variants.
+type T { A, B }
+type W { P(T, Bool) }
+fn f(x) {
+  match x {
+    P(A | B, true) -> 1
+    P(A | B, false) -> 2
+  }
+}
+fn main() { print(f(P(A, true))) }

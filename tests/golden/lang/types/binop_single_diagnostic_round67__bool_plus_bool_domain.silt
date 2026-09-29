@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires
+fn main() {
+    let a: Bool = true
+    let b: Bool = false
+    let x = a + b
+    ()
+}

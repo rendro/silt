@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'
+fn main() {
+  let tup = (1, Some(42))
+  let (_, Some(x)) = tup
+  println(x)
+}

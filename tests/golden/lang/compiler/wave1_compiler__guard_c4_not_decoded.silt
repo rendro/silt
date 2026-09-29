@@ -1,0 +1,14 @@
+import json
+import set
+
+type Bag { name: String, items: Set(Int) }
+type Label { text: String }
+
+fn main() {
+  let b = Bag { name: "b", items: #[1, 2] }
+  println(set.length(b.items))
+  match json.parse("\{\"text\": \"t\"\}", Label) {
+    Ok(v) -> println(v.text)
+    Err(e) -> println("err: {e.message()}")
+  }
+}

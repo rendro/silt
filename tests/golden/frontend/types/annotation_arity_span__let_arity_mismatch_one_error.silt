@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A wrong-arity annotation on a let yields exactly one arity diagnostic,
+-- carrying the annotation's span (no zero-span sentinel, no cascade).
+type Box(a, b) { Two(a, b) }
+fn main() {
+  let b: Box(Int) = Two(1, "hi")
+  println(b)
+}

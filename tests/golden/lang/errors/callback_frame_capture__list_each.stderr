@@ -1,0 +1,9 @@
+error[runtime]: division by zero
+ --> callback_frame_capture__list_each.silt:4:11
+   |
+ 4 |   let _ = 1 / 0
+   |           ^ division by zero
+
+call stack:
+  -> bad_each  at callback_frame_capture__list_each.silt:4:11
+  -> main  at callback_frame_capture__list_each.silt:6:13

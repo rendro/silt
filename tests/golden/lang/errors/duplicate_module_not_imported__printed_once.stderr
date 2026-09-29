@@ -1,0 +1,5 @@
+error[compile]: module 'math' is not imported; add `import math` at the top of the file
+ --> duplicate_module_not_imported__printed_once.silt:4:11
+   |
+ 4 |   println(math.sqrt(2.0))
+   |           ^ module 'math' is not imported; add `import math` at the top of the file

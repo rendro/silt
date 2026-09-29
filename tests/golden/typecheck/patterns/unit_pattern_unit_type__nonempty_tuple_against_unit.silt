@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected (_, _), got ()
+-- `let (a, b) = ()` is still a type error.
+fn main() {
+  let (a, b) = ()
+  println(a)
+}

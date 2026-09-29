@@ -1,0 +1,2 @@
+import list
+fn main() { println(list.index_of([10, 20, 30], 99)) }

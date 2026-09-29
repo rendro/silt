@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'frobnicate'
+-- stderr-not-contains: tuple indexing
+fn main() {
+  let t = (1, 2)
+  println(t.frobnicate())
+}

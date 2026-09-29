@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-contains: constructor 'Some' is only one of 2 variants of enum 'Option'
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- Every closure parameter is a binding site, not only the first.
+import list
+fn main() {
+  println(list.fold([Some(1), None], 0) { acc, Some(x) -> acc + x })
+}

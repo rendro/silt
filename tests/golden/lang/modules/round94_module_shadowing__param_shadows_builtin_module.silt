@@ -1,0 +1,7 @@
+import list
+type P { map: Int }
+fn f(list: P) -> Int { list.map }
+fn main() {
+  println(f(P { map: 7 }))
+  println(list.map([1, 2, 3], fn(x) { x * 10 }))
+}

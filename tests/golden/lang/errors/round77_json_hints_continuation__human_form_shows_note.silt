@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: program has no main()
+-- stderr-contains: = note: add one as the entry point

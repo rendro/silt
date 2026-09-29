@@ -1,0 +1,7 @@
+-- `Bytes` is a valid parameter annotation.
+import bytes
+fn handle(b: Bytes) -> Int { 1 }
+fn main() {
+  let x: Bytes = bytes.empty()
+  println(handle(x))
+}

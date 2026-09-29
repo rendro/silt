@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import list as l
+fn main() -> Int {
+    l.length([1, 2, 3])
+}

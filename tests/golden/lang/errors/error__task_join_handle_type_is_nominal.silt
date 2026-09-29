@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected String
+import task
+fn main() {
+  let h = task.spawn(fn() { 42 })
+  let s: String = task.join(h)
+  println(s)
+}

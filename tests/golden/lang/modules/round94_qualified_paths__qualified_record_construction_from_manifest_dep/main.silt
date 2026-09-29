@@ -1,0 +1,11 @@
+import geom
+
+fn main() {
+  let p = geom.Pt { x: 3, y: 4 }
+  print(p.x + p.y)
+  let s = match geom.Circle(2.0) {
+    geom.Circle(r) -> "circle",
+    geom.Rect(w, h) -> "rect",
+  }
+  print(s)
+}

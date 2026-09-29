@@ -1,0 +1,26 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- `channel.select` on the main thread, no scheduler. One arm is a
+-- stream, the other a channel that nobody ever serves: the stream arm
+-- alone must keep the select from being reported.
+import channel
+import stream
+import time
+
+fn main() {
+  let idle = channel.new(0)
+  let out = stream.from_list(["a", "b"]) |> stream.map { x ->
+    time.sleep(time.ms(300))
+    x
+  }
+  match channel.select([Recv(idle), Recv(out)]) {
+    (_, Message(v)) -> println("first {v}")
+    (_, Closed) -> println("closed")
+    _ -> println("other")
+  }
+  match channel.select([Recv(out), Recv(idle)]) {
+    (_, Message(v)) -> println("second {v}")
+    (_, Closed) -> println("closed")
+    _ -> println("other")
+  }
+}

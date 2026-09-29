@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.to_lower("HELLO") }
+
+fn main() {
+  println(io.inspect(program()))
+}

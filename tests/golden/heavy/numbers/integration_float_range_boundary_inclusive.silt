@@ -1,0 +1,15 @@
+import io
+fn classify(x) {
+  match x {
+    10.0..20.0 -> "in range"
+    _ -> "out of range"
+  }
+}
+
+fn program() {
+  [classify(10.0), classify(20.0), classify(9.9), classify(20.1)]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

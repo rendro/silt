@@ -1,0 +1,5 @@
+error[type]: undefined variable 'nope'
+ --> caret_width__cjk_before_caret.silt:5:19
+   |
+ 5 |   let t = ("中文字", nope)
+   |                      ^ undefined variable 'nope'

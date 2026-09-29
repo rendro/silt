@@ -1,0 +1,5 @@
+import list
+fn main() {
+  let f = list.intersperse
+  println(f([1, 2, 3], 0))
+}

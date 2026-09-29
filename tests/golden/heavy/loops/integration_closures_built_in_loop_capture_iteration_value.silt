@@ -1,0 +1,18 @@
+-- Build a list of closures inside a loop; each closure captures
+-- the iteration variable at the time it was created.
+import io
+import list
+fn program() {
+  let closures = loop i = 0, acc = [] {
+    match i >= 4 {
+      true -> acc
+      _ -> loop(i + 1, list.append(acc, fn() { i }))
+    }
+  }
+  -- Call each closure and collect results
+  closures |> list.map(fn(f) { f() })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

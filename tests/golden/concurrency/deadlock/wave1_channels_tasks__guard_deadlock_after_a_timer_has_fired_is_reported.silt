@@ -1,0 +1,25 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- A real deadlock is still reported when a timer was involved: the
+-- task waits for a timer, and afterwards for a channel that nobody
+-- sends on. The report comes after the timer has fired. Passes with
+-- and without the fix.
+import channel
+import task
+
+fn main() {
+  let x = channel.new(0)
+  let dead = channel.new(0)
+  let h = task.spawn(fn() {
+    let t = channel.timeout(100)
+    let _ = channel.receive(t)
+    println("timer fired")
+    let _ = channel.receive(dead)
+    channel.send(x, 1)
+  })
+  match channel.receive(x) {
+    Message(v) -> println("main got: {v}")
+    _ -> println("main got no message")
+  }
+}

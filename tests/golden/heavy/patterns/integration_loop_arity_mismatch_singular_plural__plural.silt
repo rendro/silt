@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: loop() expects 2 arguments, got 1
+-- Singular: 1 binding, called with 0 args → "expects 1 argument"
+-- Plural: 2 bindings, called with 1 arg → "expects 2 arguments"
+fn main() {
+  loop x = 0, y = 0 {
+    loop(1)
+  }
+}

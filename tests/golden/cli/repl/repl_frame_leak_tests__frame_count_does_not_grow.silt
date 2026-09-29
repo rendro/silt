@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: fn boom(){1/0}\nboom()\nboom()\nboom()\nboom()\nboom()\n:quit\n

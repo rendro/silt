@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 0
+import int
+
+trait Decode {
+    fn decode(body: String) -> Result(Self, ParseError)
+}
+
+trait Decode for Int {
+    fn decode(body: String) -> Result(Int, ParseError) {
+        int.parse(body)
+    }
+}
+
+fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode {
+    a.decode(body)
+}
+
+fn use_it() {
+    let _ = parse("42", Int)
+}
+
+fn main() { use_it() }

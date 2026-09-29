@@ -1,0 +1,6 @@
+import io
+fn program() { 3.compare(5) }
+
+fn main() {
+  println(io.inspect(program()))
+}

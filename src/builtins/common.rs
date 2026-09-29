@@ -80,7 +80,7 @@ pub(super) fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError>
 ///
 /// `pub(crate)` so a test-only re-export at `silt::builtins::value_kind`
 /// can pin the matrix from an integration test
-/// (`tests/round75_kind_naming_canonical_tests.rs`). `mod common` itself
+/// (`tests/typecheck/round75_kind_naming_canonical_tests.rs`). `mod common` itself
 /// remains private — only this single helper crosses the module wall.
 pub(crate) fn value_kind(v: &Value) -> &'static str {
     match v {
@@ -135,7 +135,7 @@ pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&
 ///
 /// `pub(crate)` so internal callers (and any future in-crate test) can
 /// reference the helper. The integration-test lock in
-/// `tests/builtin_nibble_to_hex_helper_tests.rs` proves the deletion was
+/// `tests/lang/builtin_nibble_to_hex_helper_tests.rs` proves the deletion was
 /// a semantic no-op by driving both call paths through the public
 /// builtin API (`bytes.to_hex` and `encoding.form_encode`).
 pub(crate) fn nibble_to_hex(n: u8, uppercase: bool) -> char {

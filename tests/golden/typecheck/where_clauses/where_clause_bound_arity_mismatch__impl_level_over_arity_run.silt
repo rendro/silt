@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: trait 'Cast' expects 1 type argument in bound, got 2
+-- `silt run` fails on the impl-level over-arity bound; the method never dispatches.
+trait Cast(to) { fn cast(self) -> to }
+trait Cast(Float) for Int { fn cast(self) -> Float { 1.5 } }
+trait Use { fn use_it(self) -> Float }
+trait Use for List(a) where a: Cast(Int, String) {
+    fn use_it(self) -> Float = match self {
+        [] -> 0.0
+        [x, ..rest] -> x.cast() + rest.use_it()
+    }
+}
+fn main() {
+    let xs: List(Int) = [1]
+    println(xs.use_it())
+}

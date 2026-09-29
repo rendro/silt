@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'TypeOf' is a reserved type name used by the type system
+type TypeOf(a) { Foo(a) }
+fn main() {}

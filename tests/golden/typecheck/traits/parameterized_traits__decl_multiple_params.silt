@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+trait Pair(a, b) {
+    fn first(self) -> a
+    fn second(self) -> b
+}
+
+fn main() {}

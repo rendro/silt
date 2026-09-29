@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-not-contains: error[runtime]
+-- A type error in an impl written against an alias is reported at the method body.
+trait Foo { fn foo(self) -> Int }
+type Ints = List(Int)
+trait Foo for Ints {
+  fn foo(self) -> Int { "not an int" }
+}
+fn main() { println([1, 2].foo()) }

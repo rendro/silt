@@ -1,0 +1,9 @@
+import io
+import set
+fn program() {
+  set.to_list(#[3, 1, 2])
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

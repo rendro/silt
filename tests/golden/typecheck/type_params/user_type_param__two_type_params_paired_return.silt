@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: in return type is not introduced
+-- Two `type` parameters anchor a paired return type.
+fn make_pair(type a, type b) -> (a, b) {
+    panic("unreachable")
+}
+
+fn main() {}

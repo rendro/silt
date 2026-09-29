@@ -1,0 +1,7 @@
+-- cmd: fmt --check definitely_not_here.silt
+-- exit: 2
+-- stderr-contains: error reading
+
+fn main() {
+  println("hello")
+}

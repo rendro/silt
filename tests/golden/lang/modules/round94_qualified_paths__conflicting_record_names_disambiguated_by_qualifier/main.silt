@@ -1,0 +1,11 @@
+import a
+import b
+
+fn main() {
+  let p = a.Pt { x: 1, y: 2 }
+  let q = b.Pt { label: "hi", v: 3 }
+  print(p.x + p.y)
+  print(q.label)
+  let b.Pt { label, .. } = q
+  print(label)
+}

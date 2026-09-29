@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.find([], { x -> x > 0 }) }
+
+fn main() {
+  println(io.inspect(program()))
+}

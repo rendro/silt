@@ -1,0 +1,4 @@
+-- A program with no code: only these directive comments.
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- stderr-not-contains: panicked at

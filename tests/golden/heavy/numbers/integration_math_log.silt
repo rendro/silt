@@ -1,0 +1,8 @@
+-- ln(e) = 1.0 — math.log now returns ExtFloat
+import io
+import math
+fn program() { math.log(math.e) }
+
+fn main() {
+  println(io.inspect(program()))
+}

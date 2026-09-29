@@ -1,0 +1,7 @@
+import bytes
+fn main() {
+  let f = bytes.starts_with
+  let a = bytes.from_string("hello")
+  let b = bytes.from_string("he")
+  println(f(a, b))
+}

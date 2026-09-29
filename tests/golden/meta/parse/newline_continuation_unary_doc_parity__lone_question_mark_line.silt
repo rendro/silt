@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected expression, found ?
+-- Postfix `?` does not cross newlines.
+fn main() {
+  let n = maybe()
+    ?
+  println("{n}")
+}

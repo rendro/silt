@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A non-exhaustive match on a plain record names the record field in the witness.
+-- stderr-contains: non-exhaustive
+-- stderr-contains: Box.flag
+type Box { flag: Bool }
+fn check(b: Box) -> Int = match b { Box{flag: true} -> 1 }
+fn main() { check(Box{flag: true}) }

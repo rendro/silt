@@ -1,0 +1,12 @@
+fn show(v: Result((), String)) -> String {
+  match v {
+    Ok(()) | Err("fine") -> "good"
+    Err(e) -> e
+  }
+}
+
+fn main() {
+  println(show(Ok(())))
+  println(show(Err("fine")))
+  println(show(Err("bad")))
+}

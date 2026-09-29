@@ -1,0 +1,14 @@
+-- repeat: 3
+import io
+import task
+import string
+fn program() {
+  let h = task.spawn(fn() {
+    string.length("hello")
+  })
+  task.join(h)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

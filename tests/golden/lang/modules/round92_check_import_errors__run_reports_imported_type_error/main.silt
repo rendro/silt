@@ -1,0 +1,9 @@
+-- `silt run` reports the imported module's type error up front, like check.
+-- exit: 1
+-- stderr-contains: type mismatch
+-- stderr-contains: helper.silt
+import helper
+
+fn main() {
+  println(helper.good(1))
+}

@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: type name 'color' must start with an uppercase letter
+-- stderr-not-contains: error[runtime]
+type color { Red, Green }
+fn main() {
+  println(Green)
+}

@@ -1,0 +1,13 @@
+-- The caret sits on the pattern line, not the outer match.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined constructor 'Unknown'
+-- stderr-contains: --> inference_round26__undefined_ctor_span_in_match.silt:10:5
+type Shape { Circle(Int) }
+fn main() {
+  let s = Circle(5)
+  match s {
+    Unknown(x) -> println(0)
+    Circle(r) -> println(r)
+  }
+}

@@ -1,0 +1,7 @@
+import list
+import string
+fn run_main() {
+  list.max_by(["banana", "fig", "apple"]) { w -> string.length(w) }
+}
+
+fn main() { println(run_main()) }

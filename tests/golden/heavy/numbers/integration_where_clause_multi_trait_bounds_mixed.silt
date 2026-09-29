@@ -1,0 +1,25 @@
+import io
+type Color { Red, Blue }
+
+trait Display for Color {
+  fn display(self) -> String {
+    match self {
+      Red -> "Red"
+      Blue -> "Blue"
+    }
+  }
+}
+
+fn show_and_compare(a: t, b: u) where t: Equal + Compare, u: Display {
+  let eq = a == a
+  let lt = a < a
+  b.display()
+}
+
+fn program() {
+  show_and_compare(1, Red)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -185,7 +185,7 @@ impl Span {
     /// Single-source-of-truth for the synthetic-span shape; collapses
     /// the previously-duplicated `synth_span` helpers in
     /// `typechecker::exhaustiveness` and `typechecker::auto_derive`.
-    /// Lock: tests/round72_bloat_cleanup_lock_tests.rs.
+    /// Lock: tests/meta/round72_bloat_cleanup_lock_tests.rs.
     pub fn synthetic() -> Self {
         Self::new(0, 0)
     }
@@ -237,7 +237,7 @@ impl fmt::Display for LexError {
 /// Consumers (LSP completion, LSP rename, etc.) MUST source their
 /// keyword lists from these constants instead of hand-rolling parallel
 /// arrays. A parity-lock test in
-/// `tests/lexer_keyword_parity_tests.rs` asserts this set matches the
+/// `tests/meta/lexer_keyword_parity_tests.rs` asserts this set matches the
 /// `match name.as_str()` arms in `scan_ident_or_keyword` and that no
 /// LSP module re-introduces a hand-rolled keyword list.
 pub const KEYWORDS: &[&str] = &[

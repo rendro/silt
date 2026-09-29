@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: should differ
+import test
+fn main() {
+  test.assert_ne(5, 5, "should differ")
+}

@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.repeat("ab", 3) }
+
+fn main() {
+  println(io.inspect(program()))
+}

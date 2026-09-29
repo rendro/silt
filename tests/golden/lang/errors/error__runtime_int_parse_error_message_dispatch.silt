@@ -1,0 +1,7 @@
+import int
+fn main() {
+    match int.parse("") {
+        Ok(_) -> println("impossible")
+        Err(e) -> println(e.message())
+    }
+}

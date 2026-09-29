@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: function expects 2 arguments, got 3
+-- stderr-not-contains: function expects 3
+fn use_cb(cb: Fn(Int, Int) -> Int) -> Int { cb(1, 2) }
+fn main() {
+  let f = { x, y, z -> x + y + z }
+  println(use_cb(f))
+}

@@ -1,0 +1,9 @@
+fn make_scale(k) {
+  { x -> x * k }
+}
+
+fn main() {
+  let triple = make_scale(3)
+  let r = 7 |> triple
+  println(r)
+}

@@ -1,0 +1,19 @@
+-- `e.display()` equals `e.message()` for a JsonError.
+import json
+fn main() {
+    match json.parse("not valid json at all", String) {
+        Ok(_) -> ()
+        Err(e) -> {
+            let display_method_form = e.display()
+            let message_form = e.message()
+            match display_method_form == message_form {
+                true -> println("EQUIV")
+                false -> {
+                    println("DRIFT")
+                    println(display_method_form)
+                    println(message_form)
+                }
+            }
+        }
+    }
+}

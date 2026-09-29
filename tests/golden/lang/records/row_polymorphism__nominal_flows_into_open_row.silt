@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+type Person { name: String, age: Int }
+fn name(p: {name: String, ...r}) -> String = p.name
+fn main() {
+    let _ = name(Person { name: "A", age: 30 })
+}

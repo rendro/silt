@@ -1,0 +1,12 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: deadlock on main thread
+-- stderr-contains: no counterparty
+-- channel.each on the main thread with no scheduler and no sender
+-- reports a deadlock instead of blocking forever.
+import channel
+
+fn main() {
+  let ch = channel.new(0)
+  channel.each(ch) { msg -> println("{msg}") }
+}

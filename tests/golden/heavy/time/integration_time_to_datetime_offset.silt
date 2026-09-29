@@ -1,0 +1,28 @@
+import io
+import time
+fn program() {
+  -- Construct a known instant: 2024-01-01T00:00:00 UTC
+  let dt_utc = time.datetime(must_date(2024, 1, 1), must_time(0, 0, 0))
+  let instant = time.from_utc(dt_utc)
+  -- Convert to UTC+9 (Tokyo)
+  let tokyo = instant |> time.to_datetime(540)
+  tokyo.date.year == 2024 && tokyo.time.hour == 9
+}
+
+fn must_date(y, m, d) {
+  match time.date(y, m, d) {
+    Ok(date) -> date
+    Err(_) -> panic("invalid date")
+  }
+}
+
+fn must_time(h, m, s) {
+  match time.time(h, m, s) {
+    Ok(t) -> t
+    Err(_) -> panic("invalid time")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

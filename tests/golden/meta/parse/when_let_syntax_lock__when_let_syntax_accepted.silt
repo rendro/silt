@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+fn main() {
+  when let Some(x) = Some(42) else { return }
+}

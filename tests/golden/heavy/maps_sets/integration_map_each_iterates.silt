@@ -1,0 +1,16 @@
+-- repeat: 3
+import io
+import channel
+import map
+fn program() {
+  let m = #{"a": 1, "b": 2}
+  let ch = channel.new(10)
+  map.each(m) { k, v -> channel.send(ch, k) }
+  when let Message(k1) = channel.receive(ch) else { panic("pattern did not match") }
+  when let Message(k2) = channel.receive(ch) else { panic("pattern did not match") }
+  "{k1},{k2}"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

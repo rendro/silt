@@ -1,0 +1,6 @@
+-- cmd: test
+-- exit: 1
+fn test_a( {
+}
+fn test_b( {
+}

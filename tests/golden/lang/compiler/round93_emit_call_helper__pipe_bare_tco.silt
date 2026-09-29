@@ -1,0 +1,11 @@
+-- stderr-not-contains: stack overflow
+fn countdown(n) {
+  match n {
+    0 -> 0
+    _ -> n - 1 |> countdown
+  }
+}
+
+fn main() {
+  println("{countdown(200000)}")
+}

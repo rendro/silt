@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: forms a cycle
+type A = B
+type B = A
+fn main() -> Int { 0 }

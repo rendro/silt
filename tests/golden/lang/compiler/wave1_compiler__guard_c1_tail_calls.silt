@@ -1,0 +1,13 @@
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> {
+      let next = acc + 1
+      count(n - 1, next)
+    }
+  }
+}
+
+fn main() {
+  println(count(300000, 0))
+}

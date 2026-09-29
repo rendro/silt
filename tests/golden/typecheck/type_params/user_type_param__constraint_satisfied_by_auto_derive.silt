@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- `where a: Display` is satisfied by a record (Display is auto-derived).
+fn say(type a) -> String where a: Display {
+    "ok"
+}
+
+type Blob { value: Int }
+
+fn use_it() {
+    let _ = say(Blob)
+}
+
+fn main() {}

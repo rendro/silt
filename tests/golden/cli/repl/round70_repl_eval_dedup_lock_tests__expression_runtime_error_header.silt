@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: 1/0\n:quit\n
+-- stderr-contains: error[runtime]:
+-- stderr-not-contains: VM error:

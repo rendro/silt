@@ -1,0 +1,7 @@
+-- Concrete Int, String and List interpolation typechecks and renders.
+fn main() {
+  let n = 42
+  let s = "hi"
+  let xs = [1, 2, 3]
+  println("a={n} b={s} c={xs}")
+}

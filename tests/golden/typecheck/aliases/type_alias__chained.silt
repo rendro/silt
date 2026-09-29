@@ -1,0 +1,6 @@
+-- An alias of an alias reduces transitively.
+import list
+type PhDA = List(Int)
+type PhDB = PhDA
+fn f(x: PhDB) -> Int { list.length(x) }
+fn main() { println(f([1, 2, 3, 4])) }

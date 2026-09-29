@@ -1,0 +1,9 @@
+import string
+fn main() {
+  println("[{string.pad_left("hi", 5, " ")}]")
+  println("[{string.pad_right("hi", 5, " ")}]")
+  -- width below the input's length keeps the string
+  println("[{string.pad_left("hello", 2, " ")}]")
+  -- multibyte pad char
+  println("[{string.pad_left("hi", 5, "é")}]")
+}

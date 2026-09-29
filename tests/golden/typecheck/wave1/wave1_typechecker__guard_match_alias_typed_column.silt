@@ -1,0 +1,28 @@
+-- exit: 0
+-- GUARD: a column typed by an alias is judged by the alias's target.
+type Flag = Bool
+type W { A(Flag), B }
+type R { on: Flag, n: Int }
+
+fn name(w: W) -> String {
+  match w {
+    A(true) -> "a-true"
+    A(false) -> "a-false"
+    B -> "b"
+  }
+}
+
+fn rec(r: R) -> String {
+  match r {
+    R { on: true, n } -> "on {n}"
+    R { on: false, n } -> "off {n}"
+  }
+}
+
+fn main() {
+  println(name(A(true)))
+  println(name(A(false)))
+  println(name(B))
+  println(rec(R { on: true, n: 1 }))
+  println(rec(R { on: false, n: 2 }))
+}

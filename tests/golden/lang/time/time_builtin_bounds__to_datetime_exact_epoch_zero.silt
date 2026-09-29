@@ -1,0 +1,12 @@
+import time
+fn main() {
+  -- the epoch itself
+  let dt = time.to_datetime(Instant { epoch_ns: 0 }, 0)
+  println(dt.date.year == 1970
+    && dt.date.month == 1
+    && dt.date.day == 1
+    && dt.time.hour == 0
+    && dt.time.minute == 0
+    && dt.time.second == 0
+    && dt.time.ns == 0)
+}

@@ -1,0 +1,6 @@
+import int
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    println(eq_gen(ParseEmpty, ParseEmpty))
+    println(eq_gen(ParseEmpty, ParseOverflow))
+}

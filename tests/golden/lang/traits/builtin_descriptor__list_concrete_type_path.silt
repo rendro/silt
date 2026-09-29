@@ -1,0 +1,12 @@
+trait Empty {
+    fn empty() -> Self
+}
+
+trait Empty for List(a) {
+    fn empty() -> Self { [] }
+}
+
+fn main() {
+    let xs: List(Int) = List.empty()
+    println(xs)
+}

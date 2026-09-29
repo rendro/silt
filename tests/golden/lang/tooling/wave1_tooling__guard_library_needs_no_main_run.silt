@@ -1,0 +1,3 @@
+-- exit: 1
+-- stderr-contains: program has no main() function
+pub fn double(x: Int) -> Int { x * 2 }

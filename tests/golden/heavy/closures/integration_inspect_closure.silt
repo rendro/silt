@@ -1,0 +1,9 @@
+import io
+fn program() {
+  let f = { x -> x + 1 }
+  io.inspect(f)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

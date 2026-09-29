@@ -1,0 +1,7 @@
+import io
+import time
+fn program() { time.time(14, 30, 0) }
+
+fn main() {
+  println(io.inspect(program()))
+}

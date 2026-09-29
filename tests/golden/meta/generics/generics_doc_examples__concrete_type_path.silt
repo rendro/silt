@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 0
+trait Default {
+    fn default() -> Self
+}
+
+trait Default for Int {
+    fn default() -> Self { 0 }
+}
+
+fn use_it() {
+    let _ = Int.default()
+}
+
+fn main() { use_it() }

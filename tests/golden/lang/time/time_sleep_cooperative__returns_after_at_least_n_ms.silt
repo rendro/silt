@@ -1,0 +1,13 @@
+import task
+import test
+import time
+fn main() {
+  let h = task.spawn(fn() {
+    let before = time.now()
+    time.sleep(time.ms(100))
+    let elapsed = time.since(before, time.now())
+    test.assert(elapsed.ns >= 100000000)
+  })
+  task.join(h)
+  println("ok")
+}

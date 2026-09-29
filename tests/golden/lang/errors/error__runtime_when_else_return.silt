@@ -1,0 +1,5 @@
+fn abs(n) {
+  when n >= 0 else { return -n }
+  n
+}
+fn main() { println(abs(-42)) }

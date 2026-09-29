@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.fold([], 0, { acc, x -> acc + x }) }
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,1 @@
+[{"col":1,"file":"main.silt","hints":["note: --> broken.silt:1:15\n|\n1 | pub fn broken(\n|               ^ expected parameter name, found EOF"],"kind":"compile","line":3,"message":"module 'broken': parse error at broken.silt:1:15 — expected parameter name, found EOF","severity":"error"}]

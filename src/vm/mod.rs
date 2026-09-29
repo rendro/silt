@@ -116,7 +116,7 @@ use runtime::{IoPool, RegexCache, TimerManager};
 /// of 21845 levels on a 256 MiB stack the nested loops fill about 62% of
 /// it, and the stack would overflow only at about 34,900 levels.
 ///
-/// The margin is guarded by `tests/wave2_vm_tests.rs`, which recurses
+/// The margin is guarded by `tests/lang/wave2_vm_tests.rs`, which recurses
 /// through the most expensive shapes to exactly the limit, on the main
 /// thread and in a task, and requires a normal result. If a compiler or
 /// platform change makes a level more expensive than this value allows
@@ -364,7 +364,7 @@ pub struct Vm {
     /// `runtime::TCO_ELIDED_CAP` to cap memory under deeply recursive
     /// tail-call loops.
     ///
-    /// Lock: tests/callback_frame_capture_tests.rs
+    /// Lock: tests/lang/callback_frame_capture_tests.rs
     /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
     pub(crate) tco_elided: Vec<(usize, String, crate::lexer::Span)>,
 
@@ -788,7 +788,7 @@ impl Vm {
     /// restored to the depths recorded at entry so subsequent calls
     /// (e.g. successive REPL evaluations sharing the same persistent VM)
     /// don't render phantom call-stack frames from prior entries. See
-    /// `tests/repl_frame_leak_tests.rs` for the regression lock.
+    /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
     pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
         let saved_frames_len = self.frames.len();
         let saved_stack_len = self.stack.len();
@@ -1030,7 +1030,7 @@ impl Vm {
             Value::List(_) => "List",
             // `stringify!` is used here instead of the bare string
             // literal so the architectural lock test
-            // (tests/canonical_type_arch_lock_tests.rs) can grep for
+            // (tests/meta/canonical_type_arch_lock_tests.rs) can grep for
             // dispatch-key uses of `"Range"` without false-positiving
             // on this representation-level debug helper. The expansion
             // is identical at compile time: a `&'static str` "Range".
@@ -1086,7 +1086,7 @@ impl Vm {
     /// skipped (`type_name_for_impl` returns `None`); `Op::DisplayValue`
     /// consults this predicate at the execution site to reject the same
     /// set rather than silently rendering a debug string. Locked by
-    /// tests/round95_interp_display_runtime_tests.rs.
+    /// tests/typecheck/round95_interp_display_runtime_tests.rs.
     pub fn value_implements_display(val: &Value) -> bool {
         !matches!(
             val,
@@ -1128,9 +1128,9 @@ impl Vm {
     /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
     /// `dispatch_trait_method` (src/vm/dispatch.rs), and the collection
     /// builtin backstop `ensure_no_fn` (src/builtins/collections.rs).
-    /// Locked by tests/container_fn_compare_runtime_gate_tests.rs; this
+    /// Locked by tests/typecheck/container_fn_compare_runtime_gate_tests.rs; this
     /// being the ONLY definition of the walker is locked by
-    /// tests/value_contains_fn_dedup_lock_tests.rs.
+    /// tests/meta/value_contains_fn_dedup_lock_tests.rs.
     ///
     /// `Range` / `Bytes` and the scalar leaves can never contain a
     /// function, and Channel / Handle / TcpListener / TcpStream stay
@@ -1178,7 +1178,7 @@ impl Vm {
     ///
     /// All other variants delegate to `type_name` so the two paths
     /// produce byte-identical output. The `pub` visibility is required
-    /// by `tests/round75_kind_naming_canonical_tests.rs`, which pins
+    /// by `tests/typecheck/round75_kind_naming_canonical_tests.rs`, which pins
     /// the alignment matrix.
     pub fn user_facing_type_name(&self, val: &Value) -> String {
         match val {

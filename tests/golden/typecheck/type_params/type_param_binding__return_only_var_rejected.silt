@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type variable 'a' in return type is not introduced
+fn make() -> a { unreachable() }
+fn main() {}

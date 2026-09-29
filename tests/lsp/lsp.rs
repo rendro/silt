@@ -1,0 +1,1155 @@
+//! End-to-end integration tests for the Silt LSP server.
+//!
+//! These tests spawn the compiled `silt lsp` binary as a subprocess and
+//! communicate with it over stdin/stdout using the LSP JSON-RPC framing
+//! (`Content-Length: N\r\n\r\n{json}`). They exercise the protocol surface
+//! end-to-end rather than calling internal helpers directly.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde_json::{Value, json};
+
+use crate::support::{LspClient, next_id};
+
+static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn unique_uri() -> String {
+    let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("file:///tmp/silt_lsp_test_{n}.silt")
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+// ── 1. initialize handshake returns expected capabilities ──────────
+
+#[test]
+fn test_initialize_returns_capabilities() {
+    let mut client = LspClient::spawn_uninitialized();
+    let (id, resp) = client.initialize();
+
+    assert_eq!(
+        resp.get("id").and_then(|v| v.as_u64()),
+        Some(id),
+        "initialize response must echo id={id}, got: {resp}"
+    );
+    assert!(
+        resp.get("error").is_none(),
+        "initialize returned an error: {resp}"
+    );
+
+    let caps = resp
+        .pointer("/result/capabilities")
+        .expect("result.capabilities must be present");
+
+    // The Silt LSP advertises hover, definition, completion, and document
+    // formatting per src/lsp.rs::run(). Assert each one is present and
+    // truthy (lsp-types may serialize `true` or `{"workDoneProgress":...}`).
+    assert!(
+        caps.get("hoverProvider").is_some(),
+        "expected hoverProvider capability, got: {caps}"
+    );
+    assert!(
+        caps.get("definitionProvider").is_some(),
+        "expected definitionProvider capability, got: {caps}"
+    );
+    assert!(
+        caps.get("completionProvider").is_some(),
+        "expected completionProvider capability, got: {caps}"
+    );
+    assert!(
+        caps.get("documentFormattingProvider").is_some(),
+        "expected documentFormattingProvider capability, got: {caps}"
+    );
+    // textDocumentSync is set to FULL sync in run().
+    assert!(
+        caps.get("textDocumentSync").is_some(),
+        "expected textDocumentSync capability, got: {caps}"
+    );
+
+    client.shutdown();
+}
+
+// ── 2. didOpen with valid program produces no diagnostics ──────────
+
+#[test]
+fn test_did_open_valid_program_no_diagnostics() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    let source = "fn main() {\n  println(\"hello\")\n}\n";
+    let publish = client.did_open_and_wait(&uri, source);
+
+    let diags = publish
+        .pointer("/params/diagnostics")
+        .and_then(|v| v.as_array())
+        .expect("diagnostics array must be present");
+    assert!(
+        diags.is_empty(),
+        "expected no diagnostics for a valid program, got: {diags:?}"
+    );
+
+    client.shutdown();
+}
+
+// ── 3. didOpen with type error produces a diagnostic at the right
+//      location ────────────────────────────────────────────────────
+
+#[test]
+fn test_did_open_type_error_produces_diagnostic() {
+    let mut client = LspClient::spawn();
+
+    // `let x: Int = "hello"` is a clear type mismatch — the CLI tests in
+    // tests/cli/cli.rs rely on the same snippet producing a type error.
+    let uri = unique_uri();
+    let source = "fn main() {\n  let x: Int = \"hello\"\n}\n";
+    let publish = client.did_open_and_wait(&uri, source);
+
+    let diags = publish
+        .pointer("/params/diagnostics")
+        .and_then(|v| v.as_array())
+        .expect("diagnostics array must be present");
+
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for a type-error program"
+    );
+
+    // Find a diagnostic whose message mentions "type mismatch".
+    let diag = diags
+        .iter()
+        .find(|d| {
+            d.get("message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.contains("type mismatch"))
+                .unwrap_or(false)
+        })
+        .unwrap_or_else(|| panic!("no 'type mismatch' diagnostic found, got: {diags:?}"));
+
+    // Severity = ERROR = 1 in LSP.
+    assert_eq!(
+        diag.get("severity").and_then(|v| v.as_u64()),
+        Some(1),
+        "diagnostic should be Error severity, got: {diag}"
+    );
+
+    // The diagnostic must point somewhere on the second line (0-indexed: 1),
+    // because that's where `let x: Int = "hello"` lives in our source.
+    let line = diag
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("diagnostic must have a range.start.line");
+    assert_eq!(
+        line, 1,
+        "type-error diagnostic should be on line index 1 (the `let` line), got line {line}"
+    );
+
+    // The diagnostic's range must not be a degenerate (0,0)-(0,0) span.
+    let end_char = diag
+        .pointer("/range/end/character")
+        .and_then(|v| v.as_u64())
+        .expect("diagnostic must have a range.end.character");
+    assert!(
+        end_char > 0,
+        "diagnostic end character must be > 0, got: {diag}"
+    );
+
+    client.shutdown();
+}
+
+// ── 4. hover on an identifier returns an inferred type ─────────────
+
+#[test]
+fn test_hover_returns_inferred_type() {
+    let mut client = LspClient::spawn();
+
+    // Hover on the `answer` *reference* (not the declaration) — the Silt LSP
+    // reads types off the typed AST, which annotates expressions, so the
+    // identifier must appear in an expression position (here: a call arg).
+    //
+    //   line 0: fn main() {
+    //   line 1:   let answer = 42
+    //   line 2:   println(answer)
+    //   line 3: }
+    let uri = unique_uri();
+    let source = "fn main() {\n  let answer = 42\n  println(answer)\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position: line 2, character 11 — somewhere inside `answer` in
+    // "  println(answer)":
+    //   0         1
+    //   0123456789012345
+    //              ^— 'a' of `answer` is at column 10, 'n' at 11.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 11 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "hover request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("hover response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null hover result on an identifier with a known type"
+    );
+
+    // The server returns Hover { contents: MarkupContent { kind: "markdown",
+    // value: "```silt\n<Type>\n```" }, ... }. We just check that the value
+    // contains `Int` — the type of the literal `42`.
+    let value = result
+        .pointer("/contents/value")
+        .and_then(|v| v.as_str())
+        .expect("hover result must contain contents.value string");
+    assert!(
+        value.contains("Int"),
+        "expected hover to mention `Int`, got: {value}"
+    );
+
+    client.shutdown();
+}
+
+// ── 5. textDocument/definition on an identifier returns a location ─
+
+#[test]
+fn test_goto_definition_returns_location() {
+    let mut client = LspClient::spawn();
+
+    // Two functions — `helper` defined at line 0, called from inside `main`
+    // at line 3. Asking for the definition of `helper` on the call site
+    // should return a Location pointing at the `fn helper` declaration.
+    //
+    //   line 0: fn helper() {
+    //   line 1:   println("helped")
+    //   line 2: }
+    //   line 3: fn main() {
+    //   line 4:   helper()
+    //   line 5: }
+    let uri = unique_uri();
+    let source = "fn helper() {\n  println(\"helped\")\n}\nfn main() {\n  helper()\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position of 'h' in `helper()` on line 4, columns "  helper()":
+    //   0123456
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 4, "character": 3 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "definition request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("definition response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null definition result for a known identifier"
+    );
+
+    // The server returns `GotoDefinitionResponse::Scalar(Location { uri, range })`
+    // which serializes as a single Location object.
+    let def_uri = result
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .expect("definition result must have a uri");
+    assert_eq!(
+        def_uri, uri,
+        "definition must point back into the same document"
+    );
+
+    let line = result
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("definition result must have a range.start.line");
+    assert_eq!(
+        line, 0,
+        "definition of `helper` should be on line index 0, got line {line}"
+    );
+
+    client.shutdown();
+}
+
+// ── 6. completion returns a list including keywords ────────────────
+
+#[test]
+fn test_completion_returns_keywords() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    let source = "fn main() {\n  \n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Request completions from inside the function body (line 1, col 2).
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 2 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "completion request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("completion response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null completion result at a valid position"
+    );
+
+    // Completion can serialize as either a plain array or `{items:[...]}`.
+    let items: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        panic!("unexpected completion result shape: {result}");
+    };
+
+    assert!(
+        !items.is_empty(),
+        "expected at least one completion item, got empty list"
+    );
+
+    // The server always emits keyword completions from the KEYWORDS table
+    // (see src/lsp.rs completion handler). `fn` and `let` are core keywords
+    // that should always be offered.
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
+        .collect();
+    assert!(
+        labels.contains(&"fn"),
+        "expected `fn` keyword in completion list, got: {labels:?}"
+    );
+    assert!(
+        labels.contains(&"let"),
+        "expected `let` keyword in completion list, got: {labels:?}"
+    );
+
+    client.shutdown();
+}
+
+// ── 7. completion returns local bindings in scope ──────────────────
+
+#[test]
+fn test_completion_returns_local_bindings() {
+    // A completion request inside the body of `main` — after a local
+    // `greeting` has been bound — must include `greeting` as a candidate.
+    // This guards against a regression where only keywords/builtins are
+    // offered and user locals are dropped from the symbol/completion path.
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    // Line indices (0-based):
+    //   0: fn main() {
+    //   1:   let greeting = "hi"
+    //   2:   gree
+    //   3: }
+    let source = "fn main() {\n  let greeting = \"hi\"\n  gree\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Request completions right after `gree` on line 2. Column index 6
+    // is the end of "  gree" (two spaces + four characters).
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "completion request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("completion response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null completion result at a valid position"
+    );
+
+    let items: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        panic!("unexpected completion result shape: {result}");
+    };
+
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
+        .collect();
+
+    assert!(
+        labels.contains(&"greeting"),
+        "expected local binding `greeting` in completion list, got: {labels:?}"
+    );
+
+    client.shutdown();
+}
+
+// ── 8. dot-completion surfaces stdlib module members ──────────────
+
+#[test]
+fn test_completion_returns_module_members_after_dot() {
+    // After `string.` inside a function body, the completion list should
+    // include at least one well-known function from the `string` stdlib
+    // module such as `length` or `contains`.
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    // Line indices (0-based):
+    //   0: import string
+    //   1: fn main() {
+    //   2:   string.
+    //   3: }
+    let source = "import string\nfn main() {\n  string.\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Cursor right after the `.` on line 2. "  string." is 9 columns.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 9 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "completion request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("completion response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null completion result after `string.`"
+    );
+
+    let items: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        panic!("unexpected completion result shape: {result}");
+    };
+
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
+        .collect();
+
+    // At least one well-known `string` module member must appear.
+    let has_known_member = labels.iter().any(|l| *l == "length" || *l == "contains");
+    assert!(
+        has_known_member,
+        "expected dot-completion after `string.` to include `length` or `contains`, got: {labels:?}"
+    );
+
+    client.shutdown();
+}
+
+// ── 9. hover on a let-binding site returns the binding's type (B9) ──
+
+#[test]
+fn test_hover_on_let_binding_site_returns_binding_type() {
+    // Regression test for B9: hovering the identifier `x` *at its binding
+    // site* (`let x = 42`) used to return the enclosing block's `()` Unit
+    // type instead of `Int`. The fix makes the hover handler notice when
+    // the cursor sits on a local binding LHS and return its definition
+    // type instead.
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    //   line 0: fn main() {
+    //   line 1:   let x = 42
+    //   line 2: }
+    let source = "fn main() {\n  let x = 42\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position: line 1, character 6 — the `x` in "  let x = 42":
+    //   0         1
+    //   0123456789012
+    //         ^— 'x' is at column 6.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "hover request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("hover response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null hover result on the binding `x`"
+    );
+
+    let value = result
+        .pointer("/contents/value")
+        .and_then(|v| v.as_str())
+        .expect("hover result must contain contents.value string");
+
+    // The binding's type is `Int` (from the 42 literal), not `()` / Unit.
+    assert!(
+        value.contains("Int"),
+        "hover on `let x = 42` binding site should mention `Int`, got: {value}"
+    );
+    assert!(
+        !value.contains("()"),
+        "hover on binding site should not return the enclosing block's Unit type, got: {value}"
+    );
+
+    client.shutdown();
+}
+
+// ── 10. goto-definition on a local variable use site (G5) ──────────
+
+#[test]
+fn test_goto_definition_on_local_variable() {
+    // Regression test for G5: `textDocument/definition` on a local binding
+    // used to return `null` because the definitions map only contained
+    // top-level declarations. The fix adds a per-document locals table so
+    // the request resolves to the `x` in `let x = 42`.
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    //   line 0: fn main() {
+    //   line 1:   let x = 42
+    //   line 2:   println(x)
+    //   line 3: }
+    let source = "fn main() {\n  let x = 42\n  println(x)\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position: line 2, character 10 — the `x` inside `println(x)`:
+    //   0         1
+    //   01234567890
+    //             ^— `x` is at column 10.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 10 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "definition request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("definition response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null definition result for a local binding, got null"
+    );
+
+    let def_uri = result
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .expect("definition result must have a uri");
+    assert_eq!(
+        def_uri, uri,
+        "definition must point back into the same document"
+    );
+
+    // The binding `x` is on line 1 (`  let x = 42`).
+    let line = result
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("definition result must have a range.start.line");
+    assert_eq!(
+        line, 1,
+        "definition of local `x` should be on line index 1 (the `let`), got line {line}"
+    );
+
+    // And the character should be 6 (the `x` in `  let x = 42`).
+    let character = result
+        .pointer("/range/start/character")
+        .and_then(|v| v.as_u64())
+        .expect("definition result must have a range.start.character");
+    assert_eq!(
+        character, 6,
+        "definition of local `x` should be at column 6 (the `x` in `let x`), got character {character}"
+    );
+
+    client.shutdown();
+}
+
+// ── 11. textDocument/formatting returns edits for unformatted source ─
+//
+// Regression: guards `fn format()` in src/lsp.rs (the `Formatting::METHOD`
+// dispatch). If the formatting handler ever stopped running the formatter,
+// stopped computing the full-document replacement edit, or started
+// returning `None`/`[]` for clearly-unformatted input, this test would
+// fail. The snippet below is intentionally ugly ( `let x=42` has no spaces
+// around `=`, and the body is flush-left inside the block) so the
+// formatter definitely produces a different string, forcing at least one
+// TextEdit in the response.
+
+#[test]
+fn test_formatting_returns_edits() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    // Deliberately unformatted: no spaces around `=`, body not indented.
+    let source = "fn main() {\nlet x=42\nprintln(x)\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": {
+                "tabSize": 2,
+                "insertSpaces": true,
+            }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "formatting request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("formatting response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null formatting result for a known document"
+    );
+
+    let edits = result
+        .as_array()
+        .expect("formatting result must be an array of TextEdit");
+    assert!(
+        !edits.is_empty(),
+        "expected at least one TextEdit when formatting clearly-unformatted source, got empty list"
+    );
+
+    // Each edit must have both a `range` and a `newText` field. The
+    // implementation returns a single whole-document replacement, so check
+    // that the first edit has a non-empty `newText` that differs from the
+    // original source — this is the "actually formatted" signal.
+    let edit = &edits[0];
+    assert!(
+        edit.get("range").is_some(),
+        "TextEdit must have a range, got: {edit}"
+    );
+    let new_text = edit
+        .get("newText")
+        .and_then(|v| v.as_str())
+        .expect("TextEdit must have a newText string");
+    assert!(
+        !new_text.is_empty(),
+        "newText must not be empty for an unformatted document"
+    );
+    assert_ne!(
+        new_text, source,
+        "newText must differ from the original source for unformatted input"
+    );
+    // The formatter canonicalizes `let x=42` to `let x = 42`. If that
+    // normalization ever stops happening, the edit's new text will not
+    // contain the spaced form.
+    assert!(
+        new_text.contains("let x = 42"),
+        "expected formatted output to contain `let x = 42`, got: {new_text}"
+    );
+
+    client.shutdown();
+}
+
+// ── 12. textDocument/signatureHelp returns a signature with parameters ─
+//
+// Regression: guards `fn signature_help()` in src/lsp.rs (the
+// `SignatureHelpRequest::METHOD` dispatch). If the handler ever stopped
+// locating the enclosing call, stopped looking up the definition, or
+// stopped building a SignatureInformation label from `DefInfo`, this test
+// would fail. Uses a user-defined `fn add(a: Int, b: Int) -> Int` so the
+// assertion on the label is deterministic (not dependent on the stdlib).
+
+#[test]
+fn test_signature_help_returns_arity() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    //   line 0: fn add(a: Int, b: Int) -> Int {
+    //   line 1:   a + b
+    //   line 2: }
+    //   line 3: fn main() {
+    //   line 4:   add(
+    //   line 5: }
+    //
+    // Cursor will sit just after the `(` of the `add(` call on line 4.
+    let source = "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn main() {\n  add(\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // "  add(" is 6 columns, cursor goes right after the `(`.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/signatureHelp",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 4, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "signatureHelp request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("signatureHelp response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null signatureHelp result inside a known call"
+    );
+
+    let sigs = result
+        .pointer("/signatures")
+        .and_then(|v| v.as_array())
+        .expect("signatureHelp result must have a `signatures` array");
+    assert!(
+        !sigs.is_empty(),
+        "signatures array must contain at least one SignatureInformation"
+    );
+
+    let sig = &sigs[0];
+    let label = sig
+        .get("label")
+        .and_then(|v| v.as_str())
+        .expect("SignatureInformation must have a label string");
+
+    // `build_signature_from_def` renders a typed Fun as
+    //   fn add(a: Int, b: Int) -> Int
+    // — assert on both parameter names and the return type.
+    assert!(
+        label.contains("add"),
+        "signature label must mention the function name `add`, got: {label}"
+    );
+    assert!(
+        label.contains("a: Int"),
+        "signature label must mention the first parameter `a: Int`, got: {label}"
+    );
+    assert!(
+        label.contains("b: Int"),
+        "signature label must mention the second parameter `b: Int`, got: {label}"
+    );
+    assert!(
+        label.contains("-> Int"),
+        "signature label must mention the return type `-> Int`, got: {label}"
+    );
+
+    // The `parameters` field must reflect the function's arity (2).
+    let params = sig
+        .get("parameters")
+        .and_then(|v| v.as_array())
+        .expect("SignatureInformation must have a parameters array");
+    assert_eq!(
+        params.len(),
+        2,
+        "signature must have 2 parameters for `fn add(a, b)`, got: {params:?}"
+    );
+
+    // At the cursor (just after `(`, before any arg), active_parameter is 0.
+    let active = sig
+        .get("activeParameter")
+        .and_then(|v| v.as_u64())
+        .expect("SignatureInformation must have activeParameter");
+    assert_eq!(
+        active, 0,
+        "activeParameter must be 0 before any comma has been typed, got: {active}"
+    );
+
+    client.shutdown();
+}
+
+// ── 13. textDocument/documentSymbol lists top-level declarations ───
+//
+// Regression: guards `fn document_symbols()` in src/lsp.rs (the
+// `DocumentSymbolRequest::METHOD` dispatch). If the handler ever stopped
+// walking the program's declarations, stopped including Fn/Type decls, or
+// regressed on the serialization shape, this test would fail. The snippet
+// has a function, a record type, and a top-level `let` so all three
+// branches of the handler are exercised at least shallowly.
+
+#[test]
+fn test_document_symbols_lists_top_level_defs() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    //   line 0: type Point {
+    //   line 1:   x: Int,
+    //   line 2:   y: Int,
+    //   line 3: }
+    //   line 4: fn origin() -> Point {
+    //   line 5:   Point { x: 0, y: 0 }
+    //   line 6: }
+    //   line 7: fn main() {
+    //   line 8:   let _p = origin()
+    //   line 9: }
+    let source = "type Point {\n  x: Int,\n  y: Int,\n}\n\
+                  fn origin() -> Point {\n  Point { x: 0, y: 0 }\n}\n\
+                  fn main() {\n  let _p = origin()\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/documentSymbol",
+        json!({
+            "textDocument": { "uri": uri }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "documentSymbol request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("documentSymbol response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null documentSymbol result for a document with declarations"
+    );
+
+    // The server returns `DocumentSymbolResponse::Nested(...)`, which serializes
+    // as a bare array of DocumentSymbol. Fall back to `{items: [...]}` just in
+    // case the serialization shape ever varies.
+    let symbols: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else {
+        panic!("unexpected documentSymbol result shape: {result}");
+    };
+
+    assert!(
+        !symbols.is_empty(),
+        "expected at least one top-level DocumentSymbol, got empty list"
+    );
+
+    // Collect (name, kind) tuples. LSP SymbolKind values: FUNCTION=12,
+    // STRUCT=23, VARIABLE=13 — but we assert on names + the presence of the
+    // kind field rather than pinning to the exact numeric values, which are
+    // implementation details of the lsp-types crate.
+    let names: Vec<&str> = symbols
+        .iter()
+        .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+        .collect();
+
+    assert!(
+        names.contains(&"origin"),
+        "expected top-level function `origin` in document symbols, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"main"),
+        "expected top-level function `main` in document symbols, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"Point"),
+        "expected top-level type `Point` in document symbols, got: {names:?}"
+    );
+
+    // Every symbol must carry a `kind` and a `range` — these are required
+    // by the LSP spec and by the editor UIs that consume them.
+    for sym in symbols {
+        assert!(
+            sym.get("kind").is_some(),
+            "DocumentSymbol must have a `kind`, got: {sym}"
+        );
+        assert!(
+            sym.get("range").is_some(),
+            "DocumentSymbol must have a `range`, got: {sym}"
+        );
+        assert!(
+            sym.get("selectionRange").is_some(),
+            "DocumentSymbol must have a `selectionRange`, got: {sym}"
+        );
+    }
+
+    // Locate the `origin` symbol specifically and assert it's reported as
+    // a function kind (LSP SymbolKind::FUNCTION == 12). This guards against
+    // a regression where Fn decls get mislabeled as Variable etc.
+    let origin_sym = symbols
+        .iter()
+        .find(|s| s.get("name").and_then(|v| v.as_str()) == Some("origin"))
+        .expect("origin symbol must be present");
+    assert_eq!(
+        origin_sym.get("kind").and_then(|v| v.as_u64()),
+        Some(12),
+        "`origin` must be reported as SymbolKind::FUNCTION (12), got: {origin_sym}"
+    );
+
+    client.shutdown();
+}
+
+// ── E3: malformed params must yield an error response, not a hang ──
+//
+// Previously `extract_request` returned `Option<(id, params)>` and the
+// dispatcher silently dropped deserialize failures, causing compliant
+// LSP clients to hang waiting for a response that never arrived. The
+// fix restructures the helper to return `Err(Response)` and forwards
+// the response, with an `InvalidParams` error code.
+
+#[test]
+fn test_lsp_malformed_params_returns_error_response() {
+    let mut client = LspClient::spawn();
+
+    // Send a textDocument/hover request whose `textDocument.uri` is an
+    // integer instead of a string. serde_json::from_value will fail to
+    // deserialize lsp_types::HoverParams, and the server must respond
+    // with an InvalidParams error (JSON-RPC code -32602) rather than
+    // dropping the request silently.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": 12345 },
+            "position": { "line": 0, "character": 0 }
+        }),
+    );
+
+    let resp = client.recv_response_for(id);
+    assert_eq!(
+        resp.get("id").and_then(|v| v.as_u64()),
+        Some(id),
+        "response must echo the request id, got: {resp}"
+    );
+    let error = resp
+        .get("error")
+        .unwrap_or_else(|| panic!("expected an error field on malformed-params response: {resp}"));
+    assert_eq!(
+        error.get("code").and_then(|v| v.as_i64()),
+        Some(-32602),
+        "expected JSON-RPC InvalidParams code -32602, got: {error}"
+    );
+
+    client.shutdown();
+}
+
+// ── E3: unknown methods must yield MethodNotFound ─────────────────
+//
+// The dispatcher previously had a `_ => {}` catch-all that silently
+// dropped unknown request methods, also causing client hangs. The fix
+// sends a MethodNotFound response for any request method we don't
+// recognize.
+
+#[test]
+fn test_lsp_unknown_method_returns_error_response() {
+    let mut client = LspClient::spawn();
+
+    // Send a request with a method name we definitely don't handle.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/definitelyDoesNotExist",
+        json!({
+            "textDocument": { "uri": "file:///tmp/silt_lsp_unknown.silt" }
+        }),
+    );
+
+    let resp = client.recv_response_for(id);
+    assert_eq!(
+        resp.get("id").and_then(|v| v.as_u64()),
+        Some(id),
+        "response must echo the request id, got: {resp}"
+    );
+    let error = resp
+        .get("error")
+        .unwrap_or_else(|| panic!("expected an error field on unknown-method response: {resp}"));
+    assert_eq!(
+        error.get("code").and_then(|v| v.as_i64()),
+        Some(-32601),
+        "expected JSON-RPC MethodNotFound code -32601, got: {error}"
+    );
+
+    client.shutdown();
+}
+
+// ── 19. textDocument/formatting range.end is in UTF-16 code units, not bytes ─
+//
+// Regression: guards `fn format()` in src/lsp.rs. Per the LSP spec,
+// `Position.character` is measured in UTF-16 code units, not UTF-8 bytes and
+// not Rust `char`s. A previous implementation computed the whole-document
+// replacement range using `str::lines().count()` for the end line (which is
+// one PAST the last valid line index) and `str::len()` for the end column
+// (which is UTF-8 BYTES). That "works" for pure ASCII by accident but
+// mis-reports the range whenever the last line contains any multibyte
+// character.
+//
+// This test pins the correct behaviour by feeding a document whose last
+// line is `-- résultat comment`. That line is 20 UTF-8 bytes but only 19
+// UTF-16 code units (the single `é` is 2 bytes in UTF-8 but 1 code unit in
+// UTF-16). The fixed server must return `range.end = {line: 3, character:
+// 19}`, NOT `{line: 4, character: 20}`.
+
+#[test]
+fn test_formatting_range_end_uses_utf16_not_bytes() {
+    let mut client = LspClient::spawn();
+
+    let uri = unique_uri();
+    // Four lines (indices 0..=3). Line 1 is deliberately unformatted
+    // (`let x=1` with no spaces) so the formatter definitely produces a
+    // different string and the handler emits a whole-document edit rather
+    // than bailing out early with an empty list.
+    //
+    // Line 3 — the last line — is `-- résultat comment`:
+    //   UTF-8 bytes    : 20   (the `é` is two bytes: 0xC3 0xA9)
+    //   UTF-16 units   : 19   (the `é` is one code unit)
+    //   Rust chars     : 19
+    // The previous buggy code used `str::len()` (bytes) and would therefore
+    // report column 20. The fix must report 19.
+    let source = "fn main() {\nlet x=1\n}\n-- résultat comment";
+
+    // Sanity-check our counts at test-compile-time so a future edit to the
+    // literal can't silently drift away from the invariant being tested.
+    let last_line = source.lines().last().expect("non-empty source");
+    assert_eq!(last_line, "-- résultat comment");
+    assert_eq!(last_line.len(), 20, "last line must be 20 UTF-8 bytes");
+    assert_eq!(
+        last_line.chars().map(|c| c.len_utf16()).sum::<usize>(),
+        19,
+        "last line must be 19 UTF-16 code units"
+    );
+
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": {
+                "tabSize": 2,
+                "insertSpaces": true,
+            }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "formatting request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("formatting response must have a `result` field");
+    let edits = result
+        .as_array()
+        .expect("formatting result must be an array of TextEdit");
+    assert!(
+        !edits.is_empty(),
+        "expected a whole-document TextEdit for unformatted input, got empty list"
+    );
+
+    // The server returns a single whole-document replacement edit. Its
+    // `range.start` is always (0, 0); the interesting bit is `range.end`.
+    let edit = &edits[0];
+    let range = edit
+        .get("range")
+        .expect("TextEdit must have a `range` field");
+
+    let start_line = range
+        .pointer("/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("range.start.line must be a number");
+    let start_char = range
+        .pointer("/start/character")
+        .and_then(|v| v.as_u64())
+        .expect("range.start.character must be a number");
+    assert_eq!(start_line, 0, "range.start.line must be 0");
+    assert_eq!(start_char, 0, "range.start.character must be 0");
+
+    let end_line = range
+        .pointer("/end/line")
+        .and_then(|v| v.as_u64())
+        .expect("range.end.line must be a number");
+    let end_char = range
+        .pointer("/end/character")
+        .and_then(|v| v.as_u64())
+        .expect("range.end.character must be a number");
+
+    // The document has four lines (indices 0..=3). The last valid line
+    // index is 3 — NOT 4 (which is what `lines().count() as u32` would
+    // produce and which is what the old buggy code returned).
+    assert_eq!(
+        end_line, 3,
+        "range.end.line must be the last valid line index (3), not one past it; got {end_line}"
+    );
+
+    // The last line is 19 UTF-16 code units. The old buggy code used
+    // `str::len()` and would report 20 (UTF-8 bytes). Pin the correct
+    // behaviour so a regression to byte-counting fails loudly.
+    assert_eq!(
+        end_char, 19,
+        "range.end.character must be the UTF-16 length of the last line (19), not its UTF-8 byte length (20); got {end_char}"
+    );
+
+    client.shutdown();
+}

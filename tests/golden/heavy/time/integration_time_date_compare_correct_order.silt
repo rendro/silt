@@ -1,0 +1,12 @@
+-- Verifies that Date comparison is year→month→day, NOT alphabetical field order
+import io
+import time
+fn program() {
+  when let Ok(jan31) = time.date(2024, 1, 31) else { panic("unexpected Err") }
+  when let Ok(feb1) = time.date(2024, 2, 1) else { panic("unexpected Err") }
+  (jan31 < feb1, feb1 > jan31, jan31 == jan31)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

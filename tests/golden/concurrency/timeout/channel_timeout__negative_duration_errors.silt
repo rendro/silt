@@ -1,0 +1,13 @@
+-- exit: 1
+-- stderr-contains: channel.recv_timeout: duration must be non-negative
+-- A negative Duration built from the raw record literal is rejected at
+-- runtime, not treated as a zero wait.
+import channel
+import time
+fn main() {
+  let ch = channel.new(4)
+  match channel.recv_timeout(ch, Duration { ns: -1 }) {
+    Ok(_) -> println("ok")
+    Err(_) -> println("err")
+  }
+}

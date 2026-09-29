@@ -1,0 +1,8 @@
+-- exit: 1
+-- cmd: check
+-- stderr-contains: undefined variable 'secret'
+import calc.{ secret }
+
+fn main() {
+  println(secret(5))
+}

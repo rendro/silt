@@ -1,0 +1,12 @@
+type P { a: Int, b: Int, c: Int }
+fn cmp_gen(x: t, y: t) -> Int where t: Compare { x.compare(y) }
+fn main() {
+  -- a decides (later fields disagree loudly)
+  println(cmp_gen(P { a: 1, b: 9, c: 9 }, P { a: 2, b: 0, c: 0 }))
+  -- a ties, b decides (c disagrees)
+  println(cmp_gen(P { a: 1, b: 2, c: 9 }, P { a: 1, b: 3, c: 0 }))
+  -- a and b tie, c decides
+  println(cmp_gen(P { a: 1, b: 2, c: 5 }, P { a: 1, b: 2, c: 3 }))
+  -- full tie
+  println(cmp_gen(P { a: 1, b: 2, c: 3 }, P { a: 1, b: 2, c: 3 }))
+}

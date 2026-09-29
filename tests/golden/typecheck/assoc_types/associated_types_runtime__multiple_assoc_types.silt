@@ -1,0 +1,22 @@
+trait Pair {
+  type First
+  type Second
+  fn first(self) -> Self::First
+  fn second(self) -> Self::Second
+}
+
+type IntStringPair { a: Int, b: String }
+
+trait Pair for IntStringPair {
+  type First = Int
+  type Second = String
+
+  fn first(self) -> Int { self.a }
+  fn second(self) -> String { self.b }
+}
+
+fn main() {
+  let p = IntStringPair { a: 13, b: "ok" }
+  println(p.first())
+  println(p.second())
+}

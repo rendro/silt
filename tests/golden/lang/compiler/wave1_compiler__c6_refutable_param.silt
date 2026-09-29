@@ -1,0 +1,12 @@
+-- A closure parameter pattern that does not match must fail the program,
+-- not bind the name to a part of the other variant (this printed [1, 7]).
+-- exit: 1
+-- stderr-contains: error
+import list
+
+type S { A(Int), B(Int) }
+
+fn main() {
+  let r = [A(1), B(7)] |> list.map { A(n) -> n }
+  println(r)
+}

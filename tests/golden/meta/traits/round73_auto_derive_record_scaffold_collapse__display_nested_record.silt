@@ -1,0 +1,9 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type Inner { x: Int }
+type Wrap { r: Inner, tag: Int }
+fn main() {
+    println(d(Wrap { r: Inner { x: 7 }, tag: 3 }))
+}

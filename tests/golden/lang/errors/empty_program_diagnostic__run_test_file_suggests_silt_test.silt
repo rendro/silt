@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: error[compile]: program has no main() function
+-- stderr-contains: silt test
+fn test_example() {
+  let x = 1
+  x + 1
+}

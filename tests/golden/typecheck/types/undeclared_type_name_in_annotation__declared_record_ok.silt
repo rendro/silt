@@ -1,0 +1,3 @@
+type Point { x: Int, y: Int }
+fn read(p: Point) -> Int { p.x }
+fn main() { println(read(Point { x: 3, y: 4 })) }

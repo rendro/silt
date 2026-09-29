@@ -1,0 +1,11 @@
+-- exit: 0
+import list
+fn main() {
+  let xs = []
+  let _ = list.length(xs)
+  let _ = list.map(xs) { x -> x }
+  let _ = list.filter(xs) { x -> true }
+  let _ = list.fold(xs, 0) { acc, x -> acc + x }
+  let _ = list.head(xs)
+  let _ = list.reverse(xs)
+}

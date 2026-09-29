@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: pad_right
+-- stderr-contains: negative width
+import string
+fn main() {
+  string.pad_right("hi", -1, " ")
+}

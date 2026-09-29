@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate field 'x'
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let Point { x: a, x: b } = p
+  println(a + b)
+}

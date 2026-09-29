@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: does not implement Equal
+import stream
+import list
+fn main() {
+  let f = fn(y){ y }
+  let g = fn(z){ z + 100 }
+  let out = stream.collect(stream.dedup(stream.from_list([f, f, g])))
+  println(list.length(out))
+}

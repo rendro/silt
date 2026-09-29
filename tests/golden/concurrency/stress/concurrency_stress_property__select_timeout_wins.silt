@@ -1,0 +1,21 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: panicked
+-- Select over a silent channel and a 50ms timeout channel: the timeout
+-- fires (its channel closes) and main returns cleanly.
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  -- No sender on `ch`; only timer should fire.
+  let timer = channel.timeout(50)
+  let outcome = match channel.select([Recv(ch), Recv(timer)]) {
+    (_, Closed) -> "timed_out"
+    (_, Message(_v)) -> "got_value"
+    (_, Empty) -> "empty"
+    (_, Sent) -> "sent"
+  }
+  println(outcome)
+}

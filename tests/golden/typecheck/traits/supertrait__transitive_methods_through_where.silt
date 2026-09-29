@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 0
+-- `where t: C1` makes A1, B1 and C1 methods callable.
+trait A1 {
+  fn a1(self) -> Int
+}
+
+trait B1: A1 {
+  fn b1(self) -> Int
+}
+
+trait C1: B1 {
+  fn c1(self) -> Int
+}
+
+type Bar { v: Int }
+
+trait A1 for Bar {
+  fn a1(self) -> Int { self.v }
+}
+
+trait B1 for Bar {
+  fn b1(self) -> Int { self.v + 1 }
+}
+
+trait C1 for Bar {
+  fn c1(self) -> Int { self.v + 2 }
+}
+
+-- All three method calls must resolve via the C1 -> B1 -> A1 chain.
+fn use_all(x: t) -> Int where t: C1 {
+  x.a1() + x.b1() + x.c1()
+}
+
+fn main() {
+  println(use_all(Bar { v: 10 }))
+}

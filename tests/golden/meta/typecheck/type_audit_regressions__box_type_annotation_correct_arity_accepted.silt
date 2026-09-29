@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+type Box(a) { value: a }
+fn takes(b: Box(Int)) -> Int { b.value + 1 }
+fn main() { println(takes(Box { value: 5 })) }

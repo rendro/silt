@@ -1,0 +1,5 @@
+import string as s
+import list
+fn main() {
+  list.each(s.lines("a\nb"), fn(l) { println(l) })
+}

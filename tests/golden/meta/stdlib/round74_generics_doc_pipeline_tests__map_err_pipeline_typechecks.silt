@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 0
+-- The generics.md "Pipe interaction" snippet: errors of different types
+-- are unified through a shared enum with result.map_err and `?`.
+import bytes
+import json
+import result
+
+type Config { name: String }
+
+type LoadError {
+  Decode(BytesError),
+  Parse(JsonError),
+}
+
+fn load_config(raw_bytes) -> Result(Config, LoadError) {
+  let s = raw_bytes |> bytes.to_string |> result.map_err(Decode)?
+  json.parse(s, Config) |> result.map_err(Parse)
+}
+
+fn main() { () }

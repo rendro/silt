@@ -1,0 +1,26 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- B1: a cancelled receiver must not leave its waker behind; a later
+-- try_send on the rendezvous channel sees no receiver and fails.
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() { channel.receive(ch) })
+  time.sleep(time.ms(200))
+  task.cancel(h)
+  time.sleep(time.ms(200))
+  -- No real receiver is parked on `ch`. A rendezvous `try_send` must
+  -- return false. Before the fix, the cancelled receiver's leaked
+  -- recv-waker keeps `waiting_receivers == 1`, and `try_send`
+  -- phantom-succeeds (value silently dropped into the handoff slot).
+  let probe = task.spawn(fn() { channel.try_send(ch, 999) })
+  let ok = task.join(probe)
+  match ok {
+    true -> println("BUG:phantom_send_after_cancel")
+    false -> println("ok")
+    _ -> println("?")
+  }
+}

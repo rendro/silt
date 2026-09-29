@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: list.get: negative index -1
+import list
+fn main() { list.get([1, 2, 3], -1) }

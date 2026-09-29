@@ -1,0 +1,8 @@
+import time
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    match time.date(2025, 1, 15) {
+        Ok(date) -> println(d(date))
+        Err(_) -> ()
+    }
+}

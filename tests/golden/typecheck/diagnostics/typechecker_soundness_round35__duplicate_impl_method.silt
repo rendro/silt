@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate method 'say' in trait impl
+-- Two same-named methods in one impl are rejected.
+trait Greet {
+  fn say(self) -> String
+}
+trait Greet for Int {
+  fn say(self) -> String { "one" }
+  fn say(self) -> String { "two" }
+}
+fn main() {
+  println((1).say())
+}

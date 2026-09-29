@@ -1,0 +1,10 @@
+import toml
+type User { name: String }
+fn run_main() {
+  match toml.parse("not = = toml", User) {
+    Ok(_) -> false
+    Err(_) -> true
+  }
+}
+
+fn main() { println(run_main()) }

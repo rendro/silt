@@ -1,0 +1,17 @@
+import io
+fn program() {
+  let outer = 100
+  {
+    let inner = 1
+    {
+      let deep = 2
+      deep
+    }
+    inner
+  }
+  outer
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

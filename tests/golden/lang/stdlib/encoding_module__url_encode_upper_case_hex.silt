@@ -1,0 +1,4 @@
+import encoding
+fn main() {
+  println(encoding.url_encode("/"))
+}

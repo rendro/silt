@@ -1,0 +1,17 @@
+-- stderr-not-contains: stack overflow
+-- 200k rounds only complete if both the module-qualified call and
+-- bounce's call back emit TailCall
+import helper
+
+fn countdown(n) {
+  match n {
+    0 -> 0
+    _ -> helper.bounce(countdown, n - 1)
+  }
+}
+
+fn main() {
+  let direct = helper.bounce(countdown, 3)
+  println("{direct}")
+  println("{countdown(200000)}")
+}

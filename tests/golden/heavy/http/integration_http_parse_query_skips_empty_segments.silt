@@ -1,0 +1,11 @@
+-- Leading, doubled, and trailing `&` produce empty segments that
+-- are silently skipped (same as `encoding.form_decode`).
+import io
+import http
+fn program() {
+  http.parse_query("&a=1&&b=2&")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

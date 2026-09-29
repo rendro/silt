@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'qqqqqqqq_unrelated' on Set
+-- stderr-not-contains: on type Set
+fn main() {
+  let s = #[1, 2, 3]
+  println(s.qqqqqqqq_unrelated())
+}

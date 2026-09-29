@@ -1,0 +1,6 @@
+trait Pretty { fn pretty(self) -> String }
+trait Pretty for Range { fn pretty(self) -> String = "range-or-list" }
+fn main() {
+  println((1..3).pretty())
+  println([1, 2].pretty())
+}

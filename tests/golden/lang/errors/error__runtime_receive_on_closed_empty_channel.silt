@@ -1,0 +1,6 @@
+import channel
+fn main() {
+  let ch = channel.new(10)
+  channel.close(ch)
+  println(channel.receive(ch))
+}

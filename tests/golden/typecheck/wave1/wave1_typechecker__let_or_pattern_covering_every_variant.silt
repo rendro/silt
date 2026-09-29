@@ -1,0 +1,11 @@
+-- exit: 0
+-- A `let` or-pattern covering every variant is irrefutable.
+type Money { Dollars(Int), Cents(Int) }
+fn amount(v: Money) -> Int {
+  let Dollars(n) | Cents(n) = v
+  n
+}
+fn main() {
+  println(amount(Dollars(5)))
+  println(amount(Cents(250)))
+}

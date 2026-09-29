@@ -1,0 +1,13 @@
+import io
+import json
+import map
+fn program() {
+  match json.parse_map("\{\"name\": \"Alice\", \"city\": \"NYC\"\}", String) {
+    Ok(m) -> map.get(m, "name")
+    Err(_) -> None
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

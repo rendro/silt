@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let m = #{"user": #{"name": "alice"}}
+  match m {
+    #{"user": #{"name": n}} -> n
+    _ -> "unknown"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

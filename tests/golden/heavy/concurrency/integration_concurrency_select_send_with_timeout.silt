@@ -1,0 +1,20 @@
+-- repeat: 3
+-- Select: send to a full channel with a timeout
+import io
+import channel
+fn program() {
+  let ch = channel.new(1)
+  channel.send(ch, "fill")
+
+  let timer = channel.timeout(50)
+
+  match channel.select([Send(ch, "more"), Recv(timer)]) {
+    (_, Closed) -> "timeout"
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

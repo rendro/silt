@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot infer the type of `x`
+-- An unanchored polymorphic value that did not error still gets exactly one "cannot infer" diagnostic (exact stderr).
+fn default() -> a { panic("no value") }
+fn main() {
+  let x = default()
+}

@@ -1,0 +1,4 @@
+-- A program that prints: the harness compares stdout exactly.
+fn main() {
+  println("hello from a golden case")
+}

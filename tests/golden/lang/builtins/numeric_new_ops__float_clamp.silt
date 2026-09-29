@@ -1,0 +1,9 @@
+import float
+fn main() {
+  -- float_clamp_inside_range_returns_value
+  println(float.clamp(0.5, 0.0, 1.0) == 0.5)
+  -- float_clamp_below_lo_returns_lo
+  println(float.clamp(-0.2, 0.0, 1.0) == 0.0)
+  -- float_clamp_above_hi_returns_hi
+  println(float.clamp(1.5, 0.0, 1.0) == 1.0)
+}

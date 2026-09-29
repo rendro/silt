@@ -1,0 +1,4 @@
+-- exit: 1
+import list
+fn divider(x) { 1 / 0 }
+fn main() { list.map([1, 2, 3], divider) }

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-not-contains: error[runtime]
+-- GUARD: the same impl against the canonical `List(a)` still reports its body error.
+trait Foo { fn foo(self) -> Int }
+trait Foo for List(a) {
+  fn foo(self) -> Int { "not an int" }
+}
+fn main() { println([1, 2].foo()) }

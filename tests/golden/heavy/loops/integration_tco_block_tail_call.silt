@@ -1,0 +1,16 @@
+-- Tail call as the last expression in a block.
+import io
+fn count(n, acc) {
+  let next = acc + 1
+  match n {
+    0 -> acc
+    _ -> count(n - 1, next)
+  }
+}
+fn program() {
+  count(200000, 0)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,11 @@
+import io
+import set
+fn program() {
+  let a = #[1, 2, 3]
+  let b = #[3, 4, 5]
+  set.length(set.union(a, b))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

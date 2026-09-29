@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '<' requires
+-- stderr-contains: got 'Map(String, Int)'
+fn main() {
+  let a = #{"x": 1}
+  let b = #{"y": 2}
+  a < b
+}

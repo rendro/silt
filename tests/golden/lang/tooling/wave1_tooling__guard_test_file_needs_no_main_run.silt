@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: program has no main() function
+-- stderr-contains: This looks like a test file — run it with 'silt test wave1_tooling__guard_test_file_needs_no_main_run.silt'
+import test
+fn test_a() {
+  test.assert_eq(1, 1)
+}

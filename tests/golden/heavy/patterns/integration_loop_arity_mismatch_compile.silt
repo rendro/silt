@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: loop() expects 1 argument, got 2
+-- Lock the full production phrase so that any generic compile error
+-- containing the word "argument" cannot satisfy the assertion.
+fn main() {
+  loop x = 0 {
+    match x > 5 {
+      true -> x
+      _ -> loop(x + 1, 99)
+    }
+  }
+}

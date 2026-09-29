@@ -1,0 +1,17 @@
+fn classify(p) {
+  1000 + match p {
+    (Some(1), _) -> 1
+    (Some(n), true) when n > 5 -> 2
+    (Some(n), true) -> 3 + n
+    (None, _) -> 4
+    _ -> 5
+  }
+}
+
+fn main() {
+  println(classify((Some(1), false)))
+  println(classify((Some(9), true)))
+  println(classify((Some(2), true)))
+  println(classify((None, true)))
+  println(classify((Some(2), false)))
+}

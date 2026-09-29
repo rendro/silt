@@ -1,0 +1,6 @@
+import util as u
+
+fn main() {
+  let p = u.Pt { x: 5, y: 6 }
+  print(p.x + p.y)
+}

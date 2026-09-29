@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: time arithmetic overflow: time.hours(2562048) exceeds i64 nanoseconds
+import time
+fn main() {
+  println(time.hours(2562048).ns)
+}

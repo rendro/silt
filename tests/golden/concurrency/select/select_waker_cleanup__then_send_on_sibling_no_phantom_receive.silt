@@ -1,0 +1,40 @@
+-- repeat: 3
+-- A task select resolved via `a` must not leave its waker on `b`: a later
+-- send on `b` hands off to the real receiver, not a phantom.
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+
+  -- Receiver 1 selects over a and b; expects to resolve via a.
+  let r1 = task.spawn { ->
+    match channel.select([Recv(a), Recv(b)]) {
+      (_, Message(_)) -> "got_one"
+      _ -> "other"
+    }
+  }
+  -- Give r1 time to register both wakers.
+  time.sleep(time.ms(50))
+  -- Resolve r1 via a. With the bug, b's waiting_receivers stays
+  -- at 1 forever even after r1 completes.
+  channel.send(a, 1)
+  let v1 = task.join(r1)
+
+  -- Receiver 2: real consumer of b.
+  let r2 = task.spawn { -> channel.receive(b) }
+  -- Give r2 time to park.
+  time.sleep(time.ms(50))
+  -- Send into b. If the leaked select-waker still inflates b's
+  -- waiting_receivers, this might falsely succeed without r2 ever
+  -- waking. With the fix, this blocks until r2 is the actual receiver.
+  channel.send(b, 2)
+  let v2 = task.join(r2)
+
+  match v2 {
+    Message(_) -> println("ok:{v1}")
+    _ -> println("fail:{v1}")
+  }
+}

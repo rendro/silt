@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type Int
+fn main() {
+  let _ = [1, 2, Int]
+}

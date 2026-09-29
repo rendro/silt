@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn identity(x: a) -> a { x }
+fn main() {}

@@ -1,0 +1,27 @@
+-- repeat: 3
+-- Select with both send and receive operations.
+-- Both operations are simultaneously ready (inbox has data, outbox has
+-- capacity) and select chooses fairly between them, so either outcome
+-- is valid — we just assert the select resolved to one of the ready ops.
+import io
+import channel
+-- Both operations are ready (inbox has data, outbox has capacity) and
+-- select chooses fairly between them, so either outcome is valid: check
+-- that the select resolved to one of the ready operations.
+fn program() {
+  let inbox = channel.new(1)
+  let outbox = channel.new(1)
+
+  channel.send(inbox, "hello")
+
+  let outcome = match channel.select([Recv(inbox), Send(outbox, "world")]) {
+    (_, Message(val)) -> val
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+  outcome == "hello" || outcome == "sent"
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected String, got Int
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-not-contains: error[runtime]
+-- GUARD: a passed optional argument is still type checked, per call (exact stderr).
+import test
+import float
+
+fn main() {
+  test.assert(true, 5)
+  println(float.to_string(1.5, "two"))
+}

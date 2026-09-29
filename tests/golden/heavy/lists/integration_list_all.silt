@@ -1,0 +1,9 @@
+import io
+import list
+fn program() {
+  [2, 4, 6] |> list.all { x -> x > 0 }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

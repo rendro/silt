@@ -1,0 +1,37 @@
+import float
+import int
+import math
+import result
+import set
+fn main() {
+  -- test_int_parse_invalid_returns_err
+  println(result.is_err(int.parse("not_a_number")))
+  -- test_int_parse_empty_string_returns_err
+  println(result.is_err(int.parse("")))
+  -- test_float_parse_empty_string_returns_err
+  println(result.is_err(float.parse("")))
+  -- test_float_parse_rejects_infinity
+  println(result.is_err(float.parse("inf")))
+  -- test_float_parse_rejects_nan
+  println(result.is_err(float.parse("NaN")))
+  -- test_float_round_negative_zero: the result is +0.0, so it is the
+  -- same set key as 0.0 (set keys compare bitwise)
+  let r = float.round(-0.0)
+  println(r == 0.0)
+  println(set.length(set.from_list([r, 0.0])))
+  -- test_int_abs_zero
+  println(int.abs(0))
+  -- test_math_sqrt_zero
+  println(math.sqrt(0.0) == 0.0)
+  -- test_int_abs_negative
+  println(int.abs(-42))
+  -- test_float_round_half_positive / _negative: ties away from zero
+  println(float.round(0.5) == 1.0)
+  println(float.round(-0.5) == -1.0)
+  -- test_math_sqrt_four
+  println(math.sqrt(4.0) == 2.0)
+  -- test_int_to_float_zero
+  println(int.to_float(0) == 0.0)
+  -- test_int_to_float_i64_max: rounds to 2^63
+  println(int.to_float(9223372036854775807) == 9223372036854775808.0)
+}

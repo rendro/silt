@@ -1,0 +1,21 @@
+import list
+import task
+
+trait Deep { fn go(self) -> Int }
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+
+fn wide() {
+  list.fold(1..5000, 0) { acc, x -> acc + 3.go() }
+}
+fn main() {
+  println("main {wide()}")
+  let t = task.spawn { -> wide() }
+  println("task {task.join(t)}")
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A variant pattern with the wrong arity keeps the "constructor ... expects" wording.
+-- stderr-contains: constructor 'Circle' expects
+type Shape { Circle(Int), Square }
+fn main() {
+  let c = Circle(5)
+  match c {
+    Circle(r, extra) -> println(r)
+    Square -> println("sq")
+  }
+}

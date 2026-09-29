@@ -1,0 +1,7 @@
+type Tagged { Foo(Int), Bar(Int), }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn main() {
+    println(h(Foo(5)) == h(Foo(5)))
+    println(h(Foo(5)) != h(Foo(6)))
+    println(h(Foo(5)) != h(Bar(5)))
+}

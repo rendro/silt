@@ -1,0 +1,10 @@
+-- An enum-variant constructor pattern in `let` is not mistaken for a
+-- record type or an undefined constructor (single-variant enum, so the
+-- pattern is irrefutable).
+-- exit: 0
+type Wrap { W(Int) }
+fn main() {
+  let v = W(5)
+  let W(x) = v
+  println(x)
+}

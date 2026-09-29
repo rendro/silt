@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: self-referential
+trait Foo {
+  type T
+}
+
+trait Bar {
+  type S
+}
+
+trait Bar for Int {
+  type S = <Int as Foo>::T
+}
+
+trait Foo for Int {
+  type T = <Int as Bar>::S
+}
+
+fn main() {
+  println("ok")
+}

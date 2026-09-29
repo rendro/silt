@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: implements 'C1'
+-- stderr-contains: supertrait 'B1'
+-- Transitive supertraits: implementing only C1 reports the missing B1.
+trait A1 {
+  fn a1(self) -> Int
+}
+
+trait B1: A1 {
+  fn b1(self) -> Int
+}
+
+trait C1: B1 {
+  fn c1(self) -> Int
+}
+
+type Bar { v: Int }
+
+-- Only impl C1, missing A1 and B1.
+trait C1 for Bar {
+  fn c1(self) -> Int { self.v }
+}
+
+fn main() {}

@@ -1,0 +1,14 @@
+import io
+fn program() {
+  let total = loop i = 1, acc = 0 {
+    match i > 5 {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+  total * 2
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

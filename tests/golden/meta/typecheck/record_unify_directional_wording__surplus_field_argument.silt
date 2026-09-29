@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-not-contains: record is missing field
+type A { x: Int }
+type B { x: Int, y: Int }
+fn f(_a: A) {}
+fn main() {
+  let b = B { x: 1, y: 2 }
+  f(b)
+}

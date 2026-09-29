@@ -1,0 +1,8 @@
+import io
+fn program() {
+  io.inspect(Some([1, 2, 3]))
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

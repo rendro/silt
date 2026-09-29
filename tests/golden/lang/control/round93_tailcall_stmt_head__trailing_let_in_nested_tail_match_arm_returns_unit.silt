@@ -1,0 +1,19 @@
+fn g(n) {
+  n + 1
+}
+
+fn f(flag) {
+  match flag {
+    true -> {
+      let x = g(41)
+    }
+    false -> {
+      let y = g(98)
+    }
+  }
+}
+
+fn main() {
+  println("{f(true)}")
+  println("{f(false)}")
+}

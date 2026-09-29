@@ -1,0 +1,24 @@
+-- repeat: 3
+-- A task blocked on receive should wake up when channel is closed.
+import io
+import channel
+import task
+fn program() {
+  let ch = channel.new()
+
+  let receiver = task.spawn(fn() {
+    match channel.receive(ch) {
+      Closed -> "woken_by_close"
+      Message(_) -> "got_message"
+      _ -> "other"
+    }
+  })
+
+  -- Close the channel to wake the blocked receiver
+  channel.close(ch)
+  task.join(receiver)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

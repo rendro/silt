@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: ambiguous method 'show' on type 'Int': provided by traits A, B
+-- Two traits providing `show` both implemented for Int is ambiguous.
+trait A { fn show(self) -> String }
+trait B { fn show(self) -> String }
+trait A for Int { fn show(self) -> String { "from-A" } }
+trait B for Int { fn show(self) -> String { "from-B" } }
+fn main() { }

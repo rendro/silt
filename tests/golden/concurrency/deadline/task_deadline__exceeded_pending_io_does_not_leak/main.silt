@@ -1,0 +1,23 @@
+-- repeat: 3
+-- When a 1ms deadline may elapse while the inner I/O is in flight, the
+-- early exit clears the pending completion: the next I/O, outside the
+-- scope, gets its own result, not the stale one. (Whether the first
+-- read wins the race is timing-dependent and not printed.)
+import io
+import task
+import time
+
+fn main() {
+  let first = task.deadline(time.ms(1), fn() {
+    io.read_file("fixture.txt")
+  })
+  let second = io.read_file("fixture.txt")
+  match first {
+    Ok(_) -> ()
+    Err(_) -> ()
+  }
+  match second {
+    Ok(s) -> println("second={s}")
+    Err(_) -> println("second=err:leak")
+  }
+}

@@ -1,0 +1,16 @@
+import io
+fn classify(pair) {
+  match pair {
+    (a, b) when a > b -> "first"
+    (a, b) when b > a -> "second"
+    _ -> "equal"
+  }
+}
+
+fn program() {
+  [classify((5, 3)), classify((3, 5)), classify((4, 4))]
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

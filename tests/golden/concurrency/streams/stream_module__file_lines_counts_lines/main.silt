@@ -1,0 +1,3 @@
+-- stream.file_lines yields one element per line of the file.
+import stream
+fn main() { println(stream.count(stream.file_lines("lines.txt"))) }

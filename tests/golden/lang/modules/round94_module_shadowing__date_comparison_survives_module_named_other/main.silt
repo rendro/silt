@@ -1,0 +1,9 @@
+import other
+import time
+fn main() {
+  let a = time.date(2020, 1, 1)
+  let b = time.date(2021, 1, 1)
+  println(a < b)
+  println(a == b)
+  println(other.double(21))
+}

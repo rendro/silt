@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A typo'd field on an anonymous record keeps its wording and gains a did-you-mean hint.
+-- stderr-contains: anon record has no field 'nam'
+-- stderr-contains: did you mean `name`?
+fn main() {
+  let r = {name: "x"}
+  println(r.nam)
+}

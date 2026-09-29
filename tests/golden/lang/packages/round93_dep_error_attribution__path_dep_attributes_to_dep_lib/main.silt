@@ -1,0 +1,7 @@
+-- exit: 1
+-- exact stderr: the --> locator and every call-stack frame name the file the code lives in
+import r93_mathdep
+
+fn main() {
+  r93_mathdep.divide(1, 0)
+}

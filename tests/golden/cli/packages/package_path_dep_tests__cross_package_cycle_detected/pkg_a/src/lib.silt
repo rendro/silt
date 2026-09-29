@@ -1,0 +1,3 @@
+import pkg_b
+pub fn entry() = pkg_b.go()
+pub fn helper() = 1

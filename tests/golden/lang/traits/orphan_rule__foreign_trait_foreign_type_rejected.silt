@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: orphan impl
+trait Display for List(a) {
+  fn display(self) -> String { "stolen" }
+}
+fn main() {}

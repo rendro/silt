@@ -1,0 +1,18 @@
+import map
+fn main() {
+  let empty: Map(String, Int) = #{}
+  -- test_map_get_missing_key_returns_none
+  println(map.get(empty, "missing"))
+  -- test_map_keys_empty
+  println(map.keys(empty))
+  -- test_map_values_empty
+  println(map.values(empty))
+  -- test_map_length_empty
+  println(map.length(empty))
+  -- test_map_merge_both_empty
+  println(map.merge(empty, empty))
+  -- test_map_delete_missing_key
+  println(map.length(map.delete(#{"a": 1}, "b")))
+  -- test_map_contains_empty
+  println(map.contains(empty, "anything"))
+}

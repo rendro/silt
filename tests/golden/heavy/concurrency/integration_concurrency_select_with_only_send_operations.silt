@@ -1,0 +1,17 @@
+-- repeat: 3
+-- Select with only send operations on channels with room.
+import io
+import channel
+fn program() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+
+  match channel.select([Send(ch1, "a"), Send(ch2, "b")]) {
+    (_, Sent) -> "sent_ok"
+    _ -> "unexpected"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

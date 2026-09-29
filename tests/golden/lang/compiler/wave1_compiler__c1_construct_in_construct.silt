@@ -1,0 +1,18 @@
+fn main() {
+  let x = 5
+  println(1 + {
+    let y = 2
+    y + match x {
+      5 -> {
+        let z = 10
+        z + loop i = 0 {
+          match {
+            i >= 3 -> i
+            _ -> loop(i + 1)
+          }
+        }
+      }
+      _ -> 20
+    }
+  })
+}

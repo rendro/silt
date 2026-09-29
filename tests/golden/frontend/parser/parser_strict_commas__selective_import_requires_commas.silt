@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: selective import list
+-- stderr-contains: ','
+import list.{ map filter }

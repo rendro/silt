@@ -1,0 +1,7 @@
+-- Rest after a named field still resolves against the parent record.
+fn main() {
+  let p = {a: 1, b: 2, c: 3}
+  match p {
+    {a: x, ...r} -> println(r.b + r.c)
+  }
+}

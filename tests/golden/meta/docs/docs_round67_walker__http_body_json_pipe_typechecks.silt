@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 0
+import http
+import json
+import result
+
+type Todo {
+  id: Int,
+  title: String,
+}
+
+fn process(t: Todo) -> Todo = t
+
+fn fetch_todo(url: String) -> Result(Todo, HttpError) {
+  let resp = http.get(url)?
+  let _parsed = resp.body
+    |> json.parse(Todo)
+    |> result.map_ok(process)
+  Ok(Todo { id: 1, title: "" })
+}
+
+fn main() {
+  ()
+}

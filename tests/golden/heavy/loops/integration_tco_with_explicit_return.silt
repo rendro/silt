@@ -1,0 +1,15 @@
+import io
+fn count(n) {
+  match n <= 0 {
+    true -> return 0
+    _ -> return count(n - 1)
+  }
+}
+
+fn program() {
+  count(100000)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,2 @@
+fn eq(x: a, y: a) -> Bool { x == y }
+fn main() { println(eq(3, 3)) }

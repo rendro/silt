@@ -1,0 +1,10 @@
+-- Interpolating a channel through a polymorphic function fails at run time.
+-- exit: 1
+-- stderr-contains: does not implement Display
+-- stderr-contains: 'Channel'
+import channel
+fn show(x: a) -> String { "val={x}" }
+fn main() {
+  let c = channel.new()
+  println(show(c))
+}

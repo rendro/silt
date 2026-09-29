@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: expected Int, got ()
+-- stderr-not-contains: undefined variable 'f'
+fn f(a, b) -> Int {
+  let bad = 1 +
+}
+
+fn main() -> Int {
+  f(1, 2)
+}

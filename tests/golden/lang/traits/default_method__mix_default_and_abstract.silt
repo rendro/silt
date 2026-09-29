@@ -1,0 +1,16 @@
+trait Display2 {
+  fn show(self) -> String { "default-show" }
+  fn debug(self) -> String
+}
+
+type Item { v: Int }
+
+trait Display2 for Item {
+  fn debug(self) -> String { "item-debug" }
+}
+
+fn main() {
+  let it = Item { v: 1 }
+  println(it.show())
+  println(it.debug())
+}

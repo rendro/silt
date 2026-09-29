@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected Int
+import channel
+let ch = channel.new(1)
+fn main() {
+  channel.send(ch, 42)
+  channel.send(ch, "hi")
+}

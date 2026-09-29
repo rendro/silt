@@ -1,0 +1,5 @@
+type Square(a) = Map(a, a)
+trait Tag { fn tag(self) -> String }
+trait Tag for Square(a) { fn tag(self) -> String = "square" }
+fn tag_it(x: t) -> String where t: Tag { x.tag() }
+fn main() { println(tag_it(#{ 1: 2 })) }

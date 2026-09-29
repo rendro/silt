@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: string.pad_right: negative width
+-- stderr-not-contains: negative index
+import string
+fn main() {
+  string.pad_right("hi", -1, " ")
+}

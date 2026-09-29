@@ -2156,7 +2156,7 @@ impl IntoValue for f64 {
         // everywhere else: `Value::Float` is finite, non-finite (NaN
         // and ±∞) goes in `Value::ExtFloat`. The invariant is
         // documented at `Vm::finite_float`, the `PartialEq`/`Ord`
-        // arms above, and `tests/list_sum_product_float_finite_tests.rs`,
+        // arms above, and `tests/lang/list_sum_product_float_finite_tests.rs`,
         // and is re-enforced in `src/builtins/numeric.rs::clamp`. Without
         // this canonicalization, an embedder registering a Rust closure
         // returning a non-finite f64 (e.g. `register_fn0("get_nan",
@@ -2272,7 +2272,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
 /// single edit to one match arm propagates to every FFI error message.
 /// Per the project's "one way to do things" convention.
 ///
-/// Locked by `tests/round76_value_type_name_parity_tests.rs`.
+/// Locked by `tests/meta/round76_value_type_name_parity_tests.rs`.
 fn value_type_name(v: &Value) -> &'static str {
     crate::builtins::value_kind(v)
 }

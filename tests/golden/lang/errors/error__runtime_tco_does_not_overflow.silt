@@ -1,0 +1,9 @@
+-- 300000 calls, three times the VM frame cap (MAX_FRAMES = 100000): only
+-- tail-call elimination lets this finish.
+fn countdown(n) {
+  match n {
+    0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+fn main() { println(countdown(300000)) }

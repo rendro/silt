@@ -1,0 +1,11 @@
+-- `[x] | [_, x]`: [5] binds 5, [5, 9] binds 9.
+fn pick(xs: List(Int)) -> Int {
+  match xs {
+    [x] | [_, x] -> x
+    _ -> -1
+  }
+}
+fn main() {
+  println(pick([5]))
+  println(pick([5, 9]))
+}

@@ -1,0 +1,7 @@
+import io
+fn main() {
+  match io.read_file("silt_nonexistent_file_12345.txt") {
+    Ok(_) -> println("Ok")
+    Err(_) -> println("Err")
+  }
+}

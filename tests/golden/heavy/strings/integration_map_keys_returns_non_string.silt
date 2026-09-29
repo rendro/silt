@@ -1,0 +1,10 @@
+import io
+import map
+fn program() {
+  let m = #{ 1: "one", 2: "two" }
+  map.keys(m)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

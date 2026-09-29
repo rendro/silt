@@ -1,0 +1,10 @@
+import io
+import map
+fn program() {
+  let m = #{ "name": "Alice", "age": "30" }
+  map.get(m, "name")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: function parameter list
+-- stderr-contains: ','
+fn f(a b c) {}

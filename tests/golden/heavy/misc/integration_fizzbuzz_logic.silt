@@ -1,0 +1,23 @@
+import io
+fn fizzbuzz(n) {
+  match (n % 3, n % 5) {
+    (0, 0) -> "FizzBuzz"
+    (0, _) -> "Fizz"
+    (_, 0) -> "Buzz"
+    _      -> "{n}"
+  }
+}
+
+fn program() {
+  let results = [
+    fizzbuzz(1),
+    fizzbuzz(3),
+    fizzbuzz(5),
+    fizzbuzz(15),
+  ]
+  results
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

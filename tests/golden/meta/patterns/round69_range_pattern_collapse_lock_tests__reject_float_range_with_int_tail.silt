@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: expected float end for range pattern
+fn f(x) {
+    match x {
+        1.0..1 -> "yes"
+        _ -> "no"
+    }
+}
+
+fn main() {
+    println(f(1))
+}

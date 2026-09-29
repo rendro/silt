@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+import calc.internal
+fn main() {}

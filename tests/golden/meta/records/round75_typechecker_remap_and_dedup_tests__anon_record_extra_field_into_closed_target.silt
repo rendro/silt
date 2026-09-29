@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unexpected field not declared in target type: extra
+fn pluck(r: { name: String }) -> String = r.name
+fn caller_open_closed() -> String {
+  let row = { name: "ok", extra: 1 }
+  pluck(row)
+}
+
+fn main() {
+  println(caller_open_closed())
+}

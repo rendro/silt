@@ -1,0 +1,7 @@
+-- exit: 1
+import list
+fn bad_flat(x) {
+  let _ = 1 / 0
+  [x]
+}
+fn main() { list.flat_map([1, 2, 3], bad_flat) }

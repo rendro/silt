@@ -1,0 +1,13 @@
+import io
+fn program() {
+  loop i = 0 {
+    match i >= 3 {
+      true -> i
+      _ -> loop(i + 1)
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

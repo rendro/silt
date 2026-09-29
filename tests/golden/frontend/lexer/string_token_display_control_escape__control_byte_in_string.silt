@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- A U+0001 in a string found-token is rendered as \u{1}, never raw.
+-- stderr-contains: found "a\u{1}b"
+"ab"

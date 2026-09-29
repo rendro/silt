@@ -1,0 +1,13 @@
+import string
+fn main() {
+  -- test_last_index_of_simple: b(0) a(1) n(2) a(3) n(4) a(5)
+  println(string.last_index_of("banana", "a"))
+  -- test_last_index_of_multichar_needle
+  println(string.last_index_of("abcabc", "bc"))
+  -- test_last_index_of_missing
+  println(string.last_index_of("hello", "z"))
+  -- test_last_index_of_unicode_char_index: indices count chars
+  println(string.last_index_of("café☕café", "café"))
+  -- test_last_index_of_empty_needle: the char count, like Rust rfind
+  println(string.last_index_of("abc", ""))
+}

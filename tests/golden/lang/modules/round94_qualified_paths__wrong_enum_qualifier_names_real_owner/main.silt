@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'Red' is not a variant of enum 'Shape'
+-- stderr-contains: belongs to 'Color'
+type Shape {
+  Circle(Int)
+}
+type Color {
+  Red
+}
+
+fn main() {
+  let m = match Circle(1) {
+    Shape.Red -> 1,
+    _ -> 2,
+  }
+  print(m)
+}

@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.captures("(\\d+)", "no numbers")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

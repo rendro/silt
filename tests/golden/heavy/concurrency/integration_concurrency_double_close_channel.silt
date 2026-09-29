@@ -1,0 +1,9 @@
+-- exit: 0
+-- repeat: 3
+-- Closing a channel twice should not panic.
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  channel.close(ch)
+}

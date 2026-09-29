@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: implements 'Ord2'
+-- stderr-contains: supertrait 'Eq2'
+-- Implementing a subtrait without its supertrait is an error.
+trait Eq2 {
+  fn eq2(self, other: Self) -> Bool
+}
+
+trait Ord2: Eq2 {
+  fn lt2(self, other: Self) -> Bool
+}
+
+type Foo { v: Int }
+
+trait Ord2 for Foo {
+  fn lt2(self, other: Foo) -> Bool { self.v < other.v }
+}
+
+fn main() {}

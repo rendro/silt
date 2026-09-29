@@ -1,0 +1,9 @@
+import io
+import string
+fn program() {
+  string.pad_right("hi", 5, ".")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

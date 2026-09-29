@@ -1,0 +1,5 @@
+import map
+import list
+fn main() {
+  println(list.length(map.entries(map.from_entries([(1, 10), (2, 20)]))))
+}

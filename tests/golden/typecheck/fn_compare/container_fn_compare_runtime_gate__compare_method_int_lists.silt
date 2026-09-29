@@ -1,0 +1,3 @@
+-- Positive control: `.compare()` on Int lists gives -1.
+fn cmpm(a: t, b: t) -> Int where t: Compare { a.compare(b) }
+fn main() { println(cmpm([1, 2], [3, 4])) }

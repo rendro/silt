@@ -1,0 +1,12 @@
+-- `when cond else { ... }` keeps parsing: `else` is not eaten as an infix.
+fn f(n: Int) -> Int {
+  when n > 0 else {
+    return 0
+  }
+  n
+}
+
+fn main() {
+  println(f(3))
+  println(f(-1))
+}

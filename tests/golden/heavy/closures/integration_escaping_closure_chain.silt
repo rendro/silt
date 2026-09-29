@@ -1,0 +1,18 @@
+-- A closure returned from a function returns another closure,
+-- creating a chain of escaping closures with layered captures.
+import io
+fn outer(a) {
+  fn(b) {
+    fn(c) { a + b + c }
+  }
+}
+
+fn program() {
+  let f = outer(10)
+  let g = f(20)
+  g(30)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

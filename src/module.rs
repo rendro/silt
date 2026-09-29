@@ -21,7 +21,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
 /// `Value::PrimitiveDescriptor` shape in the VM) still lives at the
 /// call sites — only the NAME set is hoisted to prevent drift.
 ///
-/// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
+/// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "String", "Bool"];
 
 /// Names of the built-in generic container type descriptors (uppercase)
@@ -38,7 +38,7 @@ pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "Stri
 /// `Map(k,v)` vs the others), but the NAME set is centralised so the
 /// two sites cannot drift.
 ///
-/// Parity lock: `tests/round73_descriptor_name_parity_tests.rs`.
+/// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
 
 /// Central registry of the record / enum type NAMES the stdlib registers
@@ -61,7 +61,7 @@ pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Ch
 ///                       `TimeError`, `BytesError`, `ChannelError`,
 ///                       and the cfg-gated `PgError`, `TcpError`.
 ///
-/// Parity lock: `tests/round82_stdlib_types_registry_tests.rs` walks
+/// Parity lock: `tests/typecheck/round82_stdlib_types_registry_tests.rs` walks
 /// `checker.records.keys() ∪ checker.enums.keys()` after stdlib init
 /// and asserts the set matches this registry. Adding a new stdlib
 /// record/enum without updating this list will fail that test.
@@ -99,7 +99,7 @@ pub const BUILTIN_STDLIB_TYPE_NAMES: &[&str] = &[
     // errors.rs (cfg-gated) — listed but conditional. The
     // `feature_gated_stdlib_type` helper below routes each gated name
     // to its required cargo feature; the parity test in
-    // `tests/round82_stdlib_types_registry_tests.rs` filters by the
+    // `tests/typecheck/round82_stdlib_types_registry_tests.rs` filters by the
     // active feature set when comparing against typechecker state.
     "PgError",
     "TcpError",
@@ -306,7 +306,7 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
 /// completion to keep hand-rolled parallel lists from drifting away from
 /// the authoritative source at `builtin_enum_variants`.
 ///
-/// A parity-lock test at `tests/builtin_constructor_parity_tests.rs`
+/// A parity-lock test at `tests/meta/builtin_constructor_parity_tests.rs`
 /// asserts every surface that mentions builtin constructors consults
 /// this helper (directly or by name-set membership).
 pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
@@ -329,7 +329,7 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
 /// `KEYWORD_LITERALS`/`KEYWORDS` consolidations (round-63/64).
 ///
 /// A parity-lock test at
-/// `tests/builtin_free_function_parity_tests.rs` asserts every surface
+/// `tests/meta/builtin_free_function_parity_tests.rs` asserts every surface
 /// that mentions these free-function names consults this helper, and
 /// that the helper itself matches what's actually registered in the
 /// typechecker's free-function table at runtime.
@@ -352,7 +352,7 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 /// instead of repeating the wording.
 ///
 /// A parity-lock test at
-/// `tests/error_enum_dispatch_parity_tests.rs` asserts the typechecker
+/// `tests/meta/error_enum_dispatch_parity_tests.rs` asserts the typechecker
 /// registrations in `src/typechecker/builtins/errors.rs::register`
 /// match these `(variant, arity)` tuples shape-for-shape.
 ///
@@ -502,7 +502,7 @@ pub fn variant_to_error_enum(tag: &str) -> Option<&'static str> {
 /// at dispatch.rs picks up the arity automatically.
 ///
 /// A parity-lock test at
-/// `tests/round71_dispatch_collapse_and_parity_tests.rs` asserts these
+/// `tests/meta/round71_dispatch_collapse_and_parity_tests.rs` asserts these
 /// `(variant, arity)` tuples agree with the previous hand-rolled
 /// constructor registrations on every prelude / gated non-error enum.
 pub fn builtin_prelude_enum_variants_with_arity()
@@ -916,7 +916,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 ///
 /// The first line keeps the historical
 /// `cannot load module '<name>': <io error>` shape (asserted by
-/// tests/modules.rs and tests/round92_test_import_filter_e2e_tests.rs);
+/// tests/lang/modules.rs and tests/lang/round92_test_import_filter_e2e_tests.rs);
 /// the lines after it render as `= note:` / `= help:` continuations via
 /// `SourceError::Display` (see src/errors.rs — a body line beginning
 /// with `help: ` becomes `= help:`):
@@ -930,7 +930,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 /// The two help lines are only added for NotFound — a permission or
 /// encoding error on an existing file should not invite a rename hunt.
 ///
-/// Lock: tests/round93_module_load_hint_tests.rs.
+/// Lock: tests/lang/round93_module_load_hint_tests.rs.
 pub fn format_module_load_error(
     module_name: &str,
     attempted_path: &std::path::Path,
@@ -988,7 +988,7 @@ fn sibling_module_suggestion(
 /// `register_float_builtins`). LSP dot-completion (`src/lsp.rs::dot_completions`)
 /// consults this list so editor autocompletion surfaces module constants.
 ///
-/// Parity lock: `tests/module_constants_completion_tests.rs`
+/// Parity lock: `tests/lang/module_constants_completion_tests.rs`
 /// (`math_constants_are_listed`, `float_constants_are_listed`,
 /// `unknown_module_has_no_constants`,
 /// `float_functions_do_not_duplicate_constants`) — round-26 audit

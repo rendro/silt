@@ -1,0 +1,15 @@
+fn is_even(n) {
+  match n {
+    0 -> true
+    _ -> is_odd(n - 1)
+  }
+}
+
+fn is_odd(n) {
+  match n {
+    0 -> false
+    _ -> is_even(n - 1)
+  }
+}
+
+fn main() { println(is_even(10)) }

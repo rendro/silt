@@ -1,0 +1,11 @@
+type Tagged { Foo(Int), Bar(Int, String), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(cmp_gen(Foo(1), Foo(2)))
+    println(eq_gen(Bar(1, "x"), Bar(1, "y")))
+    let _ = h(Foo(7))
+    println(d(Bar(2, "z")))
+}

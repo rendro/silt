@@ -1,0 +1,10 @@
+type Color { Red, Green, Blue }
+
+trait Display for Color {
+  fn display(self) -> String { "a color" }
+}
+
+fn main() {
+  let r = Red
+  println(r.display())
+}

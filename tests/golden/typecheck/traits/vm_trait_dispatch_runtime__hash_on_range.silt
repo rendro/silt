@@ -1,0 +1,6 @@
+-- `.hash()` through a Hash bound runs on a range.
+fn h(v: a) -> Int where a: Hash { v.hash() }
+fn main() {
+  let r = 1..5
+  println(h(r) == h(r))
+}

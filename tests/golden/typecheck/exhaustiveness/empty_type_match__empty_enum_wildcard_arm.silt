@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 0
+-- A wildcard arm on an empty enum is exhaustive too.
+type Absurd { }
+fn elim(x: Absurd) -> Int { match x { _ -> 0 } }
+fn main() {}

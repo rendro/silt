@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: must be a named type
+trait X { fn x(self) -> Int }
+trait X for (Int, Int) {
+  fn x(self) -> Int { 1 }
+}
+fn main() {}

@@ -1,0 +1,16 @@
+-- repeat: 3
+import io
+import channel
+fn program() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  match ch1 {
+    ^ch2 -> "wrong"
+    ^ch1 -> "same"
+    _ -> "unknown"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

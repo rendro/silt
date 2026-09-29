@@ -1,0 +1,20 @@
+import io
+import result
+
+type E { Wrap(IoError) }
+
+fn load() -> Result(String, E) {
+  let raw = result.map_err(io.read_file("/nope"), Wrap)?
+  Ok(raw)
+}
+
+fn outcome() {
+  match load() {
+    Ok(_) -> "ok"
+    Err(Wrap(_)) -> "err"
+  }
+}
+
+fn main() {
+  println(outcome())
+}

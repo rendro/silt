@@ -1,0 +1,13 @@
+-- The `ext` group sits inside an outer `(...)?`, so when the input
+-- has no extension the group never participates in the match. The
+-- spec says we omit such keys from the map instead of mapping them
+-- to "".
+import io
+import regex
+fn program() {
+  regex.captures_named("(?P<name>\\w+)(?:\\.(?P<ext>\\w+))?", "file")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

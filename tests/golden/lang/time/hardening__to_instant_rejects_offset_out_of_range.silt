@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: time.to_instant
+-- stderr-contains: out of range
+-- stderr-not-contains: panicked
+import time
+fn main() {
+  let d = Date { year: 2024, month: 1, day: 1 }
+  let t = Time { hour: 0, minute: 0, second: 0, ns: 0 }
+  let dt = time.datetime(d, t)
+  println(time.to_instant(dt, 9223372036854775807))
+}

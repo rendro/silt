@@ -1,0 +1,1 @@
+pub type Pt { label: String, v: Int }

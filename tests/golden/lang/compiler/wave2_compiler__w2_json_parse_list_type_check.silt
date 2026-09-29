@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse
+-- stderr-contains: `List`
+import json
+
+fn main() {
+  println(json.parse("[1]", List))
+}

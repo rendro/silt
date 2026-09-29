@@ -1,0 +1,24 @@
+-- cmd: test
+-- exit: 0
+-- repeat: 3
+-- stderr-contains: PASS wave2_tasks__guard_test_that_cancels_its_failed_task_passes_test.silt::test_cancels
+-- stderr-contains: 1 test: 1 passed, 0 failed, 0 skipped
+-- A test that joins or cancels its failed tasks passes. Passes with
+-- and without the fix.
+import channel
+import task
+import test
+import time
+
+fn test_cancels() {
+  let about_to_fail = channel.new(1)
+  let h = task.spawn(fn() {
+    channel.send(about_to_fail, 1)
+    let zero = 0
+    10 / zero
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  task.cancel(h)
+  test.assert_eq(1, 1)
+}

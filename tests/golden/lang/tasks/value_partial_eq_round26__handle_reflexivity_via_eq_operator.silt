@@ -1,0 +1,12 @@
+import task
+
+fn main() {
+  let h = task.spawn { -> 42 }
+  let r = task.join(h)
+  -- `h == h` must be true.
+  println(h == h)
+  match r == 42 {
+    true -> println("joined")
+    false -> println("wrong")
+  }
+}

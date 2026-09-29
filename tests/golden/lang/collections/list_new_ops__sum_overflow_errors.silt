@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: list.sum
+-- stderr-contains: overflow
+import list
+fn main() {
+  let big = 9223372036854775807  -- i64::MAX
+  list.sum([big, 1])
+}

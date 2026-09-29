@@ -1,0 +1,13 @@
+fn main() {
+  let a = 1
+  let f = { x ->
+    let g = { y ->
+      let h = { z ->
+        a + x + y + z
+      }
+      h(100)
+    }
+    g(10)
+  }
+  println(f(1000))
+}

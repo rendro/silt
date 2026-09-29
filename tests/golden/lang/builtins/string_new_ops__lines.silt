@@ -1,0 +1,19 @@
+import string
+fn main() {
+  -- silt string literals have no \r escape; build CR from its code
+  let cr = string.from_char_code(13)
+  -- test_lines_basic
+  println(string.lines("a\nb\nc") == ["a", "b", "c"])
+  -- test_lines_trailing_newline_no_empty_element
+  println(string.lines("a\nb\n") == ["a", "b"])
+  -- test_lines_crlf_stripped
+  println(string.lines("a{cr}\nb{cr}\nc") == ["a", "b", "c"])
+  -- test_lines_crlf_trailing
+  println(string.lines("a{cr}\nb{cr}\n") == ["a", "b"])
+  -- test_lines_empty_string_returns_empty_list
+  println(string.lines("") == [])
+  -- test_lines_internal_blank_lines_kept
+  println(string.lines("a\n\nb") == ["a", "", "b"])
+  -- test_lines_no_newline_single_line
+  println(string.lines("hello") == ["hello"])
+}

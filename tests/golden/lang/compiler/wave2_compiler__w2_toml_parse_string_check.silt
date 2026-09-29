@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: toml.parse
+-- stderr-contains: `String`
+-- stderr-contains: record type
+import toml
+
+fn main() {
+  println(toml.parse("a = 1", String))
+}

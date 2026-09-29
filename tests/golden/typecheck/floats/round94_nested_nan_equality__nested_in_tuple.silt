@@ -1,0 +1,6 @@
+-- A NaN inside a tuple keeps IEEE semantics under `==`/`!=`.
+fn main() {
+    let nan = 0.0 / 0.0
+    println((nan, 1) == (nan, 1))
+    println((nan, 1) != (nan, 1))
+}

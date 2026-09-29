@@ -1,0 +1,1 @@
+[{"col":1,"file":"main.silt","hints":["note: --> badlex.silt:2:1\n|\n2 | @@@\n| ^ unexpected character: '@'"],"kind":"compile","line":4,"message":"module 'badlex': lex error at badlex.silt:2:1 — unexpected character: '@'","severity":"error"}]

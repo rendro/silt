@@ -1,0 +1,13 @@
+-- exit: 0
+import string
+fn main() {
+  let s = ""
+  let _ = string.length(s)
+  let _ = string.split(s, ",")
+  let _ = string.trim(s)
+  let _ = string.to_upper(s)
+  let _ = string.to_lower(s)
+  let _ = string.contains(s, "x")
+  let _ = string.starts_with(s, "")
+  let _ = string.ends_with(s, "")
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive
+-- A refining payload (`Yes(true)`) in the first tuple column leaves `(Yes(false), _)` uncovered.
+type Maybe { Nope, Yes(Bool) }
+fn f(x: Maybe, y: Int) -> Int {
+  match (x, y) {
+    (Nope, _) -> 0
+    (Yes(true), _) -> 1
+  }
+}
+fn main() { print(f(Yes(false), 99)) }

@@ -1,0 +1,25 @@
+import list
+
+type P { x: Int, y: Int }
+type W { Wrap(Int) }
+
+fn sum(p: P) -> Int {
+  let P { x, y } = p
+  x + y
+}
+
+fn main() {
+  let (a, b) = (1, 2)
+  println(a + b)
+  let P { x, y } = P { x: 3, y: 4 }
+  println(x + y)
+  let Wrap(n) = Wrap(5)
+  println(n)
+  let ((c, d), e) = ((1, 2), 3)
+  println(c + d + e)
+  let {name, age} = {name: "A", age: 3}
+  println("{name} {age}")
+  println(sum({x: 3, y: 4}))
+  let pairs = [(1, 2), (3, 4)]
+  println(pairs |> list.map { (l, r) -> l * r })
+}

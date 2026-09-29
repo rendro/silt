@@ -1,0 +1,14 @@
+import io
+import json
+import list
+type User { name: String, skills: List(String) }
+fn program() {
+  match json.parse("\{\"name\": \"Alice\", \"skills\": [\"go\", \"rust\"]\}", User) {
+    Ok(user) -> list.length(user.skills)
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

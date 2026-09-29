@@ -1,0 +1,19 @@
+import int
+
+trait Convertible(b) {
+    fn convert(self) -> b
+}
+
+trait Convertible(Int) for String {
+    fn convert(self) -> Int {
+        match int.parse(self) {
+            Ok(n) -> n
+            Err(_) -> 0
+        }
+    }
+}
+
+fn main() {
+    let n: Int = "42".convert()
+    println(n)
+}

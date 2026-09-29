@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]
+-- stderr-contains: json.parse_list
+-- stderr-contains: `Int`
+-- stderr-contains: record type
+import json as j
+
+fn main() {
+  println(j.parse_list("[1]", Int))
+}

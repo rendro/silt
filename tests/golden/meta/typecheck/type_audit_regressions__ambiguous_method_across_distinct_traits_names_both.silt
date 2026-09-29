@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: ambiguous method 'name' on type 'Int': provided by traits First, Second
+trait First { fn name(self) -> String }
+trait Second { fn name(self) -> String }
+trait First for Int { fn name(self) -> String { "first" } }
+trait Second for Int { fn name(self) -> String { "second" } }
+fn main() { println((5).name()) }

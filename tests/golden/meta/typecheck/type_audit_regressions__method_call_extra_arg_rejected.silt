@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: expects 1 argument
+import string
+fn main() {
+  println(string.length("hi", "extra"))
+}

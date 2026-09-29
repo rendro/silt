@@ -1,0 +1,10 @@
+fn demo(x: Int) -> String {
+  match x {
+    0 -> "zero"
+    _ -> "other"
+  }
+}
+fn main() {
+  println(demo(0))
+  println(demo(5))
+}

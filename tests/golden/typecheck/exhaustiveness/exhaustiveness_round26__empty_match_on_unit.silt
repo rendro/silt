@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive
+fn main() {
+  let u: () = ()
+  match u {
+  }
+}

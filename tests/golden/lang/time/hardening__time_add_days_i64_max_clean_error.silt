@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: time arithmetic overflow
+import time
+fn main() {
+  match time.date(2024, 1, 1) {
+    Ok(d) -> println(time.add_days(d, 9223372036854775807))
+    Err(e) -> panic(e)
+  }
+}

@@ -1,0 +1,28 @@
+-- Built-in enums (Weekday, Method) and the built-in Date record go
+-- through the same auto-derive synth globals as user types.
+import time
+import http
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(cmp_gen(Monday, Friday))
+    println(eq_gen(Monday, Monday))
+    let _ = h(Tuesday)
+    println(d(Wednesday))
+    println(cmp_gen(GET, POST))
+    println(d(DELETE))
+    match time.date(2025, 1, 15) {
+        Ok(a) -> match time.date(2025, 6, 30) {
+            Ok(b) -> {
+                println(cmp_gen(a, b))
+                println(eq_gen(a, a))
+                println(h(a) == h(a))
+                println(d(a))
+            }
+            Err(_) -> println("bad date b")
+        }
+        Err(_) -> println("bad date a")
+    }
+}

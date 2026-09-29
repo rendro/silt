@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+fn main() {
+  let n = 0.0
+  let _ = n + 1.5
+  n
+}

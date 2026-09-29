@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: missing required associated type 'Item'
+trait Stream {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+type Wrap { v: Int }
+
+trait Stream for Wrap {
+  fn first(self) -> Int { self.v }
+}
+
+fn main() {}

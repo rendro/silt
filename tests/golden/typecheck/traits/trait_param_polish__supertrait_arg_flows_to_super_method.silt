@@ -1,0 +1,27 @@
+trait Parent(a) {
+    fn parent_fn(self) -> a
+}
+
+trait Child(a): Parent(a) {
+    fn child_fn(self) -> a
+}
+
+type Holder { v: Int }
+
+trait Parent(Int) for Holder {
+    fn parent_fn(self) -> Int { self.v }
+}
+
+trait Child(Int) for Holder {
+    fn child_fn(self) -> Int { self.v + 1 }
+}
+
+fn call_parent(x: b, type a) -> a where b: Child(a) {
+    x.parent_fn()
+}
+
+fn main() {
+    let h = Holder { v: 5 }
+    let r: Int = call_parent(h, Int)
+    println(r)
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Foo'
+-- stderr-contains: unknown supertrait 'NotATrait'
+-- An unknown supertrait name is an error at the trait declaration.
+trait Foo: NotATrait {
+  fn foo(self) -> Int
+}
+
+fn main() {}

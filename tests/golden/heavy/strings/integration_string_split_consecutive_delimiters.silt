@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { string.split("a,,b", ",") }
+
+fn main() {
+  println(io.inspect(program()))
+}

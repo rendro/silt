@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 0
+-- `where a: Child` makes the supertrait's method callable on a descriptor.
+trait Parent {
+    fn parent() -> Self
+}
+
+trait Child: Parent {
+    fn child() -> Self
+}
+
+trait Parent for Int {
+    fn parent() -> Self { 1 }
+}
+
+trait Child for Int {
+    fn child() -> Self { 2 }
+}
+
+fn call_parent(type a) -> a where a: Child {
+    a.parent()
+}
+
+fn use_it() {
+    let _ = call_parent(Int)
+}
+
+fn main() {}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: duplicate field 'a' in record type 'R'
+type R { a: Int, a: String }
+fn main() {
+  let r = R { a: 1 }
+  println(r.a)
+}

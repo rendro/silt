@@ -1,0 +1,20 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-not-contains: overflowed its stack
+import task
+
+trait Deep { fn go(self) -> Int }
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+
+fn main() {
+  let t = task.spawn { -> 50000.go() }
+  println(task.join(t))
+}

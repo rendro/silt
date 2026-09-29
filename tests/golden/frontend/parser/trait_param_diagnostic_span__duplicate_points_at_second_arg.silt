@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- The trait-header parameter diagnostic points at the offending argument.
+-- stderr-contains: duplicate type variable 'a' in trait declaration
+-- stderr-contains: trait_param_diagnostic_span__duplicate_points_at_second_arg.silt:6:14
+trait Foo(a, a) { fn bar() }

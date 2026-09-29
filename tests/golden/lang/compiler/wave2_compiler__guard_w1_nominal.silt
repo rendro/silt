@@ -1,0 +1,15 @@
+type P { x: Int, y: Int }
+
+fn f(p: P) -> Int {
+  match p {
+    P { x: 1, .. } -> 100
+    P { x, .. } -> x
+  }
+}
+
+fn main() {
+  println(f(P { x: 5, y: 6 }))
+  println(f(P { x: 1, y: 6 }))
+  println({x: 1, y: 2} == P { x: 1, y: 2 })
+  println({x: 1, y: 3} == P { x: 1, y: 2 })
+}

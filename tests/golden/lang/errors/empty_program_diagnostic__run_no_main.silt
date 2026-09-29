@@ -1,0 +1,3 @@
+-- exit: 1
+-- stderr-contains: error[compile]: program has no main() function
+fn helper() { 42 }

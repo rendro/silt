@@ -1,0 +1,15 @@
+fn load_data() -> Result(Int, String) {
+  Ok(42)
+}
+
+fn main() {
+  let res = load_data()
+  match res {
+    Err(e) -> panic("load failed: {e}")
+    Ok(_)  -> {}
+  }
+  when let Ok(data) = res else {
+    panic("unreachable")
+  }
+  println(data)
+}

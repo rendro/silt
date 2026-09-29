@@ -1,0 +1,12 @@
+-- Closure capturing an outer variable used as a callback in list.map.
+import io
+import list
+fn program() {
+  let scale = 10
+  let bias = 3
+  [1, 2, 3] |> list.map(fn(x) { x * scale + bias })
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

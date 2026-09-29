@@ -1,0 +1,8 @@
+import util.{ Pt }
+
+fn main() {
+  let a = Pt { x: 1, y: 2 }
+  let b = Pt { x: 9, y: 9 }
+  print(a == b)
+  print(a == Pt { x: 1, y: 2 })
+}

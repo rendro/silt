@@ -1,0 +1,19 @@
+import io
+import json
+import list
+type Address { city: String, zip: String }
+type Person { name: String, address: Address }
+fn program() {
+  let json_str = "[\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}, \{\"name\": \"Bob\", \"address\": \{\"city\": \"LA\", \"zip\": \"90001\"\}\}]"
+  match json.parse_list(json_str, Person) {
+    Ok(people) -> match list.get(people, 1) {
+      Some(p) -> p.address.city
+      None -> "fail"
+    }
+    Err(_) -> "fail"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

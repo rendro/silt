@@ -1,0 +1,16 @@
+-- repeat: 3
+-- A timeout of 0ms should close (almost) immediately.
+import io
+import channel
+fn program() {
+  let timer = channel.timeout(0)
+  let result = channel.receive(timer)
+  match result {
+    Closed -> "closed"
+    _ -> "unexpected"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

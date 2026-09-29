@@ -1,0 +1,11 @@
+-- cmd: test
+-- A runtime error inside `silt test` is reported without the legacy
+-- "VM error:" prefix.
+-- exit: 1
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-not-contains: VM error:
+import list
+fn test_divides_by_zero() {
+  let xs = [1, 2, 3]
+  println(10 / (list.length(xs) - 3))
+}

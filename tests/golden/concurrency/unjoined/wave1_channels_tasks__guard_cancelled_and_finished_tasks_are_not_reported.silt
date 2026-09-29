@@ -1,0 +1,18 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- stderr-not-contains: failed and was never joined
+-- A cancelled task did not fail, and a task that ended well has
+-- nothing to report either. Passes with and without the fix.
+import channel
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let parked = task.spawn(fn() { channel.receive(never) })
+  let done = task.spawn(fn() { 42 })
+  time.sleep(time.ms(100))
+  task.cancel(parked)
+  time.sleep(time.ms(100))
+  println("main done")
+}

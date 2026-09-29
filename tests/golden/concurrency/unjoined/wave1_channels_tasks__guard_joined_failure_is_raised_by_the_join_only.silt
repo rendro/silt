@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- stderr-contains: joined task failed
+-- stderr-contains: worker failed
+-- stderr-not-contains: failed and was never joined
+-- A failure that a join received is the joiner's: it is raised there
+-- and not reported a second time. Passes with and without the fix.
+import task
+import time
+
+fn main() {
+  let failing = task.spawn(fn() { panic("worker failed") })
+  time.sleep(time.ms(100))
+  let v = task.join(failing)
+  println("not reached {v}")
+}

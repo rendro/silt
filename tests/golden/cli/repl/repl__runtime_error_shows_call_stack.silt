@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: fn g() { 1 / 0 }\nfn f() { g() + 0 }\nf() + 0\n:quit\n

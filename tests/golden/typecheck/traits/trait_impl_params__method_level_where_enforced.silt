@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'String' does not implement trait 'Greet'
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Wrap { fn unwrap(self) -> String }
+trait Wrap for Box(a) {
+  fn unwrap(self) -> String where a: Greet {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() {
+  let b = Box("hello")
+  println(b.unwrap())
+}

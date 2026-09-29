@@ -1,0 +1,10 @@
+type Box(T) { Box(T) }
+trait Unwrap { fn get(self) -> Int }
+trait Unwrap for Box(a) {
+  fn get(self) -> Int { match self { Box(inner) -> 1 } }
+}
+fn main() {
+  let b = Box(99)
+  let c = Box("hello")
+  println(b.get() + c.get())
+}

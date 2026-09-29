@@ -1,0 +1,7 @@
+-- Division, spaced and unspaced, is unaffected by the // hint.
+fn main() {
+  let a = 10
+  let b = 2
+  println(a / b)
+  println(a/b)
+}

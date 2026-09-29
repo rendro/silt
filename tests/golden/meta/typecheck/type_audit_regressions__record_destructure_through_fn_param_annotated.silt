@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+type Pair { a: Int, b: Int }
+fn sum(p: Pair) -> Int {
+  let Pair { a, b } = p
+  a + b
+}
+fn main() { println(sum(Pair { a: 10, b: 20 })) }

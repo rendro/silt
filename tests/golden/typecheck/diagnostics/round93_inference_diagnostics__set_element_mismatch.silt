@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: set elements must have the same type: first element is Int, but element 3 is String
+-- stderr-not-contains: expected String, got Int
+-- A mixed set literal gets the curated message, not a direction-reversed mismatch.
+fn main() {
+  let s = #[1, 2, "x"]
+  println(s)
+}

@@ -1,0 +1,10 @@
+fn loop_until(n, acc) {
+  match n <= 0 {
+    true -> acc
+    false -> loop_until(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  println(loop_until(5000, 0))
+}

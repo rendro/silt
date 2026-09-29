@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'break'
+-- stderr-contains: silt has no 'break'/'continue' — return early or restructure the recursion
+fn main() {
+  break
+}

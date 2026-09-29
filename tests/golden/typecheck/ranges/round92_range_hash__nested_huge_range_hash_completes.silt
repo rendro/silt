@@ -1,0 +1,12 @@
+-- A huge range inside a tuple and a record hashes promptly through auto-derive.
+type R { xs: List(Int) }
+fn main() {
+  let t = (1, 0..4000000000)
+  let th = t.hash()
+  println("tuple hashed ok")
+  let r = R { xs: 0..4000000000 }
+  let rh = r.hash()
+  println("record hashed ok")
+  println(th == th)
+  println(rh == rh)
+}

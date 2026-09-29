@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: byte-order mark (U+FEFF)
+-- stderr-contains: round92_bom__mid_file_bom_errors_with_readable_name.silt:6:
+-- stderr-not-contains: '﻿'
+fn main() {
+  let x﻿ = 1
+  println(x)
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: qualified record construction
+fn main() {
+  let a = util.pt { x: 1 }
+  ()
+}

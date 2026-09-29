@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+-- A non-builtin trait name typechecks even with a method called `eq`.
+trait MyEqual { fn eq(self) -> Bool }
+fn main() { println(1) }

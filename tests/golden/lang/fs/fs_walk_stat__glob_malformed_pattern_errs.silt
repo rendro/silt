@@ -1,0 +1,11 @@
+import fs
+import string
+fn main() {
+    match fs.glob("src/[unterminated") {
+        Ok(_) -> println("unexpected Ok")
+        Err(e) -> {
+            let msg = e.message()
+            println(string.starts_with(msg, "invalid input"))
+        }
+    }
+}

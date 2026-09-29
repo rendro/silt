@@ -1,0 +1,15 @@
+-- Tail call in a guardless match arm.
+import io
+fn countdown(n) {
+  match {
+    n == 0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+fn program() {
+  countdown(200000)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

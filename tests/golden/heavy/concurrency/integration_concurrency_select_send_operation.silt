@@ -1,0 +1,16 @@
+-- repeat: 3
+-- Select with a send operation — should succeed when channel has room
+import io
+import channel
+fn program() {
+  let ch = channel.new(1)
+
+  match channel.select([Send(ch, 42)]) {
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

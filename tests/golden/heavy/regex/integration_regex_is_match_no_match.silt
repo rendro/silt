@@ -1,0 +1,9 @@
+import io
+import regex
+fn program() {
+  regex.is_match("\\d+", "no numbers here")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

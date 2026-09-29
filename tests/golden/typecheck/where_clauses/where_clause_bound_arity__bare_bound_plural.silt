@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Convert' expects 2 type arguments in bound, got 0
+trait Convert(from, to) {
+  fn convert(self) -> to
+}
+fn g(x: a) -> Float where a: Convert { 1.0 }
+fn main() { }

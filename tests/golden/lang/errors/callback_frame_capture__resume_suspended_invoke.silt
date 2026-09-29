@@ -1,0 +1,25 @@
+-- exit: 1
+-- repeat: 5
+import channel
+import task
+
+fn consumer(c, blocker) {
+  channel.each(c, fn(x) {
+    let v = channel.receive(blocker)
+    1 / 0
+  })
+}
+
+fn producer(blocker) {
+  channel.send(blocker, 99)
+}
+
+fn main() {
+  let c = channel.new(1)
+  let blocker = channel.new(0)
+  channel.send(c, 1)
+  channel.close(c)
+  let t1 = task.spawn(fn() { consumer(c, blocker) })
+  let _ = task.spawn(fn() { producer(blocker) })
+  task.join(t1)
+}

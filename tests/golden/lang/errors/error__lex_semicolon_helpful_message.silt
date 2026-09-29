@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: semicolons are not used
+let x = 1; let y = 2

@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: constructor 'Just' expects 1 field, but pattern has 2
+-- stderr-contains: type_audit_regressions__constructor_arity_caret_lands_on_pattern_not_scrutinee.silt:8:5
+type Maybe { Just(Int), Nothing }
+fn main() {
+  match Just(1) {
+    Just(x, y) -> println(x)
+    Nothing -> println(0)
+  }
+}

@@ -1,0 +1,5 @@
+error[type]: operator '>' requires Int, Float, ExtFloat, String, List, Range, Record, or Variant, got 'Bool'
+ --> binop_single_diagnostic_round67__bool_gt_int_single.silt:4:14
+   |
+ 4 |     let x = (true > 1)
+   |              ^ operator '>' requires Int, Float, ExtFloat, String, List, Range, Record, or Variant, got 'Bool'

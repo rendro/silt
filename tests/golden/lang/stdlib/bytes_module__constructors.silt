@@ -1,0 +1,22 @@
+import bytes
+fn main() {
+  -- empty has zero length
+  println(bytes.length(bytes.empty()))
+  -- from_string / to_string round trip, ascii and multibyte
+  match bytes.to_string(bytes.from_string("hello")) {
+    Ok(s) -> println(s)
+    Err(e) -> println(e.message())
+  }
+  match bytes.to_string(bytes.from_string("café 🎉")) {
+    Ok(s) -> println(s)
+    Err(e) -> println(e.message())
+  }
+  -- 0xff alone is not valid utf-8
+  match bytes.from_list([255]) {
+    Ok(b) -> match bytes.to_string(b) {
+      Ok(_) -> println("wrong: should have errored")
+      Err(_) -> println("invalid utf-8 rejected")
+    }
+    Err(_) -> println("wrong: from_list rejected")
+  }
+}

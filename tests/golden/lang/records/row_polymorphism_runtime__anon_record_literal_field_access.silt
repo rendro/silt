@@ -1,0 +1,5 @@
+fn main() {
+  let p = {name: "Alice", age: 30}
+  println(p.name)
+  println(p.age)
+}

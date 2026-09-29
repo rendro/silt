@@ -1,0 +1,5 @@
+  PASS cli__passing_tests_and_skip.silt::test_add
+  PASS cli__passing_tests_and_skip.silt::test_mul
+  SKIP cli__passing_tests_and_skip.silt::skip_test_broken
+
+3 tests: 2 passed, 0 failed, 1 skipped

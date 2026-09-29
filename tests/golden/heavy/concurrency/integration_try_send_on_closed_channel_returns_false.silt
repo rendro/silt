@@ -1,0 +1,13 @@
+-- repeat: 3
+-- try_send on a closed channel should return false (not panic).
+import io
+import channel
+fn program() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  channel.try_send(ch, 42)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

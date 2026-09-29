@@ -1,0 +1,23 @@
+-- repeat: 3
+-- A task parked in recv_timeout is cancelled; afterwards no receiver is
+-- parked, so a rendezvous try_send fails (no phantom send).
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() {
+    match channel.recv_timeout(ch, time.ms(5000)) {
+      Ok(_) -> 1
+      Err(_) -> 0
+    }
+  })
+  time.sleep(time.ms(50))
+  task.cancel(h)
+  time.sleep(time.ms(50))
+  let r = match channel.try_send(ch, 42) {
+    true -> "leaked"
+    false -> "ok"
+  }
+  println(r)
+}

@@ -1,0 +1,9 @@
+-- A polymorphic `<` on generic records holding functions fails at run time.
+-- exit: 1
+-- stderr-contains: does not implement Compare
+-- stderr-contains: 'Fn'
+type Box(a) { v: a }
+fn lt(a: x, b: x) -> Bool { a < b }
+fn main() {
+  println(lt(Box{v: fn(y) { y }}, Box{v: fn(y) { y }}))
+}

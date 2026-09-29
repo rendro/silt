@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: orphan impl: trait 'Display' is from package '__builtin__' and type 'List' is from package '__builtin__'
+-- stderr-contains: current package 'myapp'
+-- stderr-contains: --> main.silt:8:
+-- the caret lands on the impl block (line 8), not on `fn pad` (line 7)
+fn pad() { }
+trait Display for List(a) {
+  fn display(self) -> String { "x" }
+}
+fn main() {}

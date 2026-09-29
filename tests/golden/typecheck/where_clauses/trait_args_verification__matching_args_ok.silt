@@ -1,0 +1,4 @@
+trait TryInto(b) { fn try_into(self) -> Result(b, String) }
+trait TryInto(Float) for String { fn try_into(self) = Ok(1.5) }
+fn convert(s: a) -> Result(Float, String) where a: TryInto(Float) { s.try_into() }
+fn main() { println(convert("hi")) }

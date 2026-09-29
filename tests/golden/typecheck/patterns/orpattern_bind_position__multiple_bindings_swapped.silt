@@ -1,0 +1,11 @@
+-- `P(a, b) | Q(b, a)`: P(10, 3) gives 7, Q(10, 3) gives -7.
+type T { P(Int, Int), Q(Int, Int) }
+fn diff(t: T) -> Int {
+  match t {
+    P(a, b) | Q(b, a) -> a - b
+  }
+}
+fn main() {
+  println(diff(P(10, 3)))
+  println(diff(Q(10, 3)))
+}

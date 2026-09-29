@@ -1,0 +1,19 @@
+-- repeat: 3
+-- A value delivered mid-window to a task parked in recv_timeout is
+-- returned as Ok(v), not misreported as a timeout.
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn(fn() {
+    match channel.recv_timeout(ch, time.ms(5000)) {
+      Ok(v) -> v
+      Err(_) -> -1
+    }
+  })
+  time.sleep(time.ms(50))
+  channel.send(ch, 42)
+  let r = task.join(h)
+  println("{r}")
+}

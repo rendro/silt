@@ -1,0 +1,6 @@
+import list as l
+fn main() {
+  println(l.product([1, 2, 3, 4]))
+  println(l.sum_float([1.5, 2.5]))
+  println(l.product_float([2.0, 3.0]))
+}

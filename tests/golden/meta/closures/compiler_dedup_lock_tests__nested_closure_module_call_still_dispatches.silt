@@ -1,0 +1,13 @@
+-- With no shadowing local, a module call inside a nested closure still
+-- dispatches to the module.
+import math
+
+fn main() {
+  let outer = fn() {
+    let inner = fn() {
+      math.sqrt(9.0)
+    }
+    inner()
+  }
+  println(outer())
+}

@@ -1,0 +1,25 @@
+import json
+import toml
+
+type Post {
+  title: String,
+  tags: Tags,
+  n: Count,
+  pair: Pair(Int),
+}
+
+type Tags = List(String)
+type Count = Int
+type Pair(a) = (a, a)
+
+fn main() {
+  let raw = "\{\"title\": \"hi\", \"tags\": [\"a\", \"b\"], \"n\": 3, \"pair\": [1, 2]\}"
+  match json.parse(raw, Post) {
+    Ok(p) -> println("ok: {p.title} {p.tags} {p.n + 1} {p.pair}")
+    Err(e) -> println("err: {e.message()}")
+  }
+  match toml.parse("title = \"hi\"\ntags = [\"a\", \"b\"]\nn = 3\npair = [1, 2]\n", Post) {
+    Ok(p) -> println("ok: {p.title} {p.tags} {p.n + 1} {p.pair}")
+    Err(e) -> println("err: {e.message()}")
+  }
+}

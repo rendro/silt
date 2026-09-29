@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- A `type a` function works as a pipe target.
+import json
+
+type Todo { id: Int, title: String }
+
+fn decode(body: String, type a) -> Result(a, JsonError) {
+    json.parse(body, a)
+}
+
+fn use_it(body: String) {
+    let _ = body |> decode(Todo)
+}
+
+fn main() {}

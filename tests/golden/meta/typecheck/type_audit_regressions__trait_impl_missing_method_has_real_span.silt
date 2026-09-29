@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: trait impl 'Foo' for 'Int' is missing method 'a'
+-- stderr-contains: type_audit_regressions__trait_impl_missing_method_has_real_span.silt:9:1
+trait Foo {
+  fn a(self) -> Int
+  fn b(self) -> Int
+}
+trait Foo for Int { }
+fn main() { 42 }

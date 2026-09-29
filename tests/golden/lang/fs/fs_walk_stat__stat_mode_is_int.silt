@@ -1,0 +1,8 @@
+import fs
+fn main() {
+    let m = match fs.stat("fs_walk_stat__stat_mode_is_int.silt") {
+        Ok(s) -> s.mode
+        Err(_) -> -1
+    }
+    println(m >= 0)
+}

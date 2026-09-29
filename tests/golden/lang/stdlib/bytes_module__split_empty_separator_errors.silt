@@ -1,0 +1,7 @@
+-- The original bug was an infinite loop; the harness timeout catches a hang.
+-- exit: 1
+-- stderr-contains: bytes.split: separator must be non-empty
+import bytes
+fn main() {
+  bytes.split(bytes.from_string("hello"), bytes.empty())
+}

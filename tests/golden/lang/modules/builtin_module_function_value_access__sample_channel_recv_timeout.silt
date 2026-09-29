@@ -1,0 +1,11 @@
+import channel
+import time
+fn main() {
+  let f = channel.recv_timeout
+  let ch: Channel(Int) = channel.new(1)
+  channel.send(ch, 99)
+  match f(ch, time.ms(50)) {
+    Ok(v) -> println(v)
+    Err(_) -> println(-1)
+  }
+}

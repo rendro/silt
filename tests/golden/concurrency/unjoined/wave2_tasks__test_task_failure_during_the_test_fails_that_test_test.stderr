@@ -1,0 +1,10 @@
+  FAIL wave2_tasks__test_task_failure_during_the_test_fails_that_test_test.silt::test_spawns_failing_task
+    error[runtime]: task <handle:0> failed and was never joined: division by zero
+     --> wave2_tasks__test_task_failure_during_the_test_fails_that_test_test.silt:16:5
+        |
+     16 |     10 / zero
+        |     ^ task <handle:0> failed and was never joined: division by zero
+      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+  PASS wave2_tasks__test_task_failure_during_the_test_fails_that_test_test.silt::test_other
+
+2 tests: 1 passed, 1 failed, 0 skipped

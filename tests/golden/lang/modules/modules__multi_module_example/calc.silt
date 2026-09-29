@@ -1,0 +1,3 @@
+pub fn add(a, b) = a + b
+pub fn square(x) = x * x
+fn internal_helper(x) = x * 2

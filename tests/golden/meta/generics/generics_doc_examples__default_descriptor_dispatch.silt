@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 0
+trait Default {
+    fn default() -> Self
+}
+
+trait Default for Int {
+    fn default() -> Self { 0 }
+}
+
+fn default(type a) -> a where a: Default {
+    a.default()
+}
+
+fn use_it() {
+    let _ = default(Int)
+}
+
+fn main() { use_it() }

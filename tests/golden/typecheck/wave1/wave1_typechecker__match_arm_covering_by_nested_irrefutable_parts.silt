@@ -1,0 +1,14 @@
+-- exit: 0
+-- A single match arm of nested single-variant/any-list parts is exhaustive.
+type Wrap { W(Int) }
+
+fn main() {
+  let v = ((W(1), 2), 3)
+  match v {
+    ((W(q), r), t) -> println(q + r + t)
+  }
+  let lv = ([1, 2], 3)
+  match lv {
+    ([..rest], u) -> println("{rest}{u}")
+  }
+}

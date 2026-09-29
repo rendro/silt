@@ -1,0 +1,6 @@
+type Tree { Leaf, Node(Tree, Tree), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+    println(cmp_gen(Leaf, Node(Leaf, Leaf)))
+    println(cmp_gen(Node(Leaf, Leaf), Node(Leaf, Leaf)))
+}

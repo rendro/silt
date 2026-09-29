@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Cast' expects 1 type argument in bound, got 2
+-- `where a: Cast(Int, String)` on one-parameter `trait Cast(to)` is an arity error.
+trait Cast(to) { fn cast(self) -> to }
+trait Cast(Float) for Int { fn cast(self) -> Float { 1.0 } }
+fn g(x: a) -> Float where a: Cast(Int, String) { 1.0 }
+fn main() { let _ = g(42)
+  println("accepted") }

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: forms a cycle
+-- stderr-contains: PhDCycA
+-- stderr-contains: PhDCycB
+-- A two-alias cycle is rejected, naming both.
+type PhDCycA = PhDCycB
+type PhDCycB = PhDCycA
+fn main() {}

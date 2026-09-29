@@ -1,0 +1,19 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-not-contains: deadlock on main thread
+-- stderr-contains: failed and was never joined
+-- stderr-contains: worker failed
+-- The exact .stderr pins one report for one failed task.
+-- The failure of a task that is never joined is reported on stderr,
+-- with its error, and the run exits with status 1.
+--
+-- The main thread cannot wait for the failure without joining the
+-- task, so it sleeps. The sleep is long, to leave the task time to
+-- fail on a loaded machine; nothing is asserted about time.
+import task
+import time
+fn main() {
+  let _ = task.spawn(fn() { panic("worker failed") })
+  time.sleep(time.ms(500))
+  println("main done")
+}

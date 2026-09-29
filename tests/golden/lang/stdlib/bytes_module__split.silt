@@ -1,0 +1,21 @@
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.from_string("a,b,c"), bytes.from_string(","))
+  println(list.map(parts) { p ->
+    match bytes.to_string(p) {
+      Ok(s) -> s
+      Err(e) -> e.message()
+    }
+  })
+  println(list.length(bytes.split(bytes.from_string("hello"), bytes.from_string(","))))
+  -- empty input yields one empty part
+  let empties = bytes.split(bytes.empty(), bytes.from_string(","))
+  let first_len = match list.head(empties) {
+    Some(b) -> bytes.length(b)
+    None -> -1
+  }
+  println((list.length(empties), first_len))
+  println(list.length(bytes.split(bytes.from_string("a,,b"), bytes.from_string(","))))
+  println(list.length(bytes.split(bytes.from_string("foo::bar::baz"), bytes.from_string("::"))))
+}

@@ -25,7 +25,7 @@ use super::conversions::floor_char_boundary;
 /// `off` is clamped to `source.len()` and snapped back to the previous
 /// `char` boundary, so no offset can make the slices below panic.
 ///
-/// Lock: tests/lsp_span_at_offset_dedup_lock_tests.rs + the unit tests
+/// Lock: tests/lsp/lsp_span_at_offset_dedup_lock_tests.rs + the unit tests
 /// below.
 pub(super) fn span_at_offset(source: &str, off: usize) -> Span {
     let off = floor_char_boundary(source, off);

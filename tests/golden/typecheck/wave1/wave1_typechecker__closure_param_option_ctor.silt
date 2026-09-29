@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in closure parameter
+-- stderr-contains: constructor 'Some' is only one of 2 variants of enum 'Option'
+-- stderr-contains: `match`
+-- stderr-contains: `when let ... else`
+-- stderr-not-contains: error[runtime]
+-- `{ Some(x) -> ... }` as a closure parameter is refutable and rejected.
+import list
+fn main() {
+  println([Some(1), None] |> list.map { Some(x) -> x + 1 })
+}

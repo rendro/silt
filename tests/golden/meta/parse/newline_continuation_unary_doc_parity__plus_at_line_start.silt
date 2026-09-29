@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected expression, found +
+-- silt has no unary plus: a line starting with `+` is a parse error.
+fn main() {
+  let y = 10
+    + 20
+  println("{y}")
+}

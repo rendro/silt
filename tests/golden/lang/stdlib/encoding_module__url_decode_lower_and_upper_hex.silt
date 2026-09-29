@@ -1,0 +1,11 @@
+import encoding
+fn main() {
+  match encoding.url_decode("%2F") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+  match encoding.url_decode("%2f") {
+    Ok(s) -> println(s)
+    Err(e) -> println(e)
+  }
+}

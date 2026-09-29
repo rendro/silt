@@ -1,0 +1,2 @@
+fn secret() = 42
+pub fn public() = secret()

@@ -1,0 +1,4 @@
+import list
+fn main() {
+  println([10, 20] |> list.flat_map { _ -> 1..4 })
+}

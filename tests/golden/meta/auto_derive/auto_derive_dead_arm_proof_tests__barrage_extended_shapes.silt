@@ -1,0 +1,38 @@
+type Tree { Leaf, Node(Tree, Tree), }
+type GTree(a) { GLeaf, GNode(GTree(a), GTree(a)), }
+type Big { a: Int, b: Int, c: Int, d: String, }
+type Status { Active(Int), Pending, Done, Cancelled(String), Failed(Int, String), }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    -- Shape 7: self-recursive enum
+    println(cmp_gen(Leaf, Node(Leaf, Leaf)))
+    println(cmp_gen(Node(Leaf, Leaf), Node(Leaf, Leaf)))
+    println(eq_gen(Node(Leaf, Leaf), Node(Leaf, Leaf)))
+    println(d(Node(Leaf, Leaf)))
+
+    -- Shape 8: self-recursive generic enum
+    let gl: GTree(Int) = GLeaf
+    let gn: GTree(Int) = GNode(GLeaf, GLeaf)
+    println(cmp_gen(gl, gn))
+    println(d(gl))
+
+    -- Shape 9: 3+ field record
+    let p = Big { a: 1, b: 2, c: 3, d: "x" }
+    let q = Big { a: 1, b: 2, c: 3, d: "y" }
+    let r = Big { a: 1, b: 2, c: 3, d: "x" }
+    println(cmp_gen(p, q))
+    println(eq_gen(p, r))
+    println(eq_gen(p, q))
+    let _ = h(p)
+    println(d(p))
+
+    -- Shape 10: 3+ variant enum
+    println(cmp_gen(Active(1), Pending))
+    println(cmp_gen(Cancelled("x"), Failed(1, "y")))
+    println(eq_gen(Pending, Done))
+    let _ = h(Active(5))
+    println(d(Failed(2, "z")))
+}

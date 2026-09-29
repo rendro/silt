@@ -1,0 +1,9 @@
+-- strings should be quoted in inspect output
+import io
+fn program() {
+  io.inspect("hello")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

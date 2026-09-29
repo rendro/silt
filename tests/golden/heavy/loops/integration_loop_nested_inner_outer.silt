@@ -1,0 +1,21 @@
+import io
+fn program() {
+  loop i = 0, outer_sum = 0 {
+    match i >= 3 {
+      true -> outer_sum
+      _ -> {
+        let inner = loop j = 0, s = 0 {
+          match j >= 3 {
+            true -> s
+            _ -> loop(j + 1, s + 1)
+          }
+        }
+        loop(i + 1, outer_sum + inner)
+      }
+    }
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

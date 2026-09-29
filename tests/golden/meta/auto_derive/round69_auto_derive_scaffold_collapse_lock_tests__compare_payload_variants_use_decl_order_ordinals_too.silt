@@ -1,0 +1,11 @@
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn h(a: a) -> Int where a: Hash { a.hash() }
+fn d(a: a) -> String where a: Display { a.display() }
+type Status { Pending, Active(Int), Done, }
+fn main() {
+    println(cmp_gen(Pending, Active(99)))
+    println(cmp_gen(Done, Pending))
+    println(cmp_gen(Active(5), Active(5)))
+    println(cmp_gen(Active(7), Done))
+}

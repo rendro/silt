@@ -1,0 +1,12 @@
+-- exit: 1
+import calc
+
+fn helper() {
+  let r = calc.wrapper()
+  r
+}
+
+fn main() {
+  let r = helper()
+  r
+}

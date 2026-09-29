@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 0
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+type Color { Red, Green, Blue }
+
+type Expr {
+  Num(Int),
+  Add(Expr, Expr),
+}
+
+fn main() {
+  let _s = Circle(5.0)
+  let _r = Rect(3.0, 4.0)
+  let _c = Red
+  let _e = Add(Num(1), Num(2))
+  ()
+}

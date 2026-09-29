@@ -1,0 +1,12 @@
+-- The cycle is reported, with no misleading mismatch at the use site.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: forms a cycle
+-- stderr-not-contains: expected B, got Int
+-- stderr-not-contains: expected A, got Int
+type A = B
+type B = A
+fn main() -> Int {
+  let v: A = 42
+  v
+}

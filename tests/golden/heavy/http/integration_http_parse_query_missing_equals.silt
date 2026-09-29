@@ -1,0 +1,10 @@
+-- Key without `=` maps to a single empty string.
+import io
+import http
+fn program() {
+  http.parse_query("flag&other=x")
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

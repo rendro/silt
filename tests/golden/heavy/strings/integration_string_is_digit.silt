@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { (string.is_digit("7"), string.is_digit("x")) }
+
+fn main() {
+  println(io.inspect(program()))
+}

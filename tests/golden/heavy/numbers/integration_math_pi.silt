@@ -1,0 +1,7 @@
+import io
+import math
+fn program() { math.pi }
+
+fn main() {
+  println(io.inspect(program()))
+}

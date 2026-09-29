@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> callback_frame_capture__nested_innermost_frame.silt:3:19
+   |
+ 3 | fn innermost(x) { 1 / 0 }
+   |                   ^ division by zero
+
+call stack:
+  -> innermost  at callback_frame_capture__nested_innermost_frame.silt:3:19
+  -> outer  at callback_frame_capture__nested_innermost_frame.silt:4:19
+  -> main  at callback_frame_capture__nested_innermost_frame.silt:6:3

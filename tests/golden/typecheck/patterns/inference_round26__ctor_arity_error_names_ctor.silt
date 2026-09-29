@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: constructor 'Some' expects 1 field, but pattern has 2
+fn main() {
+  match Some(1) {
+    Some(x, y) -> println(x)
+    None -> println(0)
+  }
+}

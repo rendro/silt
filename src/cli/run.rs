@@ -321,7 +321,7 @@ pub(crate) fn render_runtime_error(
     // style the user typed on the command line, the `-->` line
     // included.
     //
-    // Lock: tests/cli_test_rendering_tests.rs
+    // Lock: tests/cli/cli_test_rendering_tests.rs
     // `test_cross_module_call_stack_uses_consistent_path_style`
     // `test_run_module_error_paths_consistently_normalized`.
     //
@@ -329,7 +329,7 @@ pub(crate) fn render_runtime_error(
     // `crate::cli::paths::display_path_for` helper — `silt test`
     // (src/cli/test.rs) builds the same closure from it, so the
     // two subcommands can never drift. Lock:
-    // tests/round101_display_path_helper_lock_tests.rs.
+    // tests/meta/round101_display_path_helper_lock_tests.rs.
     let user_path_is_absolute = Path::new(path).is_absolute();
     let cwd = std::env::current_dir().ok();
     let normalize_path = |candidate: &Path| -> String {

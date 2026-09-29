@@ -1,0 +1,7 @@
+import io
+import string
+fn program() { (string.is_whitespace(" "), string.is_whitespace("a")) }
+
+fn main() {
+  println(io.inspect(program()))
+}

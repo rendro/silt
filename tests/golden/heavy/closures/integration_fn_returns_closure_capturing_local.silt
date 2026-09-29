@@ -1,0 +1,14 @@
+import io
+fn make_counter(start) {
+  let base = start * 10
+  fn(n) { base + n }
+}
+
+fn program() {
+  let f = make_counter(5)
+  f(3)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

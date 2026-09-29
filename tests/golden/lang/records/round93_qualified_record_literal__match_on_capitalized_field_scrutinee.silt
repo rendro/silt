@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: error[parse]
+fn main() {
+  let r = match util.Pt {
+    _ -> 1,
+  }
+  print(r)
+}

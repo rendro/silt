@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected String, got Int
+ --> ascribed_let_binop_single_diagnostic__mismatch_prints_once.silt:5:22
+   |
+ 5 |     let n: Int = s + 1
+   |                      ^ type mismatch: expected String, got Int

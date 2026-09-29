@@ -1,0 +1,21 @@
+-- Define a trait with Self in method signatures, impl for a type
+import io
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+  fn combine(a: Self, b: Self) -> Self { a + b }
+}
+
+fn program() {
+  let x = Int.empty()
+  let y = Int.combine(3, 4)
+  x + y
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

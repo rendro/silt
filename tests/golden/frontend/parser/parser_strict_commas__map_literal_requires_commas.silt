@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: map literal
+-- stderr-contains: ','
+fn main() { #{"a": 1 "b": 2} }

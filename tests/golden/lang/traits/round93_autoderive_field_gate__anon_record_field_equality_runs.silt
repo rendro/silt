@@ -1,0 +1,8 @@
+type R { x: {a: Int} }
+fn main() {
+    let r1 = R{x: {a: 1}}
+    let r2 = R{x: {a: 1}}
+    let r3 = R{x: {a: 2}}
+    println(r1 == r2)
+    println(r1 == r3)
+}

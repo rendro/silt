@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot pipe into function taking 2 arguments
+fn add(a: Int, b: Int) -> Int { a + b }
+fn main() {
+  let r = 5 |> add
+  r + 1
+}

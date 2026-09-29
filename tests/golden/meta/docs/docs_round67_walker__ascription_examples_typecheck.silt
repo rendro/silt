@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+fn main() {
+  let xs = [] as List(Int)
+  let rows = [[]] as List(List(Int))
+  ()
+}

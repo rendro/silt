@@ -1,0 +1,9 @@
+type Color { Red, Green, Blue, }
+trait Display for Color {
+    fn display(self: Color) -> String = "<color>"
+}
+fn d(a: a) -> String where a: Display { a.display() }
+fn main() {
+    println(d(Red))
+    println(d(Blue))
+}

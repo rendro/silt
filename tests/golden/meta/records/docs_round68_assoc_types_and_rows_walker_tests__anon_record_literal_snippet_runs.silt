@@ -1,0 +1,6 @@
+fn main() {
+  let alice = { name: "Alice", age: 30 }
+  let bob   = { name: "Bob",   age: 25 }
+  println(alice.name)
+  println(bob.name)
+}

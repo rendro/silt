@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires
+-- stderr-contains: got 'List(Int)'
+fn main() {
+  let xs = [1, 2] + [3, 4]
+  xs
+}

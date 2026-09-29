@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown field
+import a
+import b
+
+fn main() {
+  let q = b.Pt { x: 1, y: 2 }
+  print(q)
+}

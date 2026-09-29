@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: map keys must have the same type: first key is String, but key 2 is Int
+-- stderr-not-contains: expected Int, got String
+-- Mixed map keys get the curated message.
+fn main() {
+  let m = #{ "a": 1, 2: 3 }
+  println(m)
+}

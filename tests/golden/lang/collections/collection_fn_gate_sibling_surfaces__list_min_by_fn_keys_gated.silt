@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: does not implement Compare
+import list
+fn main() {
+  let f = fn(y){ y }
+  let g = fn(z){ z + 100 }
+  println(list.min_by([1, 2], fn(x){ match x { 1 -> f, _ -> g } }))
+}

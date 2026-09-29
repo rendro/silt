@@ -1,0 +1,6 @@
+import stream
+fn main() {
+  stream.from_range(1, 10)
+    |> stream.fold(0, fn(acc, x) { acc + x })
+    |> println
+}

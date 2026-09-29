@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+type Wrapper { Wrap(Int) }
+fn main() {
+  let w = Wrap(5)
+  let Wrap(r) = w
+  println(r + 1)
+}

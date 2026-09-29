@@ -1,0 +1,20 @@
+import list
+fn main() {
+  let items = [1, 7, 3]
+  let r = match items |> list.any { x -> x > 5 } {
+    true -> "big"
+    false -> "small"
+  }
+  let s = match items |> list.filter { x -> x > 1 } |> list.map { x -> x * 2 } {
+    [] -> "none"
+    ys -> "{ys}"
+  }
+  let t = match items
+    |> list.filter { x -> x > 1 }
+    |> list.length
+  {
+    2 -> "two"
+    _ -> "other"
+  }
+  println("{r} {s} {t}")
+}

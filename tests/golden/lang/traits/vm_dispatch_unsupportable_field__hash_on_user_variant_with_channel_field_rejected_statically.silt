@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: type 'V' does not implement trait 'Hash'
+import channel
+type V { Box1(Channel(Int)), Other }
+fn h(x: a) -> Int where a: Hash { x.hash() }
+fn main() {
+    let v = Box1(channel.new(1))
+    println(h(v))
+}

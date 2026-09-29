@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in `let`
+fn main() {
+  let xs = [1, 2, 3]
+  let [a, b, c] = xs
+  ()
+}

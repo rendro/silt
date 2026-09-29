@@ -1,0 +1,17 @@
+import io
+import time
+fn program() {
+  -- 2024-03-16 was a Saturday
+  must_date(2024, 3, 16) |> time.weekday
+}
+
+fn must_date(y, m, d) {
+  match time.date(y, m, d) {
+    Ok(date) -> date
+    Err(_) -> panic("invalid date")
+  }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,12 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: cannot load module 'ghost_mod'
+-- stderr-not-contains: undefined variable
+-- stderr-not-contains: unknown module
+-- stderr-not-contains: failed to compile — type errors
+import test
+import ghost_mod.{answer}
+
+fn test_answer() {
+    test.assert_eq(answer() + 1, 42)
+}

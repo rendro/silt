@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: Range(Int)
+fn main() {
+    let s: String = 1..10
+    s
+}

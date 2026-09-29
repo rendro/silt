@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: error
+import a
+
+fn main() {
+  let c = a.Red
+  c
+}

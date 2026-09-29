@@ -1,0 +1,9 @@
+-- A module imported both plainly and under an alias: both paths resolve.
+-- stderr-not-contains: undefined global
+import geometry
+import geometry as g
+
+fn main() {
+  println(geometry.area(2, 5))
+  println(g.area(3, 4))
+}

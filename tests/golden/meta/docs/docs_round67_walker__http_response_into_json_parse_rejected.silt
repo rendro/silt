@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: type mismatch
+import http
+import json
+import result
+
+type Todo {
+  id: Int,
+  title: String,
+}
+
+fn process(t: Todo) -> Todo = t
+
+fn fetch_todo(url: String) -> Result(Todo, HttpError) {
+  let _x = http.get(url)?
+    |> json.parse(Todo)
+    |> result.map_ok(process)
+  Ok(Todo { id: 1, title: "" })
+}
+
+fn main() {
+  ()
+}

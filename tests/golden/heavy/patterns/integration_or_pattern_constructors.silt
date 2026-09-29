@@ -1,0 +1,15 @@
+import io
+type Color { Red, Green, Blue }
+fn is_warm(c) {
+  match c {
+    Red | Green -> true
+    Blue -> false
+  }
+}
+fn program() {
+  is_warm(Red)
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

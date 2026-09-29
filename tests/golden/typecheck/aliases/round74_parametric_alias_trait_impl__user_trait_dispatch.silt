@@ -1,0 +1,7 @@
+type Pair(a) = (a, a)
+trait Show { fn show(self) -> String }
+trait Show for Pair(a) { fn show(self) -> String = "p" }
+fn main() {
+  let p: Pair(Int) = (1, 2)
+  println(p.show())
+}

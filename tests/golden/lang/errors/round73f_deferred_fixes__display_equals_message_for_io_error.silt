@@ -1,0 +1,19 @@
+-- "{e}" and e.message() render a stdlib error the same way.
+import io
+fn main() {
+    match io.read_file("nope_round73f_does_not_exist.txt") {
+        Ok(_) -> ()
+        Err(e) -> {
+            let display_form = "{e}"
+            let message_form = e.message()
+            match display_form == message_form {
+                true -> println("EQUIV")
+                false -> {
+                    println("DRIFT")
+                    println(display_form)
+                    println(message_form)
+                }
+            }
+        }
+    }
+}

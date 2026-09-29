@@ -1,0 +1,8 @@
+-- stderr-not-contains: undefined global
+import geometry as g1
+import geometry as g2
+
+fn main() {
+  println(g1.area(3, 4))
+  println(g2.area(2, 5))
+}

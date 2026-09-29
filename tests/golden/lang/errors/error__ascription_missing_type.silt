@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected identifier, found }
+fn main() {
+  42 as
+}

@@ -1,0 +1,9 @@
+type Wrapped(a) { value: a }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn main() {
+    let p = Wrapped { value: 1 }
+    let q = Wrapped { value: 1 }
+    let r = Wrapped { value: 2 }
+    println(eq_gen(p, q))
+    println(eq_gen(p, r))
+}

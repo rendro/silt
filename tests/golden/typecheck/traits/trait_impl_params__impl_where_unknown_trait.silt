@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown trait 'NotARealTrait'
+type Box(T) { Box(T) }
+trait Show { fn show(self) -> String }
+trait Show for Box(a) where a: NotARealTrait {
+  fn show(self) -> String {
+    match self { Box(inner) -> "x" }
+  }
+}
+fn main() {}

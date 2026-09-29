@@ -1,0 +1,10 @@
+import io
+import set
+fn program() {
+  let s = #[1, 2, 3, 4]
+  set.fold(s, 0) { acc, x -> acc + x }
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

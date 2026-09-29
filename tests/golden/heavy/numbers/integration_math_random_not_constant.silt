@@ -1,0 +1,11 @@
+import io
+import math
+fn program() {
+    let a = math.random()
+    let b = math.random()
+    a != b
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: mismatch
+fn greet(name: String) = println(name)
+fn main() { greet(42) }

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot infer the type of `x`
+fn default() -> a { panic("no value") }
+fn main() {
+  let r = match 1 {
+    _ -> ({
+      let x = default()
+      42
+    }) as Int
+  }
+  r
+}

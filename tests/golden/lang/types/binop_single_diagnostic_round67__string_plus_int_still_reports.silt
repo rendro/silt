@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+fn main() {
+    let s: String = "hello"
+    let x = s + 1
+    ()
+}

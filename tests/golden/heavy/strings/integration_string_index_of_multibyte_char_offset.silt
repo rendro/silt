@@ -1,0 +1,10 @@
+-- "é" is a 2-byte UTF-8 sequence, so "x" sits at byte index 2 but
+-- character index 1. If the builtin returned the raw byte offset the
+-- result would be Some(2); the correct character-based result is Some(1).
+import io
+import string
+fn program() { string.index_of("éxyz", "x") }
+
+fn main() {
+  println(io.inspect(program()))
+}

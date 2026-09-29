@@ -1,0 +1,7 @@
+import io
+import list
+fn program() { list.enumerate(["a", "b"]) }
+
+fn main() {
+  println(io.inspect(program()))
+}

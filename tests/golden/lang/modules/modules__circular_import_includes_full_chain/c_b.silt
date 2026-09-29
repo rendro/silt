@@ -1,0 +1,2 @@
+import c_c
+pub fn fb() = 2

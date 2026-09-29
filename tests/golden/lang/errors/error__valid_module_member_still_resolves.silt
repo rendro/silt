@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 0
+import list
+fn main() {
+  let r = list.reverse([1, 2, 3])
+  println("{r}")
+}

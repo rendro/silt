@@ -1,0 +1,15 @@
+-- stderr-not-contains: stack overflow
+fn dec(n, by) {
+  countdown(n - by)
+}
+
+fn countdown(n) {
+  match n {
+    0 -> 0
+    _ -> n |> dec(1)
+  }
+}
+
+fn main() {
+  println("{countdown(200000)}")
+}

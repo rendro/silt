@@ -1,0 +1,8 @@
+import regex
+fn main() {
+  let f = regex.captures_named
+  match f("(?P<x>\\d+)", "abc 123") {
+    Some(_) -> println("matched")
+    None -> println("no match")
+  }
+}

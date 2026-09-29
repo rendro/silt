@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+type Box(a) { value: a }
+fn mk() -> Box(Int) { Box { value: 42 } }
+fn main() {
+  let b = mk()
+  let Box { value } = b
+  let x: Int = value
+  println(x)
+}

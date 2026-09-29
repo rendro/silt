@@ -1,0 +1,10 @@
+import io
+import time
+fn program() {
+  let t = time.now()
+  t.epoch_ns > 0
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

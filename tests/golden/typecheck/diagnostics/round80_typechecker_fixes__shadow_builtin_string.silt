@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- Declaring `type String` is rejected as a builtin shadow.
+-- stderr-contains: shadows builtin type 'String'
+type String { x: Int }
+fn main() {}

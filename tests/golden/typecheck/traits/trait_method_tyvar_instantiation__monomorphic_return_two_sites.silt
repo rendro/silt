@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 0
+-- A monomorphic trait method at two constrained sites typechecks.
+trait Summarizable {
+  fn summarize(self) -> String
+}
+trait Summarizable for Int {
+  fn summarize(self) -> String { "int" }
+}
+trait Summarizable for String {
+  fn summarize(self) -> String { self }
+}
+fn show_a(x: a) -> String where a: Summarizable { x.summarize() }
+fn show_b(y: b) -> String where b: Summarizable { y.summarize() }
+fn main() {
+  println(show_a(42))
+  println(show_b("hello"))
+}

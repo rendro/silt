@@ -1,0 +1,4 @@
+-- cmd: foobar
+-- exit: 1
+-- stderr-contains: Unknown command
+fn main() {}

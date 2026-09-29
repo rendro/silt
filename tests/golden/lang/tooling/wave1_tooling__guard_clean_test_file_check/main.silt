@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- exact (empty) stderr
+import test
+import helper
+fn test_passes() {
+  test.assert_eq(helper.double(2), 4)
+}
+fn test_fails() {
+  test.assert_eq(helper.double(2), 5)
+}
+fn skip_test_later() {
+  test.assert(false)
+}

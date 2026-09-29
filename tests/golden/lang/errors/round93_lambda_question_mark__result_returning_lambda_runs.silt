@@ -1,0 +1,6 @@
+import list
+fn main() {
+  let xs = [Ok(1), Err("bad"), Ok(3)]
+  let ys = xs |> list.map({ x -> Ok(x? + 1) })
+  println(ys)
+}

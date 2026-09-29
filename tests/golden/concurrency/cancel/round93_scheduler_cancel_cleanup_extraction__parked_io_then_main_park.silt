@@ -1,0 +1,22 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- Cancelling a task parked on a long timer sleep (an Io park) leaves
+-- the scheduler clean.
+import channel
+import task
+import time
+
+fn main() {
+  let victim = task.spawn(fn() { time.sleep(time.ms(600000)) })
+  time.sleep(time.ms(50))
+  task.cancel(victim)
+  time.sleep(time.ms(50))
+  let ch = channel.new(0)
+  let feeder = task.spawn(fn() { channel.send(ch, 42) })
+  let got = match channel.receive(ch) {
+    Message(v) -> v
+    _ -> 0
+  }
+  let _ = task.join(feeder)
+  println("{got}")
+}

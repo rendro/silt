@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- `Self::Out` as a trait method's return type.
+trait Producer {
+  type Out
+  fn produce(self) -> Self::Out
+}
+
+type Wrap { v: Int }
+
+trait Producer for Wrap {
+  type Out = Int
+  fn produce(self) -> Int { 7 }
+}
+
+fn main() {}

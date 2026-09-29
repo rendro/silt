@@ -1,0 +1,7 @@
+-- cmd: run
+-- exit: 1
+-- stderr-contains: program has no main() function
+let s = """
+fn main() {}
+"""
+fn helper() { s }

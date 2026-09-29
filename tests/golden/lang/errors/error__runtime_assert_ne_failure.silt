@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: assertion failed: 5 == 5
+import test
+fn main() { test.assert_ne(5, 5) }

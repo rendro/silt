@@ -1094,7 +1094,7 @@ fn json_to_typed_value(
 /// `regex.<op>(pattern: String, text: String)` shape.
 ///
 /// Error messages are verbatim those emitted by the pre-dedupe arms; a
-/// round-36 parity test suite (`tests/regex_dispatch_parity_round36_tests.rs`)
+/// round-36 parity test suite (`tests/meta/regex_dispatch_parity_round36_tests.rs`)
 /// locks them so any accidental phrasing drift breaks loudly.
 fn parse_regex_string_pair<'a>(
     op_name: &str,

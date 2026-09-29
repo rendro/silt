@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 0
+-- stderr-not-contains: expected Int, got
+-- Method-call args unify against the parameters after self (a record descriptor fills the `type a` slot).
+trait Cast {
+    fn cast(self, type a) -> a
+}
+
+trait Cast for Int {
+    fn cast(self, type a) -> a {
+        panic("unreachable")
+    }
+}
+
+type Box(T) { value: T }
+
+fn use_it() {
+    -- Passing a record type here exercises: receiver=Int flows
+    -- into the self slot via dispatch_method_entry; the explicit
+    -- arg Box unifies against the `type a` slot (params[1]).
+    let _ = 42.cast(Box)
+}
+
+fn main() {}

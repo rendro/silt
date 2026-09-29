@@ -1,0 +1,16 @@
+import result
+
+fn main() {
+  println(result.unwrap_or(Ok(7), 0))
+  println(result.unwrap_or(Err("boom"), 42))
+  println(result.is_ok(Ok(1)))
+  println(result.is_ok(Err("x")))
+  println(result.is_err(Err("x")))
+  println(result.is_err(Ok(1)))
+  println(result.map_ok(Ok(3), fn(x) { x * 2 }))
+  println(result.map_ok(Err("e"), fn(x) { x * 2 }))
+  println(result.map_err(Err("boom"), fn(s) { "wrapped" }))
+  println(result.flatten(Ok(Ok(5))))
+  println(result.flat_map(Ok(3), fn(x) { Ok(x + 10) }))
+  println(result.flat_map(Err("e"), fn(x) { Ok(x) }))
+}

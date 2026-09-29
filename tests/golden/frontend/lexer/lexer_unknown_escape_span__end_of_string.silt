@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[lex]: unknown escape sequence: \q
+-- stderr-contains: lexer_unknown_escape_span__end_of_string.silt:6:3
+-- Escape last in the string: the caret lands on the backslash, not the closing quote.
+"a\q"

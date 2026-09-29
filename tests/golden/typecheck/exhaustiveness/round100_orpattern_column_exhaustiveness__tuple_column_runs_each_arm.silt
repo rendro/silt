@@ -1,0 +1,9 @@
+-- f((B, false)) selects the `(A | B, false)` arm and prints 2.
+type T { A, B }
+fn f(x) {
+  match x {
+    (A | B, true) -> 1
+    (A | B, false) -> 2
+  }
+}
+fn main() { print(f((B, false))) }

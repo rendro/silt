@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'b'
+-- stderr-contains: not declared in the target type arguments
+type Box(T) { Box(T) }
+trait Show { fn show(self) -> String }
+trait Show for Box(a) where b: Show {
+  fn show(self) -> String {
+    match self { Box(inner) -> "x" }
+  }
+}
+fn main() {}

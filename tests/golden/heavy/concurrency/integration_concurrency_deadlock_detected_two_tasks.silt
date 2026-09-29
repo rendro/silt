@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: deadlock
+-- repeat: 3
+-- Two tasks each waiting on the other's channel — classic deadlock.
+import channel
+import task
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  let t1 = task.spawn(fn() {
+    channel.receive(ch1)
+  })
+  let t2 = task.spawn(fn() {
+    channel.receive(ch2)
+  })
+  task.join(t1)
+}

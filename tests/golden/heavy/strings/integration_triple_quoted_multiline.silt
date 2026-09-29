@@ -1,0 +1,12 @@
+import io
+fn program() {
+  let s = """
+    line1
+    line2
+    """
+  s
+}
+
+fn main() {
+  println(io.inspect(program()))
+}

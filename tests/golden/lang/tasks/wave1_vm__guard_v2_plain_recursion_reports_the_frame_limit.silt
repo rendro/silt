@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-not-contains: overflowed its stack
+-- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+fn main() {
+  println(deep(200000))
+}

@@ -1,0 +1,17 @@
+fn find(n) {
+  match n > 0 {
+    true -> Some(n)
+    false -> None
+  }
+}
+
+fn f(n) {
+  when let Some(x) = find(n) else {
+    panic("not found")
+  }
+}
+
+fn main() {
+  let y = f(5)
+  println("{y}")
+}

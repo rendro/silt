@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: list.flatten
+-- stderr-contains: exceeds maximum list length
+import list
+fn main() {
+  println(list.flatten([0..5999999, 0..5999999]))
+}

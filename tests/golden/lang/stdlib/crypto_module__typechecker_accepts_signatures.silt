@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 0
+import bytes
+import crypto
+fn main() {
+  let msg = bytes.from_string("hi")
+  let digest = crypto.sha256(msg)
+  let tag = crypto.hmac_sha256(bytes.from_string("k"), msg)
+  let _ = crypto.constant_time_eq(digest, tag)
+  let _ = crypto.sha512(msg)
+  let _ = crypto.hmac_sha512(bytes.from_string("k"), msg)
+  let _ = crypto.random_bytes(16)
+}
