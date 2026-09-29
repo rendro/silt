@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: kaput
+fn fail() -> Result(Int, String) {
+  Err("kaput")
+}
+
+fn main() -> Result(Int, String) {
+  let v = fail()?
+  Ok(v)
+}

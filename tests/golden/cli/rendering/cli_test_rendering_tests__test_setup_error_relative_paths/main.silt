@@ -1,0 +1,11 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: setup error
+-- stderr-contains: -->
+-- stderr-contains: crasher.silt
+-- stderr-not-contains: --> /
+import crasher
+import test
+fn test_never_runs() {
+  test.assert_eq(crasher.value, 0)
+}

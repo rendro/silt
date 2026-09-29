@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: path does not exist
+-- stderr-contains: does_not_exist
+import gone
+fn main() { println(gone.hello()) }

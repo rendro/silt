@@ -1,0 +1,4 @@
+-- cmd: test --filter=alpha
+-- stderr-not-contains: unknown flag
+fn test_alpha() {}
+fn test_beta() {}

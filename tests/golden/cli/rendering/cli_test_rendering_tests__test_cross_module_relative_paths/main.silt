@@ -1,0 +1,7 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: FAIL
+import helper
+fn test_cross_module() {
+  helper.do_check(1)
+}

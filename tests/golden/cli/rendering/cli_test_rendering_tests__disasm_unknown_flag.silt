@@ -1,0 +1,8 @@
+-- cmd: disasm --bogus
+-- exit: 1
+-- stderr-contains: unknown flag
+-- stderr-contains: --bogus
+-- stderr-contains: silt disasm --help
+fn main() {
+  println("hello")
+}

@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: fn main() { 7 }\n1 + 2\nmain()\n3 * 4\n:quit\n

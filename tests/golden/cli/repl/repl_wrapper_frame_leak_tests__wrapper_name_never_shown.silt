@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: fn boom() { 1 / 0 }\nboom()\n:quit\n
+-- stderr-not-contains: __repl_eval
+-- stderr-contains: -> boom
+-- stderr-contains: -> <repl>

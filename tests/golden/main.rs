@@ -37,6 +37,7 @@ struct Directives {
     stderr_not_contains: Vec<String>,
     stdin: String,
     repeat: usize,
+    timeout: Duration,
 }
 
 fn golden_root() -> PathBuf {
@@ -68,6 +69,7 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
     let mut d = Directives {
         cmd: vec!["run".to_string()],
         repeat: 1,
+        timeout: CASE_TIMEOUT,
         ..Directives::default()
     };
     for line in source.lines() {
@@ -93,6 +95,12 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
             "stderr-contains" => d.stderr_contains.push(value),
             "stderr-not-contains" => d.stderr_not_contains.push(value),
             "stdin" => d.stdin = value.replace("\\n", "\n"),
+            "timeout" => {
+                let secs: u64 = value
+                    .parse()
+                    .map_err(|_| format!("bad `-- timeout:` value {value:?}"))?;
+                d.timeout = Duration::from_secs(secs);
+            }
             "repeat" => {
                 d.repeat = value
                     .parse()
@@ -217,7 +225,7 @@ fn run_in(case: &Case, dir: &Path) -> Output {
     let status = loop {
         match child.try_wait().expect("try_wait") {
             Some(status) => break status,
-            None if started.elapsed() >= CASE_TIMEOUT => {
+            None if started.elapsed() >= case.directives.timeout => {
                 timed_out = true;
                 let _ = child.kill();
                 break child.wait().expect("wait after kill");
@@ -238,7 +246,7 @@ fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
     let d = &case.directives;
     let mut problems = Vec::new();
     if out.timed_out {
-        problems.push(format!("did not exit within {CASE_TIMEOUT:?}"));
+        problems.push(format!("did not exit within {:?}", d.timeout));
         return problems;
     }
     if out.code != Some(d.exit) {

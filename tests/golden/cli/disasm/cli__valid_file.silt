@@ -1,0 +1,7 @@
+-- cmd: disasm
+-- stdout-contains: == <script> (arity=0, upvalues=0) ==
+-- stdout-contains: == main (arity=0, upvalues=0) ==
+-- stdout-contains: Return
+fn main() {
+  println("hello")
+}

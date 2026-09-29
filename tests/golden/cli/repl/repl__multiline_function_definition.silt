@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: fn double(x) {\n  x * 2\n}\ndouble(21)\n:quit\n

@@ -1,0 +1,7 @@
+-- cmd: test --filter alpha
+-- stderr-contains: 1 test
+-- stderr-contains: PASS
+import test
+pub fn test_alpha() {
+  test.assert_eq(1, 1)
+}

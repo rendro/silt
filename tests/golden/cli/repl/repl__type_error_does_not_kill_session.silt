@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: 1 + "hi"\n7\n:quit\n
+-- stderr-contains: error[type]
+-- stderr-contains: type mismatch

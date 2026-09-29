@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: division by zero
+-- stderr-not-contains: --> /
+import helper
+fn main() = helper.kaboom()

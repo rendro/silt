@@ -1,0 +1,12 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: setup error
+-- stderr-contains: error[runtime]
+-- stderr-contains: -->
+-- stderr-contains: 1 / 0
+-- stderr-not-contains: VM error:
+import test
+let big = 1 / 0
+fn test_never_runs() {
+  test.assert_eq(big, 0)
+}

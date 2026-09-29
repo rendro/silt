@@ -1,0 +1,4 @@
+-- cmd: test --filter xyz_nonexistent_filter
+-- stdout-contains: no matching test files found
+fn test_a() { }
+fn main() { }

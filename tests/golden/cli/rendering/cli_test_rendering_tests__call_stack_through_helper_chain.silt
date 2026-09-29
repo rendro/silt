@@ -1,0 +1,18 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: FAIL
+-- stderr-contains: test_fails_in_helper
+-- stderr-contains: call stack
+import test
+fn helper(x) {
+  let r = inner(x)
+  r
+}
+fn inner(x) {
+  test.assert_eq(x, 99)
+  x
+}
+fn test_fails_in_helper() {
+  let r = helper(5)
+  r
+}

@@ -1,0 +1,3 @@
+-- exit: 1
+-- stderr-contains: division by zero
+fn main() { 1 / 0 }

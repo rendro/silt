@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: :exit\n:quit\n
+-- stderr-contains: unknown REPL command
+-- stderr-contains: type :help
+-- stderr-not-contains: expected expression

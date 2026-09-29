@@ -1,0 +1,6 @@
+-- cmd: fmt --check
+-- exit: 2
+-- stderr-contains: -->
+
+fn broken( {
+}

@@ -1,0 +1,11 @@
+error[runtime]: division by zero
+ --> calc.silt:1:19
+   |
+ 1 | pub fn kaboom() = 1 / 0
+   |                   ^ division by zero
+
+call stack:
+  -> kaboom  at calc.silt:1:19
+  -> wrapper  at calc.silt:2:20
+  -> helper  at main.silt:5:11
+  -> main  at main.silt:10:11

@@ -1,0 +1,8 @@
+error[runtime]: division by zero
+ --> <declaration>
+  -> err1  at <declaration>
+  -> <repl>  at <declaration>
+error[runtime]: division by zero
+ --> <declaration>
+  -> err2  at <declaration>
+  -> <repl>  at <declaration>

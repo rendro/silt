@@ -1,0 +1,12 @@
+main.silt: setup error:
+error[runtime]: division by zero
+ --> helper.silt:1:17
+   |
+ 1 | pub fn boom() = 1 / 0
+   |                 ^ division by zero
+
+call stack:
+  -> boom  at helper.silt:1:17
+  -> <module:crasher>  at crasher.silt:2:17
+
+0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

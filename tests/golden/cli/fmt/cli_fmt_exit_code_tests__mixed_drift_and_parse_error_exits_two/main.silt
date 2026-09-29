@@ -1,0 +1,4 @@
+-- cmd: fmt --check drift.silt
+-- exit: 2
+fn broken( {
+}

@@ -38,37 +38,6 @@ fn temp_dir_named(name: &str) -> PathBuf {
     dir
 }
 
-// ─── 1. Source-grep lock ────────────────────────────────────────────────
-//
-// Pin that the package-name validator in `src/manifest.rs` consults
-// `is_builtin_module`. The audit's contract: if anyone removes the
-// builtin-collision check from the manifest module, this test screams.
-
-#[test]
-fn round75_manifest_validator_consults_is_builtin_module() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/manifest.rs");
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-
-    // Two assertions:
-    //   (a) `validate_package_name` exists.
-    //   (b) somewhere in manifest.rs, `is_builtin_module` is called
-    //       (the validator delegates here, and Manifest::load also
-    //       reuses the same predicate for the on-disk path).
-    assert!(
-        src.contains("pub fn validate_package_name"),
-        "src/manifest.rs is missing pub fn validate_package_name — the \
-         single source of truth for package-name acceptance \
-         (round-75 DX-5 GAP fix)."
-    );
-    assert!(
-        src.contains("is_builtin_module"),
-        "src/manifest.rs's package-name validator must consult \
-         is_builtin_module so the builtin-collision check matches the \
-         one silt add already enforces (round-75 DX-5 GAP fix)."
-    );
-}
-
 // ─── 2. Behavioral: dir named `io` is rejected ──────────────────────────
 
 #[test]

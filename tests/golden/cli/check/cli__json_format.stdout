@@ -1,0 +1,1 @@
+[{"col":26,"file":"cli__json_format.silt","hints":[],"kind":"type","line":3,"message":"type mismatch: expected Int, got String","severity":"error"}]

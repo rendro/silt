@@ -33,6 +33,7 @@ Leading comment lines of the `.silt` file (for a directory case, of
 | `-- stderr-not-contains: TEXT` | stderr must not contain TEXT (repeatable) | — |
 | `-- stdin: TEXT` | text fed on stdin (`\n` for newlines) | empty |
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
+| `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 |
 
 Comparison:
 - If `<case>.stdout` exists, stdout must equal it exactly. Otherwise stdout

@@ -434,32 +434,6 @@ pub fn shout(x) = x * 10
     assert_eq!(result, Value::Int(70));
 }
 
-/// Multi-segment cross-package imports (`import dep.internal`) are
-/// not part of silt's import grammar — the parser only accepts a
-/// single bare identifier after `import`. So a user can't even type
-/// `import calc.internal` to attempt to reach into a dep's internals.
-///
-/// This test documents that absence by verifying the parser rejects
-/// the construct cleanly (so PR 2/4 can rely on it). If multi-segment
-/// imports are ever added, the rejection here will fail loudly and
-/// cross-package access rules will need an explicit gate at that
-/// point.
-#[test]
-fn test_cross_package_multi_segment_rejected() {
-    // The parser treats `import calc.{ ... }` as the *items* form
-    // (selective import). A truly multi-segment form like `import
-    // calc.internal` (no braces) is not legal silt syntax. We assert
-    // both shapes here so the contract is explicit.
-    let bare_multi = "import calc.internal\n";
-    let tokens = Lexer::new(bare_multi).tokenize().expect("lex");
-    let result = Parser::new(tokens).parse_program();
-    assert!(
-        result.is_err(),
-        "bare `import dep.module` must be a parse error; if multi-segment \
-         imports are added later, cross-package access needs a new gate"
-    );
-}
-
 // ── Sanity checks for the resolver itself ────────────────────────────
 
 /// A tiny direct test that `with_package_roots` panics on a

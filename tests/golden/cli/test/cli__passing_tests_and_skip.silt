@@ -1,0 +1,17 @@
+-- cmd: test
+-- stderr-contains: 2 passed
+-- stderr-contains: 0 failed
+-- stderr-contains: 1 skipped
+import test
+
+fn test_add() {
+  test.assert_eq(1 + 1, 2)
+}
+
+fn test_mul() {
+  test.assert_eq(2 * 3, 6)
+}
+
+fn skip_test_broken() {
+  test.assert(false, "not ready yet")
+}

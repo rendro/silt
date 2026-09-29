@@ -1,0 +1,5 @@
+error[parse]: expected =, found EOF
+ --> cli_test_rendering_tests__fmt_parse_error_with_caret.silt:7:18
+   |
+ 7 | fn main() { let x
+   |                  ^ expected =, found EOF

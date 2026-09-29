@@ -1,0 +1,7 @@
+-- cmd: test
+-- exit: 1
+import crasher
+import test
+fn test_never_runs() {
+  test.assert_eq(crasher.value, 0)
+}

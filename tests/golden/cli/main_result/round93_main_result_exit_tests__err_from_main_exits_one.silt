@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: main returned Err
+-- stderr-contains: boom
+fn main() -> Result(Int, String) {
+  Err("boom")
+}

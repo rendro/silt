@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: library entry point
+-- stderr-contains: calc
+import calc
+fn main() { println(calc.h()) }

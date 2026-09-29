@@ -1,0 +1,20 @@
+error[runtime]: division by zero
+ --> <declaration>
+  -> boom  at <declaration>
+  -> <repl>  at <declaration>
+error[runtime]: division by zero
+ --> <declaration>
+  -> boom  at <declaration>
+  -> <repl>  at <declaration>
+error[runtime]: division by zero
+ --> <declaration>
+  -> boom  at <declaration>
+  -> <repl>  at <declaration>
+error[runtime]: division by zero
+ --> <declaration>
+  -> boom  at <declaration>
+  -> <repl>  at <declaration>
+error[runtime]: division by zero
+ --> <declaration>
+  -> boom  at <declaration>
+  -> <repl>  at <declaration>

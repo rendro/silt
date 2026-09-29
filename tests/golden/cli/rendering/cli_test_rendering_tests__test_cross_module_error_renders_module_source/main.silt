@@ -1,0 +1,11 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: FAIL
+-- stderr-contains: pub fn divide
+-- stderr-contains: calc.silt
+import calc
+
+fn test_divide_by_zero() {
+  let r = calc.divide(10, 0)
+  r
+}

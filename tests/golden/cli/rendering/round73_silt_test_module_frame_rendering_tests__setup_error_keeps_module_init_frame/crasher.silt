@@ -1,0 +1,2 @@
+import helper
+pub let value = helper.boom()

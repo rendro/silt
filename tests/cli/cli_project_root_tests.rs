@@ -64,28 +64,6 @@ fn test_run_inside_package_with_no_args() {
 }
 
 #[test]
-fn test_run_with_explicit_path_still_works() {
-    // Mimics the legacy non-package workflow: a single .silt file with
-    // an explicit path argument, no enclosing manifest. Must still run.
-    let dir = fresh_dir("run_explicit");
-    let file = dir.join("hello.silt");
-    fs::write(&file, "fn main() { println(\"explicit\") }\n").unwrap();
-
-    let out = silt_cmd()
-        .arg("run")
-        .arg(&file)
-        .output()
-        .expect("failed to invoke silt run");
-    assert!(
-        out.status.success(),
-        "silt run failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("explicit"), "got stdout: {stdout}");
-}
-
-#[test]
 fn test_check_inside_package_no_args() {
     let dir = fresh_dir("check_inside");
     write_package(

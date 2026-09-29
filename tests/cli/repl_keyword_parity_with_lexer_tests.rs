@@ -7,8 +7,7 @@
 //! hand-rolled list. The DUP-2 finding from round 64 caught this: if
 //! a future PR adds a keyword to `lexer::KEYWORDS`, REPL `<Tab>`
 //! completion would silently miss it. These tests ensure that the
-//! REPL stays in sync with the lexer's keyword set, and that the
-//! source no longer carries a hand-rolled keyword array literal.
+//! REPL stays in sync with the lexer's keyword set.
 
 #[test]
 fn repl_builtin_names_is_superset_of_lexer_keywords() {
@@ -36,19 +35,4 @@ fn repl_includes_short_commands() {
     for short in &[":quit", ":q", ":help", ":h"] {
         assert!(names.contains(*short));
     }
-}
-
-#[test]
-fn repl_source_does_not_contain_handrolled_keyword_array() {
-    // Source-grep guard: ensure the specific old hand-rolled keyword
-    // array literal that DUP-2 flagged has not been re-introduced.
-    // Phrase chosen to be distinctive enough not to false-positive
-    // against incidental occurrences.
-    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/repl.rs",))
-        .expect("read src/repl.rs");
-    assert!(
-        !src.contains(r#""as", "else", "fn", "import","#),
-        "src/repl.rs has re-introduced a hand-rolled keyword list — \
-         REPL must consume lexer::KEYWORDS directly (round-64 DUP-2)"
-    );
 }

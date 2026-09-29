@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: looks like a test file
+import test
+
+fn test_thing() {
+  test.assert_eq(1, 1)
+}

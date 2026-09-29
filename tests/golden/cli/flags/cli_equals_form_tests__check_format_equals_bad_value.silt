@@ -1,0 +1,4 @@
+-- cmd: check --format=xml
+-- exit: 1
+-- stderr-contains: --format requires 'json'
+fn main() {}

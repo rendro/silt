@@ -1,0 +1,6 @@
+error[runtime]: division by zero
+ --> <declaration>
+  -> a  at <declaration>
+  -> b  at <declaration>
+  -> c  at <declaration>
+  -> <repl>  at <declaration>

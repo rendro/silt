@@ -1,0 +1,7 @@
+-- cmd: fmt --check
+-- exit: 1
+-- stderr-contains: not formatted
+
+fn  main( ) {
+println("hello")
+}

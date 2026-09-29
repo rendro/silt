@@ -1,0 +1,1 @@
+[{"col":13,"file":"cli_json_hint_round36_tests__did_you_mean_in_hints.silt","hints":["help: did you mean `println`?"],"kind":"type","line":3,"message":"undefined variable 'prntln'","severity":"error"}]

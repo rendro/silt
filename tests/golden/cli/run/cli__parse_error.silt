@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected identifier, found {
+fn { }

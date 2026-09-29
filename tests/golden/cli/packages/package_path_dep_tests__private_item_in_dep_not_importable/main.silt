@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: secret
+-- stderr-contains: not `pub`
+import calc
+fn main() { println(calc.secret()) }

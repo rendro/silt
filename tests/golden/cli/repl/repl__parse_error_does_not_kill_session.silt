@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: 1 +\n2 + 3\n:quit\n
+-- stderr-contains: error[parse]
+-- stderr-contains: expected expression

@@ -1,0 +1,12 @@
+  FAIL main.silt::test_cross_module
+    error[runtime]: assertion failed: 1 != 999
+     --> helper.silt:3:3
+       |
+     3 |   test.assert_eq(x, 999)
+       |   ^ assertion failed: 1 != 999
+
+    call stack:
+      -> do_check  at helper.silt:3:3
+      -> test_cross_module  at main.silt:6:3
+
+1 test: 0 passed, 1 failed, 0 skipped

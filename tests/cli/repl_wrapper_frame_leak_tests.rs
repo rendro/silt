@@ -22,23 +22,14 @@
 //! the real user frame too). `render_call_stack` (src/vm/error.rs)
 //! keeps the `<repl>` label explicitly, like `<module:...>`.
 //!
-//! Two layers of lock:
-//!   1. Unit tests against the `pub` production helper
-//!      `repl_call_stack_lines`, pinning the relabel and its precision
-//!      (numeric suffixes only).
-//!   2. An end-to-end `silt repl` subprocess run of the exact repro,
-//!      asserting the user-visible stderr.
-
-use std::io::Write;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
+//! These are unit tests against the `pub` production helper
+//! `repl_call_stack_lines`, pinning the relabel and its precision
+//! (numeric suffixes only). The end-to-end `silt repl` run of the exact
+//! repro is the golden case
+//! `tests/golden/cli/repl/repl_wrapper_frame_leak_tests__wrapper_name_never_shown`.
 
 use silt::lexer::Span;
 use silt::repl::repl_call_stack_lines;
-
-// ── layer 1: unit locks on the production rendering helper ─────────
 
 fn span(line: usize, col: usize) -> Span {
     Span::new(line, col)
@@ -109,76 +100,5 @@ fn non_numeric_suffix_is_not_relabelled() {
     assert!(
         !rendered.contains("-> <repl>"),
         "no frame should be relabelled `<repl>` here, got:\n{rendered}"
-    );
-}
-
-// ── layer 2: end-to-end repro through `silt repl` ──────────────────
-
-const SESSION_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Run `silt repl` with `script` on stdin (`:quit` appended) and return
-/// captured stderr. Mirrors the harness in repl_frame_leak_tests.rs.
-fn run_session_stderr(script: &str) -> String {
-    let mut child: Child = Command::new(env!("CARGO_BIN_EXE_silt"))
-        .arg("repl")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn `silt repl` subprocess");
-
-    {
-        let stdin = child.stdin.as_mut().expect("child stdin was not piped");
-        stdin
-            .write_all(script.as_bytes())
-            .expect("failed to write script");
-        if !script.ends_with('\n') {
-            stdin.write_all(b"\n").expect("failed to write newline");
-        }
-        stdin.write_all(b":quit\n").expect("failed to write :quit");
-    }
-    drop(child.stdin.take());
-
-    let (tx, rx) = mpsc::channel();
-    let handle = thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    match rx.recv_timeout(SESSION_TIMEOUT) {
-        Ok(Ok(out)) => {
-            let _ = handle.join();
-            String::from_utf8_lossy(&out.stderr).into_owned()
-        }
-        Ok(Err(e)) => panic!("failed to wait on repl child: {e}"),
-        Err(_) => panic!(
-            "repl session did not exit within {}s",
-            SESSION_TIMEOUT.as_secs()
-        ),
-    }
-}
-
-/// Exact repro from the finding: `fn boom() { 1 / 0 }` then `boom()`.
-/// Pre-fix stderr rendered `-> __repl_eval_0  at <declaration>`;
-/// post-fix the wrapper frame renders as `<repl>` and the user frame
-/// `boom` is preserved.
-#[test]
-fn repl_runtime_error_stderr_never_shows_wrapper_name() {
-    let stderr = run_session_stderr("fn boom() { 1 / 0 }\nboom()\n");
-
-    assert!(
-        stderr.contains("error[runtime]:"),
-        "expected a runtime error from `boom()`, got stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("__repl_eval"),
-        "internal wrapper name `__repl_eval_<n>` leaked into REPL stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("-> boom"),
-        "user frame `boom` must appear in the rendered call stack:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("-> <repl>"),
-        "wrapper frame should render under the `<repl>` label:\n{stderr}"
     );
 }

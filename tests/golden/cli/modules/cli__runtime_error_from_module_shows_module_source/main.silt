@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: foo.silt
+-- stderr-contains: 1 / 0
+-- stderr-contains: division by zero
+import foo
+
+fn main() {
+  foo.bad()
+}

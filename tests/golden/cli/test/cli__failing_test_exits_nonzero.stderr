@@ -1,0 +1,9 @@
+  PASS cli__failing_test_exits_nonzero.silt::test_ok
+  FAIL cli__failing_test_exits_nonzero.silt::test_fails
+    error[runtime]: assertion failed: one equals two: 1 != 2
+     --> cli__failing_test_exits_nonzero.silt:10:3
+        |
+     10 |   test.assert_eq(1, 2, "one equals two")
+        |   ^ assertion failed: one equals two: 1 != 2
+
+2 tests: 1 passed, 1 failed, 0 skipped

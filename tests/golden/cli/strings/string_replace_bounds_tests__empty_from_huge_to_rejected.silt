@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: string.replace: result would exceed maximum string size
+-- stderr-contains: 10000000 limit
+import string
+fn main() {
+  let s = string.repeat("a", 100000)
+  let t = string.repeat("x", 10000)
+  println(string.replace(s, "", t))
+}

@@ -1,0 +1,13 @@
+  FAIL cli_test_rendering_tests__call_stack_through_helper_chain.silt::test_fails_in_helper
+    error[runtime]: assertion failed: 5 != 99
+     --> cli_test_rendering_tests__call_stack_through_helper_chain.silt:12:3
+        |
+     12 |   test.assert_eq(x, 99)
+        |   ^ assertion failed: 5 != 99
+
+    call stack:
+      -> inner  at cli_test_rendering_tests__call_stack_through_helper_chain.silt:12:3
+      -> helper  at cli_test_rendering_tests__call_stack_through_helper_chain.silt:8:11
+      -> test_fails_in_helper  at cli_test_rendering_tests__call_stack_through_helper_chain.silt:16:11
+
+1 test: 0 passed, 1 failed, 0 skipped

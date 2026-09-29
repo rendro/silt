@@ -1,0 +1,4 @@
+-- cmd: check --format=json
+-- stderr-not-contains: unknown flag
+-- stderr-not-contains: --format=json
+fn main() {}

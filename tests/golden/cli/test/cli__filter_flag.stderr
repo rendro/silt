@@ -1,0 +1,4 @@
+  PASS cli__filter_flag.silt::test_add_small
+  PASS cli__filter_flag.silt::test_add_big
+
+2 tests: 2 passed, 0 failed, 0 skipped

@@ -1,0 +1,2 @@
+import leaf
+pub fn foo() = leaf.bar() + 1

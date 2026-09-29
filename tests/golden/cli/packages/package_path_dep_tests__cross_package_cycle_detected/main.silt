@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: circular import
+-- stderr-contains: pkg_a::lib
+-- stderr-contains: pkg_b::lib
+import pkg_a
+fn main() { println(pkg_a.entry()) }

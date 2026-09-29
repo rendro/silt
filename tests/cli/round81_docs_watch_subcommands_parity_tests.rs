@@ -2,48 +2,43 @@
 //!
 //! Both `README.md` and `docs/getting-started.md` previously listed only
 //! `run`, `check`, and `test` as the subcommands compatible with `--watch`,
-//! while `src/cli/watch.rs` actually permits `disasm` as well (and the help
-//! banner advertises `silt disasm [--watch]`). This test pins the docs to
-//! the source-of-truth `RUNNABLE` allowlist so a future addition that
+//! while the binary actually permits `disasm` as well. This test pins the
+//! docs to the subcommands the binary accepts, which its watch gate names
+//! when `--watch` is given without a subcommand, so a future addition that
 //! forgets to update the prose is caught immediately.
+
+#![cfg(feature = "watch")]
+
+use std::process::Command;
 
 const README: &str = include_str!("../../README.md");
 const GETTING_STARTED: &str = include_str!("../../docs/getting-started.md");
-const WATCH_RS: &str = include_str!("../../src/cli/watch.rs");
 
-/// Parse the `RUNNABLE: &[&str] = &[...]` literal from `src/cli/watch.rs`
-/// and return the contained string names. We intentionally do this with
-/// simple slicing rather than a regex dependency to keep the test
-/// self-contained.
-fn extract_runnable_from_watch_rs() -> Vec<String> {
-    let needle = "RUNNABLE: &[&str] = &[";
-    let start = WATCH_RS
-        .find(needle)
-        .expect("watch.rs should declare `RUNNABLE: &[&str] = &[...]`");
-    let after = &WATCH_RS[start + needle.len()..];
-    let end = after
-        .find(']')
-        .expect("RUNNABLE literal should be closed by `]`");
-    let body = &after[..end];
-
-    let mut names = Vec::new();
-    for chunk in body.split(',') {
-        let trimmed = chunk.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        // strip surrounding double quotes
-        let stripped = trimmed
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .unwrap_or_else(|| {
-                panic!("expected quoted string literal in RUNNABLE, got: {trimmed:?}")
-            });
-        names.push(stripped.to_string());
-    }
+/// The subcommands the binary runs under `--watch`, read from the gate's
+/// rejection of a bare `silt --watch`:
+/// `error: --watch requires a runnable subcommand (run, check, test, disasm)`.
+fn runnable_watch_subcommands() -> Vec<String> {
+    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("--watch")
+        .output()
+        .expect("failed to run silt --watch");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("requires a runnable subcommand"))
+        .unwrap_or_else(|| panic!("no watch-gate error from `silt --watch`: {stderr}"));
+    let open = line
+        .find('(')
+        .expect("gate error lists subcommands in (...)");
+    let close = line.rfind(')').expect("gate error closes its list");
+    let names: Vec<String> = line[open + 1..close]
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     assert!(
         !names.is_empty(),
-        "RUNNABLE allowlist parsed to zero entries"
+        "gate error listed no subcommands: {line}"
     );
     names
 }
@@ -54,8 +49,6 @@ fn extract_runnable_from_watch_rs() -> Vec<String> {
 fn watch_sentence(doc: &str) -> Option<&str> {
     let prefix = "The `--watch` / `-w` flag works with";
     let start = doc.find(prefix)?;
-    // Scan forward to end-of-line — list items live on the same line in
-    // both docs as a comma-separated phrase.
     let tail = &doc[start..];
     let end = tail.find('\n').unwrap_or(tail.len());
     Some(&tail[..end])
@@ -63,7 +56,7 @@ fn watch_sentence(doc: &str) -> Option<&str> {
 
 #[test]
 fn readme_watch_sentence_lists_every_runnable_subcommand() {
-    let runnable = extract_runnable_from_watch_rs();
+    let runnable = runnable_watch_subcommands();
     let sentence = watch_sentence(README).expect(
         "README.md must contain the canonical \"The `--watch` / `-w` flag works with\" sentence",
     );
@@ -72,14 +65,14 @@ fn readme_watch_sentence_lists_every_runnable_subcommand() {
         assert!(
             sentence.contains(&token),
             "README.md `--watch` sentence is missing subcommand `{name}`. \
-             Sentence found: {sentence:?}. RUNNABLE = {runnable:?}"
+             Sentence found: {sentence:?}. Runnable = {runnable:?}"
         );
     }
 }
 
 #[test]
 fn getting_started_watch_sentence_lists_every_runnable_subcommand() {
-    let runnable = extract_runnable_from_watch_rs();
+    let runnable = runnable_watch_subcommands();
     let sentence = watch_sentence(GETTING_STARTED).expect(
         "docs/getting-started.md must contain the canonical \
          \"The `--watch` / `-w` flag works with\" sentence",
@@ -89,22 +82,20 @@ fn getting_started_watch_sentence_lists_every_runnable_subcommand() {
         assert!(
             sentence.contains(&token),
             "docs/getting-started.md `--watch` sentence is missing subcommand `{name}`. \
-             Sentence found: {sentence:?}. RUNNABLE = {runnable:?}"
+             Sentence found: {sentence:?}. Runnable = {runnable:?}"
         );
     }
 }
 
 #[test]
-fn runnable_extractor_finds_expected_baseline() {
-    // Sanity check: the parser itself should produce the four known
-    // entries today. If a future change adds a 5th, this test will need
-    // to be updated alongside the docs — which is exactly the contract
-    // we want.
-    let runnable = extract_runnable_from_watch_rs();
+fn runnable_watch_subcommands_baseline() {
+    // The binary runs these four under `--watch` today. A 5th needs the
+    // docs updated alongside it — which is exactly the contract we want.
+    let runnable = runnable_watch_subcommands();
     for expected in ["run", "check", "disasm", "test"] {
         assert!(
             runnable.iter().any(|s| s == expected),
-            "expected `{expected}` in RUNNABLE, got {runnable:?}"
+            "expected `{expected}` among the --watch subcommands, got {runnable:?}"
         );
     }
 }

@@ -1,0 +1,6 @@
+pub fn run() {
+  "this is completely unrelated"
+  42
+  1 * 2
+  let z = 99
+}

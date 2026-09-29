@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: let a = 10\nlet b = a + 5\nlet c = b * 2\nc\n:quit\n
