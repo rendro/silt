@@ -15,7 +15,7 @@ use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
     RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
 };
-use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
+use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{Lexer, Span};
 use crate::module;
@@ -59,8 +59,8 @@ const DECODING_BUILTINS: &[&str] = &[
 
 /// The field types the decoders support, as shown in compile errors.
 const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, ExtFloat, String, \
-     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, and \
-     non-generic record types";
+     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
+     non-generic record types, and aliases of these";
 
 /// A record declaration, kept to describe and check its field types.
 struct RecordDecl {
@@ -239,8 +239,10 @@ impl CompileContext {
 fn frame_slot(height: usize, span: Span) -> Result<u16, CompileError> {
     u16::try_from(height).map_err(|_| CompileError {
         message: format!(
-            "this function keeps more than {} values on its stack at once; \
-             split the expression into smaller parts",
+            "this function keeps more than {} values on its stack at once \
+             (its local bindings plus the values of the expression being evaluated); \
+             move some of its statements into separate functions, or split a large \
+             expression into smaller parts",
             u16::MAX
         ),
         span,
@@ -326,11 +328,11 @@ fn format_module_source_error(
         let line_num = clamped_span.line;
         let gutter_width = crate::errors::line_num_width(line_num);
         let gutter_blank: String = " ".repeat(gutter_width);
-        let col = if clamped_span.col > 0 {
-            clamped_span.col - 1
-        } else {
-            0
-        };
+        // A long line is cut to a window around the error, as in
+        // `SourceError::Display`.
+        let (src_line, col) =
+            crate::errors::excerpt_around(src_line, clamped_span.col.saturating_sub(1));
+        let src_line = src_line.as_str();
         // Preserve tabs so the caret lines up with the actual char.
         // Use the shared helper from `errors.rs` so CJK / emoji /
         // other double-wide chars get one space per display cell
@@ -382,7 +384,17 @@ fn format_module_source_error(
 /// path, because any synthetic prefix-stripping there would lie about
 /// where the file actually lives. Lock:
 /// tests/compiler_module_path_norm_round36_tests.rs.
+///
+/// The result is only ever printed, so it is escaped by the display rule
+/// (`crate::git::escape_for_display`): a directory name holding a control
+/// character cannot forge lines of a diagnostic. Plain paths, Windows
+/// backslashes included, print unchanged.
 fn normalize_module_path(p: &std::path::Path) -> String {
+    crate::git::escape_for_display(&module_path_for_display(p))
+}
+
+/// The unescaped text of [`normalize_module_path`].
+fn module_path_for_display(p: &std::path::Path) -> String {
     if let Ok(cwd) = std::env::current_dir() {
         // First try a literal strip — cheap, no I/O.
         if let Ok(rel) = p.strip_prefix(&cwd) {
@@ -631,6 +643,22 @@ pub struct Compiler {
     /// `extract_builtin_name`, the Call arm's module-call detection,
     /// and `FieldAccess` codegen.
     top_level_value_globals: HashSet<String>,
+    /// Names of the entry program's top-level `fn` declarations, filled
+    /// by the same pre-pass as `top_level_value_globals`. A function is a
+    /// value, so `double.baz()` with a top-level `fn double` is a method
+    /// call on the function, not a call of a member of a module `double`.
+    /// Inside a file module the module's own functions are in
+    /// `module_scope` instead.
+    top_level_fn_names: HashSet<String>,
+    /// Lowercase names imported by name (`import json.{ parse }`,
+    /// `import util.{ helper }`), per program: the key is the file module
+    /// being compiled (`None` for the entry program) and the bare name,
+    /// the value the qualified name the import binds (`json.parse`).
+    /// Filled by `collect_selective_imports` before the program's code is
+    /// compiled. An imported function is a value like a program's own
+    /// function, and a call of an imported decoder gets the same
+    /// compile-time check as the qualified call.
+    selective_imports: HashMap<(Option<String>, String), String>,
     /// Record declarations of every program compiled so far (the entry
     /// program and the file modules it imports), by type name. Filled by
     /// `collect_type_decls` before any code of the program is compiled.
@@ -735,6 +763,8 @@ impl Compiler {
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
             top_level_value_globals: HashSet::new(),
+            top_level_fn_names: HashSet::new(),
+            selective_imports: HashMap::new(),
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
             module_exports: HashMap::new(),
@@ -863,14 +893,18 @@ impl Compiler {
         errors: &[typechecker::TypeError],
         source: &str,
         file_path: &std::path::Path,
-        file_display: &str,
     ) {
         if !self.module_type_error_files.insert(file_path.to_path_buf()) {
             return;
         }
+        // `SourceError.file` holds the path as it is: its `Display`
+        // escapes it for a terminal, and `silt check --format json`
+        // JSON-escapes it. A display-escaped path would be escaped twice
+        // there.
+        let file = module_path_for_display(file_path);
         let converted: Vec<crate::errors::SourceError> = errors
             .iter()
-            .map(|e| crate::errors::SourceError::from_type_error(e, source, file_display))
+            .map(|e| crate::errors::SourceError::from_type_error(e, source, &file))
             .collect();
         let has_user_import_warning = converted.iter().any(|e| {
             e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
@@ -1011,15 +1045,123 @@ impl Compiler {
     /// Round 94: pre-pass over the entry program's decls collecting
     /// top-level `let` binder names into `top_level_value_globals`.
     /// Top-level lets only accept Ident patterns (see the `Decl::Let`
-    /// arm of `compile_decl`), so a single-name walk suffices.
+    /// arm of `compile_decl`), so a single-name walk suffices. Also
+    /// collects the top-level `fn` names into `top_level_fn_names` and
+    /// the program's selective imports (`collect_selective_imports`).
     fn collect_top_level_value_globals(&mut self, program: &Program) {
         for decl in &program.decls {
-            if let Decl::Let { pattern, .. } = decl
-                && let PatternKind::Ident(name) = &pattern.kind
-            {
-                self.top_level_value_globals.insert(resolve(*name));
+            match decl {
+                Decl::Let { pattern, .. } => {
+                    if let PatternKind::Ident(name) = &pattern.kind {
+                        self.top_level_value_globals.insert(resolve(*name));
+                    }
+                }
+                Decl::Fn(fn_decl) => {
+                    self.top_level_fn_names.insert(resolve(fn_decl.name));
+                }
+                _ => {}
             }
         }
+        self.collect_selective_imports(program);
+    }
+
+    /// Pre-pass recording the lowercase names `program` imports by name
+    /// (`import json.{ parse }`) in `selective_imports`, under the
+    /// program being compiled (see `current_program`). Uppercase names
+    /// are types; `Point.origin()` stays a qualified call.
+    fn collect_selective_imports(&mut self, program: &Program) {
+        let current = self.current_program();
+        // A name the program binds itself at top level (`let` or `fn`)
+        // shadows the import, in a file module as in the entry program: a
+        // call of it is not a decoder call.
+        let own_names: HashSet<String> = program
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Fn(f) => Some(resolve(f.name)),
+                Decl::Let { pattern, .. } => match &pattern.kind {
+                    PatternKind::Ident(name) => Some(resolve(*name)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        for decl in &program.decls {
+            let Decl::Import(ImportTarget::Items(module_name, items), _) = decl else {
+                continue;
+            };
+            let mod_str = resolve(*module_name);
+            for item in items {
+                let item_str = resolve(*item);
+                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_')
+                    && !own_names.contains(&item_str)
+                {
+                    self.selective_imports.insert(
+                        (current.clone(), item_str.clone()),
+                        format!("{mod_str}.{item_str}"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// The program being compiled: the file module's name, or `None` for
+    /// the entry program.
+    fn current_program(&self) -> Option<String> {
+        self.module_scope.as_ref().map(|(module, _)| module.clone())
+    }
+
+    /// Whether the identifier `name`, which is not a local or an upvalue,
+    /// names a function of the program being compiled or a value imported
+    /// by name, rather than a module. A name that is also a builtin
+    /// module, a builtin module alias or a compiled file module keeps
+    /// meaning the module.
+    fn names_function_value(&self, name: Symbol) -> bool {
+        let name_str = resolve(name);
+        if module::is_builtin_module(&name_str)
+            || self.imported_builtin_module_aliases.contains_key(&name_str)
+            || self.module_public_fns.contains_key(&name_str)
+        {
+            return false;
+        }
+        let own_function = match &self.module_scope {
+            Some((_, fns)) => fns.contains_key(&name_str),
+            None => self.top_level_fn_names.contains(&name_str),
+        };
+        own_function
+            || self
+                .selective_imports
+                .contains_key(&(self.current_program(), name_str))
+    }
+
+    /// The qualified builtin name a call of the bare identifier `callee`
+    /// calls, when `callee` was imported by name from a builtin module
+    /// (`import json.{ parse }` makes `parse` call `json.parse`) and is
+    /// not shadowed by a local, an upvalue or a function or top-level
+    /// `let` of the program.
+    fn selectively_imported_builtin(&self, callee: &Expr) -> Option<String> {
+        let ExprKind::Ident(name) = &callee.kind else {
+            return None;
+        };
+        if self.resolve_local(*name).is_some() || self.resolve_upvalue_peek(*name).is_some() {
+            return None;
+        }
+        let name_str = resolve(*name);
+        let shadowed = match &self.module_scope {
+            Some((_, fns)) => fns.contains_key(&name_str),
+            None => {
+                self.top_level_fn_names.contains(&name_str)
+                    || self.top_level_value_globals.contains(&name_str)
+            }
+        };
+        if shadowed {
+            return None;
+        }
+        let qualified = self
+            .selective_imports
+            .get(&(self.current_program(), name_str))?;
+        let module_name = qualified.split('.').next()?;
+        module::is_builtin_module(module_name).then(|| qualified.clone())
     }
 
     /// Pre-pass over a program's type declarations, run before any of its
@@ -1639,7 +1781,7 @@ impl Compiler {
                         message: format!(
                             "package '{module_name}' has no library entry point — \
                              expected `src/lib.silt` in the dep at {}",
-                            pkg_root.display()
+                            crate::git::escape_for_display(&pkg_root.display().to_string())
                         ),
                         span,
                     });
@@ -1844,12 +1986,7 @@ impl Compiler {
             // of dropping the whole batch. Import-resolvable shapes
             // stay suppressed inside the harvest — see
             // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(
-                &module_errors,
-                &source,
-                &resolved.file_path,
-                &file_display,
-            );
+            self.harvest_module_type_errors(&module_errors, &source, &resolved.file_path);
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -1999,7 +2136,7 @@ impl Compiler {
         // `harvest_module_type_errors`). First-wins keying by file path
         // means this is a no-op when the pre-typecheck pass already
         // harvested the same module.
-        self.harvest_module_type_errors(&module_type_errors, &source, file_path, &file_display);
+        self.harvest_module_type_errors(&module_type_errors, &source, file_path);
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
@@ -2056,6 +2193,7 @@ impl Compiler {
         self.contexts.push(CompileContext::new(init_name, 0));
 
         self.collect_type_decls(&program);
+        self.collect_selective_imports(&program);
 
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
@@ -2593,10 +2731,14 @@ impl Compiler {
                     // they shadow same-named modules exactly like locals do
                     // (the typechecker resolves `other.double(2)` with a
                     // top-level `let other` as a field call on the value).
+                    // A function (the program's own, or imported by name)
+                    // is a value as well: `double.baz()` calls the method
+                    // `baz` on the function `double`.
                     let is_module_call = if let ExprKind::Ident(name) = &receiver.kind {
                         self.resolve_local(*name).is_none()
                             && self.resolve_upvalue_peek(*name).is_none()
                             && !self.top_level_value_globals.contains(&resolve(*name))
+                            && !self.names_function_value(*name)
                     } else {
                         false
                     };
@@ -2733,7 +2875,12 @@ impl Compiler {
                         self.current_chunk().emit_u8(argc, span);
                     }
                 } else {
-                    // Normal function call
+                    // Normal function call. A decoder imported by name
+                    // (`import json.{ parse }`) is checked like
+                    // `json.parse(..)`.
+                    if let Some(builtin_name) = self.selectively_imported_builtin(callee) {
+                        self.check_decode_target(&builtin_name, args.last(), span)?;
+                    }
                     self.compile_operands(std::iter::once(&**callee).chain(args))?;
                     let argc = args.len() as u8;
                     self.emit_call(argc, tail, span);
@@ -3193,11 +3340,13 @@ impl Compiler {
                     }
                 } else {
                     // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with synthetic name "<anon>".
+                    // RecordCreate but with the synthetic name
+                    // `ANON_RECORD_TAG`, which every run-time record-tag
+                    // check accepts (see `bytecode::record_tag_matches`).
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
                     let type_name_idx =
-                        self.add_constant(Value::String("<anon>".to_string()), span)?;
+                        self.add_constant(Value::String(ANON_RECORD_TAG.to_string()), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -3480,6 +3629,9 @@ impl Compiler {
                         .emit_op_u16(Op::CallBuiltin, name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
                 } else {
+                    if let Some(builtin_name) = self.selectively_imported_builtin(callee) {
+                        self.check_decode_target(&builtin_name, args.last(), span)?;
+                    }
                     // Non-builtin: callee first, then val, then args
                     self.compile_operands([&**callee, left].into_iter().chain(args))?;
                     let argc = (args.len() + 1) as u8;
@@ -3737,9 +3889,11 @@ impl Compiler {
     /// `_map` forms). If `T` names a type declared in the program, every
     /// field the decoder would have to fill must have a decoder;
     /// otherwise the call is a compile error that names the field and its
-    /// type. When the type argument is a variable (a `type a` parameter)
-    /// the type is only known at run time, where the decoders return
-    /// `Err` for such a field.
+    /// type. An enum, a builtin container type, or a primitive type given
+    /// to a decoder that only decodes records is a compile error as well.
+    /// When the type argument is a variable (a `type a` parameter) the
+    /// type is only known at run time, where the decoders report the same
+    /// problems.
     fn check_decode_target(
         &self,
         builtin_name: &str,
@@ -3799,6 +3953,30 @@ impl Compiler {
                 message: format!(
                     "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder\n\
                      help: decode into a record type"
+                ),
+                span,
+            });
+        }
+        // Builtin type names. `json.parse`, `json.parse_map` and
+        // `toml.parse_map` also decode the primitive types; every other
+        // decoder, and every decoder given a container type such as
+        // `List`, needs a record type.
+        let is_primitive = module::BUILTIN_PRIMITIVE_NAMES.contains(&type_name.as_str());
+        let is_container = module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&type_name.as_str());
+        let decodes_primitives = matches!(
+            builtin_name,
+            "json.parse" | "json.parse_map" | "toml.parse_map"
+        );
+        if is_container || (is_primitive && !decodes_primitives) {
+            let accepted = if decodes_primitives {
+                "Int, Float, ExtFloat, String, Bool, or a record type"
+            } else {
+                "a record type"
+            };
+            return Err(CompileError {
+                message: format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}\n\
+                     help: declare a record type with a field of the type you want, and decode into the record"
                 ),
                 span,
             });

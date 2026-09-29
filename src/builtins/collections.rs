@@ -887,7 +887,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // / `float.max` / `float.clamp` treatment in
             // `src/builtins/numeric.rs`.
             if total.is_finite() {
-                Ok(Value::Float(total))
+                Ok(crate::builtins::numeric::float_value(total))
             } else {
                 Ok(Value::ExtFloat(total))
             }
@@ -931,7 +931,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // Same finiteness guard as `sum_float`: ±inf / NaN widens to
             // `ExtFloat` to preserve the `Value::Float` finite invariant.
             if total.is_finite() {
-                Ok(Value::Float(total))
+                Ok(crate::builtins::numeric::float_value(total))
             } else {
                 Ok(Value::ExtFloat(total))
             }

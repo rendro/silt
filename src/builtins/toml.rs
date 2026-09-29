@@ -324,6 +324,10 @@ fn value_to_top_level_toml(v: &Value) -> Result<::toml::Value, VmError> {
 /// distinguish clean silt-visible failures from VM-internal bugs.
 enum TomlDecodeErr {
     Variant(Value),
+    /// A value was present for a type no decoder exists for (the type as
+    /// written). `toml_to_record` turns it into a `TomlUnknown` that names
+    /// the record field whose type this is.
+    Unsupported(String),
     Vm(VmError),
 }
 
@@ -336,6 +340,11 @@ impl From<VmError> for TomlDecodeErr {
 fn decode_err_to_silt(e: TomlDecodeErr) -> Value {
     match e {
         TomlDecodeErr::Variant(v) => toml_err_wrap(v),
+        // Only record fields carry unsupported types, and
+        // `toml_to_record` names the field; this arm is the fallback.
+        TomlDecodeErr::Unsupported(declared) => {
+            toml_unknown_err(format!("a value of type {declared} cannot be decoded"))
+        }
         TomlDecodeErr::Vm(err) => toml_unknown_err(err.message),
     }
 }
@@ -355,6 +364,11 @@ fn toml_to_record(
             Some(val) => match toml_to_typed_value(vm, val, field_type) {
                 Ok(v) => {
                     record_fields.insert(field_name.clone(), v);
+                }
+                Err(TomlDecodeErr::Unsupported(declared)) => {
+                    return Ok(toml_unknown_err(unsupported_field_type_message(
+                        type_name, field_name, &declared,
+                    )));
                 }
                 Err(e) => return Ok(decode_err_to_silt(e)),
             },
@@ -475,7 +489,12 @@ fn toml_to_typed_value(
             _ => Err(mismatch("Int", toml_type_name(tv))),
         },
         FieldType::Float => match tv {
-            ::toml::Value::Float(f) => Ok(Value::Float(*f)),
+            // A `Float` is finite; `nan` and `inf` fit only an `ExtFloat`
+            // field.
+            ::toml::Value::Float(f) if f.is_finite() => {
+                Ok(crate::builtins::numeric::float_value(*f))
+            }
+            ::toml::Value::Float(_) => Err(mismatch("Float", "a non-finite float")),
             // TOML integers coerce to Float the way JSON numbers do.
             ::toml::Value::Integer(n) => Ok(Value::Float(*n as f64)),
             _ => Err(mismatch("Float", toml_type_name(tv))),
@@ -532,7 +551,7 @@ fn toml_to_typed_value(
             ))),
             _ => Err(mismatch("Tuple", toml_type_name(tv))),
         },
-        FieldType::Unsupported(declared) => Err(unknown(unsupported_field_type_message(declared))),
+        FieldType::Unsupported(declared) => Err(TomlDecodeErr::Unsupported(declared.clone())),
         FieldType::Date => match tv {
             ::toml::Value::Datetime(dt) => {
                 // Preferred path: TOML native date literal.

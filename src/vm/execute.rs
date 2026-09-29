@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::bytecode::{Op, VmClosure};
+use crate::bytecode::{ANON_RECORD_TAG, Op, VmClosure, record_tag_matches};
 use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
@@ -119,7 +119,7 @@ fn language_eq(a: &Value, b: &Value) -> bool {
             // already decided they share a type). Two distinct nominal names
             // stay unequal. Values still recurse through `language_eq` so the
             // IEEE-754 NaN rule applies to nested floats.
-            let names_ok = na.as_str() == "<anon>" || nb.as_str() == "<anon>" || na == nb;
+            let names_ok = record_tag_matches(na, nb) || nb.as_str() == ANON_RECORD_TAG;
             names_ok
                 && fa.len() == fb.len()
                 && fa
@@ -2391,7 +2391,7 @@ impl Vm {
                         }
                     }
                     self.push(Value::Record(
-                        "<anon>".to_string(),
+                        ANON_RECORD_TAG.to_string(),
                         std::sync::Arc::new(rest_fields),
                     ));
                 } else {
@@ -2405,7 +2405,7 @@ impl Vm {
                 let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;
                 let val = self.peek()?;
-                let result = matches!(val, Value::Record(tag, _) if *tag == name);
+                let result = matches!(val, Value::Record(tag, _) if record_tag_matches(tag, &name));
                 self.push(Value::Bool(result));
             }
             Op::TestMapHasKey => {

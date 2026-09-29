@@ -122,10 +122,15 @@ impl fmt::Display for GitError {
                     .unwrap_or_else(|| "?".into());
                 write!(f, "git command failed (exit {code}): `{command}`")?;
                 // Each line git wrote gets a line of its own, marked
-                // as git's.
+                // as git's. An empty line is the prefix alone, without
+                // its trailing space.
                 for line in stderr.trim_end().lines() {
                     f.line_break()?;
-                    write!(f, "{GIT_OUTPUT_PREFIX}{line}")?;
+                    if line.is_empty() {
+                        write!(f, "{}", GIT_OUTPUT_PREFIX.trim_end())?;
+                    } else {
+                        write!(f, "{GIT_OUTPUT_PREFIX}{line}")?;
+                    }
                 }
                 Ok(())
             }
@@ -268,9 +273,17 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
             .chars()
             .any(|c| is_forbidden(c) && is_space_or_control(c))
         {
-            "must not contain whitespace or control characters \
-             (a space is allowed only in a `file://` URL or a local path)"
-                .to_string()
+            // The hint names what the value's own form allows.
+            if local {
+                "must not contain whitespace or control characters \
+                 (the ordinary space is the only one a `file://` URL or a local path \
+                 may contain)"
+                    .to_string()
+            } else {
+                "must not contain whitespace or control characters \
+                 (a space is allowed only in a `file://` URL or a local path)"
+                    .to_string()
+            }
         } else if url.chars().any(is_invisible_format_char) {
             "must not contain invisible or bidirectional formatting characters".to_string()
         } else {
@@ -1540,7 +1553,7 @@ mod tests {
             [
                 "git command failed (exit ?): `git clone`",
                 "  git: remote: one",
-                "  git: ",
+                "  git:",
                 "  git: error: all checks passed",
                 "  git:   = note: fine\\rwarning: x",
             ]

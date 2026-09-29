@@ -1086,8 +1086,8 @@ fn main() {
     assert_prints(
         "c4_type_parameter",
         src,
-        "err: a value of type Set(Int) cannot be decoded\n\
-         err: a value of type Set(Int) cannot be decoded\n",
+        "err: cannot decode field `items` of `Bag`: a value of type Set(Int) cannot be decoded\n\
+         err: cannot decode field `items` of `Bag`: a value of type Set(Int) cannot be decoded\n",
     );
 }
 

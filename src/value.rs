@@ -863,13 +863,24 @@ pub struct TaskHandle {
     /// mutex, the two orders would meet and `task.cancel` would hang.
     cancel_cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// True while the task has ended with an error of its own that no
-    /// join has received and that has not been reported. Set by `fail`,
-    /// cleared by `join`, `mark_joined` and `take_unjoined_failure`.
+    /// join has received, that no cancel has dismissed, and that has not
+    /// been reported. Set by `fail`, cleared by `join`, `mark_joined`
+    /// and `take_unjoined_failure`.
     unjoined_failure: AtomicBool,
+    /// Who spawned the task, as the tag that was current where it was
+    /// spawned (`crate::scheduler::set_task_owner`); 0 when nobody set
+    /// one. A report of the task's failure carries it, so `silt test`
+    /// can fail the test that spawned the task.
+    owner: u64,
 }
 
 impl TaskHandle {
     pub fn new(id: usize) -> Self {
+        Self::with_owner(id, 0)
+    }
+
+    /// A handle for a task spawned under the owner tag `owner`.
+    pub fn with_owner(id: usize, owner: u64) -> Self {
         Self {
             id,
             result: Mutex::new(None),
@@ -878,7 +889,13 @@ impl TaskHandle {
             next_join_waker_id: AtomicU64::new(0),
             cancel_cleanup: Mutex::new(None),
             unjoined_failure: AtomicBool::new(false),
+            owner,
         }
+    }
+
+    /// The owner tag the task was spawned under. See `with_owner`.
+    pub fn owner(&self) -> u64 {
+        self.owner
     }
 
     /// Register a cleanup closure to run when the task completes or is cancelled
@@ -973,9 +990,10 @@ impl TaskHandle {
         self.result.lock().clone()
     }
 
-    /// Note that a join has received the result of the task. A failure
-    /// of the task is the joiner's to handle from here on, and is not
-    /// reported as unjoined.
+    /// Note that the program has handled the task: a join has received
+    /// its result, or `task.cancel` was called on it. A failure of the
+    /// task is the program's to handle from here on, and is not reported
+    /// as unjoined.
     pub fn mark_joined(&self) {
         self.unjoined_failure.store(false, AtomicOrdering::Release);
     }

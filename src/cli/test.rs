@@ -1,12 +1,14 @@
 //! `silt test [--filter <pat>] [path]` — discover, compile, and run
 //! `test_*` functions.
 
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
 use silt::errors::{ErrorKind, SourceError};
+use silt::scheduler::UnjoinedFailures;
 use silt::vm::Vm;
 
 use crate::cli::help::test_usage_banner;
@@ -16,7 +18,7 @@ use crate::cli::pipeline::{
     CompilePipelineResult, Emit, analyse_parsed_entry_file, parse_entry_file,
     pipeline_has_real_hard_errors, reportable_diagnostics, resolve_strict_effects,
 };
-use crate::cli::run::returned_err;
+use crate::cli::run::{render_runtime_error, returned_err};
 use crate::cli::source_scan::{TestKind, test_functions};
 
 /// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
@@ -163,16 +165,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
     // Files that `--filter` did not rule out. Without a filter, all of them.
     let mut files_considered: usize = 0;
     let mut total = 0;
-    let mut passed = 0;
-    let mut failed = 0;
     let mut skipped = 0;
-    // Count files that failed to lex / parse / type-check / compile.
-    // These are tracked separately from the per-test failure counter so
-    // that `X tests: Y passed, Z failed` still reflects what actually
-    // ran. Previously a single file compile error was booked as one
-    // "failed test", which was misleading — that file may have contained
-    // dozens of tests we couldn't even count.
-    let mut file_errors: usize = 0;
+    let mut counts = Counts::default();
+    // The failures of spawned tasks are taken from the scheduler and
+    // charged to the test that spawned the task.
+    silt::scheduler::collect_unjoined_failures();
+    let mut owners = TaskOwners::default();
 
     for path in &paths {
         let source = match fs::read_to_string(path) {
@@ -182,7 +180,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                 // `--filter` does not rule it out: the error is reported.
                 files_considered += 1;
                 eprintln!("{path}: failed to read — {e}");
-                file_errors += 1;
+                counts.file_errors += 1;
                 continue;
             }
         };
@@ -239,7 +237,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         let (source, functions) = match (failed_to_compile, result.functions) {
             (false, Some(functions)) => (result.source, functions),
             _ => {
-                file_errors += 1;
+                counts.file_errors += 1;
                 continue;
             }
         };
@@ -247,7 +245,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         // Run the setup script to register all globals in the VM
         let Some(first) = functions.into_iter().next() else {
             eprintln!("{path}: internal error: no functions compiled");
-            file_errors += 1;
+            counts.file_errors += 1;
             continue;
         };
         // Build module_sources BEFORE running the script so setup errors
@@ -272,9 +270,19 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
             crate::cli::paths::display_path_for(user_path_is_absolute, cwd.as_deref(), candidate)
         };
 
+        // Tasks that the file's top-level code spawns are the file's.
+        let file_index = owners.add_file(TestFile {
+            path: path.clone(),
+            source: source.clone(),
+            module_sources: module_sources.clone(),
+        });
+        let setup_owner = owners.add_owner(file_index, None);
+        silt::scheduler::set_task_owner(setup_owner);
+
         let script = Arc::new(first);
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
+            owners.mark_failed(setup_owner);
             if let Some(span) = e.span {
                 // Find the innermost frame that identifies a source file:
                 // either a user function or a <module:X> init frame.
@@ -329,7 +337,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                 eprintln!("{path}: setup error:");
                 eprintln!("{source_err}");
             }
-            file_errors += 1;
+            counts.file_errors += 1;
             continue;
         }
 
@@ -341,14 +349,29 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                 skipped += 1;
                 continue;
             }
+            // The tasks that this test spawns, and the tasks that those
+            // spawn in turn, are the test's: their failures fail it.
+            let owner = owners.add_owner(file_index, Some(name.clone()));
+            silt::scheduler::set_task_owner(owner);
             let caller = silt::bytecode::call_global_script(name);
-            match vm.run(Arc::new(caller)) {
+            let outcome = vm.run(Arc::new(caller));
+            // The failures of spawned tasks that have happened by now.
+            // Those of this test's tasks are reported under its result
+            // line; those of earlier tests are reported here.
+            let task_failures = owners.charge_task_failures(Some(owner), &mut counts);
+            let test_failed = match outcome {
                 Ok(value) => match returned_err(&value) {
                     // `Ok(..)`, Unit and every other value: the test ran
                     // to its end.
-                    None => {
+                    None if task_failures.is_empty() => {
                         eprintln!("  PASS {path}::{name}");
-                        passed += 1;
+                        false
+                    }
+                    // The test ran to its end, but a task it spawned
+                    // failed and was neither joined nor cancelled.
+                    None => {
+                        eprintln!("  FAIL {path}::{name}");
+                        true
                     }
                     // `Err(..)`: the test gave up, typically at a `?`, and
                     // the assertions after that point never ran. Same
@@ -367,7 +390,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                         for line in formatted.lines() {
                             eprintln!("    {line}");
                         }
-                        failed += 1;
+                        true
                     }
                 },
                 Err(e) => {
@@ -445,12 +468,18 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
                             eprintln!("    {line}");
                         }
                     }
-                    failed += 1;
+                    true
                 }
+            };
+            for report in &task_failures {
+                eprint_indented(report);
             }
-            // Failures of tasks this test spawned and never joined are
-            // reported under the test's result line.
-            vm.report_unjoined_task_failures();
+            if test_failed {
+                owners.mark_failed(owner);
+                counts.failed += 1;
+            } else {
+                counts.passed += 1;
+            }
         }
     }
 
@@ -461,6 +490,17 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         return;
     }
 
+    // The last test has returned. The tasks that have failed by now are
+    // charged to the tests that spawned them, before the summary. A task
+    // that is still running is not a failure; if it fails later, its
+    // failure is not reported.
+    let _ = owners.charge_task_failures(None, &mut counts);
+
+    let Counts {
+        passed,
+        failed,
+        file_errors,
+    } = counts;
     let test_word = if total == 1 { "test" } else { "tests" };
     if file_errors > 0 {
         eprintln!(
@@ -477,5 +517,184 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
     }
     if failed > 0 || file_errors > 0 {
         process::exit(1);
+    }
+}
+
+/// The tallies of a `silt test` run.
+#[derive(Default)]
+struct Counts {
+    passed: usize,
+    failed: usize,
+    /// Files that failed to lex, parse, type-check or compile, or whose
+    /// top-level code failed. These are tracked separately from the
+    /// per-test failure counter so that `X tests: Y passed, Z failed`
+    /// still reflects what actually ran: a file that does not compile
+    /// may contain dozens of tests that could not even be counted.
+    file_errors: usize,
+}
+
+/// A test file whose code has run, kept to render the failures of the
+/// tasks that its tests spawned.
+struct TestFile {
+    path: String,
+    source: String,
+    module_sources: HashMap<String, (PathBuf, String)>,
+}
+
+/// What spawned a task: a test, or the top-level code of a file.
+struct TaskOwner {
+    /// Index of the file in `TaskOwners::files`.
+    file: usize,
+    /// The test's name; `None` for the file's top-level code.
+    test: Option<String>,
+    /// True once the test (or the file) has been counted as failed.
+    failed: bool,
+}
+
+/// Who spawned the tasks of a `silt test` run, so that the failure of a
+/// task can be charged to the test that spawned it. The owner tag of an
+/// owner, as the scheduler carries it (`silt::scheduler::set_task_owner`),
+/// is its index in `owners` plus one; 0 is no owner.
+#[derive(Default)]
+struct TaskOwners {
+    files: Vec<TestFile>,
+    owners: Vec<TaskOwner>,
+}
+
+impl TaskOwners {
+    /// Keep a file, and return its index.
+    fn add_file(&mut self, file: TestFile) -> usize {
+        self.files.push(file);
+        self.files.len() - 1
+    }
+
+    /// A new owner in the file at `file`: the test `test`, or the file's
+    /// top-level code. Returns its owner tag.
+    fn add_owner(&mut self, file: usize, test: Option<String>) -> u64 {
+        self.owners.push(TaskOwner {
+            file,
+            test,
+            failed: false,
+        });
+        self.owners.len() as u64
+    }
+
+    /// Note that the owner tagged `tag` has been counted as failed.
+    fn mark_failed(&mut self, tag: u64) {
+        if let Some(index) = owner_index(tag)
+            && let Some(owner) = self.owners.get_mut(index)
+        {
+            owner.failed = true;
+        }
+    }
+
+    /// Take the failures of spawned tasks that have happened so far, each
+    /// rendered against the file of the test that spawned the task.
+    ///
+    /// The reports of the owner tagged `current`, the test that has just
+    /// run, are returned: the caller prints them under the test's result
+    /// line, and counts the test as failed. Every other owner has been
+    /// counted already. It is reported here, as failed, with the reports
+    /// of its tasks; a test that was counted as passed is counted as
+    /// failed instead.
+    fn charge_task_failures(&mut self, current: Option<u64>, counts: &mut Counts) -> Vec<String> {
+        let taken = silt::scheduler::take_unjoined_failures();
+        // The reports per owner tag, in the order in which the tasks
+        // failed.
+        let mut reports: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+        for failure in &taken.failures {
+            let error = failure.report_error();
+            let rendered = match self.file_of(failure.owner) {
+                Some(file) => {
+                    render_runtime_error(&error, &file.path, &file.source, &file.module_sources)
+                }
+                None => error.to_string(),
+            };
+            reports.entry(failure.owner).or_default().push(rendered);
+        }
+        for &(owner, count) in &taken.not_kept {
+            let message = SourceError::runtime_at(
+                UnjoinedFailures::not_kept_message(count),
+                silt::lexer::Span::new(0, 0),
+                "",
+                "",
+            );
+            reports.entry(owner).or_default().push(message.to_string());
+        }
+        let mut current_reports = Vec::new();
+        for (tag, owner_reports) in reports {
+            if Some(tag) == current {
+                current_reports = owner_reports;
+            } else {
+                self.report_late_failures(tag, &owner_reports, counts);
+            }
+        }
+        current_reports
+    }
+
+    /// The file of the owner tagged `tag`.
+    fn file_of(&self, tag: u64) -> Option<&TestFile> {
+        let owner = self.owners.get(owner_index(tag)?)?;
+        self.files.get(owner.file)
+    }
+
+    /// Report the failures of tasks spawned by the owner tagged `tag`,
+    /// which has been counted already, and count it as failed.
+    fn report_late_failures(&mut self, tag: u64, reports: &[String], counts: &mut Counts) {
+        let owner = match owner_index(tag) {
+            Some(index) => self.owners.get_mut(index),
+            None => None,
+        };
+        match owner {
+            Some(owner) => {
+                let path = self.files[owner.file].path.as_str();
+                match &owner.test {
+                    Some(name) => {
+                        eprintln!(
+                            "  FAIL {path}::{name} (a task it spawned failed after the test had returned)"
+                        );
+                        if !owner.failed {
+                            counts.passed = counts.passed.saturating_sub(1);
+                            counts.failed += 1;
+                        }
+                    }
+                    None => {
+                        eprintln!(
+                            "  FAIL {path} (a task spawned by the file's top-level code failed)"
+                        );
+                        if !owner.failed {
+                            counts.file_errors += 1;
+                        }
+                    }
+                }
+                owner.failed = true;
+            }
+            // Every task of the run is spawned under a tag of this run;
+            // this is a failure that nothing can be charged with.
+            None => {
+                eprintln!("  FAIL a task that no test can be named for failed");
+                counts.file_errors += 1;
+            }
+        }
+        for report in reports {
+            eprint_indented(report);
+        }
+    }
+}
+
+/// The index in `TaskOwners::owners` of the owner tagged `tag`.
+fn owner_index(tag: u64) -> Option<usize> {
+    usize::try_from(tag.checked_sub(1)?).ok()
+}
+
+/// Print a rendered diagnostic on stderr, indented under a test's result
+/// line.
+fn eprint_indented(text: &str) {
+    for line in text.lines() {
+        if line.is_empty() {
+            eprintln!();
+        } else {
+            eprintln!("    {line}");
+        }
     }
 }

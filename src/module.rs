@@ -941,6 +941,10 @@ pub fn format_module_load_error(
     out.push_str(&format!("\nlooked for `{attempted_display}`"));
     if err.kind() == std::io::ErrorKind::NotFound {
         if let Some(hint) = sibling_module_suggestion(module_name, attempted_path) {
+            // The file name comes from a directory the program does not
+            // control (a dependency's), so it is shown through the
+            // display rule like the path above.
+            let hint = crate::git::escape_for_display(&hint);
             out.push_str(&format!(
                 "\nhelp: did you mean `{hint}`? (`{hint}.silt` exists in the same directory)"
             ));

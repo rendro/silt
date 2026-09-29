@@ -106,26 +106,50 @@ use runtime::{IoPool, RegexCache, TimerManager};
 /// frames below the first loop and for the native work of the innermost
 /// call.
 ///
-/// Optimised build: measured the same way. A level entered through a
-/// method call costs about 3.6 KiB, through `set.map` about 5.8 KiB,
-/// through `list.unfold` about 6.0 KiB, and through `list.fold`,
-/// `list.map` or `list.sort_by` (the most expensive measured) about
-/// 7.1 KiB. The value is 4.4 times the most expensive level. Charging
-/// optimised frames the unoptimised cost would turn away recursion that
-/// fits the stack many times over.
+/// Optimised build: measured from the resident size of the thread's
+/// stack at two depths. A level entered through a method call costs about
+/// 4.0 KiB, through `set.map` about 6.2 KiB, through `list.unfold` about
+/// 6.3 KiB, and through `list.fold`, `list.map`, `list.sort_by`, string
+/// interpolation or a pattern match (the most expensive measured) about
+/// 7.5 KiB, the same on the main thread, in a task and in a stream stage.
+/// The value, 12 KiB, is 1.6 times the most expensive level: at the limit
+/// of 21845 levels on a 256 MiB stack the nested loops fill about 62% of
+/// it, and the stack would overflow only at about 34,900 levels.
+///
+/// The margin is guarded by `tests/wave2_vm_tests.rs`, which recurses
+/// through the most expensive shapes to exactly the limit, on the main
+/// thread and in a task, and requires a normal result. If a compiler or
+/// platform change makes a level more expensive than this value allows
+/// for, that test aborts instead of passing; measure again and raise the
+/// value.
 ///
 /// The build kind is read off `debug_assertions`, which is on in the
 /// `dev` and `test` profiles and off in `release` and `bench`.
 const NATIVE_STACK_BYTES_PER_LEVEL: usize = if cfg!(debug_assertions) {
     256 * 1024
 } else {
-    32 * 1024
+    12 * 1024
 };
 
 /// Stack size assumed for a thread that never called
-/// [`set_native_stack_budget`]: 2 MiB, the size Rust gives a spawned
-/// thread by default.
-const DEFAULT_NATIVE_STACK_BUDGET: usize = 2 * 1024 * 1024;
+/// [`set_native_stack_budget`].
+///
+/// Native targets: 2 MiB, the size Rust gives a spawned thread by
+/// default.
+///
+/// WebAssembly: 1 MiB. A wasm module has no threads with a stack size of
+/// their own; its one stack is a region of linear memory whose size is
+/// fixed when the module is linked, and rustc links every wasm target
+/// with `-z stack-size=1048576` unless the embedder overrides it. The
+/// playground module (built with the default) confirms it: its
+/// `__stack_pointer` starts at 1048576, with the stack placed first in
+/// memory. An embedder that links a different stack size calls
+/// [`set_native_stack_budget`] with it before running silt code.
+const DEFAULT_NATIVE_STACK_BUDGET: usize = if cfg!(target_family = "wasm") {
+    1024 * 1024
+} else {
+    2 * 1024 * 1024
+};
 
 /// How many nested interpreter loops fit into a stack of `bytes` bytes.
 /// Never less than one, so a thread can always run a program.
@@ -140,6 +164,10 @@ thread_local! {
         const { Cell::new(native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET)) };
     /// Interpreter loops currently nested on this thread.
     static NATIVE_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// Whether the thread's outermost interpreter loop is running the
+    /// program itself (see [`ProgramLoop`]), which then does not count
+    /// against the limit.
+    static PROGRAM_LOOP_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Tell the VM how large the stack of the CURRENT thread is, in bytes.
@@ -148,7 +176,7 @@ thread_local! {
 /// explicit stack size and runs silt code. The VM derives from it how
 /// deep method calls and builtin callbacks may nest on this thread before
 /// it reports a stack overflow as a runtime error. A thread that never
-/// calls it is treated as having a 2 MiB stack.
+/// calls it is treated as having a 2 MiB stack (1 MiB on WebAssembly).
 pub fn set_native_stack_budget(bytes: usize) {
     NATIVE_DEPTH_LIMIT.with(|limit| limit.set(native_depth_limit_for(bytes)));
 }
@@ -184,7 +212,10 @@ where
     }
 }
 
-/// Most interpreter loops that may be nested on the current thread.
+/// Most method calls and builtin callbacks that may be nested on the
+/// current thread, which is the number the stack-overflow error names.
+/// The loop that runs the program itself comes on top (see
+/// [`ProgramLoop`]).
 pub(crate) fn native_depth_limit() -> usize {
     NATIVE_DEPTH_LIMIT.with(|limit| limit.get())
 }
@@ -199,7 +230,8 @@ impl NativeDepthGuard {
     /// Count one more nested loop, or return `None` if the thread is at
     /// its limit already.
     pub(crate) fn enter() -> Option<Self> {
-        let limit = native_depth_limit();
+        let program_loop = PROGRAM_LOOP_RUNNING.with(|running| running.get());
+        let limit = native_depth_limit() + usize::from(program_loop);
         NATIVE_DEPTH.with(|depth| {
             let current = depth.get();
             if current >= limit {
@@ -217,6 +249,43 @@ impl Drop for NativeDepthGuard {
         // `try_with`: a guard may be dropped while the thread is being
         // torn down, when its thread-locals are no longer accessible.
         let _ = NATIVE_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// The outermost interpreter loop of a thread, while it runs a program
+/// (`Vm::run`), is not a method call or a callback and is not charged
+/// against the limit: its host stack comes out of the part of the budget
+/// that the per-level cost leaves for the frames below the first nested
+/// loop. With it uncharged, a program can nest exactly
+/// [`native_depth_limit`] method calls and callbacks on any thread, on the
+/// main thread as in a task (whose loop, `execute_slice`, is never
+/// counted), and the stack-overflow error names that number. A loop
+/// started while others are already nested on the thread is charged as
+/// usual.
+#[must_use = "the program loop is charged again as soon as the guard is dropped"]
+struct ProgramLoop(());
+
+impl ProgramLoop {
+    /// Allow one loop more than the limit on this thread, for the loop
+    /// about to run the program, until the returned guard is dropped.
+    /// Returns `None`, and changes nothing, if a loop is running on the
+    /// thread already.
+    fn start() -> Option<Self> {
+        let idle = NATIVE_DEPTH.with(|depth| depth.get()) == 0;
+        PROGRAM_LOOP_RUNNING.with(|running| {
+            if idle && !running.get() {
+                running.set(true);
+                Some(ProgramLoop(()))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Drop for ProgramLoop {
+    fn drop(&mut self) {
+        let _ = PROGRAM_LOOP_RUNNING.try_with(|running| running.set(false));
     }
 }
 
@@ -677,17 +746,6 @@ impl Vm {
         self.runtime.scheduler.lock().clone()
     }
 
-    /// Report on stderr every task that failed and that no `task.join`
-    /// received, and return how many were reported. Each failure is
-    /// reported once. A caller that ends the process with
-    /// `std::process::exit` calls this first: the scheduler also reports
-    /// when the thread that runs the program ends, but whether that runs
-    /// on `exit` depends on the platform.
-    pub fn report_unjoined_task_failures(&self) -> usize {
-        self.current_scheduler()
-            .map_or(0, |s| s.report_unjoined_failures())
-    }
-
     /// Get or create the shared scheduler.
     pub(crate) fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
         let mut guard = self.runtime.scheduler.lock();
@@ -744,6 +802,8 @@ impl Vm {
             ip: 0,
             base_slot: 0,
         });
+        // Held until `execute` has returned; see `ProgramLoop`.
+        let _program_loop = ProgramLoop::start();
         match self.execute() {
             Ok(v) => Ok(v),
             Err(e) => {
@@ -1199,7 +1259,7 @@ impl Vm {
 mod native_stack_tests {
     use super::{
         DEFAULT_NATIVE_STACK_BUDGET, NATIVE_DEPTH, NATIVE_STACK_BYTES_PER_LEVEL, NativeDepthGuard,
-        native_depth_limit, native_depth_limit_for, set_native_stack_budget,
+        ProgramLoop, native_depth_limit, native_depth_limit_for, set_native_stack_budget,
     };
 
     /// Run `f` on a thread of its own, so that the thread-locals it reads
@@ -1280,6 +1340,52 @@ mod native_stack_tests {
             assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 1);
             drop(only);
             assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 0);
+        });
+    }
+
+    #[test]
+    fn the_program_loop_comes_on_top_of_the_limit() {
+        on_fresh_thread(|| {
+            set_native_stack_budget(2 * NATIVE_STACK_BYTES_PER_LEVEL);
+            let program = ProgramLoop::start().expect("an idle thread can start a program");
+            let outer = NativeDepthGuard::enter().expect("the program loop fits");
+            let first = NativeDepthGuard::enter().expect("nested level 1 fits");
+            let second = NativeDepthGuard::enter().expect("nested level 2 fits");
+            assert!(
+                NativeDepthGuard::enter().is_none(),
+                "a third nested level must be refused"
+            );
+            // The error names the nested levels, not the program loop.
+            assert_eq!(native_depth_limit(), 2);
+            drop(second);
+            drop(first);
+            drop(outer);
+            drop(program);
+            // Without a program running, the limit is the plain one.
+            let a = NativeDepthGuard::enter().expect("level 1 fits");
+            let b = NativeDepthGuard::enter().expect("level 2 fits");
+            assert!(NativeDepthGuard::enter().is_none());
+            drop(b);
+            drop(a);
+        });
+    }
+
+    #[test]
+    fn only_the_outermost_loop_of_a_thread_is_a_program_loop() {
+        on_fresh_thread(|| {
+            set_native_stack_budget(2 * NATIVE_STACK_BYTES_PER_LEVEL);
+            let busy = NativeDepthGuard::enter().expect("level 1 fits");
+            assert!(
+                ProgramLoop::start().is_none(),
+                "a program started inside a running loop is charged as usual"
+            );
+            drop(busy);
+            let program = ProgramLoop::start().expect("the thread is idle again");
+            assert!(
+                ProgramLoop::start().is_none(),
+                "a thread has at most one program loop"
+            );
+            drop(program);
         });
     }
 }

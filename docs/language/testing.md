@@ -82,8 +82,10 @@ silt test --filter addition     -- runs only test_addition
 silt test --filter string       -- runs only test_string_length
 ```
 
-The filter matches against the function name (not the file name). Files that
-cannot contain any matching test are skipped entirely.
+The filter matches against the function name (not the file name). A file with
+no matching test is skipped entirely: it is not compiled and nothing is
+reported for it. A file whose tests cannot be listed, because it cannot be read
+or does not lex, is still reported, and its error fails the run.
 
 ## Assertions
 
@@ -101,6 +103,36 @@ entry point.
 
 All assertions accept an optional trailing `String` message argument.
 
+## Spawned Tasks
+
+A test that spawns tasks is responsible for them. If a task fails and the
+test never joins it (`task.join`) or cancels it (`task.cancel`), the failure
+fails **the test that spawned the task** -- also when the task was spawned by
+another task of that test. The failure is reported under the test's result
+line, rendered like any runtime error:
+
+```text
+  FAIL spawn_test.silt::test_worker
+    error[runtime]: task <handle:0> failed and was never joined: division by zero
+     --> spawn_test.silt:5:29
+    ...
+      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+```
+
+The runner looks for failed tasks after each test. A task that fails only
+after its test has returned -- while a later test runs -- still fails the
+test that spawned it. That test is then reported again, as failed, with the
+note `(a task it spawned failed after the test had returned)`, and the
+summary counts it as failed instead of passed. The same holds for a failure
+noticed after the last test: the runner looks once more before it prints
+the summary. A task that is still running when the summary is printed is not
+a failure, and a failure after that point is not reported. A task spawned by
+a file's top-level code counts as a failure of the file.
+
+Join the tasks a test spawns (or cancel them) before the test returns, and
+the result of the test does not depend on timing.
+
 ## Exit Code
 
-`silt test` exits with code 0 if all tests pass and code 1 if any test fails.
+`silt test` exits with code 0 if all tests pass and code 1 if any test fails,
+including a test that failed because a task it spawned failed.

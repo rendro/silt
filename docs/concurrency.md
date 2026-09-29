@@ -184,6 +184,10 @@ requires every `match` to cover it (or use a catch-all arm).
 
 This lets you distinguish "nothing right now" from "nothing ever again."
 
+On a rendezvous channel, `try_receive` returns `Empty` even while a sender
+is parked on it: a parked sender hands its value only to a receiver that
+waits (see [Unbuffered channels](#unbuffered-channels-true-rendezvous)).
+
 ### Iterating: `channel.each(ch) { val -> ... }`
 
 ```silt
@@ -214,8 +218,20 @@ behind round-robin fan-out (see Section 5).
 `channel.new()` with no arguments creates a true rendezvous channel with
 capacity 0. The sender blocks until a receiver is ready, and the receiver
 blocks until a sender is ready. The value is handed off directly -- it is
-never buffered. This provides the strongest synchronization guarantee: when
-`channel.send` returns, you know the receiver has accepted the value.
+never buffered. When `channel.send` returns, the value has been handed to a
+receiver that was waiting for it; the receiver may not have run yet. Use a
+reply channel if the sender must know that the value was processed.
+
+The hand-off happens between a receiver that waits and a sender that waits.
+The non-blocking operations do not wait, so they only meet a counterpart
+that is already waiting: `channel.try_send` succeeds only while a receiver
+is parked on the channel, and `channel.try_receive` does **not** take the
+value of a parked sender -- it returns `Empty` even while a sender waits,
+because a parked sender keeps its value until a receiver registers.
+`channel.recv_timeout` with a zero duration behaves like `try_receive`.
+A blocking `channel.receive`, a `Recv` arm of `channel.select`, and
+`channel.recv_timeout` with a positive duration register as receivers, and
+the parked sender then hands its value over.
 
 ```silt
 let ch = channel.new()   -- capacity 0, true rendezvous
@@ -280,12 +296,16 @@ rather than a `ChannelResult(a)`:
 - `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
 - `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
 
-A value already sitting in the buffer (or a rendezvous sender already
-parked) wins over an expired timer: the non-blocking path is always tried
-first, so a ready value is never preempted by the deadline. A `Duration` of
-zero gives try-receive semantics (no timer is scheduled); negative durations
-are an error. Positive sub-millisecond durations are rounded up to one
-millisecond, so the caller always waits at least one timer tick.
+A value already sitting in the buffer wins over an expired timer: the
+non-blocking path is always tried first, so a ready value is never
+preempted by the deadline. A `Duration` of zero gives try-receive semantics
+(no timer is scheduled): on a rendezvous channel it returns
+`Err(ChannelTimeout)` even while a sender is parked, because a parked sender
+hands its value only to a receiver that waits. With a positive duration the
+call waits as a receiver, and a parked sender hands its value over.
+Negative durations are an error. Positive sub-millisecond durations are
+rounded up to one millisecond, so the caller always waits at least one timer
+tick.
 
 The `dur` argument is a `Duration` built with `time.ms` / `time.seconds`
 (the same shape `task.deadline` takes), and `ChannelError` implements the
@@ -361,7 +381,13 @@ task.cancel(h)
 
 `task.cancel(h)` sets the handle's result to `Err("cancelled")` using
 first-writer-wins semantics: if the task has already completed with some other
-result, `task.cancel` is a no-op on the handle. Its effect on the running task
+result, `task.cancel` leaves that result on the handle. Cancelling counts as
+handling the task, though: if the task had already failed, the cancel
+dismisses the failure, so it is not reported as a failure that nobody joined
+and does not make the program exit with status 1 (see
+[Failures that nobody joins](#failures-that-nobody-joins)). A later
+`task.join(h)` still raises the task's own error, because the handle keeps
+the result that came first. Its effect on the running task
 depends on where that task is at the moment of cancellation:
 
 - **Task is currently parked** (blocked on a channel receive/send, a
@@ -411,6 +437,56 @@ typically want one of two patterns when cancellation is an expected outcome:
    expected exit path.
 
 Returns `Unit`.
+
+### Failures that nobody joins
+
+A task that ends with a runtime error (a `panic`, a failed assertion, a
+division by zero, ...) hands the error to whoever joins it. If the program
+never joins the task and never cancels it, nobody receives the error. Silt
+reports such a failure itself when the program ends, and `silt run` then
+exits with status 1, even if `main` returned normally:
+
+```silt
+import task
+import time
+fn main() {
+  let _ = task.spawn(fn() { 1 / 0 })
+  time.sleep(time.ms(100))
+  println("main done")
+}
+```
+
+```text
+main done
+error[runtime]: task <handle:0> failed and was never joined: division by zero
+ --> main.silt:4:29
+   |
+ 4 |   let _ = task.spawn(fn() { 1 / 0 })
+   |                             ^ task <handle:0> failed and was never joined: division by zero
+  = help: join the task with task.join to handle its error, or cancel it with task.cancel
+```
+
+The report is rendered like every other runtime error: the file and line
+where the task failed, the source line, and the call stack when there is
+more than one frame. The rules:
+
+- **A join handles the failure.** `task.join(h)` raises the task's error in
+  the joiner (`joined task failed: <msg>`), and the failure is not reported
+  a second time.
+- **A cancel handles the failure.** `task.cancel(h)` on a task that has
+  failed dismisses the failure: no report, no exit status 1.
+- **Only failures that have happened count.** The report is made when
+  `main` returns (or fails). A task that is still running then is not a
+  failure; if it fails afterwards, while the process shuts down, it is not
+  reported.
+- **A deadlock shows its cause.** When the main thread is told
+  `deadlock on main thread`, the failures reported with it are usually the
+  reason: a producer that failed before it sent.
+
+Under `silt test`, the failure fails the test that spawned the task (see
+[Testing](language/testing.md#spawned-tasks)). In the REPL it is reported
+when the session ends, since a later input may still join or cancel the
+task.
 
 ### Scoped deadlines: `task.deadline(dur, fn)`
 
@@ -1169,6 +1245,29 @@ operations -- no special syntax needed. When a spawned task calls
 the task is parked until the result is ready. From the main thread, these
 operations block synchronously, just like channel operations.
 
+### Deadlock detection
+
+When the main thread waits (a `channel.send`, `channel.receive`,
+`channel.each`, `channel.select` or `task.join` called from `main`), silt
+checks whether any task could still end the wait. If none can -- every task
+is parked on a channel or a join that nothing will satisfy -- the wait fails
+with a runtime error that starts with `deadlock on main thread`, and the
+program exits with status 1. Together with that error, silt reports the
+tasks that failed and that nobody joined (`silt run` before it, `silt test`
+under the failing test, after it; see
+[Failures that nobody joins](#failures-that-nobody-joins)): a failed
+producer is the usual reason why a counterpart is missing.
+
+A task that waits on a timer counts as able to make progress: a
+`time.sleep`, a `channel.timeout` channel that has not closed yet, a
+`channel.recv_timeout` that has not expired. While such a task exists, no
+deadlock is reported, whether or not the task could ever reach the channel
+that `main` waits on. The verdict comes after the timer has fired, if the
+program is still stuck then. So a background task that sleeps for a minute
+delays the report of an unrelated deadlock by up to a minute. The same holds
+for a task that waits on I/O. Only the main thread gets a deadlock verdict;
+tasks that are stuck while `main` is not waiting on them stay parked.
+
 ### Implications of real parallelism
 
 - **True parallelism.** Multiple tasks execute simultaneously on different CPU
@@ -1209,7 +1308,7 @@ operations block synchronously, just like channel operations.
 | Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, ChannelError)` -- `Ok(val)`, `Err(ChannelTimeout)`, or `Err(ChannelClosed)`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
-| Cancel task | `task.cancel(handle)` | `Unit` |
+| Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |
 | Scoped deadline | `task.deadline(dur, fn() { ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
 | Bounded spawn | `task.spawn_until(dur, fn() { ... })` | `Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
 

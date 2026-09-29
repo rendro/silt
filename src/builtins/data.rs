@@ -11,6 +11,7 @@ use std::time::Duration;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::common::value_kind;
+use crate::bytecode::record_tag_matches;
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
 use crate::value::{IoCompletion, Value, checked_range_len};
@@ -104,9 +105,17 @@ fn split_tuple_descriptors(s: &str) -> Vec<&str> {
 }
 
 /// The message of the error a decoder returns for a field whose declared
-/// type has no decoder. Shared by the JSON and TOML decoders.
-pub(crate) fn unsupported_field_type_message(declared: &str) -> std::string::String {
-    format!("a value of type {declared} cannot be decoded")
+/// type has no decoder. `field` is the field of the record type `record`
+/// whose type is, or contains, `declared`. Shared by the JSON and TOML
+/// decoders.
+pub(crate) fn unsupported_field_type_message(
+    record: &str,
+    field: &str,
+    declared: &str,
+) -> std::string::String {
+    format!(
+        "cannot decode field `{field}` of `{record}`: a value of type {declared} cannot be decoded"
+    )
 }
 
 /// Compute (year, month, day) from Unix epoch seconds.
@@ -634,7 +643,7 @@ fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
             value_kind(v)
         )));
     };
-    if name != "Date" {
+    if !record_tag_matches(name, "Date") {
         return Err(VmError::new(format!("expected Date, got {name}")));
     }
     let y = field_as_i32(fields, "year", 0)?;
@@ -652,7 +661,7 @@ fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
             value_kind(v)
         )));
     };
-    if name != "Time" {
+    if !record_tag_matches(name, "Time") {
         return Err(VmError::new(format!("expected Time, got {name}")));
     }
     let h = field_as_u32(fields, "hour", 0)?;
@@ -671,7 +680,7 @@ fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
             value_kind(v)
         )));
     };
-    if name != "DateTime" {
+    if !record_tag_matches(name, "DateTime") {
         return Err(VmError::new(format!("expected DateTime, got {name}")));
     }
     let date = fields
@@ -693,7 +702,7 @@ fn extract_instant(v: &Value) -> Result<i64, VmError> {
             value_kind(v)
         )));
     };
-    if name != "Instant" {
+    if !record_tag_matches(name, "Instant") {
         return Err(VmError::new(format!("expected Instant, got {name}")));
     }
     match fields.get("epoch_ns") {
@@ -710,7 +719,7 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
             value_kind(v)
         )));
     };
-    if name != "Duration" {
+    if !record_tag_matches(name, "Duration") {
         return Err(VmError::new(format!("expected Duration, got {name}")));
     }
     match fields.get("ns") {
@@ -766,6 +775,10 @@ enum JsonDecodeErr {
     /// A decoded `JsonError` variant value ready to be wrapped in
     /// `Err(...)` — propagate unchanged.
     Variant(Value),
+    /// A value was present for a type no decoder exists for (the type as
+    /// written). `json_to_record` turns it into a `JsonUnknown` that names
+    /// the record field whose type this is.
+    Unsupported(std::string::String),
     /// VM-internal failure (e.g. record type missing from globals).
     /// Caught at the call site and converted to a silt-visible
     /// `Err(JsonUnknown(...))`.
@@ -782,6 +795,11 @@ impl From<VmError> for JsonDecodeErr {
 fn decode_err_to_silt(e: JsonDecodeErr) -> Value {
     match e {
         JsonDecodeErr::Variant(v) => json_err_wrap(v),
+        // Only record fields carry unsupported types, and
+        // `json_to_record` names the field; this arm is the fallback.
+        JsonDecodeErr::Unsupported(declared) => {
+            json_unknown_err(format!("a value of type {declared} cannot be decoded"))
+        }
         JsonDecodeErr::Vm(err) => json_unknown_err(err.message),
     }
 }
@@ -801,6 +819,11 @@ fn json_to_record(
             Some(json_val) => match json_to_typed_value(vm, json_val, field_type) {
                 Ok(val) => {
                     record_fields.insert(field_name.clone(), val);
+                }
+                Err(JsonDecodeErr::Unsupported(declared)) => {
+                    return Ok(json_unknown_err(unsupported_field_type_message(
+                        type_name, field_name, &declared,
+                    )));
                 }
                 Err(e) => return Ok(decode_err_to_silt(e)),
             },
@@ -946,7 +969,7 @@ fn json_to_typed_value(
         FieldType::Float => match json {
             serde_json::Value::Number(n) => {
                 if let Some(f) = n.as_f64() {
-                    Ok(Value::Float(f))
+                    Ok(crate::builtins::numeric::float_value(f))
                 } else {
                     Err(unknown("expected Float, got non-numeric number".into()))
                 }
@@ -1010,7 +1033,7 @@ fn json_to_typed_value(
             ))),
             _ => Err(mismatch("Tuple", json_type_name(json))),
         },
-        FieldType::Unsupported(declared) => Err(unknown(unsupported_field_type_message(declared))),
+        FieldType::Unsupported(declared) => Err(JsonDecodeErr::Unsupported(declared.clone())),
         FieldType::Date => match json {
             serde_json::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(make_date)
@@ -2020,7 +2043,7 @@ fn extract_http_response(
     let Value::Record(name, fields) = val else {
         return Err(VmError::new("handler must return a Response record".into()));
     };
-    if name != "Response" {
+    if !record_tag_matches(name, "Response") {
         return Err(VmError::new(format!(
             "handler must return Response, got {name}"
         )));

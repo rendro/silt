@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::process;
 
+use silt::git::escape_for_display;
 use silt::intern;
 use silt::lockfile::Lockfile;
 
@@ -41,13 +42,16 @@ pub(crate) fn dispatch(args: &[String]) {
             "--dry-run" | "--force" => saw_self_update_flag = true,
             other if other.starts_with("--version=") => saw_self_update_flag = true,
             other if other.starts_with('-') => {
-                eprintln!("silt update: unknown flag '{other}'");
+                eprintln!("silt update: unknown flag '{}'", escape_for_display(other));
                 eprintln!("Run 'silt update --help' for usage.");
                 process::exit(1);
             }
             other if positional.is_none() => positional = Some(other.to_string()),
             other => {
-                eprintln!("silt update: unexpected extra argument '{other}'");
+                eprintln!(
+                    "silt update: unexpected extra argument '{}'",
+                    escape_for_display(other)
+                );
                 process::exit(1);
             }
         }
@@ -115,9 +119,12 @@ fn run_dependency_update(target: Option<&str>) {
             .keys()
             .any(|sym| intern::resolve(*sym) == name);
         if !known {
+            // The name comes from the command line and the path from
+            // the file system: both are shown by the display rule.
             eprintln!(
-                "silt update: dependency `{name}` is not declared in {}",
-                manifest.manifest_path.display()
+                "silt update: dependency `{}` is not declared in {}",
+                escape_for_display(name),
+                escape_for_display(&manifest.manifest_path.display().to_string())
             );
             process::exit(1);
         }
