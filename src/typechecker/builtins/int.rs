@@ -16,7 +16,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // care about the variant.
     env.define(
         intern("int.parse"),
-        Scheme::pure_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
@@ -28,25 +28,25 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // int.abs: (Int) -> Int
     env.define(
         intern("int.abs"),
-        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
+        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
     );
 
     // int.min: (Int, Int) -> Int
     env.define(
         intern("int.min"),
-        Scheme::pure_mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
     );
 
     // int.max: (Int, Int) -> Int
     env.define(
         intern("int.max"),
-        Scheme::pure_mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
     );
 
     // int.clamp: (Int, Int, Int) -> Int
     env.define(
         intern("int.clamp"),
-        Scheme::pure_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::Int, Type::Int, Type::Int],
             Box::new(Type::Int),
         )),
@@ -55,13 +55,13 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // int.to_float: (Int) -> Float
     env.define(
         intern("int.to_float"),
-        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(Type::Float))),
+        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Float))),
     );
 
     // int.to_string: (Int) -> String
     env.define(
         intern("int.to_string"),
-        Scheme::pure_mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
+        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
     );
 
     attach_module_docs_filtered(env, super::docs::INT_FLOAT_MD, "int");

@@ -106,143 +106,6 @@ enum CtorQualifierResolution {
     Invalid,
 }
 
-/// Render a copy-paste-ready fn header carrying the supplied effect
-/// annotation. Used by the Phase D strict-effects diagnostic to emit
-/// the literal text the user can paste straight back into their fn
-/// signature — e.g. given the source `fn read_settings(path: String) -> Settings`
-/// and the inferred set `!{fs, io}`, returns
-/// `fn read_settings(path: String) -> Settings !{fs, io}`.
-///
-/// Mirrors `formatter.rs::format_fn_with_comments` but keeps the
-/// renderer minimal (no comment threading, no multi-line layout) —
-/// the help-line text needs to be a single short sentence, not a
-/// faithful reformat of the user's whole header. Where clauses are
-/// included so a fn whose annotation lives between the return type
-/// and a where-clause still emits a header that roundtrips through
-/// the parser.
-pub(super) fn format_suggested_fn_header(
-    f: &FnDecl,
-    effects: crate::types::effects::EffectSet,
-) -> String {
-    use crate::ast::{ParamKind, PatternKind};
-    let name = resolve(f.name);
-    let params: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| {
-            // Render the binding pattern. For the help-line use case the
-            // patterns we care about are `Ident(x)` and `Wildcard`; we
-            // fall back to `_` for anything more exotic so the suggested
-            // header stays compact.
-            let pat = match &p.pattern.kind {
-                PatternKind::Ident(n) => resolve(*n),
-                PatternKind::Wildcard => "_".to_string(),
-                _ => "_".to_string(),
-            };
-            match p.kind {
-                ParamKind::Type => format!("type {pat}"),
-                ParamKind::Data => match &p.ty {
-                    Some(ty) => format!("{pat}: {}", render_type_expr(ty)),
-                    None => pat,
-                },
-            }
-        })
-        .collect();
-    let mut header = format!("fn {}({})", name, params.join(", "));
-    if let Some(ret) = &f.return_type {
-        header.push_str(&format!(" -> {}", render_type_expr(ret)));
-    }
-    // BROKEN (round 62 B3): `Display for EffectSet` renders the
-    // const `EffectSet::TOP` as `!*` — a token reserved for the
-    // "no annotation declared" gradual-rollout default. Splicing
-    // it into a `help: annotate as ...` suggestion produces text
-    // the parser cannot accept (the parser only accepts `!{...}`).
-    // When the inferred effects bitset matches TOP, render the
-    // explicit set form instead so the user can copy-paste the
-    // suggestion straight back into their source.
-    if effects == crate::types::effects::EffectSet::TOP {
-        header.push_str(" !{fs, io, net, random, time}");
-    } else {
-        header.push_str(&format!(" {effects}"));
-    }
-    if !f.where_clauses.is_empty() {
-        let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
-        for wc in &f.where_clauses {
-            let n = &wc.type_param;
-            let t = &wc.trait_name;
-            let args = &wc.trait_args;
-            let rendered = if args.is_empty() {
-                resolve(*t)
-            } else {
-                let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
-                format!("{}({})", resolve(*t), arg_strs.join(", "))
-            };
-            if let Some(entry) = grouped.iter_mut().find(|(k, _)| k == n) {
-                entry.1.push(rendered);
-            } else {
-                grouped.push((*n, vec![rendered]));
-            }
-        }
-        let clauses: Vec<String> = grouped
-            .iter()
-            .map(|(n, traits)| format!("{}: {}", resolve(*n), traits.join(" + ")))
-            .collect();
-        header.push_str(&format!(" where {}", clauses.join(", ")));
-    }
-    header
-}
-
-/// Render a TypeExpr as the user would write it. Local copy of the
-/// `formatter.rs` helper; we duplicate it here rather than reach into
-/// the formatter module so the typechecker stays free of formatter
-/// dependencies. The Phase D strict-effects diagnostic is the only
-/// caller — its needs are narrow (named, generic, tuple, function
-/// types; no comment threading) so the duplication stays small.
-fn render_type_expr(ty: &TypeExpr) -> String {
-    match &ty.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
-            let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
-            format!("{}({})", resolve(*name), arg_strs.join(", "))
-        }
-        TypeExprKind::Tuple(elems) => {
-            let items: Vec<String> = elems.iter().map(render_type_expr).collect();
-            format!("({})", items.join(", "))
-        }
-        TypeExprKind::Function(params, ret) => {
-            let param_strs: Vec<String> = params.iter().map(render_type_expr).collect();
-            format!("Fn({}) -> {}", param_strs.join(", "), render_type_expr(ret))
-        }
-        TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => {
-            if matches!(receiver.kind, TypeExprKind::SelfType) {
-                format!("Self::{}", resolve(*assoc_name))
-            } else {
-                format!(
-                    "<{} as {}>::{}",
-                    render_type_expr(receiver),
-                    resolve(*trait_name),
-                    resolve(*assoc_name)
-                )
-            }
-        }
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut items: Vec<String> = fields
-                .iter()
-                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
-                .collect();
-            if let Some(rname) = tail {
-                items.push(format!("...{}", resolve(*rname)));
-            }
-            format!("{{ {} }}", items.join(", "))
-        }
-    }
-}
-
 /// Format an "undefined variable '<typo>'" error message with an
 /// optional "did you mean `<cand>`?" hint appended as a `help:` body
 /// line so `SourceError::Display` renders it as a `= help:` continuation
@@ -873,121 +736,6 @@ impl TypeChecker {
         let constrained_fn = Type::Fun(constrained_params, Box::new(constrained_ret));
         self.fn_body_types
             .insert(lookup_name, constrained_fn.clone());
-
-        // Phase A of the effect-rows proposal: walk the (now type-checked)
-        // body and record the inferred effect set.
-        let inferred_effects = super::effects_infer::infer_expr_effects(&f.body, &local_env);
-        self.fn_body_effects.insert(lookup_name, inferred_effects);
-        // Phase B: write the inferred set back onto the FnDecl AST so
-        // the LSP `build_definitions` pass can surface the body effects
-        // on hover without having to keep a parallel side-channel
-        // mapping for every consumer.
-        f.inferred_effects = Some(inferred_effects);
-
-        // Phase B annotation enforcement: when the user declared a
-        // narrower set than the body computed, emit a diagnostic.
-        // We skip enforcement when no annotation was written so
-        // legacy code keeps typechecking unchanged. Recovery stubs
-        // never have meaningful inferred sets — their synthetic empty
-        // bodies trivially infer EMPTY but the user's broken header
-        // is the real problem and we don't pile on.
-        //
-        // Pivot on `f.is_annotated` rather than the bit-equality
-        // `f.declared_effects != EffectSet::TOP`: an explicit
-        // `!{io, fs, net, time, random}` annotation has the same
-        // bitset as TOP, and the old pivot silently skipped
-        // enforcement on those fns. Under --strict-effects the same
-        // bug would land in reverse (un-annotated fn flipped to
-        // EMPTY but compared via TOP-equality and excluded).
-        if !f.is_recovery_stub && f.is_annotated && !inferred_effects.is_subset(f.declared_effects)
-        {
-            // Compute the offending bits — effects in the body that the
-            // signature didn't declare. Display in alphabetic order
-            // (the EffectSet iterator's canonical order) so diagnostics
-            // are stable regardless of which sub-expression contributed
-            // each effect.
-            let mut offending = crate::types::effects::EffectSet::EMPTY;
-            for e in inferred_effects.iter() {
-                if !f.declared_effects.contains(e) {
-                    offending = offending.insert(e);
-                }
-            }
-            // Pick a representative effect for the headline. The
-            // "first offending in alphabetic order" rule keeps the
-            // headline deterministic across inference paths.
-            let representative = offending
-                .iter()
-                .next()
-                .map(|e| format!("!{{{e}}}"))
-                .unwrap_or_else(|| "!{}".to_string());
-
-            // Phase D strict-effects-mode diagnostic shape: when this
-            // fn was flipped from TOP→EMPTY by the strict-effects
-            // pre-pass (i.e. the user did NOT write a `!{...}`
-            // annotation; the flag treated absent-annotation as
-            // pure), surface a tailored message that names strict
-            // mode AND ships a copy-paste-ready annotation in the
-            // `help:` line. The literal annotation suffix the user
-            // can paste straight back into their fn header is the
-            // load-bearing part of the migration story — see
-            // `docs/strict-effects-migration.md`.
-            //
-            // Otherwise (the user explicitly wrote `!{...}` and the
-            // body went wider), keep the original Phase B diagnostic
-            // shape so existing locks and tooling stay valid.
-            let was_strict_flipped = self.strict_effects_flipped.contains(&f.span.offset);
-            let message = if was_strict_flipped {
-                let suggested_header = format_suggested_fn_header(f, inferred_effects);
-                // GAP (round 62 G7): drop the single-quotes around
-                // the row syntax. `'!{IO}'` reads as a single
-                // weirdly-named effect; the non-strict branch below
-                // names a singleton `representative` like `!{fs}`
-                // and never wraps it in extra quotes inside the
-                // body sentence. Mirror that here so the strict
-                // diagnostic is uniform.
-                //
-                // Also: when the body inferred TOP, render it as
-                // the explicit five-effect form rather than the
-                // `!*` token. `!*` is the "no annotation" sigil,
-                // not a parseable annotation — splicing it into
-                // diagnostic text is misleading and the help line
-                // already substitutes the explicit form.
-                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
-                    "!{fs, io, net, random, time}".to_string()
-                } else {
-                    format!("{inferred_effects}")
-                };
-                format!(
-                    "function '{}' uses effect {} but is declared pure (no annotation under --strict-effects)\n\
-                     fn body uses {}; under --strict-effects, missing annotation means !{{}}\n\
-                     help: annotate as `{}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller",
-                    crate::intern::resolve(f.name),
-                    inferred_render,
-                    inferred_render,
-                    suggested_header,
-                )
-            } else {
-                // BROKEN (round 62 B3): also avoid splicing `!*`
-                // (TOP's Display) into the user-facing message —
-                // the `!*` sigil is the "no annotation" gradual
-                // default, not a parseable effect annotation.
-                // Render the explicit five-effect form when the
-                // body's inferred set covers all five.
-                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
-                    "!{fs, io, net, random, time}".to_string()
-                } else {
-                    format!("{inferred_effects}")
-                };
-                format!(
-                    "effect '{}' not declared in fn '{}'\nfn body uses {}; signature declares {}",
-                    representative,
-                    crate::intern::resolve(f.name),
-                    inferred_render,
-                    f.declared_effects,
-                )
-            };
-            self.error(message, f.body.span);
-        }
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
@@ -1810,8 +1558,7 @@ impl TypeChecker {
     /// module-call detection, qualified record literals and variant
     /// patterns) so they all agree; the compiler applies the same rule
     /// via its `resolve_local`/upvalue/`top_level_value_globals`
-    /// checks, and the effects walker via
-    /// `effects_infer`'s rebound/value-binding gate.
+    /// checks.
     pub(super) fn value_binding_shadows_module(&self, env: &TypeEnv, name: Symbol) -> bool {
         let Some(scheme) = env.lookup(name) else {
             return false;
@@ -4383,12 +4130,7 @@ impl TypeChecker {
                 result_ty
             }
 
-            ExprKind::Lambda {
-                params,
-                body,
-                effects,
-                is_annotated,
-            } => {
+            ExprKind::Lambda { params, body } => {
                 let mut local_env = env.child();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
@@ -4438,48 +4180,6 @@ impl TypeChecker {
 
                 self.current_return_type = prev_return_type;
                 self.current_qmark_spans = prev_qmark_spans;
-
-                // Round-65: enforce `fn(...) !{...} { ... }` annotations
-                // the same way `register_fn_decl` enforces FnDecl-level
-                // annotations. Mirror the FnDecl narrowing path: walk
-                // the body's inferred effects, compare to the declared
-                // set, emit a diagnostic if the body uses anything not
-                // in the declaration. Trailing-closure form
-                // `{ params -> body }` has no syntactic slot for an
-                // annotation so `is_annotated` is always false there
-                // and this branch is a no-op — effects remain inferred.
-                if *is_annotated {
-                    let inferred = super::effects_infer::infer_expr_effects(body, &local_env);
-                    if !inferred.is_subset(*effects) {
-                        let mut offending = crate::types::effects::EffectSet::EMPTY;
-                        for e in inferred.iter() {
-                            if !effects.contains(e) {
-                                offending = offending.insert(e);
-                            }
-                        }
-                        let representative = offending
-                            .iter()
-                            .next()
-                            .map(|e| format!("!{{{e}}}"))
-                            .unwrap_or_else(|| "!{}".to_string());
-                        // Match the FnDecl strict-effects diagnostic:
-                        // render TOP as the explicit five-effect form
-                        // rather than the `!*` "no annotation" sigil,
-                        // which is not a parseable annotation.
-                        let inferred_render = if inferred == crate::types::effects::EffectSet::TOP {
-                            "!{fs, io, net, random, time}".to_string()
-                        } else {
-                            format!("{inferred}")
-                        };
-                        self.error(
-                            format!(
-                                "effect '{}' not declared in lambda\nlambda body uses {}; signature declares {}",
-                                representative, inferred_render, effects,
-                            ),
-                            body.span,
-                        );
-                    }
-                }
 
                 // `lambda_ret` rather than `body_type`: identical when the
                 // unify above succeeded, and on failure it carries any
@@ -5186,20 +4886,11 @@ impl TypeChecker {
                 // with mutable state (e.g. channels) that must remain
                 // monomorphic so that the element type is shared across
                 // all uses.
-                let mut scheme = if is_value {
+                let scheme = if is_value {
                     self.generalize(env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
-                // BROKEN (round 64): `generalize` and `Scheme::mono` both
-                // hardcode `effects: EffectSet::TOP`. For an aliasing
-                // bind (`let alias = doit` where `doit` is a fn-typed
-                // name in scope), copy the source scheme's effects so
-                // the alias preserves the callee's declared effect set
-                // rather than widening every aliased call to TOP. Same
-                // shape for FieldAccess (`let alias = mod.func`).
-                propagate_alias_effects(&value.kind, env, &mut scheme);
-
                 // Bind names in the pattern
                 // For let-polymorphism we need to bind with the generalized scheme
                 match &pattern.kind {
@@ -6070,74 +5761,6 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
             fields.iter().all(|(_, e)| is_syntactic_value(&e.kind))
         }
         _ => false,
-    }
-}
-
-/// BROKEN (round 64): close the alias effect-widening hole.
-///
-/// `let alias = doit` (where `doit` is a fn-typed name in scope) used
-/// to widen the alias's declared effects to `EffectSet::TOP`. Both
-/// let-binding sites (top-level in `mod.rs`, inline in `infer_stmt`)
-/// build their scheme via `generalize` / `Scheme::mono`, both of which
-/// hardcode `effects: EffectSet::TOP` (see the doc-comment on
-/// `generalize` at `mod.rs:1834-1842` warning every caller MUST
-/// overwrite the field). Neither caller did, so an alias call became
-/// `!*`-equivalent and any caller fn declared with anything narrower
-/// than the full five-effect row started failing the body-subset
-/// check with an off-target `effect '!{fs}' not declared` diagnostic.
-///
-/// This helper inspects the bound value expression and, if it's a
-/// simple aliasing reference (Ident or dotted FieldAccess), copies
-/// the source scheme's `effects` onto the freshly-built alias scheme.
-/// It also covers Phase A's higher-order=TOP gap for the Ident-callee
-/// case at the typechecker level — the matching effects-walker fix in
-/// `effects_infer.rs::stmt_effects` mirrors the alias map into the
-/// effects pass, since the typechecker's let-bound env is dropped
-/// before `infer_expr_effects` runs over the body.
-///
-/// More elaborate value shapes (lambdas with effectful bodies,
-/// arbitrary call/field chains) intentionally remain untouched; the
-/// goal is the alias case (BROKEN repro) and the LATENT Phase-A
-/// higher-order=TOP case for simple Ident / dotted-path callees.
-pub(super) fn propagate_alias_effects(kind: &ExprKind, env: &TypeEnv, scheme: &mut Scheme) {
-    match kind {
-        ExprKind::Ident(name) => {
-            if let Some(src) = env.lookup(*name) {
-                scheme.effects = src.effects;
-            }
-        }
-        // Dotted path `mod.func` is parsed as
-        // `FieldAccess(Ident(mod), func)`. `effects_infer.rs::callee_name`
-        // joins the two halves with `.` to look up the builtin scheme;
-        // mirror that here so `let alias = io.println` (or any other
-        // builtin) preserves its `!{io, ...}` annotation.
-        //
-        // Round 94 (module-shadowing): when a VALUE binding shadows the
-        // base name, the dotted path is field access on the binding,
-        // not a module member — copying the same-named MODULE fn's
-        // effects onto the alias would mis-attribute effects in both
-        // directions. Leave the scheme's conservative default instead.
-        // (Type-name `TypeOf(..)` descriptor bindings don't count,
-        // mirroring `TypeChecker::value_binding_shadows_module`.)
-        ExprKind::FieldAccess(obj, field) => {
-            if let ExprKind::Ident(base) = &obj.kind {
-                let base_shadowed = env.lookup(*base).is_some_and(|s| {
-                    !matches!(
-                        &s.ty,
-                        Type::Generic(g, args) if resolve(*g) == "TypeOf" && args.len() == 1
-                    )
-                });
-                if base_shadowed {
-                    return;
-                }
-                let joined = format!("{}.{}", resolve(*base), resolve(*field));
-                let key = intern(&joined);
-                if let Some(src) = env.lookup(key) {
-                    scheme.effects = src.effects;
-                }
-            }
-        }
-        _ => {}
     }
 }
 

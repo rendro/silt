@@ -78,7 +78,7 @@ fn analysis_failed_diagnostic() -> Diagnostic {
 }
 
 /// Lex, parse and typecheck `source`. Reads nothing but its arguments.
-fn analyse(source: &str, strict_effects: bool) -> Analysis {
+fn analyse(source: &str) -> Analysis {
     let mut diagnostics = Vec::new();
 
     let tokens = match Lexer::new(source).tokenize() {
@@ -106,28 +106,7 @@ fn analyse(source: &str, strict_effects: bool) -> Analysis {
         ));
     }
 
-    // Phase D: when the workspace's manifest enables strict-effects
-    // mode (`[lints] strict-effects = true`), surface the
-    // strict-mode diagnostics in the editor too. The flag was
-    // captured at workspace preload time in `lsp::run`.
-    let type_errors = if strict_effects {
-        // No package context for an LSP-pull typecheck: the
-        // server doesn't have the producing-package symbol on
-        // hand for ad-hoc typechecks during editing. We also
-        // don't have cached cross-module exports plumbed through
-        // here yet — that's a follow-up. For now, route through
-        // the options entry so the strict flag flows; package=None
-        // matches the legacy `typechecker::check()` behaviour.
-        let (errs, _exports) = typechecker::check_with_package_and_imports_options(
-            &mut program,
-            None,
-            std::collections::HashMap::new(),
-            true,
-        );
-        errs
-    } else {
-        typechecker::check(&mut program)
-    };
+    let type_errors = typechecker::check(&mut program);
     // GAP #8: drop the "unknown module" warning for user-module imports
     // and the follow-on "undefined" errors for names they bring in. The
     // type checker has no filesystem access, so every legitimate
@@ -176,14 +155,8 @@ impl Server {
     /// the previous text would hand it positions and edits for a document
     /// it no longer has. `analyse` reads nothing but its arguments, so the
     /// panic cannot leave the server half-updated.
-    fn update_document_with(
-        &mut self,
-        uri: Uri,
-        source: String,
-        analyse: fn(&str, bool) -> Analysis,
-    ) {
-        let strict_effects = self.strict_effects;
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source, strict_effects)));
+    fn update_document_with(&mut self, uri: Uri, source: String, analyse: fn(&str) -> Analysis) {
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source)));
         let analysis = outcome.unwrap_or_else(|payload| {
             eprintln!(
                 "silt-lsp: internal error while analysing {}: {}; the document is kept \
@@ -294,7 +267,7 @@ mod tests {
         let uri = Uri::from_str("file:///test.silt").unwrap();
         server.update_document(uri.clone(), "fn main() { 1 }".to_string());
 
-        server.update_document_with(uri.clone(), "fn main() { 2 }".to_string(), |_, _| {
+        server.update_document_with(uri.clone(), "fn main() { 2 }".to_string(), |_| {
             panic!("deliberate panic in a test")
         });
 

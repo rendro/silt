@@ -9,7 +9,6 @@
 
 mod auto_derive;
 mod builtins;
-mod effects_infer;
 mod exhaustiveness;
 mod inference;
 mod resolve;
@@ -375,14 +374,6 @@ pub(super) fn free_vars_in_types(types: &[Type]) -> Vec<TyVar> {
 /// remapping. Producer ids in `tv_remap` keys map to consumer ids in
 /// `tv_remap` values; any tyvar absent from the map is left alone (it's
 /// outside the snapshot's reach).
-///
-/// BROKEN (round 62 B5): previously hardcoded `effects: EffectSet::TOP`,
-/// which silently dropped cross-module declared effects. A producer
-/// module's `pub fn read_file() !{io, fs}` would arrive at the consumer
-/// looking like `!*`, so a consumer fn declared `!{io}` calling it
-/// would error that its body uses unspecified effects. Carry
-/// `scheme.effects` through the remap instead — the bitset doesn't
-/// reference any tyvars so it remaps trivially as identity.
 pub(super) fn remap_scheme(
     scheme: &Scheme,
     tv_remap: &HashMap<TyVar, TyVar>,
@@ -403,8 +394,7 @@ pub(super) fn remap_scheme(
         vars: new_vars,
         ty: new_ty,
         constraints: new_constraints,
-        effects: scheme.effects,
-        // Part of the signature, like the effects: carried as is.
+        // Part of the signature: carried as is.
         optional_last_param: scheme.optional_last_param,
     }
 }
@@ -633,15 +623,6 @@ pub struct TypeChecker {
     pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
     /// Maps function names to their body-constrained types (populated during check_fn_body).
     pub(super) fn_body_types: HashMap<Symbol, Type>,
-    /// Maps function names to the effect set inferred from their body
-    /// (populated during `check_fn_body`). Phase A of the effect-rows
-    /// proposal: every function body has its effects computed and
-    /// stored here, but Phase A does not yet enforce that the inferred
-    /// set is a subset of the function's annotated set — that lands in
-    /// Phase B/D. The map exists so future phases (LSP hover, strict-
-    /// effects flag, capability boundaries) have a populated cache to
-    /// read from. See `docs/proposals/effect-rows.md`.
-    pub(super) fn_body_effects: HashMap<Symbol, EffectSet>,
     /// Deferred checks for field access on type variables (B4).
     /// Each entry is `(object_type, field_name, result_type, span)`.
     /// Re-examined after all function bodies are inferred: if the object type
@@ -809,29 +790,6 @@ pub struct TypeChecker {
     /// param to `Int` and then surfacing a "type mismatch" at the
     /// caller) keep firing.
     pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
-    /// Phase D of the effect-rows proposal: when `true`, an
-    /// unannotated user function defaults to `EffectSet::EMPTY`
-    /// (pure) rather than the gradual-rollout `EffectSet::TOP`
-    /// permissive default. The body-inference subset check then
-    /// catches any effectful builtin call from such a fn and emits
-    /// the strict-mode diagnostic (with a copy-paste annotation in
-    /// the `help:` line). Off by default so legacy programs typecheck
-    /// unchanged. Surface: `silt check --strict-effects`,
-    /// `silt run --strict-effects`, `silt test --strict-effects`,
-    /// or `[lints] strict-effects = true` in `silt.toml`.
-    pub(super) strict_effects: bool,
-    /// Phase D companion of [`strict_effects`]: the byte offsets of
-    /// the fn declarations whose `declared_effects` was flipped from
-    /// `EffectSet::TOP` to `EffectSet::EMPTY` by the strict-mode
-    /// pre-pass in `check_program_returning_env`. Consulted by the
-    /// body-inference enforcement diagnostic so it can emit the
-    /// strict-mode-specific message (with the copy-paste annotation
-    /// in `help:`) for fns the user did NOT annotate, while still
-    /// emitting the original Phase B "user wrote `!{...}` and the
-    /// body went wider" diagnostic for fns that DID get an explicit
-    /// annotation. Keyed by `f.span.offset` because `Symbol` keys
-    /// would conflate trait impl methods sharing a name.
-    pub(super) strict_effects_flipped: std::collections::HashSet<usize>,
     /// Compile-session-scoped storage for the canonical alias /
     /// associated-type-binding registries. Populated as the
     /// typechecker processes user `type ... = ...` decls and trait
@@ -880,7 +838,6 @@ impl TypeChecker {
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
-            fn_body_effects: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
@@ -901,8 +858,6 @@ impl TypeChecker {
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
-            strict_effects: false,
-            strict_effects_flipped: std::collections::HashSet::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
     }
@@ -922,14 +877,6 @@ impl TypeChecker {
     /// recover the shared resolver after typechecking finishes.
     pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
         std::mem::take(&mut self.resolver)
-    }
-
-    /// Toggle Phase D strict-effects mode. When enabled, unannotated
-    /// user fn declarations default to `EffectSet::EMPTY` (pure) and
-    /// the body-inference subset check fires on any effectful call.
-    /// See `docs/strict-effects-migration.md` for the migration story.
-    pub fn set_strict_effects(&mut self, on: bool) {
-        self.strict_effects = on;
     }
 
     /// Sentinel package symbol used as the `defined_in` for built-in
@@ -1832,16 +1779,6 @@ impl TypeChecker {
     /// include those constraints in the resulting scheme. This ensures that
     /// `let f = constrained_fn` and `let f = { x -> constrained_fn(x) }`
     /// preserve where-clause obligations.
-    ///
-    /// IMPORTANT (round 62 B4): the produced `Scheme::effects` is
-    /// always `EffectSet::TOP` — a placeholder. Every caller MUST
-    /// overwrite the field with the originating fn-decl's
-    /// `declared_effects` (or with the previous scheme's `effects` on
-    /// re-narrow) before storing the scheme in the env. The pass-3
-    /// narrowing path historically forgot to do this, which caused
-    /// `fn doit() !{io} { println("hi") }` to appear as `!*` to
-    /// callers after narrowing — see the `final_scheme.effects =
-    /// original_scheme.effects` line at the narrowing site.
     pub(super) fn generalize(&self, env: &TypeEnv, ty: &Type) -> Scheme {
         let ty = self.apply(ty);
         let env_fvs = env.free_vars(self);
@@ -1871,7 +1808,6 @@ impl TypeChecker {
             vars,
             ty,
             constraints,
-            effects: EffectSet::TOP,
             optional_last_param: false,
         }
     }
@@ -2919,7 +2855,6 @@ impl TypeChecker {
             vars: fvs,
             ty: ty.clone(),
             constraints: Vec::new(),
-            effects: EffectSet::TOP,
             optional_last_param: false,
         }
     }
@@ -3055,17 +2990,6 @@ impl TypeChecker {
         }
 
         exports
-    }
-
-    /// Look up the inferred effect set for a function by its bare name
-    /// (or impl-qualified name like `MyType.method` for trait methods).
-    /// Returns `None` if the name was never registered as a function or
-    /// if its body was never inferred (e.g. a recovery stub).
-    ///
-    /// Phase A of the effect-rows proposal — see
-    /// `docs/proposals/effect-rows.md` and `effects_infer.rs`.
-    pub fn fn_body_effects_for(&self, name: Symbol) -> Option<EffectSet> {
-        self.fn_body_effects.get(&name).copied()
     }
 
     // ── Check a full program ────────────────────────────────────────
@@ -3316,61 +3240,6 @@ impl TypeChecker {
         // runtime, never falling through to `dispatch_trait_method`.
         self.synthesize_auto_derive_impls(&mut program.decls);
 
-        // Phase D of the effect-rows proposal: when strict-effects mode
-        // is enabled, flip the gradual-rollout `EffectSet::TOP` default
-        // to `EffectSet::EMPTY` (pure) for every UN-annotated user fn
-        // before registration runs. The body-inference subset check
-        // (in `check_fn_body_with_name`) then rejects any effectful
-        // call from such a fn unless the user adds an explicit
-        // annotation. The flip is gated to:
-        //   - `!is_recovery_stub`: parse-recovery stubs keep TOP so
-        //     their downstream call sites don't cascade.
-        //   - `f.span.line != 0`: auto-derived methods (synthesized
-        //     with line 0 sentinel spans) keep TOP — they are not
-        //     user-authored code. Default trait method bodies copied
-        //     by `synthesize_default_methods` carry their original
-        //     trait-decl spans, so they ARE flipped (they're user
-        //     code, just placed into impls that omitted them).
-        //   - `!f.is_annotated`: only the gradual-rollout default is
-        //     flipped. A user who already wrote `!{io}` keeps that set
-        //     as their declared bound — and a user who wrote the
-        //     full `!{io, fs, net, time, random}` (which shares the
-        //     `EffectSet::TOP` bitset!) is correctly NOT treated as
-        //     un-annotated. Pivoting on the bit-equality `== TOP`
-        //     would silently flip such fns to EMPTY and reject every
-        //     IO call inside them.
-        //
-        // The flip mutates the AST so the LSP's `build_definitions`
-        // pass sees the flipped value via `FnDecl::declared_effects`
-        // and renders it on hover under strict mode.
-        //
-        // See `docs/strict-effects-migration.md` for the user-facing
-        // workflow and `docs/proposals/effect-rows.md` Part 7 Phase D.
-        if self.strict_effects {
-            for decl in program.decls.iter_mut() {
-                match decl {
-                    Decl::Fn(f) if !f.is_recovery_stub && f.span.line != 0 && !f.is_annotated => {
-                        f.declared_effects = EffectSet::EMPTY;
-                        // The flip itself is what counts as the
-                        // synthesized annotation; mark it so the
-                        // body-subset check enforces it.
-                        f.is_annotated = true;
-                        self.strict_effects_flipped.insert(f.span.offset);
-                    }
-                    Decl::TraitImpl(ti) if !ti.is_auto_derived => {
-                        for m in ti.methods.iter_mut() {
-                            if !m.is_recovery_stub && m.span.line != 0 && !m.is_annotated {
-                                m.declared_effects = EffectSet::EMPTY;
-                                m.is_annotated = true;
-                                self.strict_effects_flipped.insert(m.span.offset);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
         // 2c: Register fn signatures and trait impls (now seeing
         // synthesized methods alongside explicit ones).
         for decl in &program.decls {
@@ -3413,18 +3282,11 @@ impl TypeChecker {
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
                 }
-                let mut scheme = if is_value {
+                let scheme = if is_value {
                     self.generalize(&env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
-                // BROKEN (round 64): `generalize` / `Scheme::mono` both
-                // hardcode `effects: EffectSet::TOP`. For an aliasing
-                // bind (`let alias = doit`) copy the source scheme's
-                // effects so the alias preserves the callee's declared
-                // effect set rather than widening every aliased call to
-                // TOP.
-                inference::propagate_alias_effects(&value.kind, &env, &mut scheme);
                 if let PatternKind::Ident(name) = &pattern.kind {
                     // G1: top-level duplicate let binding (round 75
                     // DEAD-3: shared with `register_fn_decl` and the
@@ -3547,17 +3409,6 @@ impl TypeChecker {
                     // Scheme was narrowed — some vars got constrained
                     any_narrowed = true;
                     let mut final_scheme = new_scheme.clone();
-                    // BROKEN (round 62 B4): `generalize` hardcodes
-                    // `effects: EffectSet::TOP`, so narrowing pass-3
-                    // would silently TOP-out the effect annotation
-                    // every caller of this fn was relying on. Copy
-                    // the original scheme's effects across before
-                    // re-defining. Without this, a fn declared
-                    // `!{io}` calling-narrowed scheme appears as
-                    // `!*` to its callers, and a caller declared
-                    // `!{io}` then errors that its body uses
-                    // unspecified effects.
-                    final_scheme.effects = original_scheme.effects;
                     // BROKEN (round 17 F1): `original_scheme.constraints` uses
                     // the pass-2 tyvars, while `new_scheme.vars` uses fresh
                     // pass-3 tyvars from `instantiate_with_constraints` that
@@ -4139,7 +3990,6 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: result_type,
                                 constraints: vec![],
-                                effects: EffectSet::TOP,
                                 optional_last_param: false,
                             },
                         );
@@ -4151,7 +4001,6 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: Type::Fun(field_types, Box::new(result_type)),
                                 constraints: vec![],
-                                effects: EffectSet::TOP,
                                 optional_last_param: false,
                             },
                         );
@@ -4235,7 +4084,6 @@ impl TypeChecker {
                         vars: var_ids.clone(),
                         ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     };
                     env.define(td.name, scheme);
@@ -4314,7 +4162,6 @@ impl TypeChecker {
                         vars: vec![],
                         ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     }
                 } else {
@@ -4336,7 +4183,6 @@ impl TypeChecker {
                         vars: var_ids,
                         ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     }
                 };
@@ -5184,18 +5030,6 @@ impl TypeChecker {
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
         let mut scheme = self.generalize(env, &fn_type);
-        // Phase B of the effect-rows proposal: the declared annotation
-        // (or the gradual-rollout `TOP` default for un-annotated
-        // functions) becomes the scheme's `effects`. Callers see the
-        // declared bound — the inferred body set is recorded separately
-        // in `fn_body_effects` so the annotation enforcement pass can
-        // compare them at body-check time. Recording the declared
-        // bound here (not the inferred one) preserves opaque-boundary
-        // semantics: a fn that declares `!{io}` advertises `!{io}` to
-        // every caller regardless of whether the body is currently
-        // narrower.
-        scheme.effects = f.declared_effects;
-
         // Round 64 item 6B (annotated polymorphic recursion): record
         // whether the user's signature is fully annotated. A `Data`
         // parameter is annotated iff it carries an explicit `ty`;
@@ -7954,13 +7788,6 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             is_recovery_stub: false,
             is_signature_only: true,
             doc: None,
-            // Built-in trait method signatures default to the gradual
-            // rollout's permissive `TOP`. Phase C will tighten the
-            // stdlib-builtin annotations. These are synthesized — not
-            // user-annotated — so `is_annotated = false`.
-            declared_effects: EffectSet::TOP,
-            is_annotated: false,
-            inferred_effects: None,
         }
     }
 
@@ -7989,12 +7816,6 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
-        // Built-in `Error.message` default body — gradual-rollout TOP
-        // until Phase C tightens stdlib annotations. Synthesized, not
-        // user-annotated.
-        declared_effects: EffectSet::TOP,
-        is_annotated: false,
-        inferred_effects: None,
     };
 
     vec![
@@ -8352,44 +8173,13 @@ pub fn check_with_package_and_imports(
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
 ) -> (Vec<TypeError>, ModuleExports) {
-    check_with_package_and_imports_options(program, package, module_exports, false)
-}
-
-/// Phase D entry point: same as [`check_with_package_and_imports`] but
-/// takes an additional `strict_effects` flag that propagates the
-/// `--strict-effects` mode through to the typechecker. When `true`,
-/// unannotated user fns default to `EffectSet::EMPTY` (pure) and the
-/// body-inference subset check rejects effectful calls from such fns
-/// unless an explicit `!{...}` annotation is added. The diagnostic
-/// includes a copy-paste `help:` line with the suggested annotation.
-///
-/// `false` reproduces the legacy behavior — every existing program
-/// continues to typecheck unchanged. CLI plumbing in `silt check`,
-/// `silt run`, and `silt test` reads the bool from the
-/// `--strict-effects` CLI flag (which wins) and from the
-/// `[lints] strict-effects = true` field in `silt.toml`.
-///
-/// See `docs/strict-effects-migration.md` for the user-facing
-/// migration story and `docs/proposals/effect-rows.md` Part 7 Phase D
-/// for the design.
-pub fn check_with_package_and_imports_options(
-    program: &mut Program,
-    package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-    strict_effects: bool,
-) -> (Vec<TypeError>, ModuleExports) {
-    let (errors, exports, _resolver) = check_with_package_and_imports_options_resolver(
-        program,
-        package,
-        module_exports,
-        strict_effects,
-        None,
-    );
+    let (errors, exports, _resolver) =
+        check_with_package_and_imports_resolver(program, package, module_exports, None);
     (errors, exports)
 }
 
 /// Resolver-threaded cross-module entry point. Mirrors
-/// [`check_with_package_and_imports_options`] but accepts an optional
+/// [`check_with_package_and_imports`] but accepts an optional
 /// caller-owned [`crate::types::canonical::Resolver`] so the alias /
 /// associated-type-binding registries are shared across every module
 /// typechecked in one CLI compile invocation. Returns the resolver
@@ -8401,11 +8191,10 @@ pub fn check_with_package_and_imports_options(
 /// resolver is allocated and dropped on return.
 ///
 /// See commit 6364552 for the original migration rationale.
-pub fn check_with_package_and_imports_options_resolver(
+pub fn check_with_package_and_imports_resolver(
     program: &mut Program,
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
-    strict_effects: bool,
     resolver: Option<crate::types::canonical::Resolver>,
 ) -> (
     Vec<TypeError>,
@@ -8418,7 +8207,6 @@ pub fn check_with_package_and_imports_options_resolver(
     };
     checker.current_package = package;
     checker.module_exports = module_exports;
-    checker.set_strict_effects(strict_effects);
     let env = checker.check_program_returning_env(program);
     let exports = checker.collect_module_exports(program, &env);
     let resolver = checker.take_resolver();
@@ -8677,7 +8465,7 @@ impl ReplTypeContext {
         // fresh, unconstrained var and fails with "cannot infer the type of
         // g". `check_program` fixes this in-pass via its pass-3 narrowing
         // loop; the REPL needs the equivalent so the resolved type survives
-        // to the next turn. We mirror that loop's effects/constraints
+        // to the next turn. We mirror that loop's constraint
         // preservation and skip annotated-recursive fns (whose authoritative
         // polymorphic signature `check_program` deliberately leaves intact).
         for i in 0..program.decls.len() {
@@ -8704,12 +8492,9 @@ impl ReplTypeContext {
             {
                 continue;
             }
-            // `generalize` hardcodes `effects: TOP`; carry the registered
-            // scheme's declared effects across (see the round-62 B4 note in
-            // `check_program`). Remap the original where-clause constraints
-            // through an old→new tyvar alignment (round-17 F1).
+            // Remap the original where-clause constraints through an
+            // old→new tyvar alignment (round-17 F1).
             let mut final_scheme = new_scheme;
-            final_scheme.effects = original.effects;
             let remap = align_tyvars(&original.ty, &final_scheme.ty);
             for (old_tv, trait_name) in &original.constraints {
                 if let Some(&new_tv) = remap.get(old_tv)
@@ -8975,53 +8760,20 @@ pub fn builtin_docs() -> std::collections::HashMap<String, String> {
     docs
 }
 
-/// Return a map of every function-typed built-in's name (qualified or
-/// bare) to its `EffectSet`. Phase C of the effect-rows proposal: every
-/// builtin is classified, so this map carries the canonical effect set
-/// for each. Surfaced by the LSP hover handler to render
-/// `effects: !{io, fs}` between the signature and the doc separator
-/// for stdlib calls (mirrors the user-fn rendering already wired by
-/// `render_effects`).
-///
-/// Non-function schemes (`None`, `Empty`, primitive descriptors) are
-/// skipped — only function-typed bindings carry meaningful effects.
-/// The map is keyed by the resolved (string) name to be symmetric with
-/// `builtin_type_signatures` and `builtin_docs`.
-pub fn builtin_effects() -> std::collections::HashMap<String, crate::types::effects::EffectSet> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
-    let mut effects = std::collections::HashMap::new();
-    for (name, scheme) in &env.bindings {
-        // Only function-typed schemes carry meaningful effects. Variant
-        // constants (None, Empty, …) and primitive descriptors (Int,
-        // Float, …) are typed as values, not functions; their `effects`
-        // field is a benign placeholder set by the registration site
-        // (typically `pure()`). Surfacing those would render
-        // `effects: !{}` on hover for `None` — accurate but noisy.
-        if matches!(scheme.ty, Type::Fun(_, _)) {
-            effects.insert(resolve(*name), scheme.effects);
-        }
-    }
-    effects
-}
-
-/// Test-only: iterate `(qualified_name, scheme)` for every built-in
-/// binding registered by `register_builtins`. The Phase C
-/// `tests/meta/effect_stdlib_sweep_lock_tests.rs` lock test consumes this
-/// to assert no builtin remains at `EffectSet::TOP` after the sweep.
+/// Test-only: the sorted names (qualified or bare) of every
+/// function-typed binding registered by `register_builtins`.
 #[doc(hidden)]
-pub fn iter_builtins_for_effects_audit() -> Vec<(String, crate::types::effects::EffectSet)> {
+pub fn builtin_function_names() -> Vec<String> {
     let mut checker = TypeChecker::new();
     let mut env = TypeEnv::new();
     checker.register_builtins(&mut env);
-    let mut out: Vec<(String, crate::types::effects::EffectSet)> = env
+    let mut out: Vec<String> = env
         .bindings
         .iter()
         .filter(|(_, s)| matches!(s.ty, Type::Fun(_, _)))
-        .map(|(name, s)| (resolve(*name), s.effects))
+        .map(|(name, _)| resolve(*name))
         .collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.sort();
     out
 }
 

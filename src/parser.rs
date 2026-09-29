@@ -1,7 +1,6 @@
 use crate::ast::*;
 use crate::intern::{self, Symbol};
 use crate::lexer::{Span, SpannedToken, Token};
-use crate::types::effects::{Effect, EffectSet};
 use std::fmt;
 
 // ── Error type ───────────────────────────────────────────────────────
@@ -1146,14 +1145,6 @@ impl Parser {
             None
         };
 
-        // Phase B of the effect-rows proposal: optional `!{set}`
-        // annotation between the return type and the where clause /
-        // body. Absent → `EffectSet::TOP` (gradual-rollout default).
-        // The `_explicit` variant ALSO returns whether an annotation was
-        // present — needed downstream because `!{io, fs, net, time,
-        // random}` and "no annotation" share the same bitset.
-        let (declared_effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
-
         let where_clauses = self.parse_where_clauses_opt()?;
 
         self.skip_nl();
@@ -1197,9 +1188,6 @@ impl Parser {
             is_recovery_stub: false,
             is_signature_only,
             doc,
-            declared_effects,
-            is_annotated,
-            inferred_effects: None,
         })
     }
 
@@ -1291,30 +1279,6 @@ impl Parser {
             }
         } else {
             None
-        };
-
-        // Phase B effect annotation. On failure, fall back to the
-        // gradual-rollout `TOP` default for the recovery stub so the
-        // surrounding decl still produces a usable signature. The
-        // `_explicit` variant also tells us whether the user actually
-        // wrote a `!{...}` annotation so downstream can disambiguate
-        // it from the all-five-effects shape `!{io, fs, net, time,
-        // random}` which shares the same bitset.
-        let (declared_effects, is_annotated) = match self.parse_effect_annotation_opt_explicit() {
-            Ok(pair) => pair,
-            Err(e) => {
-                return Err(Box::new((
-                    self.make_recovery_stub(
-                        name,
-                        name_span,
-                        params,
-                        return_type,
-                        span,
-                        doc.clone(),
-                    ),
-                    e,
-                )));
-            }
         };
 
         // Try where clauses.
@@ -1449,9 +1413,6 @@ impl Parser {
             is_recovery_stub: false,
             is_signature_only,
             doc,
-            declared_effects,
-            is_annotated,
-            inferred_effects: None,
         })
     }
 
@@ -1479,117 +1440,7 @@ impl Parser {
             is_recovery_stub: true,
             is_signature_only: false,
             doc,
-            // Recovery stubs default to the gradual-rollout `TOP` so
-            // any caller that propagates the stub's "effects" sees the
-            // permissive default. They are NOT user-annotated — the
-            // user's source was malformed and we synthesized the stub.
-            declared_effects: EffectSet::TOP,
-            is_annotated: false,
-            inferred_effects: None,
         }
-    }
-
-    /// Parse an optional effect annotation (`!{io, fs}`) at the current
-    /// position. Returns `Ok(EffectSet::TOP)` when no annotation is
-    /// present (the gradual-rollout permissive default applied to any
-    /// un-annotated function).
-    ///
-    /// Phase B of the effect-rows proposal — the annotation slot lives
-    /// between the return-type arrow and the function body / where
-    /// clause. The grammar:
-    ///
-    ///   EffectAnnotation := '!' '{' EffectList '}'
-    ///   EffectList       := (Effect (',' Effect)*)?
-    ///   Effect           := 'io' | 'fs' | 'net' | 'time' | 'random'
-    ///
-    /// The five baked-in v1 effects match the const set in
-    /// `crate::types::effects::Effect`. Unknown identifiers inside the
-    /// braces emit a parser error mentioning the valid set; duplicate
-    /// effects (`!{io, io}`) are de-duplicated silently because the
-    /// underlying bitset is idempotent. Whitespace between tokens is
-    /// tolerated — `!{ io , fs }` and `!{io,fs}` parse identically.
-    ///
-    /// The two-token lookahead (`!` then `{`) keeps a stray `!` as the
-    /// unary-not prefix it always was; only the `! {` pair triggers
-    /// annotation parsing. Newlines inside the annotation are tolerated
-    /// (`skip_nl` is called after each comma) so a long list can wrap.
-    /// Parse an optional `!{...}` effect annotation, returning the
-    /// effect set AND a boolean reporting whether the user actually
-    /// wrote one. The boolean is `true` when an annotation was consumed
-    /// and `false` when the gradual-rollout `EffectSet::TOP` default
-    /// was returned.
-    ///
-    /// Critical for distinguishing `!{io, fs, net, time, random}` (all
-    /// five effects, explicitly written) from no annotation at all —
-    /// both produce the same `EffectSet` bitset, but downstream
-    /// (formatter, strict-effects flip, body subset check, suggestion
-    /// help line) needs to behave differently between the two cases.
-    /// See the `is_annotated` field on `FnDecl` and `ExprKind::Lambda`.
-    fn parse_effect_annotation_opt_explicit(&mut self) -> Result<(EffectSet, bool)> {
-        if self.peek_skip_nl() != &Token::Not {
-            return Ok((EffectSet::TOP, false));
-        }
-        // Confirm the next non-newline token is `{` — without that, the
-        // `!` is a stray prefix-not (e.g. someone wrote `fn f() -> !x`,
-        // ill-formed but recovered by surrounding code) and we leave it
-        // untouched so the body parser can produce its own diagnostic.
-        let mut idx = self.pos + 1;
-        while idx < self.tokens.len() && matches!(self.tokens[idx].0, Token::Newline) {
-            idx += 1;
-        }
-        if !matches!(self.tokens.get(idx).map(|t| &t.0), Some(Token::LBrace)) {
-            return Ok((EffectSet::TOP, false));
-        }
-        // Commit: consume the `!` and the `{`.
-        self.advance();
-        self.skip_nl();
-        self.expect(&Token::LBrace)?;
-        self.skip_nl();
-        let mut set = EffectSet::EMPTY;
-        // Empty annotation `!{}` — pure declared.
-        if self.at(&Token::RBrace) {
-            self.advance();
-            return Ok((set, true));
-        }
-        loop {
-            self.skip_nl();
-            // Each effect is a bare lowercase identifier.
-            let (name_sym, name_span) = self.expect_ident()?;
-            let name = intern::resolve(name_sym);
-            let effect = match name.as_str() {
-                "io" => Effect::Io,
-                "fs" => Effect::Fs,
-                "net" => Effect::Net,
-                "time" => Effect::Time,
-                "random" => Effect::Random,
-                _ => {
-                    return Err(ParseError {
-                        message: format!(
-                            "unknown effect '{name}' in effect annotation; \
-                             valid effects are: fs, io, net, random, time"
-                        ),
-                        span: name_span,
-                    });
-                }
-            };
-            // Idempotent insert; duplicates are silently de-duped because
-            // the bitset can't represent multiplicity.
-            set = set.insert(effect);
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-                // Allow trailing comma before `}`.
-                if self.at(&Token::RBrace) {
-                    break;
-                }
-                continue;
-            }
-            break;
-        }
-        self.skip_nl();
-        self.expect(&Token::RBrace)?;
-        Ok((set, true))
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {
@@ -3615,15 +3466,6 @@ impl Parser {
             ExprKind::Lambda {
                 params,
                 body: Box::new(body),
-                // Closure-form lambdas (`{ -> body }`) have no syntactic
-                // slot for an effect annotation. Default to the
-                // gradual-rollout `TOP`. The `fn() !{...} { body }` form
-                // is the only way to declare effects on a lambda for
-                // now.
-                effects: EffectSet::TOP,
-                // Trailing-closure form has no annotation slot, so the
-                // user could not have written one. Always `false`.
-                is_annotated: false,
             },
             span,
         ))
@@ -3849,21 +3691,12 @@ impl Parser {
         let span = self.span();
         self.expect(&Token::Fn)?;
         let params = self.parse_fn_params()?;
-        // Optional effect annotation between params and body, matching
-        // top-level fn-decl syntax: `fn() !{io} { ... }`. Use the
-        // `_explicit` variant so we can distinguish "user wrote no
-        // annotation" from "user wrote `!{io, fs, net, time, random}`"
-        // — the two collide on bit-equality (`EffectSet::TOP`) and
-        // were silently dropped by the formatter prior to this fix.
-        let (effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
         self.skip_nl();
         let body = self.parse_block()?;
         Ok(Expr::new(
             ExprKind::Lambda {
                 params,
                 body: Box::new(body),
-                effects,
-                is_annotated,
             },
             span,
         ))

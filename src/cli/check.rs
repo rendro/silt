@@ -8,8 +8,7 @@ use silt::errors::SourceError;
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
 use crate::cli::pipeline::{
-    pipeline_has_real_hard_errors, reportable_diagnostics, resolve_strict_effects,
-    run_compile_pipeline_with_options,
+    pipeline_has_real_hard_errors, reportable_diagnostics, run_compile_pipeline_with_options,
 };
 use crate::cli::source_scan::{
     looks_like_library_module, looks_like_test_file, missing_main_error, program_has_main,
@@ -23,17 +22,10 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
-/// Dispatch `silt check [--format json] [--strict-effects] <file>`.
+/// Dispatch `silt check [--format json] <file>`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut file: Option<String> = None;
     let mut format = OutputFormat::Human;
-    // Phase D effect-rows flag. `None` means "not supplied on the
-    // CLI"; the manifest's `[lints] strict-effects` field then
-    // decides. `Some(true)` forces strict mode regardless of
-    // manifest. `Some(false)` would force off (we don't expose a
-    // negative form yet — adding `--no-strict-effects` is a future
-    // ergonomic improvement). See `cli::pipeline::resolve_strict_effects`.
-    let mut strict_effects: Option<bool> = None;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--" {
@@ -62,15 +54,11 @@ pub(crate) fn dispatch(args: &[String]) {
                 eprintln!("--format requires 'json'");
                 process::exit(1);
             }
-        } else if args[i] == "--strict-effects" {
-            strict_effects = Some(true);
-            i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", check_usage_banner());
             println!();
             println!("Options:");
             println!("  --format json       Emit diagnostics as JSON");
-            println!("  --strict-effects    Treat unannotated fns as pure (Phase D)");
             println!("  --watch, -w         Re-run on file changes");
             process::exit(0);
         } else if args[i].starts_with('-') {
@@ -78,7 +66,6 @@ pub(crate) fn dispatch(args: &[String]) {
             let suggestion = match args[i].as_str() {
                 "--formats" | "-format" | "-f" => " (did you mean --format?)",
                 "--h" | "-help" => " (did you mean --help?)",
-                "--strict-effect" | "--strict_effects" => " (did you mean --strict-effects?)",
                 _ => "",
             };
             eprintln!("silt check: unknown flag '{}'{}", args[i], suggestion);
@@ -121,11 +108,10 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
-    let strict = resolve_strict_effects(&path, strict_effects);
-    check_file(&path, format, strict);
+    check_file(&path, format);
 }
 
-pub(crate) fn check_file(path: &str, format: OutputFormat, strict_effects: bool) {
+pub(crate) fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
     // `silt check` must match `silt run` diagnostics exactly, minus
     // execution. That means (a) running the compile step so the compiler
@@ -135,7 +121,7 @@ pub(crate) fn check_file(path: &str, format: OutputFormat, strict_effects: bool)
     // import. Previously this path skipped compile entirely AND emitted
     // every warning, which produced spurious "unknown module" warnings
     // on programs that `silt run` handles cleanly.
-    let result = run_compile_pipeline_with_options(path, false, true, true, strict_effects);
+    let result = run_compile_pipeline_with_options(path, false, true, true);
 
     // Filter per-entry: drop the "unknown module" warnings the compiler
     // will resolve, but keep every other diagnostic so real errors still

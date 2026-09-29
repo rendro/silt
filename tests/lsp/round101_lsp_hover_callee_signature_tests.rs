@@ -7,7 +7,7 @@
 //! and never stashed `callee.ty`, so the LSP expression walk fell back
 //! to the enclosing Call node's result type: hover on `add` in
 //! `let r = add(1, 2)` rendered a signature block of `Int` (while the
-//! effects/doc blocks in the same hover described the FUNCTION), and
+//! doc block in the same hover described the FUNCTION), and
 //! hover on `println` rendered a bare `()`. Qualified callees
 //! (`list.sum`) already stashed the instantiated fn type — this fix
 //! makes bare callees consistent with them.

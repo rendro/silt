@@ -20,7 +20,6 @@ use crate::support::LspClient;
 ///     ```silt
 ///     Fn(String) -> _
 ///     ```
-///     effects: !{}
 ///     ---
 ///     string.length(s: String) -> Int
 ///     ...

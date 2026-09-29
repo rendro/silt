@@ -2,7 +2,6 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
-mod effect_annotation_parse_tests;
 mod examples_fmt_check_tests;
 mod formatter_examples_roundtrip_tests;
 mod formatter_idempotency_tests;

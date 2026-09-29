@@ -287,21 +287,6 @@ fn main() {
     );
 }
 
-/// The trailing-closure form has no place for an effect annotation, so
-/// the result parses but is a different program.
-#[test]
-fn fmt_refuses_when_a_lambda_would_lose_its_effect_annotation() {
-    assert_fmt_refuses(
-        "lambda_effects",
-        r#"fn run(f) = f()
-fn main() {
-  run(fn() !{io} { println("declared io") })
-}
-"#,
-        "the result would change the program: function `main`",
-    );
-}
-
 /// `(a == b) |> show` is printed without the parentheses, which is
 /// `a == (b |> show)`.
 #[test]

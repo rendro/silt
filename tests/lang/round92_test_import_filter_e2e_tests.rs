@@ -78,12 +78,8 @@ fn ghost_module_scenario_produces_round91_cascade_shape() {
     // Empty exports map = the typechecker cannot see into ghost_mod,
     // exactly what `silt test` computes when the pre-typecheck pass
     // fails to load the module file.
-    let (type_errors, _exports) = silt::typechecker::check_with_package_and_imports_options(
-        &mut program,
-        None,
-        HashMap::new(),
-        false,
-    );
+    let (type_errors, _exports) =
+        silt::typechecker::check_with_package_and_imports(&mut program, None, HashMap::new());
     assert!(
         type_errors
             .iter()

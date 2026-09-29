@@ -3,8 +3,8 @@
 //! or a misspelled `[depndencies]` section) must now be rejected at
 //! parse time rather than silently accepted as if absent.
 //!
-//! The fix adds `#[serde(deny_unknown_fields)]` to `RawManifest`,
-//! `RawPackage`, and `RawLints` in `src/manifest.rs`.
+//! The fix adds `#[serde(deny_unknown_fields)]` to `RawManifest`
+//! and `RawPackage` in `src/manifest.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,24 +95,5 @@ fn manifest_accepts_well_known_fields() {
         result.is_ok(),
         "manifest with no unknown keys must still parse, got: {:?}",
         result.err()
-    );
-}
-
-#[test]
-fn manifest_rejects_unknown_lints_key() {
-    // `[lints]` is also gated; a typo like `strict-efects` must not be
-    // silently accepted as the default.
-    let bad = r#"
-        [package]
-        name = "x"
-        version = "0.1.0"
-
-        [lints]
-        strict-efects = true
-    "#;
-    let result = parse_manifest_str(bad);
-    assert!(
-        result.is_err(),
-        "manifest should reject unknown [lints] key `strict-efects`"
     );
 }

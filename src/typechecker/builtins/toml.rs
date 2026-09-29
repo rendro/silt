@@ -29,7 +29,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -49,7 +48,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -72,7 +70,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -92,7 +89,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a], Box::new(result_ty)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -108,7 +104,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a], Box::new(result_ty)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );

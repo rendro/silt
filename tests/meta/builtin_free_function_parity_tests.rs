@@ -89,17 +89,17 @@ fn registry_matches_typechecker_runtime() {
     // — and it must equal `module::builtin_free_function_names()`.
     //
     // Without this check the registry could itself drift from reality.
-    let bindings = silt::typechecker::iter_builtins_for_effects_audit();
+    let bindings = silt::typechecker::builtin_function_names();
     let ctors: HashSet<&'static str> = all_builtin_constructor_names().collect();
     let runtime_free_fns: HashSet<String> = bindings
         .iter()
         // Free functions are unqualified (no `module.` prefix).
-        .filter(|(name, _)| !name.contains('.'))
+        .filter(|name| !name.contains('.'))
         // Subtract enum constructors (Ok, Err, Some, Stop, Recv, …) —
         // they're also unqualified Type::Fun bindings but they are
         // tracked by `all_builtin_constructor_names`, not here.
-        .filter(|(name, _)| !ctors.contains(name.as_str()))
-        .map(|(name, _)| name.clone())
+        .filter(|name| !ctors.contains(name.as_str()))
+        .cloned()
         .collect();
 
     let registry_owned: HashSet<String> = builtin_free_function_names()

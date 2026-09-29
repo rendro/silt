@@ -117,7 +117,7 @@ fn silt_run_forwards_args_that_look_like_flags() {
             "run",
             script.to_str().unwrap(),
             "--",
-            "--strict-effects",
+            "--disassemble",
             "-v",
             "--unknown-thing",
         ])
@@ -132,7 +132,7 @@ fn silt_run_forwards_args_that_look_like_flags() {
          exit={:?}\nstdout={stdout}\nstderr={stderr}",
         out.status.code()
     );
-    for needle in ["--strict-effects", "-v", "--unknown-thing"] {
+    for needle in ["--disassemble", "-v", "--unknown-thing"] {
         assert!(
             stdout.lines().any(|l| l.trim() == needle),
             "stdout must contain a line equal to '{needle}'; got: {stdout}"

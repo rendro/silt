@@ -6,7 +6,6 @@ use crate::ast::*;
 use crate::intern::{Symbol, resolve};
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
-use crate::types::effects::EffectSet;
 
 const INDENT: &str = "  ";
 
@@ -3552,7 +3551,6 @@ mod self_check {
             self.sym(f.name);
             self.params(&f.params);
             self.opt_type_expr(f.return_type.as_ref());
-            self.effects(f.is_annotated, f.declared_effects);
             self.where_clauses(&f.where_clauses);
             if f.is_signature_only {
                 self.word("#signature");
@@ -3574,20 +3572,6 @@ mod self_check {
                 self.close();
             }
             self.close();
-        }
-
-        /// An effect annotation. Without one the set is the parser's
-        /// default and says nothing about the source.
-        fn effects(&mut self, is_annotated: bool, effects: crate::types::effects::EffectSet) {
-            if is_annotated {
-                self.open("effects");
-                for effect in effects.iter() {
-                    self.word(effect.name());
-                }
-                self.close();
-            } else {
-                self.none();
-            }
         }
 
         /// A trait with its arguments: `Display`, `TryInto(Int)`.
@@ -3989,15 +3973,9 @@ mod self_check {
                         self.expr(arg);
                     }
                 }
-                ExprKind::Lambda {
-                    params,
-                    body,
-                    effects,
-                    is_annotated,
-                } => {
+                ExprKind::Lambda { params, body } => {
                     self.open("lambda");
                     self.params(params);
-                    self.effects(*is_annotated, *effects);
                     self.expr(body);
                 }
                 ExprKind::RecordCreate {
@@ -4921,28 +4899,6 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     } else {
         String::new()
     };
-    // Effect annotation slot. The parser sets `is_annotated = false`
-    // for un-annotated functions and `is_annotated = true` for any
-    // explicit `!{...}` form (including the all-five `!{io, fs, net,
-    // time, random}` shape, which collides on bit-equality with
-    // `EffectSet::TOP` and was silently dropped by the previous
-    // `== TOP` pivot). Pivot on `is_annotated` instead so explicit
-    // five-effect annotations survive `silt fmt` round-trip. When
-    // emitting we render the bitset directly: for the explicit-five
-    // case that means re-emitting `!{fs, io, net, random, time}`
-    // rather than the gradual-rollout `!*` token, so the output
-    // re-parses cleanly.
-    let effects = if !f.is_annotated {
-        String::new()
-    } else if f.declared_effects == EffectSet::TOP {
-        // User wrote `!{io, fs, net, time, random}`. Re-emit the
-        // explicit set rather than `!*` (which is reserved for the
-        // gradual-rollout default and would imply the user wrote
-        // nothing — but they did).
-        " !{fs, io, net, random, time}".to_string()
-    } else {
-        format!(" {}", f.declared_effects)
-    };
     let where_clause = if f.where_clauses.is_empty() {
         String::new()
     } else {
@@ -4984,7 +4940,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause}{trailing}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause}{trailing}",
             f.name,
         );
     }
@@ -4996,14 +4952,14 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause} = {body_str}{trailing}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {body_str}{trailing}",
             f.name,
         );
     }
 
     let body = format_body(&f.body, depth);
     format!(
-        "{prefix}{pub_prefix}fn {}({params}){ret}{effects}{where_clause} {body}",
+        "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
         f.name
     )
 }
@@ -6853,12 +6809,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             format!("{callee_str}({}{trailing})", arg_strs.join(", "))
         }
 
-        ExprKind::Lambda {
-            params,
-            body,
-            effects,
-            is_annotated,
-        } => {
+        ExprKind::Lambda { params, body } => {
             // The `fn(...) { ... }` syntax requires plain identifier
             // parameters — the parser's `parse_fn_params` rejects any
             // pattern other than `Ident` with `expected parameter name,
@@ -6878,30 +6829,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             } else {
                 ""
             };
-            // Effect annotation slot. Pivot on `is_annotated` rather
-            // than `*effects == EffectSet::TOP` — the two states
-            // ("user wrote no annotation" vs "user wrote `!{io, fs,
-            // net, time, random}`") collide on bit-equality but must
-            // format differently. When the user wrote the explicit
-            // five-effect set, re-emit the alphabetised explicit form
-            // so the output round-trips through the parser; the bare
-            // `!*` token is reserved for the gradual-rollout default
-            // and is not parseable. Mirrors round 62's `FnDecl` fix
-            // (see `format_fn_with_comments`'s effect slot).
-            let effects_str = if !*is_annotated {
-                String::new()
-            } else if *effects == EffectSet::TOP {
-                // User wrote `!{io, fs, net, time, random}`. Re-emit
-                // the explicit set rather than `!*` (reserved for the
-                // un-annotated default).
-                " !{fs, io, net, random, time}".to_string()
-            } else {
-                format!(" {effects}")
-            };
-            format!(
-                "fn({params_str}{trailing}){effects_str} {}",
-                format_body(body, depth)
-            )
+            format!("fn({params_str}{trailing}) {}", format_body(body, depth))
         }
 
         ExprKind::FieldAccess(expr, field) => {
@@ -9633,14 +9561,6 @@ mod self_check_tests {
             .span
             .expect("the refusal must carry the declaration's position");
         assert_eq!(span.line, 1);
-
-        let e = refusal("fn run(f) = f()\nfn main() {\n  run(fn() !{io} { 1 })\n}\n");
-        assert!(
-            e.message
-                .contains("would change the program: function `main`"),
-            "{}",
-            e.message
-        );
     }
 
     #[test]

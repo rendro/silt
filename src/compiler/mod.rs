@@ -705,7 +705,7 @@ pub struct Compiler {
     /// in lockstep across the typecheck → compile boundary. The
     /// resolver flows in through `pre_typecheck_imports` (where each
     /// per-module typecheck threads it via
-    /// `check_with_package_and_imports_options_resolver`) and out
+    /// `check_with_package_and_imports_resolver`) and out
     /// again so the next module / entrypoint typecheck sees the
     /// accumulated state. See commit 6364552 for the migration
     /// rationale.
@@ -1995,11 +1995,10 @@ impl Compiler {
             // module registers stay visible to downstream importers.
             let resolver = std::mem::take(&mut self.resolver);
             let (module_errors, exports, resolver) =
-                typechecker::check_with_package_and_imports_options_resolver(
+                typechecker::check_with_package_and_imports_resolver(
                     &mut program,
                     self.current_package(),
                     self.module_exports.clone(),
-                    false,
                     Some(resolver),
                 );
             self.resolver = resolver;
@@ -2144,11 +2143,10 @@ impl Compiler {
         self.pre_typecheck_user_imports(&program);
         let resolver = std::mem::take(&mut self.resolver);
         let (module_type_errors, this_exports, resolver) =
-            typechecker::check_with_package_and_imports_options_resolver(
+            typechecker::check_with_package_and_imports_resolver(
                 &mut program,
                 self.current_package(),
                 self.module_exports.clone(),
-                false,
                 Some(resolver),
             );
         self.resolver = resolver;

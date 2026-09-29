@@ -55,7 +55,6 @@ mod round92_bom_tests;
 mod round92_test_import_filter_e2e_tests;
 mod round93_dep_error_attribution_tests;
 mod round93_lib_check_tests;
-mod round94_module_shadowing_tests;
 mod round94_qualified_paths_tests;
 mod row_polymorphism_tests;
 mod tcp_module_tests;

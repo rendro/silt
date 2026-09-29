@@ -10,7 +10,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     //
     // Pure formatter — runs `Value::format_silt()` and never touches any
     // OS resource. Distinct from `println` / `print`, which DO write to
-    // stdout. Effect set: `!{}`.
+    // stdout.
     {
         let (a, av) = checker.fresh_tv();
         env.define(
@@ -19,7 +19,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a], Box::new(Type::String)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -34,58 +33,47 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // io.read_file: (String) -> Result(String, IoError)
     env.define(
         intern("io.read_file"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::String],
-                Box::new(Type::Generic(
-                    intern("Result"),
-                    vec![Type::String, io_error_ty.clone()],
-                )),
-            ),
-            EffectSet::io_fs(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Generic(
+                intern("Result"),
+                vec![Type::String, io_error_ty.clone()],
+            )),
+        )),
     );
 
     // io.write_file: (String, String) -> Result((), IoError)
     env.define(
         intern("io.write_file"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::String, Type::String],
-                Box::new(Type::Generic(
-                    intern("Result"),
-                    vec![Type::Unit, io_error_ty.clone()],
-                )),
-            ),
-            EffectSet::io_fs(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic(
+                intern("Result"),
+                vec![Type::Unit, io_error_ty.clone()],
+            )),
+        )),
     );
 
     // io.read_line: () -> Result(String, IoError)
-    // Reads from stdin — that's an OS-resource interaction (`!{io}`),
-    // not specifically filesystem.
+    // Reads from stdin.
     env.define(
         intern("io.read_line"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![],
-                Box::new(Type::Generic(
-                    intern("Result"),
-                    vec![Type::String, io_error_ty],
-                )),
-            ),
-            EffectSet::io(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![],
+            Box::new(Type::Generic(
+                intern("Result"),
+                vec![Type::String, io_error_ty],
+            )),
+        )),
     );
 
     // io.args: () -> List(String)
-    // Reads process argv — env-like OS-resource read; `!{io}`.
     env.define(
         intern("io.args"),
-        Scheme::with_effects(
-            Type::Fun(vec![], Box::new(Type::List(Box::new(Type::String)))),
-            EffectSet::io(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![],
+            Box::new(Type::List(Box::new(Type::String))),
+        )),
     );
 
     attach_module_docs_filtered(env, super::docs::IO_FS_MD, "io");

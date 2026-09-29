@@ -488,7 +488,7 @@ fn unknown_key_in_a_git_dependency_is_escaped() {
 }
 
 /// An unknown table at the top level, and an unknown field in
-/// `[package]` and in `[lints]`. The message is the TOML parser's.
+/// `[package]`. The message is the TOML parser's.
 /// FAILS on the base commit: the field is printed as it is.
 #[test]
 fn unknown_manifest_fields_are_escaped() {
@@ -501,10 +501,6 @@ fn unknown_manifest_fields_are_escaped() {
         (
             "unknown_package_field",
             manifest("app", &format!("{key} = 1\n")),
-        ),
-        (
-            "unknown_lints_field",
-            manifest("app", &format!("\n[lints]\n{key} = true\n")),
         ),
     ];
     for (tag, text) in cases {

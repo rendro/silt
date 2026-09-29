@@ -16,16 +16,15 @@ use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::paths::find_silt_files;
 use crate::cli::pipeline::{
     CompilePipelineResult, Emit, analyse_parsed_entry_file, parse_entry_file,
-    pipeline_has_real_hard_errors, reportable_diagnostics, resolve_strict_effects,
+    pipeline_has_real_hard_errors, reportable_diagnostics,
 };
 use crate::cli::run::{render_runtime_error, returned_err};
 use crate::cli::source_scan::{TestKind, test_functions};
 
-/// Dispatch `silt test [--filter <pat>] [--strict-effects] [path]`.
+/// Dispatch `silt test [--filter <pat>] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut file: Option<String> = None;
     let mut filter: Option<String> = None;
-    let mut strict_effects: Option<bool> = None;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--filter" {
@@ -47,15 +46,11 @@ pub(crate) fn dispatch(args: &[String]) {
             }
             filter = Some(value.to_string());
             i += 1;
-        } else if args[i] == "--strict-effects" {
-            strict_effects = Some(true);
-            i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", test_usage_banner());
             println!();
             println!("Options:");
             println!("  --filter <pat>      Only run tests whose name contains <pat>");
-            println!("  --strict-effects    Treat unannotated fns as pure (Phase D)");
             println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Auto-discovery: when no file is given, recursively runs tests");
@@ -66,7 +61,6 @@ pub(crate) fn dispatch(args: &[String]) {
             let suggestion = match args[i].as_str() {
                 "--filters" | "-filter" | "-f" => " (did you mean --filter?)",
                 "--h" | "-help" => " (did you mean --help?)",
-                "--strict-effect" | "--strict_effects" => " (did you mean --strict-effects?)",
                 _ => "",
             };
             eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
@@ -89,7 +83,7 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
-    run_tests(file.as_deref(), filter, strict_effects);
+    run_tests(file.as_deref(), filter);
 }
 
 /// Walk `dir` for files named `*_test.silt` or `*.test.silt`. Delegates
@@ -141,7 +135,7 @@ fn report_diagnostics(path: &str, result: &CompilePipelineResult) -> bool {
     true
 }
 
-fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Option<bool>) {
+fn run_tests(file: Option<&str>, filter: Option<String>) {
     silt::intern::reset();
     let paths: Vec<String> = if let Some(f) = file {
         let p = Path::new(f);
@@ -211,13 +205,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         }
         files_considered += 1;
 
-        // Phase D: each test file may live in a different package
-        // (autodiscovery walks the cwd recursively); resolve the
-        // strict-effects flag per-file so a per-package
-        // `[lints] strict-effects = true` honours its own boundary.
-        // CLI flag (Some) wins over per-file manifest discovery.
-        let strict_effects = resolve_strict_effects(path.as_str(), strict_effects_cli);
-
         // Typecheck and compile through the pipeline that `silt check`
         // and `silt run` use, with the options of `silt check`, so a test
         // file gets the diagnostics `silt check` gives it: the type
@@ -225,14 +212,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>, strict_effects_cli: Opt
         // static checks against declared dependencies. The one
         // difference is what is emitted: the declarations, without a
         // call of `main`.
-        let result = analyse_parsed_entry_file(
-            path.as_str(),
-            parsed,
-            Emit::Declarations,
-            true,
-            true,
-            strict_effects,
-        );
+        let result =
+            analyse_parsed_entry_file(path.as_str(), parsed, Emit::Declarations, true, true);
         let failed_to_compile = report_diagnostics(path.as_str(), &result);
         let (source, functions) = match (failed_to_compile, result.functions) {
             (false, Some(functions)) => (result.source, functions),
