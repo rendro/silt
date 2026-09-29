@@ -8,15 +8,17 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 use serde_json::json;
 
 use crate::support::LspClient;
 
 fn unique_tmp_dir(tag: &str) -> PathBuf {
-    let n = REQ_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("silt_preload_pull_{tag}_{n}"));
+    let n = crate::support::next_id();
+    let dir = std::env::temp_dir().join(format!(
+        "silt_preload_pull_{tag}_{}_{n}",
+        std::process::id()
+    ));
     // Clean any leftover from a prior aborted run.
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("mkdir tempdir");
