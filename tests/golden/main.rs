@@ -336,22 +336,53 @@ fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
     problems
 }
 
-#[test]
-fn golden_cases() {
+/// The corpus is split into this many tests, each running every
+/// `SHARDS`-th case of the sorted list, so a test runner can spread the
+/// cases over its workers and CI partitions stay balanced.
+const SHARDS: usize = 8;
+
+macro_rules! shards {
+    ($($name:ident = $k:expr),* $(,)?) => {
+        $(#[test] fn $name() { run_shard($k); })*
+    };
+}
+
+shards!(
+    golden_shard_0 = 0,
+    golden_shard_1 = 1,
+    golden_shard_2 = 2,
+    golden_shard_3 = 3,
+    golden_shard_4 = 4,
+    golden_shard_5 = 5,
+    golden_shard_6 = 6,
+    golden_shard_7 = 7,
+);
+
+fn run_shard(shard: usize) {
     let root = golden_root();
-    let mut paths = Vec::new();
-    collect_cases(&root, &mut paths);
+    let mut all = Vec::new();
+    collect_cases(&root, &mut all);
     if let Ok(filter) = std::env::var("SILT_GOLDEN_FILTER") {
-        paths.retain(|p| p.to_string_lossy().contains(&filter));
+        all.retain(|p| p.to_string_lossy().contains(&filter));
     }
+    let paths: Vec<PathBuf> = all
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % SHARDS == shard)
+        .map(|(_, p)| p)
+        .collect();
     let bless = std::env::var_os("SILT_BLESS").is_some();
 
     let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let skipped: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let next = std::sync::atomic::AtomicUsize::new(0);
+    // The shards may run side by side (threads under `cargo test`,
+    // processes under nextest), so each takes a share of the CPUs.
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(4);
+        .unwrap_or(4)
+        .div_ceil(4)
+        .max(1);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {

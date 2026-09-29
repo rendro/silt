@@ -77,6 +77,12 @@ A golden captured from a wrong output is worse than no test. If the
 current output contradicts what the original test asserted, do not
 capture it: report it.
 
+## Sharding
+
+The harness runs the corpus as eight tests, `golden_shard_0` to
+`golden_shard_7`, each taking every eighth case of the sorted list, so
+that CI partitions stay balanced. A failure message names the case.
+
 ## Bless mode
 
 `SILT_BLESS=1 cargo test --test golden` rewrites every existing `.stdout`
