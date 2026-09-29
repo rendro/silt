@@ -138,9 +138,13 @@ struct Output {
 
 fn run_case(case: &Case) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+    command.args(&case.directives.cmd);
+    // A REPL session reads its input from stdin, not from the file; the
+    // file holds only the directives and the session's description.
+    if case.directives.cmd.first().map(String::as_str) != Some("repl") {
+        command.arg(&case.file);
+    }
     command
-        .args(&case.directives.cmd)
-        .arg(&case.file)
         .current_dir(&case.dir)
         .env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")

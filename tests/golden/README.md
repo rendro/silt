@@ -26,7 +26,7 @@ Leading comment lines of the `.silt` file (for a directory case, of
 
 | Directive | Meaning | Default |
 |---|---|---|
-| `-- cmd: run` / `check` / `test` / `fmt --check` / `disasm` | the subcommand | `run` |
+| `-- cmd: run` / `check` / `test` / `fmt --check` / `disasm` / `repl` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:` | `run` |
 | `-- exit: N` | expected exit status | `0` |
 | `-- stdout-contains: TEXT` | stdout must contain TEXT (repeatable) | — |
 | `-- stderr-contains: TEXT` | stderr must contain TEXT (repeatable) | — |
