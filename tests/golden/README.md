@@ -37,6 +37,7 @@ byte-order mark and before any code, each `-- key: value`:
 | `-- stderr-not-contains: TEXT` | stderr must not contain TEXT (repeatable) | — |
 | `-- stdin: TEXT` | text fed on stdin (`\n` for newlines) | empty |
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
+| `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable) | — |
 | `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 |
 
 Comparison:

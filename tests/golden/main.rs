@@ -38,6 +38,24 @@ struct Directives {
     stdin: String,
     repeat: usize,
     timeout: Duration,
+    requires_features: Vec<String>,
+}
+
+/// Whether the cargo feature `name` is enabled. The golden test binary
+/// is built with the same features as the `silt` binary it runs.
+fn feature_enabled(name: &str) -> Result<bool, String> {
+    Ok(match name {
+        "repl" => cfg!(feature = "repl"),
+        "lsp" => cfg!(feature = "lsp"),
+        "watch" => cfg!(feature = "watch"),
+        "local-clock" => cfg!(feature = "local-clock"),
+        "http" => cfg!(feature = "http"),
+        "tcp" => cfg!(feature = "tcp"),
+        "tcp-tls" => cfg!(feature = "tcp-tls"),
+        "postgres" => cfg!(feature = "postgres"),
+        "postgres-tls" => cfg!(feature = "postgres-tls"),
+        other => return Err(format!("unknown feature {other:?} in `-- requires-feature:`")),
+    })
 }
 
 fn golden_root() -> PathBuf {
@@ -108,6 +126,7 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
             "stderr-contains" => d.stderr_contains.push(value),
             "stderr-not-contains" => d.stderr_not_contains.push(value),
             "stdin" => d.stdin = value.replace("\\n", "\n"),
+            "requires-feature" => d.requires_features.push(value),
             "timeout" => {
                 let secs: u64 = value
                     .parse()
@@ -324,6 +343,7 @@ fn golden_cases() {
     let bless = std::env::var_os("SILT_BLESS").is_some();
 
     let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let skipped: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let next = std::sync::atomic::AtomicUsize::new(0);
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -346,7 +366,22 @@ fn golden_cases() {
                             continue;
                         }
                     };
-                    for run in 1..=case.directives.repeat {
+                    let mut missing = Vec::new();
+                for feature in &case.directives.requires_features {
+                    match feature_enabled(feature) {
+                        Ok(true) => {}
+                        Ok(false) => missing.push(feature.clone()),
+                        Err(e) => {
+                            failures.lock().unwrap().push(format!("{rel}: {e}"));
+                            missing.push(feature.clone());
+                        }
+                    }
+                }
+                if !missing.is_empty() {
+                    skipped.lock().unwrap().push(format!("{rel} (needs {})", missing.join(", ")));
+                    continue;
+                }
+                for run in 1..=case.directives.repeat {
                         let out = run_case(&case);
                         let problems = judge(&case, &out, bless);
                         if !problems.is_empty() {
@@ -363,6 +398,14 @@ fn golden_cases() {
         }
     });
 
+    let skipped = skipped.into_inner().unwrap();
+    if !skipped.is_empty() {
+        eprintln!(
+            "{} golden cases skipped for features this build lacks:\n  {}",
+            skipped.len(),
+            skipped.join("\n  ")
+        );
+    }
     let failures = failures.into_inner().unwrap();
     assert!(
         failures.is_empty(),

@@ -27,6 +27,15 @@ jobs:
       - name: cargo check
         run: cargo check --all-features
 
+      # The default feature set is what `cargo install silt` builds; check
+      # and lint it too, so code behind a non-default feature cannot hide
+      # a break in the default build.
+      - name: cargo check (default features)
+        run: cargo check
+
+      - name: cargo clippy (default features)
+        run: cargo clippy -- -D warnings
+
       - name: cargo check --benches
         run: cargo check --benches --all-features
 
@@ -39,14 +48,10 @@ jobs:
   test-linux:
     # Split Linux test runs across 4 parallel matrix partitions so total
     # wall-clock approximates max(slowest partition) instead of the sum.
-    # Partitions are hand-curated for balance:
-    #   * heavy   : integration.rs (~180s) + integration_concurrency
-    #   * concurrency : scheduler / channel / concurrency_stress / docs_stdlib walker
-    #   * rest1/rest2 : everything else (lib unit tests + 180+ small binaries),
-    #                   split evenly by index parity (rest1 carries lib+bins)
-    # Adding a new test file → defaults to the `rest1`/`rest2` shards. Move it
-    # into the `heavy` or `concurrency` list only when its wall-clock
-    # justifies the partition split.
+    # The partitions follow the suite binaries under tests/ (see
+    # .github/scripts/run-test-partition.sh): the `heavy` suite, the
+    # `concurrency` suite, and everything else split in two by nextest's
+    # hash partitioning. A new test needs no change here.
     name: Test Linux (${{ matrix.partition }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -77,6 +82,29 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' \
             bash .github/scripts/run-test-partition.sh ${{ matrix.partition }}
+
+  test-default-features:
+    # Everything else runs with --all-features. This job runs the unit
+    # tests and the golden corpus against the default build; golden cases
+    # that need an optional feature declare `-- requires-feature:` and
+    # are skipped here.
+    name: Test default features
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-default-features
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: cargo nextest (default features)
+        run: |
+          CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
+            cargo nextest run --lib --bin silt --test golden
 
   test-macos:
     name: Test macOS (${{ matrix.partition }})
