@@ -1,0 +1,5 @@
+-- `if` is a legal identifier: a let-bound variable named `if` still works.
+fn main() {
+  let if = 3
+  println(if + 1)
+}

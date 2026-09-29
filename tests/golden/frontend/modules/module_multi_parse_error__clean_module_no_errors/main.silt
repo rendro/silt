@@ -1,0 +1,5 @@
+import clean
+
+fn main() {
+  println(clean.add(1, 2))
+}

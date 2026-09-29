@@ -22,257 +22,19 @@
 //!
 //! Both tests drive a real `silt lsp` subprocess end-to-end over LSP
 //! JSON-RPC so the full pipeline (lex → parse → typecheck → respond) is
-//! exercised. Harness mirrors `tests/lsp/lsp_diagnostics_completion_symbols_tests.rs`.
+//! exercised. Uses the shared LSP client in `support.rs`.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
+use crate::support::LspClient;
+
 static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-const READ_TIMEOUT: Duration = Duration::from_secs(15);
-
-fn next_id() -> u64 {
-    REQ_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
 
 fn unique_uri(tag: &str) -> String {
     let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("file:///tmp/silt_round80_{tag}_{n}.silt")
-}
-
-type ServerMessage = Value;
-
-struct LspClient {
-    child: Child,
-    stdin: ChildStdin,
-    rx: Receiver<ServerMessage>,
-}
-
-impl LspClient {
-    fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn silt lsp");
-
-        let stdin = child.stdin.take().expect("no stdin on child");
-        let stdout = child.stdout.take().expect("no stdout on child");
-
-        let (tx, rx) = channel::<ServerMessage>();
-        thread::spawn(move || reader_loop(stdout, tx));
-
-        LspClient { child, stdin, rx }
-    }
-
-    fn send_raw(&mut self, msg: &Value) {
-        let body = serde_json::to_string(msg).expect("serialize");
-        let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        self.stdin
-            .write_all(framed.as_bytes())
-            .expect("write to child stdin");
-        self.stdin.flush().expect("flush child stdin");
-    }
-
-    fn send_request(&mut self, id: u64, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    fn send_notification(&mut self, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    fn initialize(&mut self) {
-        let id = next_id();
-        self.send_request(
-            id,
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": null,
-                "capabilities": {},
-            }),
-        );
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for initialize response");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        break;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for initialize response");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-        self.send_notification("initialized", json!({}));
-    }
-
-    fn did_open_and_wait(&mut self, uri: &str, source: &str) {
-        self.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "silt",
-                    "version": 1,
-                    "text": source,
-                }
-            }),
-        );
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for publishDiagnostics for {uri}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").is_none()
-                        && msg.get("method").and_then(|v| v.as_str())
-                            == Some("textDocument/publishDiagnostics")
-                        && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
-                    {
-                        return;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for publishDiagnostics for {uri}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Value {
-        let id = next_id();
-        self.send_request(id, method, params);
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for response to {method}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg.get("result").cloned().unwrap_or(Value::Null);
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for response to {method}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    fn shutdown(mut self) {
-        let id = next_id();
-        self.send_request(id, "shutdown", json!(null));
-        let _ = self.rx.recv_timeout(READ_TIMEOUT);
-        self.send_notification("exit", json!(null));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-                Ok(None) => {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(_) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for LspClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let mut content_length: Option<usize> = None;
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => return,
-                Ok(_) => {}
-                Err(_) => return,
-            }
-            if line == "\r\n" || line == "\n" || line.is_empty() {
-                break;
-            }
-            if let Some(rest) = line
-                .strip_prefix("Content-Length:")
-                .or_else(|| line.strip_prefix("content-length:"))
-                && let Ok(n) = rest.trim().parse::<usize>()
-            {
-                content_length = Some(n);
-            }
-        }
-        let Some(n) = content_length else {
-            return;
-        };
-        let mut body = vec![0u8; n];
-        if reader.read_exact(&mut body).is_err() {
-            return;
-        }
-        let Ok(val) = serde_json::from_slice::<Value>(&body) else {
-            return;
-        };
-        if tx.send(val).is_err() {
-            return;
-        }
-    }
 }
 
 fn find_symbol<'a>(symbols: &'a [Value], name: &str) -> &'a Value {
@@ -299,7 +61,6 @@ fn pos(v: &Value) -> (u64, u64) {
 #[test]
 fn round80_g1_document_symbols_selection_range_is_identifier() {
     let mut client = LspClient::spawn();
-    client.initialize();
 
     // Source layout (line/col are 0-indexed, character columns are
     // UTF-16 code units which match ASCII bytes here):
@@ -324,7 +85,7 @@ fn round80_g1_document_symbols_selection_range_is_identifier() {
     let uri = unique_uri("g1");
     client.did_open_and_wait(&uri, source);
 
-    let result = client.request(
+    let result = client.request_result(
         "textDocument/documentSymbol",
         json!({ "textDocument": { "uri": uri } }),
     );
@@ -427,7 +188,6 @@ fn round80_g1_document_symbols_selection_range_is_identifier() {
 #[test]
 fn round80_l4_fn_type_preserved_for_unreferenced_params() {
     let mut client = LspClient::spawn();
-    client.initialize();
 
     // line 0: fn ignore(a: Int, b: Int) -> Int = 42
     //         identifier `ignore` lives at cols 3..9
@@ -437,7 +197,7 @@ fn round80_l4_fn_type_preserved_for_unreferenced_params() {
     client.did_open_and_wait(&uri, source);
 
     // ── Hover on `ignore` at line 0, col 3 (start of identifier).
-    let hover = client.request(
+    let hover = client.request_result(
         "textDocument/hover",
         json!({
             "textDocument": { "uri": uri },
@@ -466,7 +226,7 @@ fn round80_l4_fn_type_preserved_for_unreferenced_params() {
     // cursor immediately after the `(`. Line 1 is `fn main() { ignore(1, 2) }`.
     // The `(` after `ignore` is at column 18; cursor at column 19 sits
     // just inside the call.
-    let sig = client.request(
+    let sig = client.request_result(
         "textDocument/signatureHelp",
         json!({
             "textDocument": { "uri": uri },

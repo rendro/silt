@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A printable unexpected character keeps its plain quoted form.
+-- stderr-contains: unexpected character: '@'
+fn main() {
+  let x = @
+}

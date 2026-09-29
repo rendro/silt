@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- The caret under a type error must account for double-width CJK cells.
+fn main() {
+  let t = ("中文字", nope)
+  println(t)
+}

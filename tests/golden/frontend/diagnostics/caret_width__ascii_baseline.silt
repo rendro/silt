@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- ASCII baseline: the caret sits under column N with N-1 cells of padding.
+fn main() {
+  let t = ("abc", nope)
+  println(t)
+}

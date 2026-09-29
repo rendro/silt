@@ -23,35 +23,50 @@
 //!
 //! These tests lock the bidirectional invariant: if a future edit removes one
 //! of the advertised capabilities OR the docs drop a feature, this test fires.
+//! The advertised set is read from a live `initialize` response.
+
+use serde_json::{Map, Value};
+
+use crate::support::LspClient;
 
 const README: &str = include_str!("../../README.md");
 const EDITOR_SETUP: &str = include_str!("../../docs/editor-setup.md");
 const VSCODE_PACKAGE: &str = include_str!("../../editors/vscode/package.json");
-const LSP_MOD: &str = include_str!("../../src/lsp/mod.rs");
+
+/// The `capabilities` object of a live `initialize` response.
+fn advertised_capabilities() -> Map<String, Value> {
+    let mut client = LspClient::spawn_uninitialized();
+    let (_, resp) = client.initialize();
+    client.shutdown();
+    resp.pointer("/result/capabilities")
+        .and_then(|c| c.as_object())
+        .cloned()
+        .unwrap_or_else(|| panic!("initialize response has no capabilities: {resp}"))
+}
 
 /// Natural-language phrases that must appear in user-facing docs for each
 /// advertised capability. The phrase is matched case-insensitively as a
-/// substring; the second tuple element is the canonical capability name from
-/// `src/lsp/mod.rs` for diagnostic messages and the bidirectional lock.
+/// substring; the second tuple element is the capability's key in the
+/// `initialize` response, for diagnostic messages and the bidirectional lock.
 const DOC_PHRASES: &[(&str, &str)] = &[
-    ("hover", "hover_provider"),
-    ("go to definition", "definition_provider"),
-    ("completion", "completion_provider"),
-    ("signature help", "signature_help_provider"),
-    ("document symbols", "document_symbol_provider"),
-    ("formatting", "document_formatting_provider"),
-    ("references", "references_provider"),
-    ("rename", "rename_provider"),
-    ("semantic tokens", "semantic_tokens_provider"),
-    ("diagnostics", "diagnostic_provider"),
-    ("workspace symbol", "workspace_symbol_provider"),
-    ("inlay hint", "inlay_hint_provider"),
-    ("document highlight", "document_highlight_provider"),
-    ("folding range", "folding_range_provider"),
-    ("selection range", "selection_range_provider"),
-    ("type definition", "type_definition_provider"),
-    ("implementation", "implementation_provider"),
-    ("code action", "code_action_provider"),
+    ("hover", "hoverProvider"),
+    ("go to definition", "definitionProvider"),
+    ("completion", "completionProvider"),
+    ("signature help", "signatureHelpProvider"),
+    ("document symbols", "documentSymbolProvider"),
+    ("formatting", "documentFormattingProvider"),
+    ("references", "referencesProvider"),
+    ("rename", "renameProvider"),
+    ("semantic tokens", "semanticTokensProvider"),
+    ("diagnostics", "diagnosticProvider"),
+    ("workspace symbol", "workspaceSymbolProvider"),
+    ("inlay hint", "inlayHintProvider"),
+    ("document highlight", "documentHighlightProvider"),
+    ("folding range", "foldingRangeProvider"),
+    ("selection range", "selectionRangeProvider"),
+    ("type definition", "typeDefinitionProvider"),
+    ("implementation", "implementationProvider"),
+    ("code action", "codeActionProvider"),
 ];
 
 /// Normalize for substring matching: lowercase + collapse hyphens to spaces.
@@ -69,7 +84,7 @@ fn readme_lists_advertised_lsp_capabilities() {
             lower.contains(needle),
             "README.md LSP feature list must mention `{needle}` — \
              the LSP server advertises `{cap}` as a capability \
-             (see src/lsp/mod.rs:421-468). If the capability has truly been \
+             (see the `initialize` response built in src/lsp/mod.rs). If the capability has truly been \
              dropped, also remove it from src/lsp/mod.rs in the same change."
         );
     }
@@ -83,7 +98,7 @@ fn editor_setup_lists_advertised_lsp_capabilities() {
             lower.contains(needle),
             "docs/editor-setup.md LSP features table must mention `{needle}` — \
              the LSP server advertises `{cap}` as a capability \
-             (see src/lsp/mod.rs:421-468). If the capability has truly been \
+             (see the `initialize` response built in src/lsp/mod.rs). If the capability has truly been \
              dropped, also remove it from src/lsp/mod.rs in the same change."
         );
     }
@@ -95,14 +110,16 @@ fn lsp_server_still_advertises_documented_capabilities() {
     // from the initialize response, the docs are now lying. Fire so the
     // doc-and-code go out of sync immediately and the author has to choose:
     // keep the capability or drop it from the docs in the same change.
+    let caps = advertised_capabilities();
     for (_phrase, cap) in DOC_PHRASES {
         assert!(
-            LSP_MOD.contains(cap),
-            "src/lsp/mod.rs must still advertise `{cap}` — \
-             README.md and docs/editor-setup.md tell users this capability \
-             exists. If the capability has truly been dropped, also remove \
-             the corresponding row from docs/editor-setup.md and the feature \
-             list in README.md."
+            caps.contains_key(*cap),
+            "the LSP server must still advertise `{cap}` in its initialize \
+             response — README.md and docs/editor-setup.md tell users this \
+             capability exists. If the capability has truly been dropped, also \
+             remove the corresponding row from docs/editor-setup.md and the \
+             feature list in README.md. Advertised: {:?}",
+            caps.keys().collect::<Vec<_>>()
         );
     }
 }
@@ -120,49 +137,30 @@ fn vscode_extension_description_lists_advertised_lsp_capabilities() {
             lower.contains(needle),
             "editors/vscode/package.json description must mention `{needle}` — \
              the VS Code extension launches `silt lsp` and gets `{cap}` \
-             as an advertised capability (see src/lsp/mod.rs:421-468)."
+             as an advertised capability (see the `initialize` response built in src/lsp/mod.rs)."
         );
     }
 }
 
 #[test]
 fn every_advertised_provider_is_documented() {
-    // Source-grep `src/lsp/mod.rs` for every `*_provider` capability the
-    // server announces in `ServerCapabilities { ... }` and assert each one is
-    // covered by `DOC_PHRASES`. This is the strict bidirectional lock: adding
-    // a new provider to mod.rs without updating the docs (and this table)
-    // fires immediately. `text_document_sync` is intentionally excluded — it
-    // is a protocol-level capability, not a user-visible feature.
+    // Every `*Provider` capability the server announces in its initialize
+    // response must be covered by `DOC_PHRASES`. This is the strict
+    // bidirectional lock: adding a new provider without updating the docs
+    // (and this table) fires immediately. `textDocumentSync` is not a
+    // provider — it is a protocol-level capability, not a user-visible
+    // feature.
     let documented: std::collections::HashSet<&str> =
         DOC_PHRASES.iter().map(|(_, cap)| *cap).collect();
-
-    let mut missing: Vec<String> = Vec::new();
-    for line in LSP_MOD.lines() {
-        // Match lines like `foo_provider: Some(...)` inside the
-        // ServerCapabilities literal. Top-level fields sit at exactly
-        // 8 spaces of indent; nested option fields (e.g. `prepare_provider`
-        // inside `RenameOptions`) are deeper and must be ignored.
-        let Some(rest) = line.strip_prefix("        ") else {
-            continue;
-        };
-        if rest.starts_with(' ') || rest.starts_with("//") {
-            continue;
-        }
-        let Some(colon_idx) = rest.find(':') else {
-            continue;
-        };
-        let name = &rest[..colon_idx];
-        if name.ends_with("_provider")
-            && !documented.contains(name)
-            && !missing.iter().any(|m| m == name)
-        {
-            missing.push(name.to_string());
-        }
-    }
+    let caps = advertised_capabilities();
+    let missing: Vec<&String> = caps
+        .keys()
+        .filter(|name| name.ends_with("Provider") && !documented.contains(name.as_str()))
+        .collect();
 
     assert!(
         missing.is_empty(),
-        "src/lsp/mod.rs advertises LSP provider capabilities not covered by \
+        "the LSP server advertises provider capabilities not covered by \
          DOC_PHRASES in this test (and therefore likely not mentioned in \
          README.md or docs/editor-setup.md): {missing:?}. \
          Add a row to DOC_PHRASES and update README.md + docs/editor-setup.md \

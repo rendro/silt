@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- A raw newline in a string found-token renders as \n on one line.
+-- stderr-contains: found "a\nb"
+"a
+b"

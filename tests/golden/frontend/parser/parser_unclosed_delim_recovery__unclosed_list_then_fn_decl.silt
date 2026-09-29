@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- An unclosed opener followed by a top-level fn decl blames the opener.
+-- stderr-contains: error[parse]
+-- stderr-contains: list literal
+-- stderr-contains: starting at line 8
+-- stderr-not-contains: expected (, found b
+fn a() = [1, 2,
+fn b() = 99

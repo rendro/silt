@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: return type mismatch
+-- stderr-not-contains: unreachable
+-- stderr-not-contains: missing return
+-- stderr-not-contains: undefined variable 'f'
+fn f(a, b) -> Int {
+  let x = 1 +
+}
+
+fn main() {
+  f(1, 2)
+}

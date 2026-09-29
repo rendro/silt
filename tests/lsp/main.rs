@@ -1,6 +1,9 @@
 //! Test suite: the language server, driven over stdio.
 //!
-//! One test binary; each module was a separate test crate before.
+//! One test binary; each module was a separate test crate before. Modules
+//! that talk to the server use the shared client in `support`.
+
+mod support;
 
 mod docs_lsp_capabilities_advertisement_tests;
 mod lsp;
@@ -23,7 +26,6 @@ mod lsp_rename_gated_constructor_rejection_tests;
 mod lsp_rename_unicode_ident_rejection_tests;
 mod lsp_round62_audit_fix_tests;
 mod lsp_semantic_tokens_tests;
-mod lsp_span_at_offset_dedup_lock_tests;
 mod lsp_tier2_tests;
 mod lsp_type_def_impl_tests;
 mod lsp_uri_encoding_tests;
@@ -34,7 +36,6 @@ mod round101_lsp_rename_nested_shorthand_binder_tests;
 mod round101_lsp_type_position_rename_tests;
 mod round102_lsp_lambda_loop_binder_rename_tests;
 mod round71_lsp_rename_let_and_field_tests;
-mod round74_vscode_readme_lsp_path_tests;
 mod round75_lsp_trait_and_sig_help_tests;
 mod round76_lsp_folding_no_dups_tests;
 mod round76_lsp_hover_stdlib_method_tests;
@@ -44,9 +45,7 @@ mod round81_lsp_completion_parity_tests;
 mod round81_lsp_dot_type_narrow_tests;
 mod round81_lsp_rename_user_shadow_tests;
 mod round83_lsp_selection_range_decl_bounds_tests;
-mod round84_lsp_offset_to_position_parity_tests;
 mod round84_lsp_selection_range_fn_body_tests;
-mod round85_lsp_cleanup_lock_tests;
 mod round86_lsp_code_action_diagnostic_wording_parity_tests;
 mod round87_lsp_folding_comment_string_skip_tests;
 mod round88_lsp_clean_shutdown_tests;

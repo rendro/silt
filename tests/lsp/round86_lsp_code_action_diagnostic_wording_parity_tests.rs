@@ -25,20 +25,20 @@
 //! format, or `Type::Display` for `Result` changes — without an in-step
 //! update to the matcher — the quick-fix would silently stop firing.
 //! Existing precedent for this kind of cross-file wording parity lock:
-//! `tests/lsp/round81_lsp_completion_parity_tests.rs::lsp_auto_derive_method_names_match_typechecker_trait_names`.
+//! `tests/lsp/round81_lsp_completion_parity_tests.rs::lsp_auto_derived_completions_match_typechecker`.
 //!
-//! These tests are **real parity locks**: they reach into the live
-//! parser/typechecker (not stub error messages) and assert the produced
-//! message string contains the substrings the matcher requires. An
-//! optional static-grep assertion on `src/lsp/code_action.rs` catches
-//! drift on the LSP side as well.
+//! Both locks reach the live producer rather than stub messages. The
+//! `WrapInOk` lock runs end to end through `silt lsp`: the real
+//! typechecker diagnostic must make the server offer the quick-fix, which
+//! catches drift on either side. The `FixArrowFnType` lock drives the live
+//! parser only (see its doc comment for why).
+
+use serde_json::json;
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker;
-use silt::types::Severity;
 
-const CODE_ACTION_RS: &str = include_str!("../../src/lsp/code_action.rs");
+use crate::support::LspClient;
 
 // ── Test 1: FixArrowFnType wording parity ───────────────────────────
 
@@ -58,6 +58,11 @@ const CODE_ACTION_RS: &str = include_str!("../../src/lsp/code_action.rs");
 ///
 /// In either case the quick-fix would silently stop matching real
 /// arrow-fn-type diagnostics in the editor; this test fires loudly.
+///
+/// This lock stays parser-only: an old-style `(Int -> Int)` type now
+/// fails earlier with "expected ')' or ',' to continue tuple type, found
+/// ->", so no current source makes the server offer this quick-fix end
+/// to end.
 #[test]
 fn fix_arrow_fn_type_matcher_matches_live_parser_error() {
     // `fn -> Foo() { ... }`: the `->` lands where `expect_ident` runs
@@ -82,114 +87,53 @@ fn fix_arrow_fn_type_matcher_matches_live_parser_error() {
          changed, update both the matcher AND this test in lock-step.",
         err.message,
     );
-
-    // Static-grep companion: the matcher source still spells the
-    // exact wording string we just observed from the parser. Together
-    // with the live-parser check above this catches drift on either
-    // side of the parity (parser wording change OR matcher edit).
-    let matcher_needle = "\"expected identifier, found ->\"";
-    assert!(
-        CODE_ACTION_RS.contains(matcher_needle),
-        "src/lsp/code_action.rs no longer contains the matcher literal \
-         {matcher_needle}. If the matcher's wording changed, the live \
-         parser error wording at src/parser.rs:589 / Token::Display \
-         for Token::Arrow at src/lexer.rs:138 MUST change in \
-         lock-step. Either revert the LSP edit or update both sides \
-         AND this test."
-    );
 }
 
 // ── Test 2: WrapInOk wording parity ─────────────────────────────────
 
-/// Drive the live typechecker on a source where a non-Result value is
-/// returned where `Result(a, e)` is expected, capture the produced
-/// type-error message, and assert it satisfies the three substring
-/// conditions `WrapInOk::diagnostic_matcher` requires:
-///
-///   1. Contains `"type mismatch"`.
-///   2. Contains `"expected Result"`.
-///   3. Does NOT contain `"got Result"` (the matcher excludes the
-///      case where the *actual* type is also a Result — wrapping in
-///      `Ok(...)` doesn't help when the user already produced a
-///      Result of the wrong shape).
-///
-/// The fixture mirrors `tests/frontend/pipe_question_precedence_tests.rs:117`'s
-/// `fn produce() -> Result(Int, Int) { Ok(21) }` style, but returns a
-/// bare `Int` instead of `Ok(Int)` so the body's inferred type is `Int`
-/// and the declared return type is `Result(Int, Int)`. The unify call
-/// at `src/typechecker/mod.rs:1654` (Int-vs-Generic mismatch arm)
-/// produces the message via `format!("type mismatch: expected {t2}, got {t1}")`.
+/// Open a document whose body returns a bare `Int` where the signature
+/// declares `Result(Int, Int)`, and ask the server for code actions on
+/// the resulting diagnostic. `WrapInOk::diagnostic_matcher` needs the
+/// message to contain `"type mismatch"` and `"expected Result"` and not
+/// `"got Result"`; the typechecker's unify mismatch format
+/// (`type mismatch: expected {t2}, got {t1}`) with `Type::Display` for
+/// `Result` must keep producing that. If either the typechecker wording
+/// or the matcher changes alone, the quick-fix stops being offered and
+/// this test fails.
 #[test]
-fn wrap_in_ok_matcher_matches_live_typechecker_error() {
-    // Body returns bare `21` (an `Int`) but the signature declares
-    // `Result(Int, Int)`. The typechecker unifies the body type
-    // against the declared return type; the mismatch arm at
-    // src/typechecker/mod.rs:1654 fires `"type mismatch: expected
-    // Result(Int, Int), got Int"`. That message contains
-    // `"type mismatch"` and `"expected Result"` and does NOT contain
-    // `"got Result"` — exactly what `WrapInOk::diagnostic_matcher`
-    // (src/lsp/code_action.rs:258) requires.
-    let src = "fn produce() -> Result(Int, Int) { 21 }\n";
-    let tokens = Lexer::new(src).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let errors = typechecker::check(&mut program);
-    let messages: Vec<String> = errors
-        .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
-        .collect();
-
-    let candidates: Vec<&String> = messages
+fn wrap_in_ok_quickfix_offered_for_live_typechecker_error() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_r86_wrap_in_ok.silt";
+    let source = "fn produce() -> Result(Int, Int) { 21 }\n";
+    let diags = client.did_open_and_collect_diagnostics(uri, source);
+    let mismatch = diags
         .iter()
-        .filter(|m| {
-            m.contains("type mismatch")
-                && m.contains("expected Result")
-                && !m.contains("got Result")
+        .find(|d| {
+            d["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("expected Result"))
         })
-        .collect();
+        .unwrap_or_else(|| panic!("expected a Result type-mismatch diagnostic; got {diags:?}"))
+        .clone();
 
-    assert!(
-        !candidates.is_empty(),
-        "no live typechecker error matched all three \
-         `WrapInOk::diagnostic_matcher` conditions \
-         (contains `type mismatch`, contains `expected Result`, does \
-         NOT contain `got Result`). Observed error messages: {:#?}. \
-         If the typechecker unify wording at \
-         src/typechecker/mod.rs:1605/1654 or `Type::Display` for \
-         `Result` (src/types/mod.rs) changed, update the matcher AND \
-         this test in lock-step.",
-        messages,
+    let resp = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": uri },
+            "range": mismatch["range"].clone(),
+            "context": { "diagnostics": [mismatch] }
+        }),
     );
-
-    // Static-grep companion: the matcher source still spells the
-    // exact three substrings we just observed are produced by the
-    // typechecker. Catches drift on the LSP side.
-    let needle_mismatch = "\"type mismatch\"";
-    let needle_expected = "\"expected Result\"";
-    let needle_got = "\"got Result\"";
+    let titles: Vec<&str> = resp["result"]
+        .as_array()
+        .map(|actions| actions.iter().filter_map(|a| a["title"].as_str()).collect())
+        .unwrap_or_default();
     assert!(
-        CODE_ACTION_RS.contains(needle_mismatch),
-        "src/lsp/code_action.rs no longer contains the matcher \
-         literal {needle_mismatch}. If the matcher's wording changed, \
-         the live typechecker error at \
-         src/typechecker/mod.rs:1605/1654 MUST change in lock-step. \
-         Either revert the LSP edit or update both sides AND this \
-         test."
+        titles.contains(&"Wrap expression in `Ok(...)`"),
+        "the typechecker's Result mismatch diagnostic no longer triggers the \
+         WrapInOk quick-fix (src/lsp/code_action.rs); the diagnostic wording \
+         and the matcher must change together. Diagnostics: {diags:?}; \
+         actions: {resp}"
     );
-    assert!(
-        CODE_ACTION_RS.contains(needle_expected),
-        "src/lsp/code_action.rs no longer contains the matcher \
-         literal {needle_expected}. If the matcher's wording changed, \
-         `Type::Display` for `Result` (src/types/mod.rs) MUST change \
-         in lock-step. Either revert the LSP edit or update both \
-         sides AND this test."
-    );
-    assert!(
-        CODE_ACTION_RS.contains(needle_got),
-        "src/lsp/code_action.rs no longer contains the matcher \
-         literal {needle_got} (the exclusion condition). If the \
-         exclusion was dropped, the WrapInOk quick-fix would start \
-         firing on Result-vs-Result mismatches where wrapping in \
-         `Ok(...)` is the wrong fix. Update both sides AND this test."
-    );
+    client.shutdown();
 }

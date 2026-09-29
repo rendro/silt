@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A raw U+0001 in source is named in the message as \u{1}, not echoed raw.
+-- stderr-contains: unexpected character: '\u{1}'
+fn main() {
+  let x = 
+}

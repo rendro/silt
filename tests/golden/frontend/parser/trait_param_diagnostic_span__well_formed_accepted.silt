@@ -1,0 +1,8 @@
+-- cmd: check
+-- A well-formed parameterised trait declaration is accepted.
+-- exit: 0
+trait Foo(a, b) { fn bar() }
+
+fn main() {
+  println("ok")
+}

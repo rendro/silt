@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: function call argument list
+-- stderr-contains: ','
+fn foo(a, b, c) {}
+fn main() { foo(1 2 3) }

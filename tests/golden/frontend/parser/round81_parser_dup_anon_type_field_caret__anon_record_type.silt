@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- The duplicate-field caret in an anon record TYPE lands on the second `a`.
+fn pluck(r: { a: Int, a: String }) = r.a

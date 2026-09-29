@@ -1,0 +1,10 @@
+-- A runtime error surfaced by `silt run` carries the `error[runtime]`
+-- header and never the legacy "VM error:" prefix.
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-not-contains: VM error:
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  println(10 / (list.length(xs) - 3))
+}

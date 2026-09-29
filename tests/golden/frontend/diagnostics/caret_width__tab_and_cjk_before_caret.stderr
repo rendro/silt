@@ -1,0 +1,5 @@
+error[type]: undefined variable 'nope'
+ --> caret_width__tab_and_cjk_before_caret.silt:6:16
+   |
+ 6 | 	let t = ("中", nope)
+   | 	               ^ undefined variable 'nope'

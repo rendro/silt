@@ -1,0 +1,23 @@
+import io
+import result
+
+type AppError {
+  ConfigRead(IoError),
+}
+
+fn load(path: String) -> Result(String, AppError) {
+  let raw = io.read_file(path) |> result.map_err(ConfigRead)?
+  Ok(raw)
+}
+
+fn outcome() {
+  match load("/definitely_does_not_exist") {
+    Ok(_) -> "ok"
+    Err(ConfigRead(IoNotFound(_))) -> "not-found"
+    Err(ConfigRead(_)) -> "other-io"
+  }
+}
+
+fn main() {
+  println(outcome())
+}

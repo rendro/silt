@@ -1,4 +1,7 @@
-//! Round 93 — parser diagnostics and Pratt-loop dedup locks.
+//! Round 93 — parser diagnostics and Pratt-loop dedup locks. The
+//! Finding 2 (`//` hint) cases and the when-else / newline controls now
+//! live in golden cases (tests/golden/frontend/{hints,parser}/round93_parser_hint__*.silt);
+//! the AST-shape table below stays here because it inspects parser output.
 //!
 //! Finding 2 (GAP): a C-style `//` comment died with the bare
 //! `expected expression, found /` (or `expected declaration, found /`
@@ -19,156 +22,6 @@ use silt::ast::{Expr, ExprKind};
 use silt::intern;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-
-/// Parse a source string with the recovering entry point and return
-/// every collected parse-error message.
-fn parse_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer");
-    let (_program, errors) = Parser::new(tokens).parse_program_recovering();
-    errors.into_iter().map(|e| e.message).collect()
-}
-
-/// Parse a source string with the strict entry point; Ok(()) when the
-/// whole program parses cleanly.
-fn parse_ok(input: &str) -> Result<(), String> {
-    let tokens = Lexer::new(input).tokenize().map_err(|e| format!("{e:?}"))?;
-    Parser::new(tokens)
-        .parse_program()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
-fn run_silt(args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
-        .args(args)
-        .output()
-        .expect("silt binary runs")
-}
-
-const HINT: &str = "silt line comments use '--', not '//'";
-
-// ────────────────────────────────────────────────────────────────────
-// Finding 2: `//` gets the comment hint
-// ────────────────────────────────────────────────────────────────────
-
-/// Top level (declaration position): `// hello` before the first decl.
-#[test]
-fn double_slash_at_top_level_gets_hint() {
-    let errs = parse_errors("// hello\nfn main() {\n  ()\n}\n");
-    let joined = errs.join("\n");
-    assert!(
-        errs.iter().any(|e| e.contains(HINT)),
-        "top-level `//` must get the comment hint, got:\n{joined}"
-    );
-}
-
-/// Inside a function body (expression position).
-#[test]
-fn double_slash_inside_fn_gets_hint() {
-    let errs = parse_errors("fn main() {\n  // hello\n  ()\n}\n");
-    let joined = errs.join("\n");
-    assert!(
-        errs.iter().any(|e| e.contains(HINT)),
-        "in-function `//` must get the comment hint, got:\n{joined}"
-    );
-}
-
-/// Trailing comment (`let a = 1 // hello`): the first `/` is consumed
-/// as division and the parse error lands on the SECOND slash; the
-/// backward-adjacency check still fires the hint.
-#[test]
-fn trailing_double_slash_gets_hint() {
-    let errs = parse_errors("fn main() {\n  let a = 1 // hello\n  ()\n}\n");
-    let joined = errs.join("\n");
-    assert!(
-        errs.iter().any(|e| e.contains(HINT)),
-        "trailing `//` comment must get the comment hint, got:\n{joined}"
-    );
-}
-
-/// Strict entry point renders the same hint.
-#[test]
-fn double_slash_strict_parse_renders_hint() {
-    let err = parse_ok("// hello\nfn main() {\n  ()\n}\n").expect_err("`//` must not parse");
-    assert!(
-        err.contains(HINT),
-        "strict parse must render the comment hint, got:\n{err}"
-    );
-}
-
-/// End-to-end rendering through the binary.
-#[test]
-fn double_slash_renders_hint_via_binary() {
-    let dir = std::env::temp_dir().join("silt_round93_slashhint");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let main = dir.join("main.silt");
-    std::fs::write(&main, "// hello\nfn main() {\n  ()\n}\n").unwrap();
-
-    let output = run_silt(&["check", main.to_str().unwrap()]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "`//` must still be rejected; stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(HINT),
-        "rendered diagnostic must contain the comment hint; got:\n{stderr}"
-    );
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Finding 2 controls: `--` comments and division are untouched
-// ────────────────────────────────────────────────────────────────────
-
-/// Real silt comments (`--` line and `{- -}` block) keep parsing.
-#[test]
-fn dash_comments_unaffected() {
-    parse_ok("-- hello\nfn main() {\n  -- inner\n  ()\n}\n").expect("`--` comments must parse");
-    parse_ok("{- block\n   comment -}\nfn main() {\n  ()\n}\n")
-        .expect("`{- -}` comments must parse");
-}
-
-/// Division — spaced and unspaced — keeps parsing and running.
-#[test]
-fn division_unaffected() {
-    parse_ok("fn main() {\n  let a = 10\n  let b = 2\n  print(a / b)\n  print(a/b)\n}\n")
-        .expect("division must keep parsing");
-
-    let dir = std::env::temp_dir().join("silt_round93_division");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let main = dir.join("main.silt");
-    std::fs::write(
-        &main,
-        "fn main() {\n  let a = 10\n  let b = 2\n  print(a / b)\n  print(a/b)\n}\n",
-    )
-    .unwrap();
-    let output = run_silt(&["run", main.to_str().unwrap()]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "division must keep running; stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert_eq!(stdout.replace(char::is_whitespace, ""), "55");
-}
-
-/// Adjacency lock: SPACED slashes (`/ /`) are not a comment attempt and
-/// keep the generic error, not the hint.
-#[test]
-fn spaced_slashes_keep_generic_error() {
-    let errs = parse_errors("fn main() {\n  / / x\n  ()\n}\n");
-    let joined = errs.join("\n");
-    assert!(
-        !joined.contains(HINT),
-        "spaced `/ /` must NOT get the comment hint, got:\n{joined}"
-    );
-    assert!(
-        errs.iter().any(|e| e.contains("expected expression")),
-        "spaced `/ /` keeps the generic expression error, got:\n{joined}"
-    );
-}
 
 // ────────────────────────────────────────────────────────────────────
 // Finding 3 lock: precedence/associativity table
@@ -272,27 +125,4 @@ fn parenthesized_spelling_matches_table() {
             "`{bare}` must parse with the structure of `{parens}`"
         );
     }
-}
-
-/// min_bp gating still works across the deduped arms: an operator that
-/// must NOT be consumed at a given binding power stays unconsumed and
-/// the parser state is restored (`when cond else { ... }` relies on
-/// `else` NOT being eaten as the FloatElse infix at min_bp 11).
-#[test]
-fn when_else_not_consumed_as_float_else() {
-    parse_ok("fn f(n: Int) -> Int {\n  when n > 0 else {\n    return 0\n  }\n  n\n}\n")
-        .expect("`when ... else { }` must keep parsing — `else` must not be eaten as FloatElse");
-}
-
-/// Newline sensitivity preserved through the dedup: `+`/`-` after a
-/// newline terminate the expression (unary-at-statement-start
-/// ambiguity), while `&&` may cross newlines.
-#[test]
-fn newline_sensitivity_preserved() {
-    // `- 1` on its own line is a new statement, not a subtraction.
-    parse_ok("fn main() {\n  let a = 1\n  - a\n  ()\n}\n")
-        .expect("newline before `-` must terminate the previous expression");
-    // `&&` may cross a newline boundary.
-    parse_ok("fn main() {\n  let a = true\n  let b = a\n    && a\n  print(b)\n}\n")
-        .expect("`&&` must still be allowed across newlines");
 }

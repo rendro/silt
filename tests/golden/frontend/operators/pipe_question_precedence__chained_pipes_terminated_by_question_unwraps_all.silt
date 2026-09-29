@@ -1,0 +1,25 @@
+import io
+import result
+
+type E { Wrap(IoError) }
+
+fn run() -> Result(String, E) {
+  -- All three pipes fire, `?` unwraps the final Result, Ok
+  -- value flows into `raw`.
+  let raw = io.read_file("/nope")
+            |> result.map_ok { s -> s }
+            |> result.map_err(Wrap)?
+  Ok(raw)
+}
+
+fn outcome() {
+  match run() {
+    Ok(_) -> "ok"
+    Err(Wrap(IoNotFound(_))) -> "not-found"
+    Err(Wrap(_)) -> "other"
+  }
+}
+
+fn main() {
+  println(outcome())
+}

@@ -5,268 +5,17 @@
 //! (`Content-Length: N\r\n\r\n{json}`). They exercise the protocol surface
 //! end-to-end rather than calling internal helpers directly.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
+use crate::support::{LspClient, next_id};
+
 static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// How long we are willing to wait for a single message from the server
-/// before declaring the test failed. Should be generous enough for a
-/// debug-build cold-start on slow CI but short enough that a broken
-/// server fails the test promptly rather than hanging forever.
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
-
-// ── Message plumbing ───────────────────────────────────────────────
-
-fn next_id() -> u64 {
-    REQ_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
 
 fn unique_uri() -> String {
     let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("file:///tmp/silt_lsp_test_{n}.silt")
-}
-
-/// A single JSON-RPC message from the server. The integration tests don't
-/// care about the distinction between Response / Notification at the transport
-/// layer — we just inspect the decoded `serde_json::Value`.
-type ServerMessage = Value;
-
-/// A client wrapping a running `silt lsp` subprocess. Reads are decoupled
-/// onto a background thread so we can apply deterministic per-read timeouts
-/// via an mpsc channel.
-struct LspClient {
-    child: Child,
-    stdin: ChildStdin,
-    rx: Receiver<ServerMessage>,
-}
-
-impl LspClient {
-    fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn silt lsp");
-
-        let stdin = child.stdin.take().expect("no stdin on child");
-        let stdout = child.stdout.take().expect("no stdout on child");
-
-        let (tx, rx) = channel::<ServerMessage>();
-        thread::spawn(move || reader_loop(stdout, tx));
-
-        LspClient { child, stdin, rx }
-    }
-
-    /// Send a raw JSON-RPC message with LSP framing.
-    fn send_raw(&mut self, msg: &Value) {
-        let body = serde_json::to_string(msg).expect("serialize");
-        let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        self.stdin
-            .write_all(framed.as_bytes())
-            .expect("write to child stdin");
-        self.stdin.flush().expect("flush child stdin");
-    }
-
-    fn send_request(&mut self, id: u64, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    fn send_notification(&mut self, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    /// Receive messages until we get a response matching `id`. Any
-    /// intervening notifications are discarded. Fails the test on timeout.
-    fn recv_response_for(&self, id: u64) -> ServerMessage {
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for response id={id}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg;
-                    }
-                    // Drop notifications / other responses.
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for response id={id}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    /// Perform the full LSP initialization handshake: the `initialize`
-    /// request and the `initialized` notification. Returns
-    /// `(request_id, raw response)` so callers can assert that the response
-    /// echoes the exact id they sent.
-    fn initialize(&mut self) -> (u64, ServerMessage) {
-        let id = next_id();
-        self.send_request(
-            id,
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": null,
-                "capabilities": {},
-            }),
-        );
-        let resp = self.recv_response_for(id);
-        self.send_notification("initialized", json!({}));
-        (id, resp)
-    }
-
-    /// Send `textDocument/didOpen` and block until the first
-    /// `publishDiagnostics` notification for the same URI arrives.
-    fn did_open_and_wait(&mut self, uri: &str, source: &str) -> ServerMessage {
-        self.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "silt",
-                    "version": 1,
-                    "text": source,
-                }
-            }),
-        );
-        // Publish may arrive asynchronously; loop until we see one for this URI.
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for publishDiagnostics for {uri}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").is_none()
-                        && msg.get("method").and_then(|v| v.as_str())
-                            == Some("textDocument/publishDiagnostics")
-                        && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
-                    {
-                        return msg;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for publishDiagnostics for {uri}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    /// Perform a graceful shutdown / exit and wait for the subprocess to stop.
-    fn shutdown(mut self) {
-        let id = next_id();
-        self.send_request(id, "shutdown", json!(null));
-        // We don't strictly need to wait for the shutdown response — the
-        // server will also exit on `exit` notification — but doing so
-        // keeps the conversation well-formed.
-        let _ = self.rx.recv_timeout(READ_TIMEOUT);
-        self.send_notification("exit", json!(null));
-        // Give the child a brief chance to exit cleanly.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-                Ok(None) => {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(_) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for LspClient {
-    fn drop(&mut self) {
-        // Best-effort cleanup if a test panics before calling shutdown.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Background reader that parses `Content-Length: N\r\n\r\n{body}` frames
-/// off the child's stdout and forwards each decoded JSON value to `tx`.
-fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        // Read headers until the blank line that terminates them.
-        let mut content_length: Option<usize> = None;
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => return, // EOF
-                Ok(_) => {}
-                Err(_) => return,
-            }
-            // Headers are terminated by `\r\n\r\n`; an empty or "\r\n" line
-            // marks the end of the header block.
-            if line == "\r\n" || line == "\n" || line.is_empty() {
-                break;
-            }
-            if let Some(rest) = line
-                .strip_prefix("Content-Length:")
-                .or_else(|| line.strip_prefix("content-length:"))
-                && let Ok(n) = rest.trim().parse::<usize>()
-            {
-                content_length = Some(n);
-            }
-        }
-        let Some(n) = content_length else {
-            // Malformed header block — bail out.
-            return;
-        };
-        let mut body = vec![0u8; n];
-        if reader.read_exact(&mut body).is_err() {
-            return;
-        }
-        let Ok(val) = serde_json::from_slice::<Value>(&body) else {
-            return;
-        };
-        if tx.send(val).is_err() {
-            return;
-        }
-    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -275,7 +24,7 @@ fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
 
 #[test]
 fn test_initialize_returns_capabilities() {
-    let mut client = LspClient::spawn();
+    let mut client = LspClient::spawn_uninitialized();
     let (id, resp) = client.initialize();
 
     assert_eq!(
@@ -325,7 +74,6 @@ fn test_initialize_returns_capabilities() {
 #[test]
 fn test_did_open_valid_program_no_diagnostics() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     let source = "fn main() {\n  println(\"hello\")\n}\n";
@@ -349,7 +97,6 @@ fn test_did_open_valid_program_no_diagnostics() {
 #[test]
 fn test_did_open_type_error_produces_diagnostic() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     // `let x: Int = "hello"` is a clear type mismatch — the CLI tests in
     // tests/cli/cli.rs rely on the same snippet producing a type error.
@@ -414,7 +161,6 @@ fn test_did_open_type_error_produces_diagnostic() {
 #[test]
 fn test_hover_returns_inferred_type() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     // Hover on the `answer` *reference* (not the declaration) — the Silt LSP
     // reads types off the typed AST, which annotates expressions, so the
@@ -477,7 +223,6 @@ fn test_hover_returns_inferred_type() {
 #[test]
 fn test_goto_definition_returns_location() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     // Two functions — `helper` defined at line 0, called from inside `main`
     // at line 3. Asking for the definition of `helper` on the call site
@@ -547,7 +292,6 @@ fn test_goto_definition_returns_location() {
 #[test]
 fn test_completion_returns_keywords() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     let source = "fn main() {\n  \n}\n";
@@ -620,7 +364,6 @@ fn test_completion_returns_local_bindings() {
     // This guards against a regression where only keywords/builtins are
     // offered and user locals are dropped from the symbol/completion path.
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     // Line indices (0-based):
@@ -686,7 +429,6 @@ fn test_completion_returns_module_members_after_dot() {
     // include at least one well-known function from the `string` stdlib
     // module such as `length` or `contains`.
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     // Line indices (0-based):
@@ -755,7 +497,6 @@ fn test_hover_on_let_binding_site_returns_binding_type() {
     // the cursor sits on a local binding LHS and return its definition
     // type instead.
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     //   line 0: fn main() {
@@ -819,7 +560,6 @@ fn test_goto_definition_on_local_variable() {
     // top-level declarations. The fix adds a per-document locals table so
     // the request resolves to the `x` in `let x = 42`.
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     //   line 0: fn main() {
@@ -903,7 +643,6 @@ fn test_goto_definition_on_local_variable() {
 #[test]
 fn test_formatting_returns_edits() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     // Deliberately unformatted: no spaces around `=`, body not indented.
@@ -989,7 +728,6 @@ fn test_formatting_returns_edits() {
 #[test]
 fn test_signature_help_returns_arity() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     //   line 0: fn add(a: Int, b: Int) -> Int {
@@ -1099,7 +837,6 @@ fn test_signature_help_returns_arity() {
 #[test]
 fn test_document_symbols_lists_top_level_defs() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     //   line 0: type Point {
@@ -1220,7 +957,6 @@ fn test_document_symbols_lists_top_level_defs() {
 #[test]
 fn test_lsp_malformed_params_returns_error_response() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     // Send a textDocument/hover request whose `textDocument.uri` is an
     // integer instead of a string. serde_json::from_value will fail to
@@ -1265,7 +1001,6 @@ fn test_lsp_malformed_params_returns_error_response() {
 #[test]
 fn test_lsp_unknown_method_returns_error_response() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     // Send a request with a method name we definitely don't handle.
     let id = next_id();
@@ -1315,7 +1050,6 @@ fn test_lsp_unknown_method_returns_error_response() {
 #[test]
 fn test_formatting_range_end_uses_utf16_not_bytes() {
     let mut client = LspClient::spawn();
-    let _ = client.initialize();
 
     let uri = unique_uri();
     // Four lines (indices 0..=3). Line 1 is deliberately unformatted

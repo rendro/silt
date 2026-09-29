@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: undefined variable 'g'
+fn (bad) {
+  42
+}
+
+fn g() -> Int {
+  1
+}
+
+fn main() {
+  g()
+}

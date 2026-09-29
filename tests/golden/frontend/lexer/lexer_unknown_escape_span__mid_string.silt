@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[lex]: unknown escape sequence: \q
+-- stderr-contains: lexer_unknown_escape_span__mid_string.silt:7:14
+-- The unknown-escape caret anchors on the backslash, not after the escape.
+fn main() {
+  let s = "ab\qcd"
+  println(s)
+}

@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type' parameters must come after
+fn bad(type a, body: String) -> a { a }

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- Backslash + TAB is named as \\t in the unknown-escape message.
+-- stderr-contains: unknown escape sequence: \\t
+fn main() {
+  let s = "a\	b"
+}

@@ -1,0 +1,16 @@
+import int
+
+fn outcome() {
+  let n: Int = match int.parse("42") {
+    Ok(v) -> v
+    Err(_) -> -1
+  }
+  match n == 42 {
+    true -> "yes"
+    false -> "no"
+  }
+}
+
+fn main() {
+  println(outcome())
+}

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-not-contains: undefined variable 'f'
+fn f(a, b) {
+  let x = 1 +
+  let y = 2
+  x + y
+}
+
+fn main() {
+  f(1, 2)
+}

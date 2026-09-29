@@ -1,0 +1,5 @@
+error[lex]: unknown escape sequence: \\t
+ --> round101_lexer_string_escape_control_char__tab_named.silt:6:15
+   |
+ 6 |   let s = "a\	b"
+   |              	^ unknown escape sequence: \\t

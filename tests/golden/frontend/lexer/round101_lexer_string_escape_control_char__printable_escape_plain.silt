@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A printable unknown escape keeps a single backslash (not escape_default-doubled).
+-- stderr-contains: unknown escape sequence: \q
+-- stderr-not-contains: unknown escape sequence: \\q
+fn main() {
+  let s = "a\qb"
+}

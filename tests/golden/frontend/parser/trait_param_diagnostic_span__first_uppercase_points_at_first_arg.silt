@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- The trait-header parameter diagnostic points at the offending argument.
+-- stderr-contains: trait parameter 'A' must be a lowercase type variable
+-- stderr-contains: trait_param_diagnostic_span__first_uppercase_points_at_first_arg.silt:6:11
+trait Foo(A, A) { fn bar() }

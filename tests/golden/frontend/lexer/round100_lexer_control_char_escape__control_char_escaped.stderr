@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '\u{1}'
+ --> round100_lexer_control_char_escape__control_char_escaped.silt:6:11
+   |
+ 6 |   let x = 
+   |           ^ unexpected character: '\u{1}'

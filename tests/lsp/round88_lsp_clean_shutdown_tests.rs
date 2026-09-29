@@ -17,105 +17,14 @@
 //! NB: the test fails outright on timeout. It does NOT fall back to
 //! `child.kill()` — doing so would mask the very hang we want to catch.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::json;
 
-const READ_TIMEOUT: Duration = Duration::from_secs(5);
+use crate::support::LspClient;
+
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
-
-fn reader_loop(stdout: std::process::ChildStdout, tx: std::sync::mpsc::Sender<Value>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let mut header = String::new();
-        let mut content_length: Option<usize> = None;
-        loop {
-            header.clear();
-            match reader.read_line(&mut header) {
-                Ok(0) => return,
-                Ok(_) => {}
-                Err(_) => return,
-            }
-            if header == "\r\n" || header == "\n" {
-                break;
-            }
-            if let Some(rest) = header.trim_end().strip_prefix("Content-Length:") {
-                content_length = rest.trim().parse().ok();
-            }
-        }
-        let Some(len) = content_length else { return };
-        let mut buf = vec![0u8; len];
-        if reader.read_exact(&mut buf).is_err() {
-            return;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(&buf) else {
-            return;
-        };
-        if tx.send(value).is_err() {
-            return;
-        }
-    }
-}
-
-struct LspClient {
-    child: Child,
-    stdin: ChildStdin,
-    rx: Receiver<Value>,
-}
-
-impl LspClient {
-    fn spawn() -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn silt lsp");
-        let mut child = child;
-        let stdin = child.stdin.take().expect("stdin");
-        let stdout = child.stdout.take().expect("stdout");
-        let (tx, rx) = channel::<Value>();
-        thread::spawn(move || reader_loop(stdout, tx));
-        LspClient { child, stdin, rx }
-    }
-
-    fn send_raw(&mut self, msg: &Value) {
-        let body = serde_json::to_string(msg).unwrap();
-        let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        self.stdin.write_all(framed.as_bytes()).unwrap();
-        self.stdin.flush().unwrap();
-    }
-
-    fn recv_response_for(&self, id: u64) -> Value {
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for response id={id}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for response id={id}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("server disconnected waiting for id={id}");
-                }
-            }
-        }
-    }
-}
 
 /// Drive the full init / shutdown / exit handshake and assert the
 /// child exits on its own within 3 s. The pid is incorporated into a
@@ -123,7 +32,7 @@ impl LspClient {
 /// the same path string.
 #[test]
 fn lsp_exits_cleanly_on_shutdown_exit() {
-    let mut client = LspClient::spawn();
+    let mut client = LspClient::spawn_uninitialized();
 
     // 1) initialize → initialized
     let pid = std::process::id();

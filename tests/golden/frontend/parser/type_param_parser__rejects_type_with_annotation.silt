@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot carry a type annotation
+fn bad(type a: Int) -> a { a }

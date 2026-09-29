@@ -1,0 +1,10 @@
+-- A newline before `-` ends the previous expression; `&&` may cross a newline.
+fn main() {
+  let a = 1
+  - a
+  let t = true
+  let b = t
+    && t
+  println(a)
+  println(b)
+}

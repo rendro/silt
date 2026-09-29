@@ -13,232 +13,17 @@
 //! locks down the end-to-end behaviour on both the local-bindings path
 //! and the top-level `definitions` path.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::thread;
-use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::json;
 
-static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
+use crate::support::{LspClient, next_id};
+
 static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn next_id() -> u64 {
-    REQ_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
 
 fn unique_uri() -> String {
     let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("file:///tmp/silt_lsp_destructured_{n}.silt")
-}
-
-type ServerMessage = Value;
-
-struct LspClient {
-    child: Child,
-    stdin: ChildStdin,
-    rx: Receiver<ServerMessage>,
-}
-
-impl LspClient {
-    fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn silt lsp");
-
-        let stdin = child.stdin.take().expect("no stdin on child");
-        let stdout = child.stdout.take().expect("no stdout on child");
-
-        let (tx, rx) = channel::<ServerMessage>();
-        thread::spawn(move || reader_loop(stdout, tx));
-
-        LspClient { child, stdin, rx }
-    }
-
-    fn send_raw(&mut self, msg: &Value) {
-        let body = serde_json::to_string(msg).expect("serialize");
-        let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        self.stdin
-            .write_all(framed.as_bytes())
-            .expect("write to child stdin");
-        self.stdin.flush().expect("flush child stdin");
-    }
-
-    fn send_request(&mut self, id: u64, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    fn send_notification(&mut self, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }));
-    }
-
-    fn recv_response_for(&self, id: u64) -> ServerMessage {
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for response id={id}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for response id={id}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    fn initialize(&mut self) {
-        let id = next_id();
-        self.send_request(
-            id,
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": null,
-                "capabilities": {},
-            }),
-        );
-        let _ = self.recv_response_for(id);
-        self.send_notification("initialized", json!({}));
-    }
-
-    fn did_open_and_wait(&mut self, uri: &str, source: &str) {
-        self.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "silt",
-                    "version": 1,
-                    "text": source,
-                }
-            }),
-        );
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for publishDiagnostics for {uri}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").is_none()
-                        && msg.get("method").and_then(|v| v.as_str())
-                            == Some("textDocument/publishDiagnostics")
-                        && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
-                    {
-                        return;
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for publishDiagnostics for {uri}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
-            }
-        }
-    }
-
-    fn shutdown(mut self) {
-        let id = next_id();
-        self.send_request(id, "shutdown", json!(null));
-        let _ = self.rx.recv_timeout(READ_TIMEOUT);
-        self.send_notification("exit", json!(null));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-                Ok(None) => {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(_) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for LspClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let mut content_length: Option<usize> = None;
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => return,
-                Ok(_) => {}
-                Err(_) => return,
-            }
-            if line == "\r\n" || line == "\n" || line.is_empty() {
-                break;
-            }
-            if let Some(rest) = line
-                .strip_prefix("Content-Length:")
-                .or_else(|| line.strip_prefix("content-length:"))
-                && let Ok(n) = rest.trim().parse::<usize>()
-            {
-                content_length = Some(n);
-            }
-        }
-        let Some(n) = content_length else {
-            return;
-        };
-        let mut body = vec![0u8; n];
-        if reader.read_exact(&mut body).is_err() {
-            return;
-        }
-        let Ok(val) = serde_json::from_slice::<Value>(&body) else {
-            return;
-        };
-        if tx.send(val).is_err() {
-            return;
-        }
-    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -323,7 +108,6 @@ fn test_hover_on_tuple_destructure_usage() {
     let source = "fn main() {\n  let (a, b) = (1, 2)\n  println(a + b)\n}\n";
 
     let mut client = LspClient::spawn();
-    client.initialize();
     let uri = unique_uri();
     client.did_open_and_wait(&uri, source);
 
@@ -354,7 +138,6 @@ fn test_goto_def_on_tuple_destructure_usage() {
     let source = "fn main() {\n  let (a, b) = (1, 2)\n  println(a + b)\n}\n";
 
     let mut client = LspClient::spawn();
-    client.initialize();
     let uri = unique_uri();
     client.did_open_and_wait(&uri, source);
 
@@ -392,7 +175,6 @@ fn test_hover_on_nested_tuple_destructure_usage() {
     let source = "fn main() {\n  let ((a, b), c) = ((1, 2), 3)\n  println(a + b + c)\n}\n";
 
     let mut client = LspClient::spawn();
-    client.initialize();
     let uri = unique_uri();
     client.did_open_and_wait(&uri, source);
 
@@ -432,7 +214,6 @@ fn test_hover_on_record_destructure_usage() {
                   }\n";
 
     let mut client = LspClient::spawn();
-    client.initialize();
     let uri = unique_uri();
     client.did_open_and_wait(&uri, source);
 
@@ -469,7 +250,6 @@ fn test_goto_def_on_top_level_tuple_destructure_usage() {
     let source = "let (a, b) = (1, 2)\nfn main() { println(a + b) }\n";
 
     let mut client = LspClient::spawn();
-    client.initialize();
     let uri = unique_uri();
     client.did_open_and_wait(&uri, source);
 

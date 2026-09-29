@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: record type fields
+-- stderr-contains: ','
+type P { x: Int y: Int }

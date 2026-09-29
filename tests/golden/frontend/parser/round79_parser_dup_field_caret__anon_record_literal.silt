@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- The duplicate-field caret lands on the second `a`, not on the `,`/`}` after its value.
+fn main() {
+  let r = { a: 1, a: 2 }
+}

@@ -1,0 +1,7 @@
+-- cmd: fmt --check
+-- exit: 0
+-- A `type a` parameter is already canonical and survives formatting.
+
+fn default(type a) -> a {
+  a
+}

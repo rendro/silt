@@ -1,0 +1,9 @@
+-- The indexing diagnostic's recommendation, string.slice(s, i, i + 1),
+-- yields the i-th character.
+import string
+
+fn main() {
+  let s = "hello"
+  let i = 1
+  println(string.slice(s, i, i + 1))
+}

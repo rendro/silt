@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The postfix-indexing diagnostic recommends only functions that exist.
+-- stderr-contains: postfix indexing is not supported
+-- stderr-contains: list.get(xs, i)
+-- stderr-contains: map.get(m, k)
+-- stderr-contains: string.slice(s, i, i + 1)
+-- stderr-not-contains: char_at
+fn main() {
+  let xs = [1, 2, 3]
+  let _r = xs[0]
+  ()
+}

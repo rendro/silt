@@ -1,4 +1,8 @@
-//! Round 92 — parser diagnostic fixes.
+//! Round 92 — parser diagnostic fixes. Finding 1 and the
+//! statement-position control now live in golden cases
+//! (tests/golden/frontend/hints/round92_parser_hint__*.silt); what stays
+//! here tests the `fn f(..) = expr` body position, which stage 4 removes,
+//! plus the example-corpus parse control.
 //!
 //! Finding 1 (GAP): the postfix-indexing diagnostic recommended
 //! `string.char_at(s, i)`, a function that does not exist anywhere in
@@ -36,97 +40,6 @@ fn parse_ok(input: &str) -> Result<(), String> {
         .parse_program()
         .map(|_| ())
         .map_err(|e| e.to_string())
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Finding 1: postfix-indexing diagnostic must name only real functions
-// ────────────────────────────────────────────────────────────────────
-
-/// Source-grep lock: `char_at` must not reappear anywhere in the
-/// parser. (The registry has no such function; recommending it sends
-/// users to a second error.)
-#[test]
-fn parser_source_never_mentions_char_at() {
-    assert!(
-        !include_str!("../../src/parser.rs").contains("char_at"),
-        "src/parser.rs must not mention `char_at` — no such builtin exists; \
-         the indexing diagnostic should point at string.slice(s, i, i + 1)"
-    );
-}
-
-/// Belt-and-suspenders: the recommended replacement must actually be a
-/// registered builtin, so the diagnostic can never dangle again.
-#[test]
-fn recommended_replacements_exist_in_string_registry() {
-    let registry = include_str!("../../src/typechecker/builtins/string.rs");
-    assert!(
-        registry.contains("string.slice"),
-        "string.slice must exist in the builtin registry — it is what the \
-         postfix-indexing diagnostic recommends"
-    );
-    assert!(
-        !registry.contains("char_at"),
-        "if string.char_at is ever added, restore it to the indexing \
-         diagnostic and update these locks"
-    );
-}
-
-/// Real-path lock: parse `xs[0]` through the public API and check the
-/// rendered error.
-#[test]
-fn indexing_error_recommends_string_slice_not_char_at() {
-    let errs = parse_errors("fn main() {\n  let xs = [1, 2, 3]\n  let _r = xs[0]\n  ()\n}\n");
-    let joined = errs.join("\n");
-    assert!(
-        errs.iter()
-            .any(|e| e.contains("postfix indexing is not supported")),
-        "expected the postfix-indexing diagnostic, got:\n{joined}"
-    );
-    assert!(
-        errs.iter().any(|e| e.contains("list.get(xs, i)")
-            && e.contains("map.get(m, k)")
-            && e.contains("string.slice(s, i, i + 1)")),
-        "indexing diagnostic must recommend list.get / map.get / \
-         string.slice(s, i, i + 1), got:\n{joined}"
-    );
-    assert!(
-        !joined.contains("char_at"),
-        "indexing diagnostic must not mention the nonexistent \
-         string.char_at, got:\n{joined}"
-    );
-}
-
-/// The recommendation must itself be a working program: getting the
-/// i-th character via `string.slice(s, i, i + 1)` parses, typechecks,
-/// and runs (verified end-to-end through the binary).
-#[test]
-fn recommended_slice_call_runs() {
-    let dir = std::env::temp_dir().join("silt_round92_slice");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let main = dir.join("main.silt");
-    std::fs::write(
-        &main,
-        "import string\n\nfn main() {\n  let s = \"hello\"\n  let i = 1\n  print(string.slice(s, i, i + 1))\n}\n",
-    )
-    .unwrap();
-
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
-        .args(["run", main.to_str().unwrap()])
-        .output()
-        .expect("silt run");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "the diagnostic's recommended replacement must run; \
-         stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert_eq!(
-        stdout.trim(),
-        "e",
-        "string.slice(s, i, i + 1) should yield the i-th character"
-    );
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -209,9 +122,8 @@ fn expr_bodied_if_repro_renders_hint_via_binary() {
 /// must keep parsing exactly as before in every touched position.
 #[test]
 fn variable_named_if_still_parses() {
-    // Statement position: bind and use.
-    parse_ok("fn main() {\n  let if = 3\n  print(if + 1)\n}\n")
-        .expect("`if` as a let-bound variable must keep parsing");
+    // (Statement position is locked by the golden case
+    // tests/golden/frontend/hints/round92_parser_hint__variable_named_if_in_statement_position.silt.)
     // Expression-bodied fn whose body is a bare `if` reference followed
     // by a newline — NOT an expression-start token, so no hint fires
     // and the program still parses (name resolution is the

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A tab-indented source line keeps a literal tab in the caret padding,
+-- and CJK cells after it still count double.
+fn main() {
+	let t = ("中", nope)
+	println(t)
+}

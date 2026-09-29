@@ -4,10 +4,11 @@
 //!   * `type a` parses as a `ParamKind::Type` param with the correct name.
 //!   * Multiple `type a` params are accepted contiguously at the end.
 //!   * Mixing `Data` and `Type` params with Type last is accepted.
-//!   * `type a` followed by any Data param is rejected (type-last rule).
-//!   * `type a: T` (annotation) is rejected.
 //!   * Trait methods accept `type a`.
-//!   * Formatter round-trips `type a` params.
+//!   * The formatter is idempotent on multi-line `type a` signatures.
+//!
+//! The rejection diagnostics and the canonical-format checks live in
+//! golden cases: tests/golden/frontend/{parser,fmt}/type_param_parser__*.silt.
 
 use silt::ast::{Decl, FnDecl, ParamKind, PatternKind};
 use silt::formatter::format as format_source;
@@ -18,15 +19,6 @@ fn parse_ok(src: &str) -> Vec<Decl> {
     let tokens = Lexer::new(src).tokenize().expect("lexer");
     let program = Parser::new(tokens).parse_program().expect("parse");
     program.decls
-}
-
-fn parse_err(src: &str) -> String {
-    let tokens = Lexer::new(src).tokenize().expect("lexer");
-    Parser::new(tokens)
-        .parse_program()
-        .err()
-        .map(|e| e.message)
-        .expect("expected parse error")
 }
 
 fn first_fn(decls: &[Decl]) -> &FnDecl {
@@ -68,33 +60,6 @@ fn parses_multiple_type_params_contiguous() {
 }
 
 #[test]
-fn rejects_type_before_data() {
-    let msg = parse_err("fn bad(type a, body: String) -> a { a }");
-    assert!(
-        msg.contains("type' parameters must come after"),
-        "unexpected message: {msg}"
-    );
-}
-
-#[test]
-fn rejects_type_then_data_then_type() {
-    let msg = parse_err("fn bad(type a, x: Int, type b) -> b { b }");
-    assert!(
-        msg.contains("type' parameters must come after"),
-        "unexpected message: {msg}"
-    );
-}
-
-#[test]
-fn rejects_type_with_annotation() {
-    let msg = parse_err("fn bad(type a: Int) -> a { a }");
-    assert!(
-        msg.contains("cannot carry a type annotation"),
-        "unexpected message: {msg}"
-    );
-}
-
-#[test]
 fn parses_in_trait_method() {
     let src = "trait Make {\n  fn make(type a) -> a\n}\n";
     let decls = parse_ok(src);
@@ -112,33 +77,6 @@ fn parses_in_trait_method() {
     let m = &trait_decl.methods[0];
     assert_eq!(m.params.len(), 1);
     assert_eq!(m.params[0].kind, ParamKind::Type);
-}
-
-#[test]
-fn formatter_roundtrips_type_param() {
-    let src = "fn default(type a) -> a {\n  a\n}\n";
-    let formatted = format_source(src).expect("format");
-    assert!(
-        formatted.contains("type a"),
-        "formatted output missing `type a`: {formatted}"
-    );
-}
-
-#[test]
-fn formatter_roundtrips_mixed_params() {
-    let src = "fn parse(body: String, type a) -> a {\n  a\n}\n";
-    let formatted = format_source(src).expect("format");
-    assert!(
-        formatted.contains("body: String"),
-        "missing body param: {formatted}"
-    );
-    assert!(formatted.contains("type a"), "missing type a: {formatted}");
-    let body_pos = formatted.find("body:").unwrap();
-    let type_pos = formatted.find("type a").unwrap();
-    assert!(
-        body_pos < type_pos,
-        "type a should come after data params: {formatted}"
-    );
 }
 
 #[test]

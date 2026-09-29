@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- A plain string found-token renders verbatim.
+-- stderr-contains: found "hello"
+-- stderr-not-contains: \
+"hello"

@@ -1,0 +1,5 @@
+error[type]: undefined variable 'nope'
+ --> caret_width__ascii_baseline.silt:5:19
+   |
+ 5 |   let t = ("abc", nope)
+   |                   ^ undefined variable 'nope'
