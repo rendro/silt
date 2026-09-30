@@ -578,7 +578,7 @@ import channel
 import task
 fn main() {
     let ch = channel.new(10)
-    task.spawn(fn() {
+    task.spawn({ ->
         channel.send(ch, 1)
         channel.send(ch, 2)
         channel.close(ch)
@@ -672,7 +672,7 @@ import time
 
 fn main() {
     let ch = channel.new(0)
-    task.spawn(fn() {
+    task.spawn({ ->
         time.sleep(time.ms(50))
         channel.send(ch, 42)
     })
@@ -716,7 +716,7 @@ import task
 fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
-    task.spawn(fn() { channel.send(ch2, "hello") })
+    task.spawn({ -> channel.send(ch2, "hello") })
     match channel.select([Recv(ch1), Recv(ch2)]) {
         (^ch2, Message(val)) -> println(val)  -- hello
         (_, Closed) -> println("closed")
@@ -891,7 +891,7 @@ import channel
 import task
 fn main() {
     let done = channel.new(1)
-    let h = task.spawn(fn() {
+    let h = task.spawn({ ->
         -- long-running work
         channel.send(done, 42)
     })
@@ -924,7 +924,7 @@ instead of relying on `task.join` for the signal.
 ```silt
 import task
 fn main() {
-    let h = task.spawn(fn() { 1 + 2 })
+    let h = task.spawn({ -> 1 + 2 })
     let sum = task.join(h)
     println(sum)  -- 3
 }
@@ -944,7 +944,7 @@ that can be used with `task.join` or `task.cancel`.
 ```silt
 import task
 fn main() {
-    let h = task.spawn(fn() {
+    let h = task.spawn({ ->
         println("running in a task")
         42
     })
@@ -988,7 +988,7 @@ import task
 import time
 
 fn main() {
-    let outcome = task.deadline(time.ms(200), fn() {
+    let outcome = task.deadline(time.ms(200), { ->
         io.read_file("/var/log/slow.log")
     })
     match outcome {
@@ -1007,7 +1007,7 @@ task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)
 ```
 
 Spawns `f` as a task with a bounded wall-clock deadline. Equivalent to
-`task.spawn(fn() { task.deadline(dur, f) })` but with one less closure
+`task.spawn({ -> task.deadline(dur, f) })` but with one less closure
 wrapper. The returned handle resolves to the function's result if it
 finishes in time, or to the deadline error inside any I/O builtin it
 was blocked on when the deadline fired.
@@ -1022,7 +1022,7 @@ import task
 import time
 
 fn main() {
-    let h = task.spawn_until(time.seconds(2), fn() {
+    let h = task.spawn_until(time.seconds(2), { ->
         io.read_file("/tmp/maybe_slow.txt")
     })
     match task.join(h) {
@@ -1962,7 +1962,7 @@ type User { id: Int, name: String }
 fn main() {
   println("Listening on :8080")
 
-  http.serve(8080, fn(req) {
+  http.serve(8080, { req ->
     match (req.method, http.segments(req.path)) {
       (GET, []) ->
         Response { status: 200, body: "Hello!", headers: #{} }
@@ -4885,7 +4885,7 @@ fn main() {
   match postgres.connect("postgresql://localhost/app") {
     Ok(pool) -> {
       -- Transactional INSERT + SELECT.
-      let result = postgres.transact(pool, fn(tx) {
+      let result = postgres.transact(pool, { tx ->
         let _ = postgres.execute(
           tx,
           "INSERT INTO users (id, name) VALUES ($1, $2)",
@@ -5957,8 +5957,8 @@ import stream
 
 fn main() {
   let squares = stream.from_range(1, 100)
-    |> stream.filter(fn(n) { n % 2 == 1 })
-    |> stream.map(fn(n) { n * n })
+    |> stream.filter({ n -> n % 2 == 1 })
+    |> stream.map({ n -> n * n })
     |> stream.take(5)
     |> stream.collect
   println(squares)
@@ -5972,7 +5972,7 @@ import stream
 
 fn main() {
   -- Generate 1, 2, 3, 4, 5 then None.
-  let xs = stream.collect(stream.unfold(1, fn(n) {
+  let xs = stream.collect(stream.unfold(1, { n ->
     match n > 5 {
       true -> None
       false -> Some((n, n + 1))
@@ -6707,7 +6707,7 @@ fn main() {
       loop {
         match tcp.accept(listener) {
           Ok(conn) -> {
-            let _ = task.spawn(fn() {
+            let _ = task.spawn({ ->
               match tcp.read(conn, 4096) {
                 Ok(buf) -> {
                   let _ = tcp.write(conn, buf)

@@ -34,7 +34,7 @@ trait Container {
 
 trait Container for Int {
   type Item = <Int as Container>::Item
-  fn unwrap(self) -> <Int as Container>::Item = self
+  fn unwrap(self) -> <Int as Container>::Item { self }
 }
 
 fn main() {

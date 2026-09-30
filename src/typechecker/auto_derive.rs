@@ -438,7 +438,7 @@ fn empty_match_body(self_sym: Symbol) -> Expr {
 
 /// Scaffold for binop-shaped enum derives (Compare, Equal).
 ///
-/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> { ... }` where the
 /// body is:
 /// - `match self { }` if `variants` is empty (uninhabited fast path).
 /// - Otherwise `match (self, other) { ...same-tag arms..., (catch-all) }`.
@@ -512,7 +512,7 @@ fn synth_binop_match_enum(
 
 /// Scaffold for unop-shaped enum derives (Hash, Display).
 ///
-/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is:
+/// Builds `fn <method>(self: T) -> <ret_ty> { ... }` where the body is:
 /// - `match self { }` if `variants` is empty (uninhabited fast path).
 /// - Otherwise `match self { ...one arm per variant... }`. The match
 ///   is exhaustive without a wildcard because every variant has its
@@ -875,7 +875,7 @@ pub(super) fn synth_display_impl_for_enum(
 
 /// Scaffold for binop-shaped record derives (Compare, Equal).
 ///
-/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> { ... }` where the
 /// body is `empty_body` when `fields` is empty, otherwise the result of
 /// `full_body(self_sym, other_sym, fields)`.
 #[allow(clippy::too_many_arguments)]
@@ -908,7 +908,7 @@ fn synth_binop_record_impl(
 
 /// Scaffold for unop-shaped record derives (Hash, Display).
 ///
-/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is
+/// Builds `fn <method>(self: T) -> <ret_ty> { ... }` where the body is
 /// `empty_body` when `fields` is empty, otherwise the result of
 /// `full_body(self_sym, fields)`.
 #[allow(clippy::too_many_arguments)]

@@ -151,7 +151,7 @@ import task
 import time
 
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let _ = io.read_file("/tmp/silt_round75_vm1_does_not_exist.txt")
     0
   })
@@ -226,7 +226,7 @@ import io
 import task
 
 fn main() {{
-  let h = task.spawn(fn() {{
+  let h = task.spawn({{ ->
     let _ = io.read_file("{path_str}")
     0
   }})

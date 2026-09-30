@@ -495,7 +495,7 @@ impl Vm {
                 // stamp is registered unconditionally
                 // (`register_auto_derived_impls_for`,
                 // src/typechecker/mod.rs) without walking element types,
-                // so `[fn(y) { y }].hash()` reaches this arm — and the
+                // so `[{ y -> y }].hash()` reaches this arm — and the
                 // std `Hash` impl on `Value` hashes every closure as a
                 // constant discriminant tag ("not meaningfully
                 // hashable", src/value.rs), so two distinct closures

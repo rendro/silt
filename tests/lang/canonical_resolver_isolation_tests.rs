@@ -92,7 +92,7 @@ fn parse(src: &str) -> silt::ast::Program {
 #[test]
 fn lsp_pull_does_not_inherit_other_files_aliases() {
     // First "pull": file with the alias declaration.
-    let mut prog_first = parse("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) = x\n");
+    let mut prog_first = parse("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n");
     let errs_first = typechecker::check(&mut prog_first);
     let hard_first: Vec<_> = errs_first
         .into_iter()
@@ -107,7 +107,7 @@ fn lsp_pull_does_not_inherit_other_files_aliases() {
     // declaring or importing it. Post-refactor the second
     // `typechecker::check` allocates a fresh Resolver internally, so
     // the alias the first pull registered is invisible.
-    let mut prog_second = parse("fn use_other(x: FooLsp_Mass) = x\n");
+    let mut prog_second = parse("fn use_other(x: FooLsp_Mass) { x }\n");
     let errs_second = typechecker::check(&mut prog_second);
     let saw_unknown = errs_second.iter().any(|e| {
         e.severity == Severity::Error

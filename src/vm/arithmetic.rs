@@ -184,7 +184,7 @@ impl Vm {
     /// function-shaped leaf (`Vm::value_contains_fn`, src/vm/mod.rs).
     ///
     /// This is the execution-site backstop for the round-97 typechecker
-    /// gate: the CONCRETE form (`[fn(x) { x }] < [fn(x) { x }]`) is a
+    /// gate: the CONCRETE form (`[{ x -> x }] < [{ x -> x }]`) is a
     /// compile error, but a polymorphic wrapper (`fn lt(a: x, b: x) ->
     /// Bool { a < b }`) launders a container of functions past
     /// `pending_numeric_checks` (which skips `Var`-typed operands on the

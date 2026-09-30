@@ -265,7 +265,7 @@ fn a_stale_arrow_diagnostic_next_to_a_multibyte_character_gets_no_action() {
 fn an_arrow_diagnostic_on_the_arrow_still_gets_the_rewrite() {
     let mut lsp = Lsp::spawn();
     let uri = "file:///wave2_sweep_arrow.silt";
-    lsp.open(uri, "fn apply(f: (Int -> Int), x: Int) -> Int = f(x)\n");
+    lsp.open(uri, "fn apply(f: (Int -> Int), x: Int) -> Int { f(x) }\n");
     // `->` of `(Int -> Int)` is at column 17.
     let response = lsp.arrow_code_action(uri, 0, 17);
     assert!(response.get("error").is_none(), "{response}");

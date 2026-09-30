@@ -78,8 +78,8 @@ fn test_private_function_not_selectively_importable() {
         &[(
             "calc.silt",
             r#"
-pub fn add(a, b) = a + b
-fn secret(x) = x * 2
+pub fn add(a, b) { a + b }
+fn secret(x) { x * 2 }
         "#,
         )],
         r#"
@@ -108,7 +108,7 @@ fn test_truly_unknown_module_function_still_emits_undefined_error() {
         &[(
             "mymod.silt",
             r#"
-pub fn x() = 1
+pub fn x() { 1 }
             "#,
         )],
         r#"

@@ -9173,7 +9173,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn main() {
-  let double = fn(x) { x * 2 }
+  let double = { x -> x * 2 }
   double(5)
 }
         "#,
@@ -9584,22 +9584,6 @@ fn main() {
         );
     }
 
-    // ── Single-expression function ──────────────────────────────────
-
-    #[test]
-    fn test_single_expr_fn() {
-        assert_no_errors(
-            r#"
-fn square(x) = x * x
-fn add(a, b) = a + b
-
-fn main() {
-  add(square(3), square(4))
-}
-        "#,
-        );
-    }
-
     // ── Integration test programs ───────────────────────────────────
 
     #[test]
@@ -9633,7 +9617,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn make_adder(n) {
-  fn(x) { x + n }
+  { x -> x + n }
 }
 
 fn main() {
@@ -10220,7 +10204,7 @@ fn main() {
   let is_s = option.is_some(opt)
   let is_n = option.is_none(opt)
   let val = option.unwrap_or(opt, 0)
-  let mapped = option.map(opt, fn(x) { x + 1 })
+  let mapped = option.map(opt, { x -> x + 1 })
   let res = option.to_result(opt, "no value")
   val
 }
@@ -10252,7 +10236,7 @@ fn main() {
   let xs = [[1, 2], [3, 4], [5]]
   let flat = list.flatten(xs)
   let zipped = list.zip([1, 2, 3], ["a", "b", "c"])
-  let sorted = list.sort_by([3, 1, 2], fn(x) { x })
+  let sorted = list.sort_by([3, 1, 2], { x -> x })
   flat
 }
         "#,
@@ -10339,7 +10323,7 @@ fn main() {
             r#"
 import task
 fn main() {
-  let h = task.spawn(fn() { 42 })
+  let h = task.spawn({ -> 42 })
   let result = task.join(h)
   result
 }
@@ -11044,8 +11028,8 @@ fn main() {
 import list
 fn main() {
   let xs = [1, 2, 3, 4, 5]
-  let doubled = list.map(xs, fn(x) { x * 2 })
-  let evens = list.filter(xs, fn(x) { x > 2 })
+  let doubled = list.map(xs, { x -> x * 2 })
+  let evens = list.filter(xs, { x -> x > 2 })
   doubled
 }
             "#,

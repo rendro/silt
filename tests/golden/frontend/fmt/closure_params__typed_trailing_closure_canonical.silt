@@ -1,12 +1,19 @@
 -- cmd: fmt --check
 -- exit: 0
 -- A closure with typed and destructuring parameters is canonical as a
--- trailing closure.
+-- trailing closure, as a plain argument and as a let binding.
 
 import list
+
+fn apply(f: Fn(Int) -> Int, v: Int) -> Int {
+  f(v)
+}
 
 fn main() {
   let ys = list.map([1, 2]) { x: Int -> x + 1 }
   let zs = list.map([(1, 2)]) { (a, b): (Int, Int) -> a + b }
+  let add = { x: Int, y: Int -> x + y }
+  let answer = { -> 42 }
+  println(apply({ n: Int -> n * 3 }, add(1, answer())))
   println("{ys} {zs}")
 }

@@ -96,7 +96,7 @@ fn trait_decl_where_multi_bound_grouping() {
 #[test]
 fn trait_impl_trait_args_round_trip() {
     let src = "trait TryInto(b) { fn try_into(self) -> Maybe(b) }\n\
-               trait TryInto(Int) for String {\n    fn try_into(self) -> Maybe(Int) = None\n}\n";
+               trait TryInto(Int) for String {\n    fn try_into(self) -> Maybe(Int) { None }\n}\n";
     let formatted = format_idempotent(src);
     assert!(
         formatted.contains("trait TryInto(Int) for String"),
@@ -111,7 +111,7 @@ fn trait_impl_trait_args_round_trip() {
 fn trait_impl_where_round_trip() {
     let src = "trait Greet { fn greet(self) -> String }\n\
                type Box(a) = { value: a }\n\
-               trait Greet for Box(a) where a: Greet {\n    fn greet(self) -> String = self.value.greet()\n}\n";
+               trait Greet for Box(a) where a: Greet {\n    fn greet(self) -> String { self.value.greet() }\n}\n";
     let formatted = format_idempotent(src);
     assert!(
         formatted.contains("trait Greet for Box(a) where a: Greet"),
@@ -124,7 +124,7 @@ fn trait_impl_where_round_trip() {
 #[test]
 fn trait_impl_trait_args_and_where_round_trip() {
     let src = "trait Conv(to) { fn conv(self) -> to }\n\
-               trait Conv(Int) for List(a) where a: Conv(Int) {\n    fn conv(self) -> Int = 0\n}\n";
+               trait Conv(Int) for List(a) where a: Conv(Int) {\n    fn conv(self) -> Int { 0 }\n}\n";
     let formatted = format_idempotent(src);
     assert!(
         formatted.contains("trait Conv(Int) for List(a) where a: Conv(Int)"),
@@ -141,7 +141,7 @@ fn trait_impl_trait_args_and_where_round_trip() {
 fn trait_decl_and_impl_format_output_reparses() {
     let src = "trait Hash { fn hash(self) -> Int }\n\
                trait HashTable(k) where k: Hash {\n    fn get(self, key: k) -> Maybe(k)\n}\n\
-               trait HashTable(Int) for List(a) where a: Hash {\n    fn get(self, key: Int) -> Maybe(Int) = None\n}\n";
+               trait HashTable(Int) for List(a) where a: Hash {\n    fn get(self, key: Int) -> Maybe(Int) { None }\n}\n";
     let formatted = format(src).expect("first format");
     // Re-tokenize and re-parse — the round-trip-parse leg.
     let toks = Lexer::new(&formatted).tokenize().unwrap_or_else(|e| {

@@ -62,13 +62,13 @@ fn assert_trailing_comma_behavior(
 
 #[test]
 fn list_literal_preserves_trailing_comma_single_line() {
-    let src = "fn main() = [1, 2, 3,]\n";
+    let src = "fn main() { [1, 2, 3,] }\n";
     assert_trailing_comma_behavior(src, Some("[1, 2, 3,]"), None);
 }
 
 #[test]
 fn list_literal_does_not_insert_trailing_comma_single_line() {
-    let src = "fn main() = [1, 2, 3]\n";
+    let src = "fn main() { [1, 2, 3] }\n";
     assert_trailing_comma_behavior(src, Some("[1, 2, 3]"), Some("3,]"));
 }
 
@@ -76,17 +76,14 @@ fn list_literal_does_not_insert_trailing_comma_single_line() {
 fn list_literal_preserves_trailing_comma_multiline_collapsed() {
     // Source is multi-line with no interior comments — the formatter
     // will collapse to single-line. The trailing comma must survive.
-    // Using the `= expr` simple-body form (not `= { block }` — the
-    // formatter reshapes the latter to `{ block }` which legitimately
-    // drops the `=` significant token, confusing the invariant check).
-    let src = "fn xs() = [\n    1,\n    2,\n  ]\n";
+    let src = "fn xs() {\n  [\n    1,\n    2,\n  ]\n}\n";
     assert_trailing_comma_behavior(src, Some("[1, 2,]"), None);
 }
 
 #[test]
 fn list_literal_idempotent_with_trailing_comma() {
     // Dedicated idempotency test for a list with a trailing comma.
-    let src = "fn main() = [1, 2, 3,]\n";
+    let src = "fn main() { [1, 2, 3,] }\n";
     let once = formatter::format(src).expect("pass 1");
     let twice = formatter::format(&once).expect("pass 2");
     assert_eq!(once, twice);
@@ -96,13 +93,13 @@ fn list_literal_idempotent_with_trailing_comma() {
 
 #[test]
 fn tuple_literal_preserves_trailing_comma_single_line() {
-    let src = "fn main() = (1, 2, 3,)\n";
+    let src = "fn main() { (1, 2, 3,) }\n";
     assert_trailing_comma_behavior(src, Some("(1, 2, 3,)"), None);
 }
 
 #[test]
 fn tuple_literal_does_not_insert_trailing_comma_single_line() {
-    let src = "fn main() = (1, 2, 3)\n";
+    let src = "fn main() { (1, 2, 3) }\n";
     assert_trailing_comma_behavior(src, Some("(1, 2, 3)"), Some("3,)"));
 }
 
@@ -112,7 +109,7 @@ fn tuple_literal_does_not_insert_trailing_comma_single_line() {
 /// isn't accidentally loosened by the round-52 extension.
 #[test]
 fn tuple_single_element_always_keeps_disambiguating_comma() {
-    let src = "fn main() = (1,)\n";
+    let src = "fn main() { (1,) }\n";
     assert_trailing_comma_behavior(src, Some("(1,)"), None);
 }
 
@@ -120,25 +117,25 @@ fn tuple_single_element_always_keeps_disambiguating_comma() {
 
 #[test]
 fn record_literal_preserves_trailing_comma_single_line() {
-    let src = "type Point { x: Int, y: Int }\nfn main() = Point { x: 1, y: 2, }\n";
+    let src = "type Point { x: Int, y: Int }\nfn main() { Point { x: 1, y: 2, } }\n";
     assert_trailing_comma_behavior(src, Some("Point { x: 1, y: 2, }"), None);
 }
 
 #[test]
 fn record_literal_does_not_insert_trailing_comma_single_line() {
-    let src = "type Point { x: Int, y: Int }\nfn main() = Point { x: 1, y: 2 }\n";
+    let src = "type Point { x: Int, y: Int }\nfn main() { Point { x: 1, y: 2 } }\n";
     assert_trailing_comma_behavior(src, Some("Point { x: 1, y: 2 }"), Some("2, }"));
 }
 
 #[test]
 fn record_update_preserves_trailing_comma() {
-    let src = "type Point { x: Int, y: Int }\nfn update(p) = p.{ x: 5, }\n";
+    let src = "type Point { x: Int, y: Int }\nfn update(p) { p.{ x: 5, } }\n";
     assert_trailing_comma_behavior(src, Some("p.{ x: 5, }"), None);
 }
 
 #[test]
 fn record_update_does_not_insert_trailing_comma() {
-    let src = "type Point { x: Int, y: Int }\nfn update(p) = p.{ x: 5 }\n";
+    let src = "type Point { x: Int, y: Int }\nfn update(p) { p.{ x: 5 } }\n";
     assert_trailing_comma_behavior(src, Some("p.{ x: 5 }"), Some("5, }"));
 }
 
@@ -146,13 +143,13 @@ fn record_update_does_not_insert_trailing_comma() {
 
 #[test]
 fn set_literal_preserves_trailing_comma() {
-    let src = "fn main() = #[1, 2, 3,]\n";
+    let src = "fn main() { #[1, 2, 3,] }\n";
     assert_trailing_comma_behavior(src, Some("#[1, 2, 3,]"), None);
 }
 
 #[test]
 fn set_literal_does_not_insert_trailing_comma() {
-    let src = "fn main() = #[1, 2, 3]\n";
+    let src = "fn main() { #[1, 2, 3] }\n";
     assert_trailing_comma_behavior(src, Some("#[1, 2, 3]"), Some("3,]"));
 }
 
@@ -160,13 +157,13 @@ fn set_literal_does_not_insert_trailing_comma() {
 
 #[test]
 fn map_literal_preserves_trailing_comma() {
-    let src = "fn main() = #{\"a\": 1, \"b\": 2,}\n";
+    let src = "fn main() { #{\"a\": 1, \"b\": 2,} }\n";
     assert_trailing_comma_behavior(src, Some("2, }"), None);
 }
 
 #[test]
 fn map_literal_does_not_insert_trailing_comma() {
-    let src = "fn main() = #{\"a\": 1, \"b\": 2}\n";
+    let src = "fn main() { #{\"a\": 1, \"b\": 2} }\n";
     assert_trailing_comma_behavior(src, Some("\"b\": 2 }"), Some("2, }"));
 }
 
@@ -174,19 +171,19 @@ fn map_literal_does_not_insert_trailing_comma() {
 
 #[test]
 fn call_args_preserve_trailing_comma_single_line() {
-    let src = "fn add(a, b) = a + b\nfn main() = add(1, 2,)\n";
+    let src = "fn add(a, b) { a + b }\nfn main() { add(1, 2,) }\n";
     assert_trailing_comma_behavior(src, Some("add(1, 2,)"), None);
 }
 
 #[test]
 fn call_args_does_not_insert_trailing_comma_single_line() {
-    let src = "fn add(a, b) = a + b\nfn main() = add(1, 2)\n";
+    let src = "fn add(a, b) { a + b }\nfn main() { add(1, 2) }\n";
     assert_trailing_comma_behavior(src, Some("add(1, 2)"), Some("2,)"));
 }
 
 #[test]
 fn call_args_preserve_trailing_comma_multiline_collapsed() {
-    let src = "fn add(a, b) = a + b\nfn main() = add(\n  1,\n  2,\n)\n";
+    let src = "fn add(a, b) { a + b }\nfn main() {\n  add(\n    1,\n    2,\n  )\n}\n";
     let out = formatter::format(src).expect("format");
     // Check the call collapsed to `add(1, 2,)` and ran through the
     // invariant check (identical source / formatted token counts).
@@ -203,28 +200,14 @@ fn call_args_preserve_trailing_comma_multiline_collapsed() {
 
 #[test]
 fn fn_params_preserve_trailing_comma_single_line() {
-    let src = "fn add(a, b,) = a + b\n";
+    let src = "fn add(a, b,) { a + b }\n";
     assert_trailing_comma_behavior(src, Some("fn add(a, b,)"), None);
 }
 
 #[test]
 fn fn_params_does_not_insert_trailing_comma_single_line() {
-    let src = "fn add(a, b) = a + b\n";
+    let src = "fn add(a, b) { a + b }\n";
     assert_trailing_comma_behavior(src, Some("fn add(a, b)"), Some("b,)"));
-}
-
-// ── Lambda parameter lists ──────────────────────────────────────────
-
-#[test]
-fn lambda_params_preserve_trailing_comma() {
-    let src = "fn mk() = fn(a, b,) { a + b }\n";
-    assert_trailing_comma_behavior(src, Some("fn(a, b,)"), None);
-}
-
-#[test]
-fn lambda_params_does_not_insert_trailing_comma() {
-    let src = "fn mk() = fn(a, b) { a + b }\n";
-    assert_trailing_comma_behavior(src, Some("fn(a, b)"), Some("b,)"));
 }
 
 // ── Type record field lists ─────────────────────────────────────────
@@ -262,7 +245,7 @@ fn import_items_does_not_insert_trailing_comma() {
 
 #[test]
 fn match_arms_preserve_separator_commas() {
-    let src = "fn f(x) = match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\" }\n";
+    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\" } }\n";
     let out = formatter::format(src).expect("format");
     check_formatter_invariants(src, &out).expect("invariants");
     // Source had 2 commas between arms (no trailing); output must
@@ -294,7 +277,7 @@ fn match_arms_preserve_separator_commas() {
 fn match_arms_preserve_trailing_comma_on_last_arm() {
     // Source has 3 commas — between each pair plus one after the last
     // arm (trailing). Output must preserve all 3 for the invariant.
-    let src = "fn f(x) = match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\", }\n";
+    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\", } }\n";
     let out = formatter::format(src).expect("format");
     check_formatter_invariants(src, &out).expect("invariants");
     let twice = formatter::format(&out).expect("pass 2");
@@ -305,7 +288,8 @@ fn match_arms_preserve_trailing_comma_on_last_arm() {
 fn match_arms_does_not_insert_commas_when_source_has_none() {
     // Source has NO commas between arms (newline-separated is the
     // canonical multi-line form). Output must also have none.
-    let src = "fn f(x) = match x {\n  1 -> \"one\"\n  2 -> \"two\"\n  _ -> \"other\"\n}\n";
+    let src =
+        "fn f(x) {\n  match x {\n    1 -> \"one\"\n    2 -> \"two\"\n    _ -> \"other\"\n  }\n}\n";
     let out = formatter::format(src).expect("format");
     check_formatter_invariants(src, &out).expect("invariants");
     assert!(
@@ -347,7 +331,7 @@ fn match_arms_nested_match_in_lambda_does_not_spuriously_comma() {
 /// `fn wrap(x,) = Some(x,)`.
 #[test]
 fn fn_params_ignore_trailing_comma_in_body() {
-    let src = "fn wrap(x) = Some(x,)\n";
+    let src = "fn wrap(x) { Some(x,) }\n";
     assert_trailing_comma_behavior(src, Some("fn wrap(x)"), Some("wrap(x,)"));
 }
 
@@ -359,7 +343,7 @@ fn constructor_pattern_args_behave_like_call_args() {
     // trailing comma (it's rendered by `format_pattern`, which is a
     // separate code path from `format_expr`). A source without a
     // trailing comma must stay without one.
-    let src = "fn f(o) = match o {\n  Some(x) -> x\n  None -> 0\n}\n";
+    let src = "fn f(o) {\n  match o {\n    Some(x) -> x\n    None -> 0\n  }\n}\n";
     assert_trailing_comma_behavior(src, Some("Some(x)"), Some("Some(x,)"));
 }
 

@@ -4607,7 +4607,7 @@ mod tests {
 
     #[test]
     fn test_compile_lambda() {
-        let fns = compile("fn main() { let f = fn(x) { x + 1 }\n f(5) }");
+        let fns = compile("fn main() { let f = { x -> x + 1 }\n f(5) }");
         let main = find_fn(&fns, "main");
         // Lambda is compiled as a VmClosure constant
         assert!(
@@ -4623,7 +4623,7 @@ mod tests {
         let fns = compile(
             r#"
 fn make_adder(n) {
-    fn(x) { x + n }
+    { x -> x + n }
 }
 "#,
         );

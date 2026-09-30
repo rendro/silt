@@ -178,8 +178,7 @@ fn every_example_formats_canonically_after_scanner_collapse() {
 // formatter output or a non-idempotent second pass.
 //
 // silt syntax notes used below:
-// - `fn name() { body }` is the block-body form (used here whenever the
-//   body needs `let`s); `fn name() = expr` is for single expressions.
+// - Function bodies are always blocks: `fn name() { body }`.
 // - String interpolation uses `"...{expr}..."` (no `$`).
 // - Triple-quoted strings `"""..."""` are raw — escapes are literal,
 //   and `{` inside triple-strings is not interpolation.

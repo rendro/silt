@@ -2710,11 +2710,11 @@ fn resolve_decl_lines(decls: &[Decl], source: &str) -> Vec<usize> {
     result
 }
 
-/// Check whether a declaration has a block body (i.e. uses `{ ... }` not `= expr`).
+/// Check whether a declaration has a block body: a function, trait,
+/// trait impl or type declaration.
 fn decl_has_block_body(decl: &Decl) -> bool {
     match decl {
-        Decl::Fn(f) => matches!(f.body.kind, ExprKind::Block(_)),
-        Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Type(_) => true,
+        Decl::Fn(_) | Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Type(_) => true,
         Decl::Import(..) | Decl::Let { .. } => false,
     }
 }
@@ -3018,14 +3018,8 @@ pub fn format(source: &str) -> Result<String, FmtError> {
 ///     dropped, number and string literals are respelled (`0xFF` as
 ///     `255`, a line break in a string as `\n`): none of these is in the
 ///     tree, so they need no rule here;
-///   * a lambda that is the last argument of a call is printed as a
-///     trailing closure, and a closure in any other place as
-///     `fn(...) { ... }`. The two forms differ in the tree only in that
-///     one has the single body expression `e` and the other the block
-///     `{ e }`, and in that a parameter `_` is a wildcard pattern in one
-///     and a name in the other. So a block that holds nothing but one
-///     expression is written as that expression, and a name `_` in a
-///     pattern as a wildcard, unless the declaration uses `_` as a value;
+///   * a block that holds nothing but one expression is written as that
+///     expression, since the printer may drop or add such braces;
 ///   * `where` bounds on the same type variable are gathered into one
 ///     clause (`a: X, b: Y, a: Z` becomes `a: X + Z, b: Y`), so bounds
 ///     are written grouped by type variable;
@@ -3179,13 +3173,6 @@ mod self_check {
             .map(|decl| {
                 let mut writer = ShapeWriter::default();
                 writer.decl(decl);
-                if writer.saw_underscore_value {
-                    writer = ShapeWriter {
-                        underscore_is_a_name: true,
-                        ..ShapeWriter::default()
-                    };
-                    writer.decl(decl);
-                }
                 let (label, span) = describe(decl);
                 DeclShape {
                     is_import: matches!(decl, Decl::Import(..)),
@@ -3352,13 +3339,6 @@ mod self_check {
     #[derive(Default)]
     struct ShapeWriter {
         out: String,
-        /// Write a parameter named `_` as a name, not as a wildcard.
-        /// Set when the declaration refers to `_` as a value: there
-        /// `fn(_) { _ }` binds a name that the body uses, and `{ _ -> _ }`
-        /// would not.
-        underscore_is_a_name: bool,
-        /// Whether an expression referred to `_`.
-        saw_underscore_value: bool,
     }
 
     impl ShapeWriter {
@@ -3694,11 +3674,6 @@ mod self_check {
         fn pattern(&mut self, pattern: &Pattern) {
             match &pattern.kind {
                 PatternKind::Wildcard => self.open("wildcard"),
-                // A parameter `_` is a wildcard in `{ _ -> ... }` and a
-                // name in `fn(_) { ... }`.
-                PatternKind::Ident(name) if resolve(*name) == "_" && !self.underscore_is_a_name => {
-                    self.open("wildcard")
-                }
                 PatternKind::Ident(name) => {
                     self.open("bind");
                     self.sym(*name);
@@ -3918,9 +3893,6 @@ mod self_check {
                     }
                 }
                 ExprKind::Ident(name) => {
-                    if resolve(*name) == "_" {
-                        self.saw_underscore_value = true;
-                    }
                     self.open("name");
                     self.sym(*name);
                 }
@@ -4945,28 +4917,11 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         );
     }
 
-    // Check if body is a simple expression (single-expression function using =)
-    if is_simple_body(&f.body) {
-        let body_str = format_expr(&f.body, depth);
-        let trailing = take_trailing_for_line(f.span.line)
-            .map(|c| format!(" {c}"))
-            .unwrap_or_default();
-        return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {body_str}{trailing}",
-            f.name,
-        );
-    }
-
     let body = format_body(&f.body, depth);
     format!(
         "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
         f.name
     )
-}
-
-fn is_simple_body(expr: &Expr) -> bool {
-    // A body is "simple" if it's not a block — single expression fn
-    !matches!(expr.kind, ExprKind::Block(_))
 }
 
 fn format_param(p: &Param) -> String {
@@ -6809,28 +6764,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             format!("{callee_str}({}{trailing})", arg_strs.join(", "))
         }
 
-        ExprKind::Lambda { params, body } => {
-            // The `fn(...) { ... }` syntax requires plain identifier
-            // parameters — the parser's `parse_fn_params` rejects any
-            // pattern other than `Ident` with `expected parameter name,
-            // found <tok>`. The closure form `{ params -> body }` (parsed
-            // by `parse_closure_params`) accepts richer patterns like
-            // tuples (`(a, b)`). When a Lambda originated from a closure
-            // and carries a non-Ident parameter pattern, we MUST emit
-            // closure syntax so the formatted output round-trips.
-            // Otherwise `fn((a, b)) { ... }` re-parses to a parse error.
-            if params.iter().any(|p| !is_ident_pattern(&p.pattern)) {
-                return format_closure_lambda(params, body, depth);
-            }
-            let param_strs: Vec<String> = params.iter().map(format_param).collect();
-            let params_str = param_strs.join(", ");
-            let trailing = if !params.is_empty() && source_has_trailing_comma(outer, '(', ')') {
-                ","
-            } else {
-                ""
-            };
-            format!("fn({params_str}{trailing}) {}", format_body(body, depth))
-        }
+        ExprKind::Lambda { params, body } => format_closure_lambda(params, body, outer.span, depth),
 
         ExprKind::FieldAccess(expr, field) => {
             format!("{}.{field}", format_expr(expr, depth))
@@ -6962,33 +6896,44 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
 
 fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
     if let ExprKind::Lambda { params, body, .. } = &expr.kind {
-        format_closure_lambda(params, body, depth)
+        format_closure_lambda(params, body, expr.span, depth)
     } else {
         format_expr(expr, depth)
     }
 }
 
-/// Emit a `Lambda` using the closure form `{ params -> body }`. Used both
-/// for trailing-closure call positions and for any non-trailing Lambda
-/// whose parameters can't be expressed in the `fn(...)` syntax (e.g. a
-/// tuple-destructuring parameter `{ (a, b) -> ... }`).
-fn format_closure_lambda(params: &[Param], body: &Expr, depth: usize) -> String {
+/// Emit a `Lambda` as `{ params -> body }`, the one closure syntax, in a
+/// trailing-closure position and everywhere else.
+fn format_closure_lambda(params: &[Param], body: &Expr, span: Span, depth: usize) -> String {
     let param_strs: Vec<String> = params.iter().map(format_param).collect();
-    let params_str = param_strs.join(", ");
+    // `{ -> body }` for a closure without parameters.
+    let params_str = if param_strs.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", param_strs.join(", "))
+    };
     if let ExprKind::Block(stmts) = &body.kind {
         if stmts.len() == 1
             && let Stmt::Expr(inner) = &stmts[0]
         {
-            return format!("{{ {params_str} -> {} }}", format_expr(inner, depth));
+            return format!("{{ {params_str}-> {} }}", format_expr(inner, depth));
         }
         // Multi-statement closure. Use the state-aware statement
         // formatter so any comments inside the closure's body block are
         // emitted at the correct nested position.
         let close_line = compute_block_end_line(body.span);
         let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
-        return format!("{{ {params_str} ->\n{}\n{}}}", inner, indent(depth));
+        return format!("{{ {params_str}->\n{}\n{}}}", inner, indent(depth));
     }
-    format!("{{ {params_str} -> {} }}", format_expr(body, depth))
+    // A single body expression with standalone comments around it inside
+    // the braces: keep the comments inside, one statement per line.
+    let close_line = compute_block_end_line(span);
+    if close_line > span.line && has_comments_between(span.line, close_line) {
+        let stmts = [Stmt::Expr(body.clone())];
+        let inner = format_stmts_with_comments(&stmts, depth + 1, close_line);
+        return format!("{{ {params_str}->\n{}\n{}}}", inner, indent(depth));
+    }
+    format!("{{ {params_str}-> {} }}", format_expr(body, depth))
 }
 
 fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
@@ -7013,14 +6958,6 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
         };
         format!("{prefix}{pat}{guard} -> {}", format_expr(&arm.body, depth))
     }
-}
-
-/// Is this pattern a plain identifier (or wildcard) — i.e. legal as a
-/// parameter in the `fn(...)` syntax accepted by `parse_fn_params`?
-/// Anything else (tuple, list, constructor, record, literal, …) requires
-/// closure syntax `{ params -> body }` when emitted as a Lambda.
-fn is_ident_pattern(pattern: &Pattern) -> bool {
-    matches!(pattern.kind, PatternKind::Ident(_) | PatternKind::Wildcard)
 }
 
 fn format_pattern(pattern: &Pattern) -> String {
@@ -7340,18 +7277,18 @@ mod tests {
 
     #[test]
     fn test_comment_between_decls() {
-        let source = r#"fn foo() = 1
+        let source = r#"fn foo() { 1 }
 
 -- helper function
-fn bar() = 2
+fn bar() { 2 }
 "#;
         let result = format(source).unwrap();
         assert!(
             result.contains("-- helper function"),
             "comment should be preserved"
         );
-        assert!(result.contains("fn foo() = 1"));
-        assert!(result.contains("fn bar() = 2"));
+        assert!(result.contains("fn foo() {\n  1\n}"));
+        assert!(result.contains("fn bar() {\n  2\n}"));
     }
 
     #[test]
@@ -7387,23 +7324,23 @@ fn bar() = 2
     #[test]
     fn test_comment_before_first_decl() {
         let source = r#"-- module header
-fn main() = 42
+fn main() { 42 }
 "#;
         let result = format(source).unwrap();
         assert!(
             result.starts_with("-- module header\n"),
             "header comment should be at top"
         );
-        assert!(result.contains("fn main() = 42"));
+        assert!(result.contains("fn main() {\n  42\n}"));
     }
 
     #[test]
     fn test_multiple_comments_between_decls() {
-        let source = r#"fn a() = 1
+        let source = r#"fn a() { 1 }
 
 -- first comment
 -- second comment
-fn b() = 2
+fn b() { 2 }
 "#;
         let result = format(source).unwrap();
         assert!(
@@ -7414,10 +7351,10 @@ fn b() = 2
 
     #[test]
     fn test_block_comment_preserved() {
-        let source = r#"fn a() = 1
+        let source = r#"fn a() { 1 }
 
 {- block comment -}
-fn b() = 2
+fn b() { 2 }
 "#;
         let result = format(source).unwrap();
         assert!(
@@ -7428,21 +7365,17 @@ fn b() = 2
 
     #[test]
     fn test_no_comments_unchanged() {
-        let source = r#"fn a() = 1
-
-fn b() = 2
-"#;
+        let source = "fn a() {\n  1\n}\n\nfn b() {\n  2\n}\n";
         let result = format(source).unwrap();
-        let expected = "fn a() = 1\n\nfn b() = 2\n";
-        assert_eq!(result, expected);
+        assert_eq!(result, source);
     }
 
     #[test]
     fn test_idempotent_with_comments() {
-        let source = r#"fn foo() = 1
+        let source = r#"fn foo() { 1 }
 
 -- a comment
-fn bar() = 2
+fn bar() { 2 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
@@ -7452,7 +7385,7 @@ fn bar() = 2
     #[test]
     fn test_idempotent_with_header_comment() {
         let source = r#"-- header
-fn foo() = 1
+fn foo() { 1 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
@@ -7463,13 +7396,13 @@ fn foo() = 1
     fn test_idempotent_with_multiple_comments() {
         let source = r#"-- header
 
-fn a() = 1
+fn a() { 1 }
 
 -- between
-fn b() = 2
+fn b() { 2 }
 
 -- another
-fn c() = 3
+fn c() { 3 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
@@ -7478,7 +7411,7 @@ fn c() = 3
 
     #[test]
     fn test_comment_after_last_decl() {
-        let source = r#"fn foo() = 1
+        let source = r#"fn foo() { 1 }
 
 -- trailing comment
 "#;
@@ -7491,7 +7424,7 @@ fn c() = 3
 
     #[test]
     fn test_extract_comments_basic() {
-        let (comments, _trailing, _leading) = extract_comments("-- hello\nfn foo() = 1\n-- bye");
+        let (comments, _trailing, _leading) = extract_comments("-- hello\nfn foo() { 1 }\n-- bye");
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[0].line, 1);
         assert_eq!(comments[0].text, "-- hello");
@@ -7502,7 +7435,7 @@ fn c() = 3
     #[test]
     fn test_extract_block_comment() {
         let (comments, _trailing, _leading) =
-            extract_comments("{- block\ncomment -}\nfn foo() = 1");
+            extract_comments("{- block\ncomment -}\nfn foo() { 1 }");
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line, 1);
         assert!(comments[0].text.contains("{- block"));
@@ -7513,7 +7446,7 @@ fn c() = 3
 
     #[test]
     fn test_idempotent_simple_fn() {
-        let source = "fn add(a, b) = a + b\n";
+        let source = "fn add(a, b) { a + b }\n";
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "formatting should be idempotent");
@@ -7538,7 +7471,7 @@ fn c() = 3
 import channel
 import string
 
-fn main() = 42
+fn main() { 42 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
@@ -7597,8 +7530,8 @@ fn describe(s) {
 
 fn main() {
   [1, 2, 3]
-  |> list.map(fn(x) { x * 2 })
-  |> list.filter(fn(x) { x > 2 })
+  |> list.map({ x -> x * 2 })
+  |> list.filter({ x -> x > 2 })
 }
 "#;
         let first = format(source).unwrap();
@@ -7613,7 +7546,7 @@ fn main() {
 }
 
 trait Printable for Int {
-  fn show(self) = "{self}"
+  fn show(self) { "{self}" }
 }
 "#;
         let first = format(source).unwrap();
@@ -7638,7 +7571,7 @@ trait Printable for Int {
         let source = r#"import list
 
 fn main() {
-  list.map([1, 2, 3], fn(x) {
+  list.map([1, 2, 3], { x ->
     x * 2
   })
 }
@@ -7650,7 +7583,7 @@ fn main() {
 
     #[test]
     fn test_idempotent_where_clause() {
-        let source = "fn show(x) where x: Display = x.display()\n";
+        let source = "fn show(x) where x: Display { x.display() }\n";
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "formatting should be idempotent");
@@ -7673,7 +7606,7 @@ type Color {
 fn main() {
   let colors = [Red, Green, Blue]
   colors
-  |> list.map(fn(c) {
+  |> list.map({ c ->
     match c {
       Red -> "red"
       Green -> "green"
@@ -7711,12 +7644,6 @@ fn main() {
     }
 
     #[test]
-    fn test_format_single_expression_fn() {
-        let result = format("fn add(a, b) = a + b\n").unwrap();
-        assert_eq!(result, "fn add(a, b) = a + b\n");
-    }
-
-    #[test]
     fn test_format_empty_fn_body() {
         let result = format("fn noop() {}\n").unwrap();
         assert!(result.contains("fn noop()"));
@@ -7724,13 +7651,13 @@ fn main() {
 
     #[test]
     fn test_format_pub_fn() {
-        let result = format("pub fn add(a, b) = a + b\n").unwrap();
+        let result = format("pub fn add(a, b) { a + b }\n").unwrap();
         assert!(result.starts_with("pub fn add"));
     }
 
     #[test]
     fn test_format_return_type_annotation() {
-        let result = format("fn add(a: Int, b: Int) -> Int = a + b\n").unwrap();
+        let result = format("fn add(a: Int, b: Int) -> Int { a + b }\n").unwrap();
         assert!(result.contains("-> Int"));
         assert!(result.contains("a: Int, b: Int"));
     }
@@ -7758,7 +7685,7 @@ fn main() {
     #[test]
     fn test_format_pipe_chain() {
         let source = r#"import list
-fn main() { [1, 2, 3] |> list.map(fn(x) { x * 2 }) |> list.filter(fn(x) { x > 2 }) }
+fn main() { [1, 2, 3] |> list.map({ x -> x * 2 }) |> list.filter({ x -> x > 2 }) }
 "#;
         let result = format(source).unwrap();
         assert!(result.contains("|>"), "pipe operator should be preserved");
@@ -7768,7 +7695,7 @@ fn main() { [1, 2, 3] |> list.map(fn(x) { x * 2 }) |> list.filter(fn(x) { x > 2 
     fn test_format_trailing_closure() {
         let source = r#"import list
 fn main() {
-  list.map([1, 2], fn(x) { x * 2 })
+  list.map([1, 2], { x -> x * 2 })
 }
 "#;
         let result = format(source).unwrap();
@@ -7796,7 +7723,7 @@ fn main() {
 
     #[test]
     fn test_format_loop_expression() {
-        let source = "fn countdown(n) = loop i = n { match i { 0 -> 0 _ -> loop(i - 1) } }\n";
+        let source = "fn countdown(n) { loop i = n { match i { 0 -> 0 _ -> loop(i - 1) } } }\n";
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "loop formatting should be idempotent");
@@ -7805,7 +7732,7 @@ fn main() {
     #[test]
     fn test_format_record_create() {
         let source = r#"type Point { x: Int, y: Int }
-fn main() = Point { x: 1, y: 2 }
+fn main() { Point { x: 1, y: 2 } }
 "#;
         let result = format(source).unwrap();
         assert!(result.contains("Point { x: 1, y: 2 }"));
@@ -7813,7 +7740,7 @@ fn main() = Point { x: 1, y: 2 }
 
     #[test]
     fn test_format_map_literal() {
-        let source = r#"fn main() = #{"a": 1, "b": 2}
+        let source = r#"fn main() { #{"a": 1, "b": 2} }
 "#;
         let result = format(source).unwrap();
         assert!(result.contains("#{ "));
@@ -7821,45 +7748,45 @@ fn main() = Point { x: 1, y: 2 }
 
     #[test]
     fn test_format_list_literal() {
-        let result = format("fn main() = [1, 2, 3]\n").unwrap();
+        let result = format("fn main() { [1, 2, 3] }\n").unwrap();
         assert!(result.contains("[1, 2, 3]"));
     }
 
     #[test]
     fn test_format_empty_list() {
-        let result = format("fn main() = []\n").unwrap();
+        let result = format("fn main() { [] }\n").unwrap();
         assert!(result.contains("[]"));
     }
 
     #[test]
     fn test_format_tuple() {
-        let result = format("fn main() = (1, 2, 3)\n").unwrap();
+        let result = format("fn main() { (1, 2, 3) }\n").unwrap();
         assert!(result.contains("(1, 2, 3)"));
     }
 
     #[test]
     fn test_format_unary_ops() {
-        let result = format("fn main() = -42\n").unwrap();
+        let result = format("fn main() { -42 }\n").unwrap();
         assert!(result.contains("-42"));
     }
 
     #[test]
     fn test_format_not_op() {
-        let result = format("fn main() = !true\n").unwrap();
+        let result = format("fn main() { !true }\n").unwrap();
         assert!(result.contains("!true"));
     }
 
     #[test]
     fn test_format_binary_precedence_parens() {
         // Ensure parentheses are added when needed for precedence
-        let source = "fn main() = (1 + 2) * 3\n";
+        let source = "fn main() { (1 + 2) * 3 }\n";
         let result = format(source).unwrap();
         assert!(result.contains("(1 + 2) * 3"));
     }
 
     #[test]
     fn test_format_string_interpolation() {
-        let source = r#"fn greet(name) = "hello {name}"
+        let source = r#"fn greet(name) { "hello {name}" }
 "#;
         let result = format(source).unwrap();
         assert!(result.contains("{name}"));
@@ -7867,14 +7794,14 @@ fn main() = Point { x: 1, y: 2 }
 
     #[test]
     fn test_format_question_mark() {
-        let source = "fn try_it(x) = x?\n";
+        let source = "fn try_it(x) { x? }\n";
         let result = format(source).unwrap();
         assert!(result.contains("x?"));
     }
 
     #[test]
     fn test_format_range() {
-        let result = format("fn main() = 1..10\n").unwrap();
+        let result = format("fn main() { 1..10 }\n").unwrap();
         assert!(result.contains("1..10"));
     }
 
@@ -7931,7 +7858,7 @@ fn main() = Point { x: 1, y: 2 }
 import list
 import channel
 
-fn main() = 1
+fn main() { 1 }
 "#;
         let result = format(source).unwrap();
         let channel_pos = result.find("import channel").unwrap();
@@ -7949,13 +7876,13 @@ fn main() = 1
 
     #[test]
     fn test_format_selective_import() {
-        let result = format("import list.{ map, filter }\nfn main() = 1\n").unwrap();
+        let result = format("import list.{ map, filter }\nfn main() { 1 }\n").unwrap();
         assert!(result.contains("import list.{ map, filter }"));
     }
 
     #[test]
     fn test_format_alias_import() {
-        let result = format("import list as l\nfn main() = 1\n").unwrap();
+        let result = format("import list as l\nfn main() { 1 }\n").unwrap();
         assert!(result.contains("import list as l"));
     }
 
@@ -8078,7 +8005,7 @@ fn main() {
 
     #[test]
     fn test_format_field_access() {
-        let result = format("fn main() = foo.bar.baz\n").unwrap();
+        let result = format("fn main() { foo.bar.baz }\n").unwrap();
         assert!(result.contains("foo.bar.baz"));
     }
 
@@ -8381,10 +8308,10 @@ fn main() {
 }
 
 -- between functions
-fn bar() = 2
+fn bar() { 2 }
 "#;
         let result = format(source).unwrap();
-        let expected = "fn foo() {\n  -- inside foo\n  let x = 1\n  x\n}\n\n-- between functions\n\nfn bar() = 2\n";
+        let expected = "fn foo() {\n  -- inside foo\n  let x = 1\n  x\n}\n\n-- between functions\n\nfn bar() {\n  2\n}\n";
         assert_eq!(
             result, expected,
             "body+between comments must stay in their canonical positions, got: {result}"
@@ -8438,7 +8365,7 @@ fn foo() {
 }
 
 -- between
-fn bar() = 2
+fn bar() { 2 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
@@ -8644,7 +8571,7 @@ import a
     #[test]
     fn test_comment_inside_lambda_body_stays_nested() {
         // F1 repro 3: comment inside a lambda body.
-        let source = "fn main() {\n  let f = fn(x) {\n    -- inside lambda\n    x + 1\n  }\n  println(f(3))\n}\n";
+        let source = "fn main() {\n  let f = { x ->\n    -- inside lambda\n    x + 1\n  }\n  println(f(3))\n}\n";
         let result = format(source).unwrap();
         let comment_pos = result
             .find("-- inside lambda")
@@ -9013,18 +8940,18 @@ import a
     #[test]
     fn test_format_string_interpolation_exact_output() {
         // Replacement for the previous `.contains("{name}")` assertion.
-        let source = r#"fn greet(name) = "hello {name}"
+        let source = r#"fn greet(name) { "hello {name}" }
 "#;
         let result = format(source).unwrap();
-        assert_eq!(result, "fn greet(name) = \"hello {name}\"\n");
+        assert_eq!(result, "fn greet(name) {\n  \"hello {name}\"\n}\n");
     }
 
     #[test]
     fn test_format_question_mark_exact_output() {
         // Replacement for the previous `.contains("x?")` assertion.
-        let source = "fn try_it(x) = x?\n";
+        let source = "fn try_it(x) { x? }\n";
         let result = format(source).unwrap();
-        assert_eq!(result, "fn try_it(x) = x?\n");
+        assert_eq!(result, "fn try_it(x) {\n  x?\n}\n");
     }
 
     // ── BROKEN-1: Unary op must preserve parens around lower-bp inner ──
@@ -9189,9 +9116,9 @@ import a
 
     #[test]
     fn test_format_preserves_trailing_comments_on_multiline_fn_params() {
-        let source = "fn add(\n  a, -- first\n  b,\n) = a + b\n";
+        let source = "fn add(\n  a, -- first\n  b,\n) { a + b }\n";
         let result = format(source).unwrap();
-        let expected = "fn add(\n  a, -- first\n  b,\n) = a + b\n";
+        let expected = "fn add(\n  a, -- first\n  b,\n) {\n  a + b\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -9202,10 +9129,9 @@ import a
         // (previously it always inserted one). The source here has no
         // trailing comma after `y: Int`, so the multi-line reshape
         // emits `y: Int` without one.
-        let source =
-            "type Point { x: Int, y: Int }\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        let source = "type Point { x: Int, y: Int }\n\nfn main() {\n  Point {\n    x: 1, -- a\n    y: 2, -- b\n  }\n}\n";
         let result = format(source).unwrap();
-        let expected = "type Point {\n  x: Int,\n  y: Int\n}\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        let expected = "type Point {\n  x: Int,\n  y: Int\n}\n\nfn main() {\n  Point {\n    x: 1, -- a\n    y: 2, -- b\n  }\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -9531,7 +9457,7 @@ mod self_check_tests {
     #[test]
     fn a_lost_block_comment_is_refused() {
         let e = refusal(
-            "fn add(a, b) = a + b\nfn main() {\n  let x = add(1, {- second -} 2)\n  \
+            "fn add(a, b) { a + b }\nfn main() {\n  let x = add(1, {- second -} 2)\n  \
              let y = (x + 1)\n  y\n}\n",
         );
         assert!(
@@ -9572,16 +9498,16 @@ mod self_check_tests {
     #[test]
     fn spellings_that_the_printer_changes_on_purpose_pass() {
         // A lambda as last argument becomes a trailing closure.
-        let out = formatted("fn main() {\n  list.map(xs, fn(x) { x * 2 })\n}\n");
+        let out = formatted("fn main() {\n  list.map(xs, { x -> x * 2 })\n}\n");
         assert!(out.contains("list.map(xs) { x -> x * 2 }"), "{out}");
-        let out = formatted("fn main() {\n  list.filter(xs, fn(_) { true })\n}\n");
+        let out = formatted("fn main() {\n  list.filter(xs, { _ -> true })\n}\n");
         assert!(out.contains("list.filter(xs) { _ -> true }"), "{out}");
-        let out = formatted("fn main() {\n  run(fn() { 1 })\n}\n");
-        assert!(out.contains("run {  -> 1 }"), "{out}");
-        // A closure anywhere else becomes a `fn` lambda.
+        let out = formatted("fn main() {\n  run({ -> 1 })\n}\n");
+        assert!(out.contains("run { -> 1 }"), "{out}");
+        // A closure anywhere else stays a closure.
         let out = formatted("fn main() {\n  apply({ x -> x + 1 }, 1)\n  apply({ _ -> 7 }, 1)\n}\n");
-        assert!(out.contains("apply(fn(x) {"), "{out}");
-        assert!(out.contains("apply(fn(_) {"), "{out}");
+        assert!(out.contains("apply({ x ->"), "{out}");
+        assert!(out.contains("apply({ _ ->"), "{out}");
         // Redundant parentheses go; literals are respelled.
         let out = formatted("fn main() {\n  let c = ((a + b)) * (0xFF)\n  c\n}\n");
         assert!(out.contains("let c = (a + b) * 255"), "{out}");
@@ -9637,15 +9563,9 @@ mod self_check_tests {
     }
 
     #[test]
-    fn an_underscore_parameter_used_as_a_value_is_not_made_a_wildcard() {
-        let src = "import list\n\nfn main() {\n  println(list.map([1, 2], fn(_) { _ * 10 }))\n}\n";
-        refusal(src);
-    }
-
-    #[test]
     fn an_unused_underscore_parameter_still_becomes_a_trailing_closure() {
         let out =
-            formatted("import list\n\nfn main() {\n  println(list.map([1, 2], fn(_) { 10 }))\n}\n");
+            formatted("import list\n\nfn main() {\n  println(list.map([1, 2], { _ -> 10 }))\n}\n");
         assert!(out.contains("{ _ -> 10 }"), "{out}");
     }
 

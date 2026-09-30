@@ -161,7 +161,7 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// direct `Type::Fun` values; the recursion (via `Vm::value_contains_fn`,
 /// src/vm/mod.rs) mirrors the round-97 container gate, whose
 /// `operand_builtin_trait_violation` walker rejects the concrete forms
-/// (`[fn(x) { x }] == [fn(x) { x }]`, tuples/records/variants wrapping
+/// (`[{ x -> x }] == [{ x -> x }]`, tuples/records/variants wrapping
 /// functions) at compile time. Without the recursion, laundering the same
 /// values through a polymorphic wrapper (`fn eq(a: x, b: x) -> Bool
 /// { a == b }`) silently produced an `Arc::ptr_eq`-based Bool. Channel /

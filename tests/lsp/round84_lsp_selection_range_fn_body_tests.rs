@@ -1,21 +1,12 @@
 //! Round-84 LATENT lock: `textDocument/selectionRange` must compute a
-//! tight upper bound on `expr_extent` for **non-Block** expression
-//! bodies. Round 83 fixed the analogous issue for `Decl::Type` /
-//! `Decl::Trait` via a dedicated `type_decl_extent` helper, but the
-//! `Decl::Fn`, `Decl::Let`, and `Decl::TraitImpl` arms still flow through
-//! `expr_extent`, which pre-fix collapsed to `source.len()` for any
-//! `ExprKind` other than `Block`.
-//!
-//! Concretely:
-//!
-//!   * `fn add(a, b) = a + b`         — body is `Binary`, not `Block`
-//!   * `let g = 99`                   — value is `Int`, not `Block`
-//!   * `fn show(self) = "foo"` in an impl — body is `StringLit`, not `Block`
-//!
-//! All three previously claimed to extend to EOF. Selection-range chains
-//! for any cursor in a later decl would drag the earlier decl's `fn`/`let`
-//! span in as a parent — Shift+Alt+→ in editors cycled into the unrelated
-//! function.
+//! tight upper bound on `expr_extent` for **non-Block** expressions.
+//! Round 83 fixed the analogous issue for `Decl::Type` / `Decl::Trait`
+//! via a dedicated `type_decl_extent` helper, but the `Decl::Let` arm
+//! still flows through `expr_extent`, which pre-fix collapsed to
+//! `source.len()` for any `ExprKind` other than `Block`: `let g = 99`
+//! (value `Int`) claimed to extend to EOF. Selection-range chains for
+//! any cursor in a later decl would drag the earlier `let` span in as a
+//! parent — Shift+Alt+→ in editors cycled into the unrelated binding.
 //!
 //! Each test spawns a real `silt lsp` subprocess, opens a small source,
 //! asks for the selection range at a cursor in a later decl, and asserts
@@ -102,76 +93,6 @@ fn outermost(node: &Value) -> &Value {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[test]
-fn fn_eq_expr_body_extent_does_not_extend_to_eof() {
-    // Bug repro: `fn add(a, b) = a + b` — body is `Binary`, NOT `Block`.
-    // Pre-fix `expr_extent` returned `source.len()` for non-Block, so the
-    // `fn add` decl's span was pushed into the chain for a cursor inside
-    // a later `fn main` body — outermost element of the chain anchored
-    // at byte 0 (`fn` keyword of `add`), not at `fn main`.
-    let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r84_fn_eq_expr.silt";
-    let src = "fn add(a: Int, b: Int) -> Int = a + b\n\
-               \n\
-               fn main() {\n\
-               \x20\x20let x = add(1, 2)\n\
-               \x20\x20println(x)\n\
-               }\n";
-    client.did_open_and_wait(file, src);
-
-    // Cursor on the `x` in `println(x)` — that's line 4 (0-indexed),
-    // column 10 (`  println(x)` → byte 10 is `x`).
-    let cursor_line: u64 = 4;
-    let cursor_char: u64 = 10;
-    assert_eq!(
-        src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
-        b'x',
-        "test source-shape sanity: cursor should point at `x`",
-    );
-
-    let resp = client.request(
-        "textDocument/selectionRange",
-        json!({
-            "textDocument": { "uri": file },
-            "positions": [ { "line": cursor_line, "character": cursor_char } ]
-        }),
-    );
-    let arr = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .expect("selection range result");
-    assert_eq!(arr.len(), 1, "exactly one position requested → one result");
-    let first = &arr[0];
-
-    // STRONG ASSERTION 1: no element of the chain is the lone `fn`
-    // keyword span of `add` (bytes 0..2). The keyword span sits at the
-    // file's very start. On pre-fix code paths this was the outermost
-    // chain element when the cursor lived in `fn main`.
-    walk_chain(first, &mut |node| {
-        let (start_off, end_off) = range_byte_span(src, node);
-        assert!(
-            !(start_off == 0 && end_off == 2),
-            "the lone `fn` keyword span of `add` (offset 0..2) must never \
-             appear in the chain when the cursor lives in `fn main`; \
-             got {node:?}",
-        );
-    });
-
-    // STRONG ASSERTION 2: the outermost element of the chain is anchored
-    // at or after the start of `fn main` (the cursor's enclosing decl).
-    let root = outermost(first);
-    let (root_start, _) = range_byte_span(src, root);
-    let fn_main_start = src.find("fn main").expect("`fn main` exists in source");
-    assert!(
-        root_start >= fn_main_start,
-        "outermost chain element must be anchored in the cursor's enclosing \
-         decl (`fn main` at byte {fn_main_start}); got root starting at byte \
-         {root_start}: {root:?}",
-    );
-
-    client.shutdown();
-}
-
-#[test]
 fn let_eq_expr_value_extent_does_not_extend_to_eof() {
     // Top-level `let g = 99` — the let's `value` is `Int(99)`, a non-Block
     // expression. Pre-fix the let-decl span was pushed for any cursor in
@@ -233,136 +154,6 @@ fn let_eq_expr_value_extent_does_not_extend_to_eof() {
              cursor inside `fn main`; got start={s}, node={node:?}",
         );
     });
-
-    client.shutdown();
-}
-
-#[test]
-fn trait_impl_method_eq_expr_body_extent_does_not_extend_to_eof() {
-    // `TraitImpl` method body written as `fn show(self) = "foo"` — body
-    // is `StringLit`, a non-Block. Pre-fix the impl method's span would
-    // appear in the chain for any cursor in a later decl.
-    //
-    // The trait `Show` is defined first so the impl typechecks; then the
-    // impl with a non-Block method body; then `fn main` whose body is the
-    // cursor target.
-    let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r84_traitimpl_eq_expr.silt";
-    let src = "trait Show { fn show(self) -> String }\n\
-               trait Show for Int { fn show(self) = \"foo\" }\n\
-               \n\
-               fn main() {\n\
-               \x20\x20let y = 7\n\
-               \x20\x20println(y)\n\
-               }\n";
-    client.did_open_and_wait(file, src);
-
-    // Cursor on the `y` in `println(y)` — line 5, column 10.
-    let cursor_line: u64 = 5;
-    let cursor_char: u64 = 10;
-    assert_eq!(
-        src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
-        b'y',
-        "test source-shape sanity: cursor should point at `y`",
-    );
-
-    let resp = client.request(
-        "textDocument/selectionRange",
-        json!({
-            "textDocument": { "uri": file },
-            "positions": [ { "line": cursor_line, "character": cursor_char } ]
-        }),
-    );
-    let arr = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .expect("selection range result");
-    assert_eq!(arr.len(), 1);
-    let first = &arr[0];
-
-    // The outermost chain element must be anchored at or after the start
-    // of `fn main`. Pre-fix the impl method's span (or any earlier decl's
-    // span dragged along via the broken extent) would land outermost.
-    let root = outermost(first);
-    let (root_start, _) = range_byte_span(src, root);
-    let fn_main_start = src.find("fn main").expect("`fn main` exists in source");
-    assert!(
-        root_start >= fn_main_start,
-        "outermost chain element must be anchored in the cursor's enclosing \
-         decl (`fn main` at byte {fn_main_start}); got root starting at byte \
-         {root_start}: {root:?}",
-    );
-
-    // No chain element should be anchored before `fn main`, period.
-    walk_chain(first, &mut |node| {
-        let (s, _) = range_byte_span(src, node);
-        assert!(
-            s >= fn_main_start,
-            "no chain element should be anchored before `fn main` for a \
-             cursor inside `fn main`; got start={s}, node={node:?}",
-        );
-    });
-
-    client.shutdown();
-}
-
-#[test]
-fn fn_eq_expr_body_extent_covers_cursor_inside_body() {
-    // Positive case: cursor inside the early `fn add(a, b) = a + b` body —
-    // the `fn add` decl span SHOULD appear in the chain. This verifies
-    // the new tight extent doesn't UNDER-extend either.
-    let mut client = LspClient::spawn();
-    let file = "file:///tmp/silt_r84_fn_eq_expr_positive.silt";
-    let src = "fn add(a: Int, b: Int) -> Int = a + b\n\
-               \n\
-               fn main() {\n\
-               \x20\x20println(add(1, 2))\n\
-               }\n";
-    client.did_open_and_wait(file, src);
-
-    // Cursor on the `+` in `a + b`: line 0, column 34.
-    let cursor_line: u64 = 0;
-    let cursor_char: u64 = 34;
-    assert_eq!(
-        src.as_bytes()[pos_to_byte_offset(src, cursor_line, cursor_char)],
-        b'+',
-        "test source-shape sanity: cursor should point at `+`",
-    );
-
-    let resp = client.request(
-        "textDocument/selectionRange",
-        json!({
-            "textDocument": { "uri": file },
-            "positions": [ { "line": cursor_line, "character": cursor_char } ]
-        }),
-    );
-    let arr = resp
-        .get("result")
-        .and_then(|r| r.as_array())
-        .expect("selection range result");
-    assert_eq!(arr.len(), 1);
-    let first = &arr[0];
-
-    // SOME chain element must be anchored at the `fn add` decl's start
-    // (byte 0) and enclose the cursor. Round 84 widened these chain
-    // elements from a bare keyword-only span to cover the whole decl
-    // extent; the anchor invariant (an element starts at byte 0) is
-    // preserved. This is the mirror image of the bug-repro assertion —
-    // it pins that the extent does NOT under-shoot.
-    let cursor_off = pos_to_byte_offset(src, cursor_line, cursor_char);
-    let mut saw_decl_anchor = false;
-    walk_chain(first, &mut |node| {
-        let (s, e) = range_byte_span(src, node);
-        if s == 0 && e >= cursor_off {
-            saw_decl_anchor = true;
-        }
-    });
-    assert!(
-        saw_decl_anchor,
-        "with cursor inside `fn add`'s body, some chain element should be \
-         anchored at the decl's start (byte 0) and enclose the cursor (byte \
-         {cursor_off}); chain={first:?}",
-    );
 
     client.shutdown();
 }

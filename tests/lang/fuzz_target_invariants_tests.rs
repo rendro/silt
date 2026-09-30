@@ -23,7 +23,7 @@ use silt::parser::Parser;
 
 #[test]
 fn lexer_invariants_accept_real_tokenization() {
-    let src = "let x = 1 + 2\nfn main() = x\n";
+    let src = "let x = 1 + 2\nfn main() { x }\n";
     let tokens = Lexer::new(src).tokenize().unwrap();
     check_lexer_invariants(src, &tokens).expect("real source must satisfy invariants");
 }
@@ -251,7 +251,7 @@ fn formatter_invariants_allow_disambiguation_parens() {
 
 #[test]
 fn parser_invariants_accept_real_parse() {
-    let src = "let x = 1\nfn main() = x\n";
+    let src = "let x = 1\nfn main() { x }\n";
     let tokens = Lexer::new(src).tokenize().unwrap();
     let program = Parser::new(tokens.clone()).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program)
@@ -331,7 +331,7 @@ fn parser_invariants_reject_decls_from_empty_source() {
 fn format_idempotent_accepts_well_formed_source() {
     // Input that already passes through the formatter must still be
     // idempotent on a second pass.
-    let src = "let x = 1\nfn main() = x\n";
+    let src = "let x = 1\nfn main() { x }\n";
     check_format_idempotent(src).expect("real source must be idempotent under format");
 }
 

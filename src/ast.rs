@@ -424,12 +424,12 @@ pub struct FnDecl {
     /// enough to return a fresh type variable (no arity/arg-type cascade).
     pub is_recovery_stub: bool,
     /// True when this is an abstract trait method (signature only, no body).
-    /// Set by the parser when neither `= expr` nor `{ block }` follows the
-    /// method header. The `body` field still holds an `ExprKind::Unit`
-    /// placeholder so the AST shape stays uniform, but downstream consumers
-    /// (typechecker default-method synthesis, formatter) use this flag to
-    /// distinguish abstract methods from methods that legitimately return
-    /// unit via an explicit `= ()` or `{ }` body.
+    /// Set by the parser when no `{ block }` follows the method header.
+    /// The `body` field still holds an `ExprKind::Unit` placeholder so the
+    /// AST shape stays uniform, but downstream consumers (typechecker
+    /// default-method synthesis, formatter) use this flag to distinguish
+    /// abstract methods from methods that legitimately return unit via an
+    /// explicit `{ }` body.
     pub is_signature_only: bool,
     /// Doc comment immediately preceding the decl token (or the `pub`
     /// keyword on a `pub fn`). Collected by the parser from `--` line

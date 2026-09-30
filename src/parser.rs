@@ -830,25 +830,6 @@ impl Parser {
             && std::mem::discriminant(self.peek()) != std::mem::discriminant(our_closer)
     }
 
-    /// True if the current token is `fn` and the next non-newline token is
-    /// an identifier. That shape is unambiguously a top-level `fn NAME(...)`
-    /// declaration — an anonymous-fn expression must be `fn(...)` with
-    /// parens immediately after. Used inside delimited-list parsers so an
-    /// unclosed `[`, `(`, or `{` whose next line begins a fresh `fn` decl
-    /// is blamed on the opener rather than on the innards of a failed
-    /// anon-fn shape. (Round-52 deferred item 3.)
-    fn at_top_level_fn_start(&self) -> bool {
-        if !matches!(self.peek(), Token::Fn) {
-            return false;
-        }
-        // Look ahead past newlines to the next real token.
-        let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
-            i += 1;
-        }
-        matches!(self.tokens.get(i), Some((Token::Ident(_), _)))
-    }
-
     /// Wrap `parse_expr()` so that if it fails because the next token is
     /// EOF or a foreign closer, the error is upgraded to a contextual
     /// unclosed-delimiter message.
@@ -865,11 +846,9 @@ impl Parser {
         if self.at(&Token::Eof) || self.at_foreign_closer(our_closer) {
             return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
         }
-        // If we see `fn NAME`, that's a top-level fn decl — never a valid
-        // anon-fn expression (which must be `fn(...)`). Blame the unclosed
-        // opener instead of letting parse_fn_expr consume the `fn` and
-        // error on the trailing ident. (Round-52 deferred item 3.)
-        if self.at_top_level_fn_start() {
+        // `fn` never starts an expression: it is the next declaration,
+        // so blame the unclosed opener. (Round-52 deferred item 3.)
+        if self.at(&Token::Fn) {
             return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
         }
         self.parse_expr()
@@ -1148,26 +1127,7 @@ impl Parser {
         let where_clauses = self.parse_where_clauses_opt()?;
 
         self.skip_nl();
-        let (body, is_signature_only) = if self.at(&Token::Eq) {
-            // Single-expression form: fn square(x) = x * x
-            self.advance();
-            self.skip_nl();
-            // `fn name() = { ... }` is rejected: it overlaps the
-            // block-body form `fn name() { ... }`. silt has one shape
-            // per construct, so the `=` is required to introduce a
-            // non-block expression.
-            if self.at(&Token::LBrace) {
-                return Err(ParseError {
-                    message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
-                    span: self.span(),
-                });
-            }
-            let body = self.parse_expr()?;
-            if let Some(err) = self.expr_body_foreign_keyword_hint(&body) {
-                return Err(err);
-            }
-            (body, false)
-        } else if self.at(&Token::LBrace) {
+        let (body, is_signature_only) = if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
         } else {
             // Abstract method — no body (e.g. trait method declarations).
@@ -1336,50 +1296,7 @@ impl Parser {
 
         self.skip_nl();
         // Body. On failure, emit a stub that preserves the header.
-        let (body, is_signature_only) = if self.at(&Token::Eq) {
-            self.advance();
-            self.skip_nl();
-            if self.at(&Token::LBrace) {
-                return Err(Box::new((
-                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
-                    ParseError {
-                        message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
-                        span: self.span(),
-                    },
-                )));
-            }
-            match self.parse_expr() {
-                Ok(e) => {
-                    if let Some(err) = self.expr_body_foreign_keyword_hint(&e) {
-                        return Err(Box::new((
-                            self.make_recovery_stub(
-                                name,
-                                name_span,
-                                params,
-                                return_type,
-                                span,
-                                doc.clone(),
-                            ),
-                            err,
-                        )));
-                    }
-                    (e, false)
-                }
-                Err(err) => {
-                    return Err(Box::new((
-                        self.make_recovery_stub(
-                            name,
-                            name_span,
-                            params,
-                            return_type,
-                            span,
-                            doc.clone(),
-                        ),
-                        err,
-                    )));
-                }
-            }
-        } else if self.at(&Token::LBrace) {
+        let (body, is_signature_only) = if self.at(&Token::LBrace) {
             match self.parse_block() {
                 Ok(b) => (b, false),
                 Err(err) => {
@@ -2260,8 +2177,7 @@ impl Parser {
     /// silt deliberately lacks. `if`/`while`/`for` lex as ordinary
     /// identifiers, so a user porting code gets a baffling generic parse
     /// error unless we recognize the shape and point at the silt
-    /// equivalent. Shared by the statement-level guard in `parse_stmt`
-    /// and the expression-body guard in the `fn name(...) = ...` paths.
+    /// equivalent. Used by the statement-level guard in `parse_stmt`.
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
             "if" => {
@@ -2294,37 +2210,6 @@ impl Parser {
                 | Token::LBrace
                 | Token::LBracket
         )
-    }
-
-    /// G1, expression-body variant: after parsing an `=` function body,
-    /// detect the `fn f(n: Int) -> Int = if n == 0 { ... }` mistake.
-    ///
-    /// Fires only when BOTH hold:
-    ///   * the parsed body is a bare `if`/`while`/`for` identifier
-    ///     reference (so `parse_expr` could not attach what follows), and
-    ///   * the next token is an expression-start token, which can never
-    ///     legally follow a completed `=` body (declaration level would
-    ///     reject it with "expected declaration, found ...").
-    ///
-    /// This keeps every accepted program byte-identical: programs that
-    /// genuinely use `if` as a variable (e.g. `fn f() = if` followed by
-    /// a newline, or a call `if(x)`, which parses as a non-Ident body)
-    /// never reach the hint. We only upgrade a guaranteed parse error
-    /// into an actionable one.
-    fn expr_body_foreign_keyword_hint(&self, body: &Expr) -> Option<ParseError> {
-        let ExprKind::Ident(name) = &body.kind else {
-            return None;
-        };
-        let text = intern::resolve(*name).to_string();
-        let msg = Self::foreign_keyword_hint(&text)?;
-        if Self::g1_next_starts_expression(self.peek()) {
-            Some(ParseError {
-                message: msg.into(),
-                span: body.span,
-            })
-        } else {
-            None
-        }
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
@@ -3141,7 +3026,6 @@ impl Parser {
             }
             Token::Match => self.parse_match_expr(),
             Token::Loop => self.parse_loop_expr(),
-            Token::Fn => self.parse_fn_expr(),
             Token::Return => {
                 self.advance();
                 // Return may or may not have a value
@@ -3708,23 +3592,6 @@ impl Parser {
         Ok(Expr::new(
             ExprKind::Loop {
                 bindings,
-                body: Box::new(body),
-            },
-            span,
-        ))
-    }
-
-    // ── Fn expression ────────────────────────────────────────────────
-
-    fn parse_fn_expr(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::Fn)?;
-        let params = self.parse_fn_params()?;
-        self.skip_nl();
-        let body = self.parse_block()?;
-        Ok(Expr::new(
-            ExprKind::Lambda {
-                params,
                 body: Box::new(body),
             },
             span,
@@ -5646,7 +5513,7 @@ fn main() {
         let prog = parse(
             r#"
             fn main() {
-                fn(x: Int, y: Int) { x + y }
+                { x: Int, y: Int -> x + y }
             }
         "#,
         );
@@ -5777,23 +5644,6 @@ fn main() {
         "#,
         );
         assert!(err.message.contains("expected declaration"));
-    }
-
-    #[test]
-    fn test_single_expression_fn() {
-        let prog = parse(
-            r#"
-            fn square(x) = x * x
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            assert_eq!(f.name, intern::intern("square"));
-            // Body should be a binary expression, not a block
-            assert!(matches!(&f.body.kind, ExprKind::Binary(_, BinOp::Mul, _)));
-        } else {
-            panic!("expected fn decl");
-        }
     }
 
     #[test]

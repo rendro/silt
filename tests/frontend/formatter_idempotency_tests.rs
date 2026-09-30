@@ -123,7 +123,7 @@ import b\n\
 -- why we use a\n\
 import a\n\
 \n\
-fn main() = 1\n";
+fn main() { 1 }\n";
     assert_idempotent(source);
 }
 
@@ -161,49 +161,6 @@ fn fizzbuzz(n) {
     assert!(
         formatted.contains("(_0,)"),
         "single-element tuple pattern must keep trailing comma; got:\n{formatted}"
-    );
-}
-
-#[test]
-fn test_closure_with_tuple_param_pattern_roundtrips_cleanly() {
-    // Round-33 fuzz repro shape (`fuzz_roundtrip` saw `expected
-    // parameter name, found (` after one format pass on a non-trailing
-    // closure with a tuple-destructuring parameter).
-    //
-    // The parser accepts richer parameter patterns inside closure form
-    // `{ (a, b) -> ... }` (see `parse_closure_params`) but the `fn(...)`
-    // form only accepts plain identifiers (see `parse_simple_param_pattern`,
-    // which fails with `expected parameter name, found <tok>`).
-    //
-    // Before the fix, the formatter emitted any non-trailing Lambda as
-    // `fn(<pattern>) { ... }` regardless of the parameter shape, so a
-    // tuple-pattern closure used as a value (or as a Call's callee, not
-    // its trailing arg) round-tripped to invalid syntax.
-    let source = "let f = ({ (a, b) -> a + b })(1, 2)\n";
-    assert_formatted_parses(source);
-    assert_idempotent(source);
-    let formatted = silt::formatter::format(source).unwrap();
-    assert!(
-        formatted.contains("{ (a, b) -> a + b }"),
-        "tuple-pattern closure must keep closure form; got:\n{formatted}"
-    );
-    assert!(
-        !formatted.contains("fn((a, b))"),
-        "must not emit `fn((a, b))` (parser rejects); got:\n{formatted}"
-    );
-}
-
-#[test]
-fn test_closure_with_constructor_param_pattern_roundtrips_cleanly() {
-    // Same root cause, different non-Ident pattern: a constructor
-    // pattern as a closure parameter.
-    let source = "let f = ({ Some(x) -> x })(Some(1))\n";
-    assert_formatted_parses(source);
-    assert_idempotent(source);
-    let formatted = silt::formatter::format(source).unwrap();
-    assert!(
-        !formatted.contains("fn(Some("),
-        "constructor-pattern closure must not be emitted as `fn(...)`; got:\n{formatted}"
     );
 }
 
@@ -392,7 +349,7 @@ fn test_string_interp_with_dashes_in_nested_string_idempotent() {
     // expression is a string literal containing `--`. The formatter
     // must not see the outer `"`-`"` pair as bracketing the whole
     // string (the inner `"-- ..."` is a nested string inside an interp).
-    let source = "fn main() = \"{\"-- not a comment\"}\"\n";
+    let source = "fn main() { \"{\"-- not a comment\"}\" }\n";
     assert_idempotent(source);
     let formatted = silt::formatter::format(source).unwrap();
     assert!(
@@ -405,7 +362,7 @@ fn test_string_interp_with_dashes_in_nested_string_idempotent() {
 fn test_string_interp_with_real_trailing_comment_idempotent() {
     // Counter-test: an actual `--` trailing comment AFTER a string
     // interpolation must still be detected as trailing.
-    let source = "fn main() = \"{x}\" -- real trailing\n";
+    let source = "fn main() { \"{x}\" } -- real trailing\n";
     assert_idempotent(source);
     let formatted = silt::formatter::format(source).unwrap();
     assert!(
@@ -421,18 +378,18 @@ fn test_string_interp_dashes_variants_idempotent() {
     // and must not gain a phantom trailing comment between passes.
     for src in [
         // Dashes inside a nested string inside an interp.
-        "fn main() = \"{\"--\"}\"\n",
+        "fn main() { \"{\"--\"}\" }\n",
         // Multiple interps, dashes inside one of them.
-        "fn main() = \"{a}{b}{\"-- inert\"}{c}\"\n",
+        "fn main() { \"{a}{b}{\"-- inert\"}{c}\" }\n",
         // Block comment inside an interp expression.
-        "fn main() = \"{a {- inline -} + 1}\"\n",
+        "fn main() { \"{a {- inline -} + 1}\" }\n",
         // Negation inside an interp expression — `{-x}` must NOT be
         // misread as a block-comment open.
-        "fn main() = \"{-x}\"\n",
+        "fn main() { \"{-x}\" }\n",
         // Escaped brace before an interp on the same line.
-        "fn main() = \"\\{not interp \\\"--\\\"}\"\n",
+        "fn main() { \"\\{not interp \\\"--\\\"}\" }\n",
         // Interp expression that itself contains another interp string.
-        "fn main() = \"{\"{\"-- z\"}\"}\"\n",
+        "fn main() { \"{\"{\"-- z\"}\"}\" }\n",
     ] {
         let first = silt::formatter::format(src)
             .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
@@ -569,16 +526,16 @@ fn test_triple_string_dashes_variants_idempotent() {
         // Same shape in let-binding.
         "let s = \"\"\"\"--\"\"\"\n",
         // Dashes inside a triple-quoted string at top level with content.
-        "fn main() = \"\"\"foo--bar\"\"\"\n",
+        "fn main() { \"\"\"foo--bar\"\"\" }\n",
         // Two adjacent triple-quoted strings on the same line, one with
         // dashes inside.
-        "fn main() = \"\"\"--\"\"\" + \"\"\"x\"\"\"\n",
+        "fn main() { \"\"\"--\"\"\" + \"\"\"x\"\"\" }\n",
         // Triple-quoted string in match-arm body with dashes inside.
         "fn main() {\n  match x {\n    Foo -> \"\"\"a--b\"\"\"\n    Bar -> 0\n  }\n}\n",
         // 5-quote opener (one literal `\"` inside, then `--`, then close).
-        "fn i() = \"\"\"\"\"--\"\"\"\n",
+        "fn i() { \"\"\"\"\"--\"\"\" }\n",
         // Triple + real trailing comment after the close.
-        "fn i() = \"\"\"--\"\"\" -- real trailing\n",
+        "fn i() { \"\"\"--\"\"\" } -- real trailing\n",
     ] {
         let first = silt::formatter::format(src)
             .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));

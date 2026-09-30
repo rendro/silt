@@ -105,7 +105,7 @@ fn f9_anon_record_field_subexpr_types_resolved() {
     // exprs to apply the substitution — without the F9 fix, the
     // field expr's `expr.ty` stays as the bare `Type::Var`.
     let source = r#"
-fn nullary() = []
+fn nullary() { [] }
 fn main() {
   let x = nullary()
   let r = { val: x }

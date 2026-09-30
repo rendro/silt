@@ -41,11 +41,12 @@ fn hover_markdown(resp: &Value) -> Option<String> {
 fn hover_on_list_map_returns_markdown_doc() {
     let mut client = LspClient::spawn();
     let uri = unique_uri();
-    let source = "import list\n\nfn main() {\n    let xs = list.map([1, 2, 3], fn(x) { x + 1 })\n    xs\n}\n";
+    let source =
+        "import list\n\nfn main() {\n    let xs = list.map([1, 2, 3], { x -> x + 1 })\n    xs\n}\n";
     client.did_open_and_wait(&uri, source);
 
     // Cursor on `map` in `list.map`. The line is
-    // `    let xs = list.map([1, 2, 3], fn(x) { x + 1 })`
+    // `    let xs = list.map([1, 2, 3], { x -> x + 1 })`
     // and `map` spans columns 18..21 (0-indexed). Use 19 to be
     // squarely inside.
     let resp = client.hover(&uri, 3, 19);

@@ -493,10 +493,10 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
         // Round-102: lambda PARAMS are binders (and may carry type
         // annotations), but `visit_expr_children` walks only the lambda
         // body (ast_walk.rs). Without this arm, renaming a lambda param
-        // from a body use-site edited the uses and never the `fn(n)` /
-        // `{ n -> ... }` binder token — `fn(n) { m * 2 }` no longer
+        // from a body use-site edited the uses and never the
+        // `{ n -> ... }` binder token — `{ n -> m * 2 }` no longer
         // compiles — and `textDocument/references` omitted the binder.
-        // Walking `param.ty` also keeps `fn(p: Point) { ... }`
+        // Walking `param.ty` also keeps `{ p: Point -> ... }`
         // annotations in sync on a type rename (mirrors the round-101
         // fn-signature handling in `collect_references_in_fn_signature`).
         ExprKind::Lambda { params, .. } => {

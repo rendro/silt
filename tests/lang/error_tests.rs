@@ -243,7 +243,7 @@ fn test_program_without_main() {
     // silent success or wrong-message regression is caught. The
     // previous body discarded `catch_unwind`'s result, so any behaviour
     // (including the program succeeding) satisfied the test.
-    let err = run_err("fn helper(x) = x + 1");
+    let err = run_err("fn helper(x) { x + 1 }");
     assert!(
         err.contains("undefined global: main"),
         "expected undefined-main runtime error, got: {err}"
@@ -257,7 +257,7 @@ fn test_pipe_into_wrong_arity() {
     // ("function 'no_args' expects 0 arguments, got 1").
     let err = run_err(
         r#"
-fn no_args() = 42
+fn no_args() { 42 }
 fn main() { 1 |> no_args() }
     "#,
     );
@@ -413,7 +413,7 @@ fn test_runtime_call_wrong_arity() {
     // check ("function 'add' expects 2 arguments, got 3").
     let err = run_err(
         r#"
-fn add(a, b) = a + b
+fn add(a, b) { a + b }
 fn main() { add(1, 2, 3) }
     "#,
     );

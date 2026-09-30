@@ -809,7 +809,7 @@ fn main() {
         // If a later statement uses the variable, the unresolved check skips it
         assert_no_errors(
             r#"
-fn identity(x) = x
+fn identity(x) { x }
 fn main() {
   let x = identity(42)
   x + 1
@@ -835,7 +835,7 @@ fn main() {
     #[test]
     fn test_type_annotations_resolved_after_check() {
         let input = r#"
-fn double(x) = x * 2
+fn double(x) { x * 2 }
 fn main() { double(5) }
         "#;
         let tokens = crate::lexer::Lexer::new(input)
@@ -872,7 +872,7 @@ fn main() { double(5) }
     fn test_generic_call_resolved_by_context() {
         assert_no_errors(
             r#"
-fn id(x) = x
+fn id(x) { x }
 fn main() {
   let n = id(42)
   n + 1

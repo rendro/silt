@@ -529,7 +529,7 @@ impl TypeChecker {
 
         // task.spawn_until: (Duration, () -> a) -> Handle(a)
         // Spawns a task that runs with a scoped wall-clock deadline.
-        // Equivalent to `task.spawn(fn() { task.deadline(dur, fn) })`
+        // Equivalent to `task.spawn { -> task.deadline(dur, fn) }`
         // but with one less closure wrapper.
         {
             let (a, av) = self.fresh_tv();

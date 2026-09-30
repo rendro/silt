@@ -19,7 +19,7 @@ pub(super) enum BindingSite {
     Let,
     /// A parameter of a named function or of a trait-impl method.
     FnParam,
-    /// A parameter of a closure, `{ pattern -> body }` or `fn(x) { body }`.
+    /// A parameter of a closure, `{ pattern -> body }`.
     ClosureParam,
 }
 
@@ -5958,8 +5958,8 @@ fn main() {
     fn test_pipe_chains_types() {
         assert_no_errors(
             r#"
-fn double(x) = x * 2
-fn add_one(x) = x + 1
+fn double(x) { x * 2 }
+fn add_one(x) { x + 1 }
 fn main() {
   5 |> double |> add_one
 }

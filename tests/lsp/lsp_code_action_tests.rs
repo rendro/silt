@@ -38,7 +38,7 @@ fn add_import_quickfix_offered_for_unimported_module() {
     let uri = "file:///tmp/silt_ca_import.silt";
     // `list.map(...)` without `import list` triggers the compiler's
     // "module 'list' is not imported" diagnostic.
-    let source = "fn main() { list.map([1], fn(x) { x }) }\n";
+    let source = "fn main() { list.map([1], { x -> x }) }\n";
     let diags = client.did_open_and_collect_diagnostics(uri, source);
     let import_diag = diag_matching(&diags, "not imported")
         .unwrap_or_else(|| panic!("expected 'not imported' diagnostic; got {diags:?}"))

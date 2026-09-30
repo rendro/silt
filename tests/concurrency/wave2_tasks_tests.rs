@@ -153,7 +153,7 @@ fn run_silt(
 fn repl_reports_an_unjoined_task_failure_when_the_session_ends() {
     let input = "import task\n\
                  import time\n\
-                 let h = task.spawn(fn() { 1 / 0 })\n\
+                 let h = task.spawn({ -> 1 / 0 })\n\
                  time.sleep(time.ms(300))\n\
                  marker_after_the_failure\n\
                  :quit\n";
@@ -190,7 +190,7 @@ fn repl_reports_an_unjoined_task_failure_when_the_session_ends() {
 fn repl_task_joined_by_a_later_input_is_not_reported() {
     let input = "import task\n\
                  import time\n\
-                 let h = task.spawn(fn() { 1 / 0 })\n\
+                 let h = task.spawn({ -> 1 / 0 })\n\
                  time.sleep(time.ms(300))\n\
                  task.join(h)\n\
                  :quit\n";

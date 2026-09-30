@@ -227,7 +227,7 @@ fn transitive_option_shaped_git_url_runs_nothing() {
         let app = ws.join("app");
         let inner = ws.join("inner");
         let evil = git_dep("evil", &injection_url(&marker));
-        write_package(&inner, "inner", &[evil], "lib.silt", "pub fn one() = 1\n");
+        write_package(&inner, "inner", &[evil], "lib.silt", "pub fn one() { 1 }\n");
         let path_dep = "inner = { path = \"../inner\" }".to_string();
         write_package(&app, "app", &[path_dep], "main.silt", "fn main() {}\n");
 
@@ -516,7 +516,13 @@ fn can_build_a_repository(ws: &Path) -> bool {
 /// `locallib`: one commit, on the branch `main`. Returns the commit id.
 #[cfg(unix)]
 fn create_locallib_repository(ws: &Path, repo: &Path) -> String {
-    write_package(repo, "locallib", &[], "lib.silt", "pub fn answer() = 42\n");
+    write_package(
+        repo,
+        "locallib",
+        &[],
+        "lib.silt",
+        "pub fn answer() { 42 }\n",
+    );
     git(ws, repo, &["init", "--quiet"]);
     // Name the branch explicitly rather than relying on the default
     // branch name or on `git init -b` (git 2.28+).

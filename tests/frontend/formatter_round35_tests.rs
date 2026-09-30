@@ -114,7 +114,7 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push(')');
         }
         ExprKind::Ascription(ex, ty) => {
-            out.push_str(&format!("Asc(ty={ty:?},"));
+            out.push_str(&format!("Asc(ty={:?},", ty.kind));
             expr_dbg(ex, out);
             out.push(')');
         }
@@ -136,7 +136,19 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push_str("])");
         }
         ExprKind::Block(stmts) => {
-            out.push_str(&format!("Block({stmts:?})"));
+            // Expression statements recurse so source positions stay out
+            // of the comparison (a function body is always a block).
+            out.push_str("Block([");
+            for (i, stmt) in stmts.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                match stmt {
+                    silt::ast::Stmt::Expr(e) => expr_dbg(e, out),
+                    other => out.push_str(&format!("{other:?}")),
+                }
+            }
+            out.push_str("])");
         }
         other => out.push_str(&format!("{other:?}")),
     }
@@ -194,7 +206,7 @@ fn test_round35_f1_block_comment_interp_round_trip() {
 fn test_round35_f2_range_containing_floatelse() {
     // `(a else b)..n` must keep parens. Otherwise `a else b..n` re-parses
     // as `FloatElse(a, Range(b, n))`.
-    let src = "fn main() = (1.0 / 2.0 else 0.0)..10\n";
+    let src = "fn main() { (1.0 / 2.0 else 0.0)..10 }\n";
     assert_ast_preserved(src);
 }
 
@@ -203,7 +215,7 @@ fn test_round35_f2_ascription_containing_floatelse() {
     // `(x else 0.0) as Int` must keep parens — Ascription bp (95) is
     // higher than FloatElse bp (10), so omitting parens reparses as
     // `FloatElse(x, Ascription(0.0, Int))`.
-    let src = "fn f(x) = (x else 0.0) as Int\n";
+    let src = "fn f(x) { (x else 0.0) as Int }\n";
     assert_ast_preserved(src);
 }
 
@@ -212,7 +224,7 @@ fn test_round35_f2_binary_containing_floatelse() {
     // `(x else 0.0) + 1.0` must keep parens — `+` (70) is tighter than
     // `else` (10), so `x else 0.0 + 1.0` reparses as
     // `FloatElse(x, Add(0.0, 1.0))`.
-    let src = "fn f(x) = (x else 0.0) + 1.0\n";
+    let src = "fn f(x) { (x else 0.0) + 1.0 }\n";
     assert_ast_preserved(src);
 }
 
@@ -220,7 +232,7 @@ fn test_round35_f2_binary_containing_floatelse() {
 fn test_round35_f2_questionmark_containing_floatelse() {
     // `(x else y)?` must keep parens — QuestionMark bp (110) is way
     // tighter than FloatElse (10).
-    let src = "fn f(x, y) = (x else y)?\n";
+    let src = "fn f(x, y) { (x else y)? }\n";
     assert_ast_preserved(src);
 }
 
@@ -228,7 +240,7 @@ fn test_round35_f2_questionmark_containing_floatelse() {
 fn test_round35_f2_binary_containing_range() {
     // `(a..n) + 1` — Add (70) is tighter than Range (60). Dropping parens
     // would re-parse as `Range(a, Add(n, 1))`.
-    let src = "fn f(a, n) = (a..n) + 1\n";
+    let src = "fn f(a, n) { (a..n) + 1 }\n";
     assert_ast_preserved(src);
 }
 
@@ -237,6 +249,6 @@ fn test_round35_f2_nested_floatelse_left() {
     // `(a else b) else c` — FloatElse is right-associative (10, 11).
     // Without parens on the left, `a else b else c` parses as
     // `FloatElse(a, FloatElse(b, c))`, flipping associativity.
-    let src = "fn f(a, b, c) = (a else b) else c\n";
+    let src = "fn f(a, b, c) { (a else b) else c }\n";
     assert_ast_preserved(src);
 }

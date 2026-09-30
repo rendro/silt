@@ -501,20 +501,15 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 /// `mod foo { ... }` declaration through `eval_expression`, which wraps
 /// it in `fn main()` and emits a confusing parse error.
 ///
-/// `fn` needs more than a prefix check: `fn NAME(...)` is a declaration,
-/// but `fn (x) { ... }` (and `fn(x) { ... }`) is an anonymous-fn
-/// *expression*. The parser distinguishes the two shapes token-wise,
-/// regardless of whitespace (see `parser::at_top_level_fn_start`), so a
-/// whitespace-sensitive `starts_with("fn ")` here mis-routed
-/// `fn (x) { x * 2 }(5)` to the declaration parser, which rejected a
-/// perfectly valid expression with "expected identifier, found (".
-/// `starts_with_named_fn` mirrors the parser's rule instead.
+/// `fn` is matched as a keyword, whatever follows it: `fn` only ever
+/// starts a declaration, so `fn\tfoo() {}` is one, and so is a malformed
+/// `fn (x)`, which the declaration parser then reports.
 ///
 /// Exposed at crate-root visibility for the integration test at
 /// `tests/cli/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
 pub fn is_declaration(input: &str) -> bool {
     let trimmed = input.trim();
-    starts_with_named_fn(trimmed)
+    starts_with_fn_keyword(trimmed)
         || trimmed.starts_with("let ")
         || trimmed.starts_with("type ")
         || trimmed.starts_with("trait ")
@@ -523,29 +518,15 @@ pub fn is_declaration(input: &str) -> bool {
         || trimmed.starts_with("pub ")
 }
 
-/// True iff `s` begins with the `fn` keyword followed — after optional
-/// whitespace — by an identifier, i.e. the `fn NAME(...)` declaration
-/// shape. Mirrors `parser::at_top_level_fn_start`: when `fn` is followed
-/// by `(` (with or without intervening whitespace) it starts an
-/// anonymous-fn expression, not a declaration.
-fn starts_with_named_fn(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix("fn") else {
-        return false;
-    };
-    // Keyword boundary: `fnord` is an identifier, not the `fn` keyword.
-    if rest
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_alphanumeric() || c == '_')
-    {
-        return false;
-    }
-    // Declaration iff the next non-whitespace char starts an identifier
-    // (the lexer's ident-start set: ASCII letter or `_`).
-    rest.trim_start()
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+/// True iff `s` begins with the `fn` keyword: `fn` not followed by an
+/// identifier character (`fnord` is an identifier).
+fn starts_with_fn_keyword(s: &str) -> bool {
+    s.strip_prefix("fn").is_some_and(|rest| {
+        !rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
 }
 
 /// Evaluate a single REPL input.  Declarations are compiled and loaded into
@@ -1507,33 +1488,6 @@ mod tests {
         assert!(is_declaration("pub fn foo() {}"));
     }
 
-    // Regression lock (round-101 BROKEN): `fn (` starts an anonymous-fn
-    // *expression*, not a declaration. The old whitespace-sensitive
-    // `starts_with("fn ")` heuristic routed `fn (x) { x * 2 }(5)` to the
-    // declaration parser, which rejected it with "expected identifier,
-    // found (" even though the identical input runs fine in file mode.
-    #[test]
-    fn is_declaration_rejects_anon_fn_expression() {
-        // Space between `fn` and `(` — the shape the old heuristic broke.
-        assert!(!is_declaration("fn (x) { x * 2 }"));
-        assert!(!is_declaration("fn (x) { x * 2 }(5)"));
-        // No space — must still be an expression (previously worked).
-        assert!(!is_declaration("fn(x) { x * 2 }"));
-        // Extra / exotic whitespace between `fn` and `(`.
-        assert!(!is_declaration("fn\t(x) { x }"));
-        assert!(!is_declaration("  fn   (x) { x }  "));
-        // Named fn with unusual whitespace before the name is still a
-        // declaration (mirrors parser::at_top_level_fn_start).
-        assert!(is_declaration("fn\tfoo() {}"));
-        // Identifier that merely starts with the letters `fn` is not the
-        // keyword.
-        assert!(!is_declaration("fnord"));
-        assert!(!is_declaration("fnord(42)"));
-        // Bare `fn` with nothing after it stays on the expression path
-        // (same routing as before this fix).
-        assert!(!is_declaration("fn"));
-    }
-
     // ── Multi-line input continuation ─────────────────────────────
     //
     // The REPL reads lines until `has_unclosed_delimiters` returns false.
@@ -1592,24 +1546,6 @@ mod tests {
         let mut ctx = ReplTypeContext::new();
         let value = eval_expression_value(&mut vm, &mut ctx, "true").unwrap();
         assert_eq!(format!("{value}"), "true");
-    }
-
-    // Round-101 BROKEN lock, execution half: an immediately-invoked
-    // anonymous fn written with a space after `fn` must evaluate through
-    // the persistent-VM expression path and produce its value. Pairs
-    // with `is_declaration_rejects_anon_fn_expression`, which locks the
-    // routing decision itself.
-    #[test]
-    fn eval_anon_fn_with_space_immediately_invoked() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        let input = "fn (x) { x * 2 }(5)";
-        assert!(
-            !is_declaration(input),
-            "`fn (` must be routed to the expression path"
-        );
-        let value = eval_expression_value(&mut vm, &mut ctx, input).unwrap();
-        assert_eq!(format!("{value}"), "10");
     }
 
     // ── repl_mode field-access lock ───────────────────────────────

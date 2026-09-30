@@ -1341,8 +1341,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("a/src")).unwrap();
         fs::create_dir_all(dir.join("b/src")).unwrap();
-        fs::write(dir.join("a/src/lib.silt"), b"pub fn f() = 1\n").unwrap();
-        fs::write(dir.join("b/src/lib.silt"), b"pub fn f() = 1\n").unwrap();
+        fs::write(dir.join("a/src/lib.silt"), b"pub fn f() { 1 }\n").unwrap();
+        fs::write(dir.join("b/src/lib.silt"), b"pub fn f() { 1 }\n").unwrap();
         // Cruft: lockfile and a non-silt file in src/ should not affect
         // the checksum.
         fs::write(dir.join("b/silt.lock"), b"# stale lockfile\n").unwrap();

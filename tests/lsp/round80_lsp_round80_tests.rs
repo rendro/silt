@@ -78,7 +78,7 @@ fn round80_g1_document_symbols_selection_range_is_identifier() {
     //
     // line 3: let x = 42
     //         identifier `x` at cols 4..5
-    let source = "fn add(a: Int, b: Int) -> Int = a + b\n\
+    let source = "fn add(a: Int, b: Int) -> Int { a + b }\n\
                   type Color { Red, Green, Blue }\n\
                   trait Show { fn show(self) -> String }\n\
                   let x = 42\n";
@@ -191,7 +191,7 @@ fn round80_l4_fn_type_preserved_for_unreferenced_params() {
 
     // line 0: fn ignore(a: Int, b: Int) -> Int = 42
     //         identifier `ignore` lives at cols 3..9
-    let source = "fn ignore(a: Int, b: Int) -> Int = 42\n\
+    let source = "fn ignore(a: Int, b: Int) -> Int { 42 }\n\
                   fn main() { ignore(1, 2) }\n";
     let uri = unique_uri("l4");
     client.did_open_and_wait(&uri, source);

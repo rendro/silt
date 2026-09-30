@@ -85,7 +85,7 @@ fn arithmetic_template_fn_can_be_bound_and_called_at_int() {
     // site would reject string concatenation via `plus("a", "b")`.
     // The status quo permits both.
     let source = r#"
-fn add(a, b) = a + b
+fn add(a, b) { a + b }
 
 fn main() {
   let plus = add

@@ -49,7 +49,7 @@ fn run_silt_ok(label: &str, src: &str) -> String {
 }
 
 /// End-to-end repro from the audit finding: a user-declared
-/// `trait Show for ExtFloat { fn show(self) -> String = "x" }` must
+/// `trait Show for ExtFloat { fn show(self) -> String { "x" } }` must
 /// dispatch on a `Type::ExtFloat` receiver and print `"x"`.
 #[test]
 fn user_trait_for_extfloat_dispatches_at_runtime() {
@@ -57,7 +57,7 @@ fn user_trait_for_extfloat_dispatches_at_runtime() {
         "user_show_for_extfloat",
         r#"
 trait Show { fn show(self) -> String }
-trait Show for ExtFloat { fn show(self) -> String = "x" }
+trait Show for ExtFloat { fn show(self) -> String { "x" } }
 fn main() {
   let x: ExtFloat = 1.0/1.0
   println(x.show())

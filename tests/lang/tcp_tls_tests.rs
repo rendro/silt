@@ -61,7 +61,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
         match tcp.accept_tls(listener, bad_cert, bad_key) {{
@@ -110,7 +110,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match bytes.from_hex("{cert_hex}") {{
           Ok(cert) -> match bytes.from_hex("{key_hex}") {{
             Ok(key) -> match tcp.accept_tls(listener, cert, key) {{

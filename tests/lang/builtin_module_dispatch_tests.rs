@@ -26,7 +26,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "option" => "option.is_some(Some(1))",
         "test" => "test.assert(true)",
         "channel" => "channel.new(1)",
-        "task" => "task.spawn(fn() { 1 })",
+        "task" => "task.spawn({ -> 1 })",
         "regex" => "regex.is_match(\"a+\", \"aa\")",
         "json" => "json.stringify(1)",
         "toml" => "toml.parse_map(\"a = 1\", Int)",

@@ -224,7 +224,7 @@ trait X {
 }
 type Foo { Foo }
 trait X for Foo {
-  fn m(self) -> Int = 1
+  fn m(self) -> Int { 1 }
 }
 fn main() { 0 }
 ";

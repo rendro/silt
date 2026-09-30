@@ -159,7 +159,7 @@ fn fragment_wrapped_in_closure(src: &str) -> String {
         }
     }
     format!(
-        "{}\n\nfn main() {{\n  let _doc_fragment = fn() {{\n{}\n    Ok(())\n  }}\n}}\n",
+        "{}\n\nfn main() {{\n  let _doc_fragment = {{ ->\n{}\n    Ok(())\n  }}\n}}\n",
         imports.join("\n"),
         body_lines.join("\n")
     )

@@ -41,7 +41,7 @@ fn write_broken_import_fixture() -> PathBuf {
     fs::create_dir_all(&tmp).expect("create temp fixture dir");
     fs::write(
         tmp.join("badlex.silt"),
-        "pub fn hi() = 1\n@@@\npub fn bye() = 2\n",
+        "pub fn hi() { 1 }\n@@@\npub fn bye() { 2 }\n",
     )
     .expect("write badlex.silt");
     let main_src = "import badlex\n\nfn main() {\n  badlex.hi()\n}\n";

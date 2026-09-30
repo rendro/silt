@@ -60,7 +60,7 @@ import time
 
 fn main() {
   let handles = 1..16
-    |> list.map { _ -> task.spawn(fn() { time.sleep(time.ms(500)) }) }
+    |> list.map { _ -> task.spawn({ -> time.sleep(time.ms(500)) }) }
   handles |> list.each { h -> task.join(h) }
   println("done")
 }

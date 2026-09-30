@@ -78,7 +78,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(conn) -> {{
             match tcp.read(conn, 1024) {{
@@ -132,7 +132,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(conn) -> {{
             -- Send 8 bytes in two writes so read_exact has to assemble.
@@ -183,7 +183,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
@@ -230,7 +230,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(c) -> tcp.close(c)
           Err(_) -> ()

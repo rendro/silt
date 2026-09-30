@@ -59,7 +59,7 @@ fn silt_bare(cwd: &Path, subcommand: &str) -> std::process::Output {
         .expect("failed to spawn silt binary")
 }
 
-const LIB_SRC: &str = "pub fn greet() = \"hello from lib\"\n";
+const LIB_SRC: &str = "pub fn greet() { \"hello from lib\" }\n";
 const MAIN_SRC: &str = "fn main() {\n  println(\"hello from main\")\n}\n";
 
 // ── Lib-only package ────────────────────────────────────────────────

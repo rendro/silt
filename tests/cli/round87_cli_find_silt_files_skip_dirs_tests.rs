@@ -44,7 +44,7 @@ fn build_fixture() -> PathBuf {
     // Mis-formatted body: trailing blank lines that `silt fmt` will
     // flag as "not formatted". Any file the walker visits will produce
     // a stderr line we can grep for.
-    let mis_formatted = "fn main() = 1\n\n\n\n";
+    let mis_formatted = "fn main() { 1 }\n\n\n\n";
 
     // Files that SHOULD be visited.
     fs::write(tmp.join("keepme.silt"), mis_formatted).expect("write keepme.silt");

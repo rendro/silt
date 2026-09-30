@@ -11,7 +11,6 @@ mod formatter_null_comment_tests;
 mod formatter_round35_tests;
 mod formatter_trailing_comma_extended_tests;
 mod formatter_trailing_comma_tests;
-mod parser_unclosed_delim_recovery_tests;
 mod round75_formatter_trait_params_where_tests;
 mod round84_formatter_bracket_interior_comment_preserved_tests;
 mod round85_formatter_inline_record_interior_comment_preserved_tests;

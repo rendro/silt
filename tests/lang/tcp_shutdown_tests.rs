@@ -87,14 +87,14 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(conn) -> {{
             -- Spawn a sibling that closes `conn` after a brief delay.
             -- Before the fix: this close is a no-op on the fd, so the
             -- read below hangs forever. After the fix: shutdown(Both)
             -- on the shared fd wakes the read with EOF (0 bytes).
-            let closer = task.spawn(fn() {{
+            let closer = task.spawn({{ ->
               time.sleep(time.ms(50))
               tcp.close(conn)
             }})
@@ -170,7 +170,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
@@ -215,7 +215,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         match tcp.accept(listener) {{
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
@@ -273,7 +273,7 @@ import time
 fn main() {{
   match tcp.listen("{addr}") {{
     Ok(listener) -> {{
-      let server = task.spawn(fn() {{
+      let server = task.spawn({{ ->
         let bad_cert = bytes.from_string("-----BEGIN CERTIFICATE-----\nnotacert\n-----END CERTIFICATE-----\n")
         let bad_key = bytes.from_string("-----BEGIN PRIVATE KEY-----\nnotakey\n-----END PRIVATE KEY-----\n")
         match tcp.accept_tls(listener, bad_cert, bad_key) {{

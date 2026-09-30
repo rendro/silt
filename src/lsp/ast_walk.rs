@@ -455,9 +455,8 @@ fn check_fn_decl_name(
     if fn_start >= source.len() {
         return;
     }
-    // Find the param-list `(` after `fn`. Bare `fn name = ...` (no params)
-    // would lack the `(`; in that case scan to the next `=` or end of
-    // line as a fallback.
+    // Find the param-list `(` after `fn`. A malformed header without
+    // one falls back to scanning to the next `=` or end of line.
     let after = &source[fn_start.min(source.len())..];
     let scan_end = after
         .find('(')

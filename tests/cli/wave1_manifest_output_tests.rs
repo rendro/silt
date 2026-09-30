@@ -254,7 +254,7 @@ fn write_app(dir: &Path, manifest_text: &str) {
 
 /// Write a valid library package named `name` at `dir`.
 fn write_lib(dir: &Path, name: &str) {
-    write_package(dir, &manifest(name, ""), "lib.silt", "pub fn one() = 1\n");
+    write_package(dir, &manifest(name, ""), "lib.silt", "pub fn one() { 1 }\n");
 }
 
 // ── Assertions ────────────────────────────────────────────────────────
@@ -570,7 +570,7 @@ fn path_dependency_without_a_manifest_is_escaped() {
 fn path_of_a_dependency_manifest_is_escaped() {
     let ws = fresh_workspace("dep_manifest_path");
     let text = "[package]\nname = \"dep\"\nversion = \"not-a-version\"\n";
-    write_package(&ws.join(HOSTILE), text, "lib.silt", "pub fn one() = 1\n");
+    write_package(&ws.join(HOSTILE), text, "lib.silt", "pub fn one() { 1 }\n");
     let line = format!("dep = {{ path = {} }}", toml_str(&format!("../{HOSTILE}")));
     let app = ws.join("app");
     write_app(&app, &manifest("app", &dependencies(&line)));
@@ -602,14 +602,14 @@ fn value_in_a_transitive_manifest_is_escaped() {
             &ws.join("inner"),
             &inner_text,
             "lib.silt",
-            "pub fn one() = 1\n",
+            "pub fn one() { 1 }\n",
         );
         let outer_deps = dependencies("inner = { path = \"../inner\" }");
         write_package(
             &ws.join("outer"),
             &manifest("outer", &outer_deps),
             "lib.silt",
-            "pub fn two() = 2\n",
+            "pub fn two() { 2 }\n",
         );
         let app = ws.join("app");
         let app_deps = dependencies("outer = { path = \"../outer\" }");
@@ -1412,7 +1412,11 @@ fn repository_in_a_directory_with_punctuation_resolves() {
 
         let repo = ws.join(dir_name);
         write_lib(&repo, "locallib");
-        fs::write(repo.join("src").join("lib.silt"), "pub fn answer() = 42\n").unwrap();
+        fs::write(
+            repo.join("src").join("lib.silt"),
+            "pub fn answer() { 42 }\n",
+        )
+        .unwrap();
         git(&ws, &repo, &["init", "--quiet"]);
         git(&ws, &repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(&ws, &repo, &["add", "."]);
@@ -1475,7 +1479,12 @@ fn version_with_a_malformed_build_part_is_rejected() {
             "[package]\nname = \"dep\"\nversion = {}\n",
             toml_str(&version)
         );
-        write_package(&ws.join("dep"), &dep_text, "lib.silt", "pub fn one() = 1\n");
+        write_package(
+            &ws.join("dep"),
+            &dep_text,
+            "lib.silt",
+            "pub fn one() { 1 }\n",
+        );
         let app = ws.join("app");
         let deps = dependencies("dep = { path = \"../dep\" }");
         write_app(&app, &manifest("app", &deps));
@@ -1514,7 +1523,12 @@ fn version_with_a_build_part_is_locked_and_read_back() {
     let ws = fresh_workspace("build_accepted");
     let version = "1.0.0-rc.1+build.5-x";
     let dep_text = format!("[package]\nname = \"dep\"\nversion = \"{version}\"\n");
-    write_package(&ws.join("dep"), &dep_text, "lib.silt", "pub fn one() = 1\n");
+    write_package(
+        &ws.join("dep"),
+        &dep_text,
+        "lib.silt",
+        "pub fn one() { 1 }\n",
+    );
     let app = ws.join("app");
     let deps = dependencies("dep = { path = \"../dep\" }");
     write_app(&app, &manifest("app", &deps));

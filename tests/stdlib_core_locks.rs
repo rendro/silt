@@ -218,7 +218,7 @@ fn test_env_set_from_spawned_task_rejected() {
 import env
 import task
 fn main() {
-    let h = task.spawn(fn() {
+    let h = task.spawn({ ->
         env.set("SILT_LOCK_TEST_SPAWN", "nope")
     })
     task.join(h)

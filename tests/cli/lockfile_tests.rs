@@ -72,7 +72,7 @@ fn test_lockfile_generated_on_first_run() {
     let ws = fresh_workspace("first_run");
     let app = ws.join("app");
     let dep = ws.join("calc");
-    write_lib_package(&dep, "calc", &[], "pub fn add(a, b) = a + b\n");
+    write_lib_package(&dep, "calc", &[], "pub fn add(a, b) { a + b }\n");
     write_package(
         &app,
         "the_app",
@@ -117,7 +117,7 @@ fn test_lockfile_unchanged_on_second_run() {
     let ws = fresh_workspace("second_run");
     let app = ws.join("app");
     let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn id(x) = x\n");
+    write_lib_package(&dep, "dep", &[], "pub fn id(x) { x }\n");
     write_package(
         &app,
         "stable_app",
@@ -156,8 +156,8 @@ fn test_lockfile_regenerates_when_manifest_changes() {
     let app = ws.join("app");
     let calc = ws.join("calc");
     let extra = ws.join("extra");
-    write_lib_package(&calc, "calc", &[], "pub fn one() = 1\n");
-    write_lib_package(&extra, "extra", &[], "pub fn two() = 2\n");
+    write_lib_package(&calc, "calc", &[], "pub fn one() { 1 }\n");
+    write_lib_package(&extra, "extra", &[], "pub fn two() { 2 }\n");
     write_package(
         &app,
         "growing_app",
@@ -214,7 +214,7 @@ fn test_lockfile_regenerates_when_dep_content_changes() {
     let ws = fresh_workspace("dep_change");
     let app = ws.join("app");
     let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn answer() = 41\n");
+    write_lib_package(&dep, "dep", &[], "pub fn answer() { 41 }\n");
     write_package(
         &app,
         "cs_app",
@@ -230,7 +230,7 @@ fn test_lockfile_regenerates_when_dep_content_changes() {
 
     // Mutate the dep's source — the auto-regenerate logic doesn't pick
     // this up (it only watches the *manifest*) but `silt update` does.
-    fs::write(dep.join("src/lib.silt"), "pub fn answer() = 42\n").unwrap();
+    fs::write(dep.join("src/lib.silt"), "pub fn answer() { 42 }\n").unwrap();
 
     let updated = silt_cmd().arg("update").current_dir(&app).output().unwrap();
     assert!(updated.status.success(), "silt update failed: {updated:?}");
@@ -246,7 +246,7 @@ fn test_silt_update_works() {
     let ws = fresh_workspace("plain_update");
     let app = ws.join("app");
     let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn k() = 5\n");
+    write_lib_package(&dep, "dep", &[], "pub fn k() { 5 }\n");
     write_package(
         &app,
         "plain_update_app",
@@ -273,7 +273,7 @@ fn test_silt_update_named_dep_works() {
     let ws = fresh_workspace("named_update");
     let app = ws.join("app");
     let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn k() = 5\n");
+    write_lib_package(&dep, "dep", &[], "pub fn k() { 5 }\n");
     write_package(
         &app,
         "named_update_app",
@@ -388,12 +388,12 @@ fn test_lockfile_transitive_deps_locked() {
     let c = ws.join("c");
     let b = ws.join("b");
     let app = ws.join("app");
-    write_lib_package(&c, "c", &[], "pub fn z() = 100\n");
+    write_lib_package(&c, "c", &[], "pub fn z() { 100 }\n");
     write_lib_package(
         &b,
         "b",
         &[r#"c = { path = "../c" }"#.to_string()],
-        "import c\npub fn y() = c.z() + 1\n",
+        "import c\npub fn y() { c.z() + 1 }\n",
     );
     write_package(
         &app,
@@ -431,8 +431,8 @@ fn test_lockfile_format_stable() {
         let app = ws.join("app");
         let alpha = ws.join("alpha");
         let zeta = ws.join("zeta");
-        write_lib_package(&alpha, "alpha", &[], "pub fn a() = 1\n");
-        write_lib_package(&zeta, "zeta", &[], "pub fn z() = 2\n");
+        write_lib_package(&alpha, "alpha", &[], "pub fn a() { 1 }\n");
+        write_lib_package(&zeta, "zeta", &[], "pub fn z() { 2 }\n");
         write_package(
             &app,
             "stable_app",
@@ -484,7 +484,7 @@ fn test_silt_fmt_does_not_create_lockfile() {
     let ws = fresh_workspace("fmt_no_lock");
     let app = ws.join("app");
     let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn x() = 1\n");
+    write_lib_package(&dep, "dep", &[], "pub fn x() { 1 }\n");
     write_package(
         &app,
         "fmt_app",
@@ -711,7 +711,7 @@ fn make_local_git_silt_package(workspace: &Path) -> (String, String) {
     )
     .unwrap();
     fs::create_dir_all(staging.join("src")).unwrap();
-    fs::write(staging.join("src/lib.silt"), "pub fn answer() = 42\n").unwrap();
+    fs::write(staging.join("src/lib.silt"), "pub fn answer() { 42 }\n").unwrap();
 
     // Init the bare repo we'll publish to. Use `master` as the initial
     // branch — older `git init` defaults to it; `--initial-branch=main`

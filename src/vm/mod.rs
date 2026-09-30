@@ -1113,7 +1113,7 @@ impl Vm {
     /// (src/typechecker/inference.rs) skips operands whose type is still
     /// a `Var`, on the documented promise that the VM catches the
     /// violation at the execution site. Round 97 made the CONCRETE
-    /// container forms (`[fn(x) { x }] < [fn(x) { x }]`) a compile error
+    /// container forms (`[{ x -> x }] < [{ x -> x }]`) a compile error
     /// (`operand_builtin_trait_violation` recurses into element types),
     /// but a polymorphic wrapper (`fn lt(a: x, b: x) -> Bool { a < b }`
     /// called with lists of lambdas) still launders a container of

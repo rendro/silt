@@ -29,7 +29,7 @@ fn is_declaration_recognizes_mod_prefix() {
          routes it through eval_declaration (not eval_expression wrapping \
          it in `fn main()`)"
     );
-    assert!(is_declaration("mod bar { pub fn x() = 1 }"));
+    assert!(is_declaration("mod bar { pub fn x() { 1 } }"));
     // Leading whitespace must not defeat the prefix check — REPL users
     // commonly paste indented code.
     assert!(is_declaration("   mod indented {}"));
@@ -71,20 +71,12 @@ fn is_declaration_rejects_expressions_and_near_misses() {
 }
 
 #[test]
-fn is_declaration_rejects_anon_fn_expressions() {
-    // Round-101 BROKEN lock: `fn (` (with or without whitespace after
-    // the keyword) starts an anonymous-fn *expression*, never a
-    // declaration. The old whitespace-sensitive `starts_with("fn ")`
-    // heuristic routed `fn (x) { x * 2 }(5)` to the declaration parser,
-    // which rejected the valid expression with
-    // "expected identifier, found (". `is_declaration` must mirror the
-    // token-based rule in `parser::at_top_level_fn_start`: declaration
-    // iff `fn` is followed by an identifier.
-    assert!(!is_declaration("fn (x) { x * 2 }"));
-    assert!(!is_declaration("fn (x) { x * 2 }(5)"));
-    assert!(!is_declaration("fn(x) { x * 2 }"));
-    assert!(!is_declaration("fn\t(x) { x }"));
-    // Named fns remain declarations even with unusual whitespace.
+fn is_declaration_takes_fn_as_a_keyword_whatever_follows() {
+    // `fn` only ever starts a declaration, so it is one with any
+    // whitespace before the name, and a malformed header such as
+    // `fn (x)` goes to the declaration parser, which reports it.
     assert!(is_declaration("fn\tfoo() {}"));
     assert!(is_declaration("  fn   spaced() {}"));
+    assert!(is_declaration("fn (x) { x }"));
+    assert!(!is_declaration("{ x -> x * 2 }(5)"));
 }

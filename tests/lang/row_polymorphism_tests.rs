@@ -10,7 +10,7 @@ fn anon_record_round_trip_format() {
     use silt::lexer::Lexer;
     use silt::parser::Parser;
 
-    let source = r#"fn id(p: { name: String, ...r }) -> String = p.name
+    let source = r#"fn id(p: { name: String, ...r }) -> String { p.name }
 
 fn main() {
     let q = { name: "A", age: 30 }
