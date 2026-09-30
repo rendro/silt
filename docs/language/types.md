@@ -165,7 +165,7 @@ which can also appear in any annotation:
 
 ```silt
 fn full_name(p: {first: String, last: String}) -> String {
-  p.first + " " + p.last
+  "{p.first} {p.last}"
 }
 ```
 

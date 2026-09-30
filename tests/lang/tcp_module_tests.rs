@@ -86,10 +86,10 @@ fn main() {{
                 let _ = tcp.write(conn, buf)
                 tcp.close(conn)
               }}
-              Err(e) -> println("server read err: " + e)
+              Err(e) -> println("server read err: {{e}}")
             }}
           }}
-          Err(e) -> println("accept err: " + e)
+          Err(e) -> println("accept err: {{e}}")
         }}
       }})
       time.sleep(time.ms(50))

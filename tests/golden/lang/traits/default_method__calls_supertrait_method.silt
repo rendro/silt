@@ -3,7 +3,7 @@ trait Sup {
 }
 
 trait Sub: Sup {
-  fn sub_method(self) -> String { "sub-of-" + self.sup_method() }
+  fn sub_method(self) -> String { "sub-of-{self.sup_method()}" }
 }
 
 type Thing { v: Int }

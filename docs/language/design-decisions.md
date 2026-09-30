@@ -6,12 +6,11 @@ order: 10
 
 # Design Trade-offs
 
-## Interpolation Preferred for String Building
+## Interpolation for String Building
 
-String `+` is supported (`p.first + " " + p.last`), but interpolation
-`"{a}{b}"` is the preferred inline form: it reads more naturally for the
-common case and keeps multi-fragment messages punctuation-light. For
-pipelines, use `string.join`.
+`+` is arithmetic only. Strings are built with interpolation
+(`"{p.first} {p.last}"`), which reads naturally and keeps multi-fragment
+messages punctuation-light. For a list of strings, use `string.join`.
 
 ## Homogeneous Maps
 

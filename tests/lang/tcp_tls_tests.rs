@@ -115,11 +115,11 @@ fn main() {{
           Ok(cert) -> match bytes.from_hex("{key_hex}") {{
             Ok(key) -> match tcp.accept_tls(listener, cert, key) {{
               Ok(_) -> "ok"
-              Err(e) -> "handshake-failed:" + e.message()
+              Err(e) -> "handshake-failed:{{e.message()}}"
             }}
-            Err(e) -> "key-parse:" + e.message()
+            Err(e) -> "key-parse:{{e.message()}}"
           }}
-          Err(e) -> "cert-parse:" + e.message()
+          Err(e) -> "cert-parse:{{e.message()}}"
         }}
       }})
       time.sleep(time.ms(50))

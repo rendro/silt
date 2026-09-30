@@ -103,12 +103,12 @@ fn main() {{
                 0 -> "eof"
                 _ -> "unexpected-data"
               }}
-              Err(e) -> "read-err:" + e
+              Err(e) -> "read-err:{{e}}"
             }}
             task.join(closer)
             r
           }}
-          Err(e) -> "accept-err:" + e
+          Err(e) -> "accept-err:{{e}}"
         }}
       }})
       time.sleep(time.ms(50))
@@ -120,10 +120,10 @@ fn main() {{
           tcp.close(client)
           r
         }}
-        Err(e) -> "connect-err:" + e
+        Err(e) -> "connect-err:{{e}}"
       }}
     }}
-    Err(e) -> "listen-err:" + e
+    Err(e) -> "listen-err:{{e}}"
   }}
 }}
 "#
@@ -187,10 +187,10 @@ fn main() {{
           task.join(server)
           r
         }}
-        Err(e) -> "connect-err:" + e
+        Err(e) -> "connect-err:{{e}}"
       }}
     }}
-    Err(e) -> "listen-err:" + e
+    Err(e) -> "listen-err:{{e}}"
   }}
 }}
 "#
@@ -229,10 +229,10 @@ fn main() {{
           task.join(server)
           "ok"
         }}
-        Err(e) -> "connect-err:" + e
+        Err(e) -> "connect-err:{{e}}"
       }}
     }}
-    Err(e) -> "listen-err:" + e
+    Err(e) -> "listen-err:{{e}}"
   }}
 }}
 "#
@@ -287,10 +287,10 @@ fn main() {{
           tcp.close(conn)
           task.join(server)
         }}
-        Err(e) -> "connect-err:" + e
+        Err(e) -> "connect-err:{{e}}"
       }}
     }}
-    Err(e) -> "listen-err:" + e
+    Err(e) -> "listen-err:{{e}}"
   }}
 }}
 "#

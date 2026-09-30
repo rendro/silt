@@ -529,7 +529,7 @@ fn test_triple_string_dashes_variants_idempotent() {
         "fn main() { \"\"\"foo--bar\"\"\" }\n",
         // Two adjacent triple-quoted strings on the same line, one with
         // dashes inside.
-        "fn main() { \"\"\"--\"\"\" + \"\"\"x\"\"\" }\n",
+        "fn main() { (\"\"\"--\"\"\", \"\"\"x\"\"\") }\n",
         // Triple-quoted string in match-arm body with dashes inside.
         "fn main() {\n  match x {\n    Foo -> \"\"\"a--b\"\"\"\n    Bar -> 0\n  }\n}\n",
         // 5-quote opener (one literal `\"` inside, then `--`, then close).

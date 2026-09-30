@@ -235,12 +235,12 @@ fn main() {{
         match tcp.read(s, 1024) {{
           Ok(_) -> "unexpected-ok"
           Err(TcpTimeout) -> "tcp-timeout"
-          Err(other) -> "other:" + other.message()
+          Err(other) -> "other:{{other.message()}}"
         }}
       }})
       println(task.join(outcome))
     }}
-    Err(e) -> println("connect-err:" + e.message())
+    Err(e) -> println("connect-err:{{e.message()}}")
   }}
 }}
 "#

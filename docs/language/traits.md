@@ -163,7 +163,7 @@ specialises per impl:
 ```silt
 trait Describable {
   fn name(self) -> String                              -- abstract
-  fn greet(self) -> String { "hi, " + self.name() }    -- default uses name()
+  fn greet(self) -> String { "hi, {self.name()}" }     -- default uses name()
 }
 
 type Person { who: String }
