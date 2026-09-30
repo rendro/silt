@@ -4,4 +4,4 @@
 -- stderr-contains: ^
 -- stderr-contains: type Empty
 type Empty {}
-fn main() = ()
+fn main() { () }

@@ -70,9 +70,9 @@ fn main() {
   let results_2 = channel.new(10)
   -- Spawn 3 workers: 2 sending to results_1, 1 sending to results_2
   -- This lets us demonstrate channel.select with wildcard matching
-  let w1 = task.spawn {  -> worker(1, jobs, results_1) }
-  let w2 = task.spawn {  -> worker(2, jobs, results_1) }
-  let w3 = task.spawn {  -> worker(3, jobs, results_2) }
+  let w1 = task.spawn { -> worker(1, jobs, results_1) }
+  let w2 = task.spawn { -> worker(2, jobs, results_1) }
+  let w3 = task.spawn { -> worker(3, jobs, results_2) }
   -- Send all file paths to the jobs channel
   file_paths
   |> list.each { path -> channel.send(jobs, path) }

@@ -2,7 +2,7 @@ import list
 -- `?` inside a closure passed to list.map returns from the closure, not
 -- from the enclosing function.
 fn try_map() -> Result(List(Result(Int, String)), String) {
-  Ok(list.map([Ok(1), Ok(2), Ok(3)], fn(x) {
+  Ok(list.map([Ok(1), Ok(2), Ok(3)], { x ->
     let v = x?
     Ok(v * 10)
   }))

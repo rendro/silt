@@ -75,7 +75,7 @@ fn swap(pair: (a, b)) -> (b, a) {
 }
 
 fn compose(f: Fn(b) -> c, g: Fn(a) -> b) -> Fn(a) -> c {
-  fn(x) { f(g(x)) }
+  { x -> f(g(x)) }
 }
 ```
 
@@ -304,7 +304,7 @@ the first argument, rewrite as a lambda:
 
 ```silt
 -- Instead of trying to pipe into the second slot, use a lambda:
-value |> fn(v) { combine(a, v, c) }
+value |> { v -> combine(a, v, c) }
 ```
 
 Silt deliberately does not provide a placeholder marker (e.g. `_`) for

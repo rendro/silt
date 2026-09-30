@@ -10,7 +10,7 @@ fn sum_with_base(base, n) {
 }
 
 fn make_summer(base) {
-  fn(n) { sum_with_base(base, n) }
+  { n -> sum_with_base(base, n) }
 }
 
 fn program() {

@@ -14,4 +14,4 @@ fn main() {
   }, 9]
   println("{shown} {both}")
 }
-fn string_of(n: Int) -> String = "{n}"
+fn string_of(n: Int) -> String { "{n}" }

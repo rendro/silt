@@ -2,6 +2,6 @@
 -- exit: 0
 -- stderr-not-contains: error
 trait Display for a {
-  fn display(self) -> String = "?"
+  fn display(self) -> String { "?" }
 }
 fn main() { }

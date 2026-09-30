@@ -6,7 +6,7 @@
 import task
 import time
 fn main() {
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     time.sleep(time.ms(3000))
     let zero = 0
     10 / zero

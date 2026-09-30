@@ -1,7 +1,7 @@
 import task
 import time
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     time.sleep(time.ms(0))
     println("zero-ok")
   })

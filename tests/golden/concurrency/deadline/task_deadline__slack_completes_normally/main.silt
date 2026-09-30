@@ -4,7 +4,7 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.seconds(60), fn() {
+  let outcome = task.deadline(time.seconds(60), { ->
     io.read_file("fixture.txt")
   })
   match outcome {

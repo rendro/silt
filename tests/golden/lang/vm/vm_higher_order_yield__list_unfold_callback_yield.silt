@@ -3,8 +3,8 @@ import task
 import io
 import list
 fn main() {
-  let h = task.spawn(fn() {
-    list.unfold(0, fn(s) {
+  let h = task.spawn({ ->
+    list.unfold(0, { s ->
       let _ = io.read_file("vm_higher_order_yield__list_unfold_callback_yield.silt")
       match s < 3 {
         true -> Some((s * 10, s + 1)),

@@ -3,9 +3,9 @@ import task
 import io
 import stream
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let s = stream.from_list([1, 2, 3])
-    stream.fold(s, 0, fn(acc, x) {
+    stream.fold(s, 0, { acc, x ->
       let _ = io.read_file("vm_higher_order_yield__stream_fold_callback_yield.silt")
       acc + x
     })

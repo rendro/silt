@@ -2,8 +2,8 @@
 -- add3(10) = 13, mul4(10) = 40 => 53
 import io
 fn make_ops(a, b) {
-  let adder = fn(x) { x + a }
-  let muler = fn(x) { x * b }
+  let adder = { x -> x + a }
+  let muler = { x -> x * b }
   (adder, muler)
 }
 

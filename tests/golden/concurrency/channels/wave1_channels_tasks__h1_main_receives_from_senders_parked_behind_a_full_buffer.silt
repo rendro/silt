@@ -11,7 +11,7 @@ import list
 fn main() {
   let ch = channel.new(2)
   let senders = [1, 2, 3, 4, 5, 6] |> list.map { i ->
-    task.spawn(fn() { channel.send(ch, i) })
+    task.spawn({ -> channel.send(ch, i) })
   }
   time.sleep(time.ms(200))
   loop n = 0 {

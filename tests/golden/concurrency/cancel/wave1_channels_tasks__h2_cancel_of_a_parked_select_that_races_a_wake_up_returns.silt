@@ -20,9 +20,9 @@ fn go(i, n) {
     true -> {
       let a = channel.new(1)
       let b = channel.new(1)
-      let t = task.spawn(fn() { channel.select([Recv(a), Recv(b)]) })
+      let t = task.spawn({ -> channel.select([Recv(a), Recv(b)]) })
       time.sleep(time.ms(2))
-      let s = task.spawn(fn() { channel.try_send(b, i) })
+      let s = task.spawn({ -> channel.try_send(b, i) })
       let _ = spin(i % 30)
       task.cancel(t)
       let _ = task.join(s)

@@ -6,7 +6,7 @@ trait Same {
   fn same(self) -> Int
 }
 trait Same for Int {
-  fn same(self) -> Int = self
+  fn same(self) -> Int { self }
 }
 fn main() {
   let x = 7

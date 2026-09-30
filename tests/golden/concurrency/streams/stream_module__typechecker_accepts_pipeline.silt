@@ -3,8 +3,8 @@
 import stream
 fn main() {
   let n = stream.from_range(1, 10)
-    |> stream.map(fn(x) { x * 2 })
-    |> stream.filter(fn(x) { x > 5 })
-    |> stream.fold(0, fn(acc, x) { acc + x })
+    |> stream.map({ x -> x * 2 })
+    |> stream.filter({ x -> x > 5 })
+    |> stream.fold(0, { acc, x -> acc + x })
   let _ = n + 1
 }

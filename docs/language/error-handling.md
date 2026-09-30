@@ -217,12 +217,12 @@ fn get_or_die(opt) {
 ## Result and Option Utilities
 
 ```silt
-result.map_ok(Ok(1), fn(x) { x + 1 })        -- Ok(2)
-result.flat_map(Ok(1), fn(x) { Ok(x + 1) })   -- Ok(2)
+result.map_ok(Ok(1), { x -> x + 1 })        -- Ok(2)
+result.flat_map(Ok(1), { x -> Ok(x + 1) })   -- Ok(2)
 result.unwrap_or(Err("x"), 0)                  -- 0
 
-option.map(Some(1), fn(x) { x + 1 })          -- Some(2)
-option.flat_map(Some(1), fn(x) { Some(x + 1) })  -- Some(2)
+option.map(Some(1), { x -> x + 1 })          -- Some(2)
+option.flat_map(Some(1), { x -> Some(x + 1) })  -- Some(2)
 option.unwrap_or(None, 0)                      -- 0
 ```
 

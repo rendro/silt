@@ -6,11 +6,11 @@ fn program() {
   let closures = loop i = 0, acc = [] {
     match i >= 4 {
       true -> acc
-      _ -> loop(i + 1, list.append(acc, fn() { i }))
+      _ -> loop(i + 1, list.append(acc, { -> i }))
     }
   }
   -- Call each closure and collect results
-  closures |> list.map(fn(f) { f() })
+  closures |> list.map({ f -> f() })
 }
 
 fn main() {

@@ -4,6 +4,6 @@
 -- stderr-contains: Display
 fn show(x: a) -> String where a: Display { "{x}" }
 fn main() {
-  let f = fn() { 42 }
+  let f = { -> 42 }
   println(show(f))
 }

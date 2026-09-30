@@ -4,11 +4,11 @@
 import map
 
 trait Marked { fn m(self) -> Int }
-trait Marked for Int { fn m(self) -> Int = self }
+trait Marked for Int { fn m(self) -> Int { self } }
 
 trait Keyed { fn total(self) -> Int }
 trait Keyed for Map(k, v) where k: Marked {
-  fn total(self) -> Int = map.length(self)
+  fn total(self) -> Int { map.length(self) }
 }
 
 fn go(x: b) -> Int where b: Keyed { x.total() }

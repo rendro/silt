@@ -5,7 +5,7 @@ import task
 
 fn main() {
   let _ = io.write_file("async.txt", "hello async")
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     io.read_file("async.txt")
   })
   println(io.inspect(task.join(h)))

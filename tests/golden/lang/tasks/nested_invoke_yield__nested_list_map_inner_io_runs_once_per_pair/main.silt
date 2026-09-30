@@ -4,11 +4,11 @@ import io
 import list
 
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let outer = [10, 20]
     let inner = [1, 2, 3]
-    let _ = list.map(outer, fn(o) {
-      list.map(inner, fn(i) {
+    let _ = list.map(outer, { o ->
+      list.map(inner, { i ->
         let _ = io.read_file("data.txt")
         println("pair")
         o + i

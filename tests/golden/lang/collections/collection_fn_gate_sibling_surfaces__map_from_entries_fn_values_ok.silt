@@ -1,6 +1,6 @@
 import map
 fn main() {
-  let f = fn(y){ y + 1 }
+  let f = { y -> y + 1 }
   let m = map.from_entries([(1, f)])
   let got = map.get(m, 1)
   match got {

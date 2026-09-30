@@ -1,4 +1,4 @@
 trait Showable { fn show(self) -> String }
-trait Showable for Int { fn show(self) -> String = "int" }
-fn show(x) = x + 1
+trait Showable for Int { fn show(self) -> String { "int" } }
+fn show(x) { x + 1 }
 fn main() { println((5).show()) }

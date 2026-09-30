@@ -48,10 +48,10 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let w1 = task.spawn(fn() {
+  let w1 = task.spawn({ ->
     channel.each(ch) { msg -> println("w1: {msg}") }
   })
-  let w2 = task.spawn(fn() {
+  let w2 = task.spawn({ ->
     channel.each(ch) { msg -> println("w2: {msg}") }
   })
 
@@ -98,7 +98,7 @@ import json
 type Todo { id: Int, title: String, done: Bool }
 
 fn main() {
-  http.serve(8080, fn(req) {
+  http.serve(8080, { req ->
     match (req.method, http.segments(req.path)) {
       (GET, ["todos"]) -> {
         let todos = [

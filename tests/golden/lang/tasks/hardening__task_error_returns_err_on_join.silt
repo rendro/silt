@@ -2,7 +2,7 @@
 -- stderr-contains: joined task failed: division by zero
 import task
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let x = 1 / 0
     x
   })

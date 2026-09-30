@@ -18,7 +18,7 @@ trait Greet for Greeter {
 
 fn main() {
   let g = Greeter { path: "greeting.txt" }
-  let handle = task.spawn(fn() {
+  let handle = task.spawn({ ->
     let msg = g.greet()
     msg
   })

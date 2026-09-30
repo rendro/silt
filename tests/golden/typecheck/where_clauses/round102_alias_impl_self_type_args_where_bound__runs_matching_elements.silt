@@ -1,7 +1,7 @@
 import list
 type Bytes2 = List(Int)
 trait Total { fn total(self) -> Int }
-trait Total for Bytes2 { fn total(self) -> Int = list.fold(self, 0, { acc, x -> acc + x }) }
+trait Total for Bytes2 { fn total(self) -> Int { list.fold(self, 0, { acc, x -> acc + x }) } }
 fn sum_it(x: a) -> Int where a: Total { x.total() }
 fn main() {
     let s = [1, 2] |> sum_it

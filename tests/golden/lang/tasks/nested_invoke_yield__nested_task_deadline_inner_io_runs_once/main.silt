@@ -4,9 +4,9 @@ import io
 import time
 
 fn main() {
-  let h = task.spawn(fn() {
-    task.deadline(time.seconds(10), fn() {
-      task.deadline(time.seconds(10), fn() {
+  let h = task.spawn({ ->
+    task.deadline(time.seconds(10), { ->
+      task.deadline(time.seconds(10), { ->
         println("enter-inner")
         let _ = io.read_file("data.txt")
         println("exit-inner")

@@ -6,14 +6,14 @@ import task
 import time
 fn main() {
   let ch = channel.new(0)
-  let _s0 = task.spawn(fn() { channel.send(ch, 1) })
-  let _s1 = task.spawn(fn() { channel.send(ch, 2) })
-  let _s2 = task.spawn(fn() { channel.send(ch, 3) })
-  let _s3 = task.spawn(fn() { channel.send(ch, 4) })
-  let _s4 = task.spawn(fn() { channel.send(ch, 5) })
-  let _s5 = task.spawn(fn() { channel.send(ch, 6) })
-  let _s6 = task.spawn(fn() { channel.send(ch, 7) })
-  let _s7 = task.spawn(fn() { channel.send(ch, 8) })
+  let _s0 = task.spawn({ -> channel.send(ch, 1) })
+  let _s1 = task.spawn({ -> channel.send(ch, 2) })
+  let _s2 = task.spawn({ -> channel.send(ch, 3) })
+  let _s3 = task.spawn({ -> channel.send(ch, 4) })
+  let _s4 = task.spawn({ -> channel.send(ch, 5) })
+  let _s5 = task.spawn({ -> channel.send(ch, 6) })
+  let _s6 = task.spawn({ -> channel.send(ch, 7) })
+  let _s7 = task.spawn({ -> channel.send(ch, 8) })
   let total = loop c = 0, acc = 0 {
     match c >= 8 {
       true -> acc

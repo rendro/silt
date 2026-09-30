@@ -5,6 +5,6 @@
 -- A lambda with a concretely typed Result parameter: `?` is checked
 -- against the lambda's own return type (Int), not main's.
 fn main() {
-  let f = fn(x: Result(Int, String)) { x? + 1 }
+  let f = { x: Result(Int, String) -> x? + 1 }
   println(f(Ok(1)))
 }

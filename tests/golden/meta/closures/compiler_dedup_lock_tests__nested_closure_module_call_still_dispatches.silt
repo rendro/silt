@@ -3,8 +3,8 @@
 import math
 
 fn main() {
-  let outer = fn() {
-    let inner = fn() {
+  let outer = { ->
+    let inner = { ->
       math.sqrt(9.0)
     }
     inner()

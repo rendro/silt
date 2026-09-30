@@ -15,7 +15,7 @@ trait Counter for Int {
 }
 
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let n = 7
     n.bump()
   })

@@ -5,8 +5,8 @@ type Box {
   item: Fn(Int) -> Int,
 }
 fn main() {
-  let a = Box { item: fn(y){ y } }
-  let b = Box { item: fn(z){ z + 1 } }
+  let a = Box { item: { y -> y } }
+  let b = Box { item: { z -> z + 1 } }
   let sorted = list.sort([a, b])
   println(list.length(sorted))
 }

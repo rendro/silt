@@ -3,8 +3,8 @@
 import io
 fn program() {
   let shared = 10
-  let add_shared = fn(x) { x + shared }
-  let mul_shared = fn(x) { x * shared }
+  let add_shared = { x -> x + shared }
+  let mul_shared = { x -> x * shared }
   add_shared(5) + mul_shared(3)
 }
 

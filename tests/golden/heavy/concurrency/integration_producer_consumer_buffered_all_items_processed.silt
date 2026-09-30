@@ -7,7 +7,7 @@ import task
 fn program() {
   let ch = channel.new(10)
 
-  let producer = task.spawn(fn() {
+  let producer = task.spawn({ ->
     loop i = 1 {
       match i > 10 {
         true -> channel.close(ch)
@@ -19,7 +19,7 @@ fn program() {
     }
   })
 
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn({ ->
     loop total = 0 {
       match channel.receive(ch) {
         Message(val) -> loop(total + val)

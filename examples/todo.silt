@@ -17,9 +17,7 @@ type Todo {
 fn next_id(todos) {
   todos
   |> list.fold(0) { acc, t -> int.max(acc, t.id) }
-  |> fn(n) {
-    n + 1
-  }
+  |> { n -> n + 1 }
 }
 
 fn add_todo(todos, text) {

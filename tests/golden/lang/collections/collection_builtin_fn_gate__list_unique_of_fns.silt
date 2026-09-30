@@ -2,7 +2,7 @@
 -- stderr-contains: does not implement Equal
 import list
 fn main() {
-  let f = fn(y){ y }
-  let g = fn(z){ z + 100 }
+  let f = { y -> y }
+  let g = { z -> z + 100 }
   println(list.length(list.unique([f, g, f])))
 }

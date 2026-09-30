@@ -2,7 +2,7 @@
 -- exit: 1
 -- `==` on open-row anonymous records is rejected (the hidden tails could differ).
 -- stderr-contains: operator '==' requires a comparable type
-fn cmp(a: {x: Int, ...ra}, b: {x: Int, ...rb}) = a == b
+fn cmp(a: {x: Int, ...ra}, b: {x: Int, ...rb}) { a == b }
 fn main() {
   println(cmp({x: 1, y: 2}, {x: 1, z: 3}))
 }

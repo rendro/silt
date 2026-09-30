@@ -148,7 +148,7 @@ useful for documentation:
 
 ```silt
 let x: Int = 42
-let transform: Fn(Int) -> Int = fn(x) { x * 2 }
+let transform: Fn(Int) -> Int = { x -> x * 2 }
 ```
 
 
@@ -160,26 +160,34 @@ let transform: Fn(Int) -> Int = fn(x) { x * 2 }
 fn add(a, b) {
   a + b
 }
+
+fn square(x) { x * x }
 ```
 
-**Single-expression shorthand** uses `=`:
+**Closures** are values that close over their environment. A closure is
+written in braces: its parameters, `->`, and its body:
 
 ```silt
-fn square(x) = x * x
-fn greet(name) = "hello {name}"
-```
-
-**Anonymous functions (closures)** are values that close over their environment:
-
-```silt
-let double = fn(x) { x * 2 }
+let double = { x -> x * 2 }
 
 fn make_adder(n) {
-  fn(x) { x + n }
+  { x -> x + n }
 }
+
+let answer = { -> 42 }   -- no parameters
 ```
 
-**No nested named functions.** Use `let f = fn(x) { ... }` for local helpers.
+Closure parameters take the same forms as a named function's: a name or a
+destructuring pattern, each with an optional type annotation. A closure has
+no return-type annotation; its type is the type of its body.
+
+```silt
+let add = { x: Int, y: Int -> x + y }
+let swap = { (a, b): (Int, String) -> (b, a) }
+let area = { Point { width, height } -> width * height }
+```
+
+**No nested named functions.** Use `let f = { x -> ... }` for local helpers.
 Named functions are always top-level, keeping scoping rules simple.
 
 **Trailing closures:** when the last argument is a closure, write it outside

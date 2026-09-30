@@ -4,5 +4,5 @@
 -- stderr-contains: 'Fn'
 fn eqm(a: t, b: t) -> Bool where t: Equal { a.equal(b) }
 fn main() {
-  println(eqm([fn(y) { y }], [fn(y) { y }]))
+  println(eqm([{ y -> y }], [{ y -> y }]))
 }

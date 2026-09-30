@@ -1,6 +1,6 @@
 import map
 type Named(a) = Map(String, a)
 trait Keys { fn keys_count(self) -> Int }
-trait Keys for Named(a) { fn keys_count(self) -> Int = map.length(self) }
+trait Keys for Named(a) { fn keys_count(self) -> Int { map.length(self) } }
 fn count_it(x: b) -> Int where b: Keys { x.keys_count() }
 fn main() { println(count_it(#{ "a": 1, "b": 2 })) }

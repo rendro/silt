@@ -2,7 +2,7 @@
 -- exit: 0
 -- An impl on `Range(a)` is found for a List receiver at typecheck time.
 trait Foo { fn bar(self) -> Int }
-trait Foo for Range(a) { fn bar(self) -> Int = 42 }
+trait Foo for Range(a) { fn bar(self) -> Int { 42 } }
 fn main() -> Int {
   let xs = [1, 2, 3]
   xs.bar()

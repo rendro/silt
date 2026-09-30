@@ -236,7 +236,7 @@ the parked sender then hands its value over.
 ```silt
 let ch = channel.new()   -- capacity 0, true rendezvous
 
-task.spawn(fn() {
+task.spawn({ ->
   -- this blocks until the main task calls channel.receive
   channel.send(ch, "hello")
 })
@@ -278,7 +278,7 @@ you only need to wait on one channel:
 ```silt
 let ch = channel.new(10)
 
-task.spawn(fn() {
+task.spawn({ ->
   channel.send(ch, 42)
 })
 
@@ -319,7 +319,7 @@ Signature: `channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, Cha
 ### Spawning: `task.spawn(fn)`
 
 ```silt
-let handle = task.spawn(fn() {
+let handle = task.spawn({ ->
   let result = compute_something()
   channel.send(ch, result)
 })
@@ -338,7 +338,7 @@ shared via `Arc` (atomic reference counting).
 let multiplier = 10
 let ch = channel.new(10)
 
-let h = task.spawn(fn() {
+let h = task.spawn({ ->
   -- captures `multiplier` and `ch` from outer scope
   channel.send(ch, multiplier * 2)
 })
@@ -350,7 +350,7 @@ when let Message(val) = channel.receive(ch) else { return }  -- val = 20
 ### Joining: `task.join(handle)`
 
 ```silt
-let h = task.spawn(fn() { 42 })
+let h = task.spawn({ -> 42 })
 let result = task.join(h)  -- result = 42
 ```
 
@@ -369,7 +369,7 @@ sentinel value when cancellation is an expected outcome rather than an error.
 
 ```silt
 let done = channel.new(1)
-let h = task.spawn(fn() {
+let h = task.spawn({ ->
   -- long-running work
   channel.send(done, 42)
 })
@@ -450,7 +450,7 @@ exits with status 1, even if `main` returned normally:
 import task
 import time
 fn main() {
-  let _ = task.spawn(fn() { 1 / 0 })
+  let _ = task.spawn({ -> 1 / 0 })
   time.sleep(time.ms(100))
   println("main done")
 }
@@ -459,10 +459,10 @@ fn main() {
 ```text
 main done
 error[runtime]: task <handle:0> failed and was never joined: division by zero
- --> main.silt:4:29
+ --> main.silt:4:27
    |
- 4 |   let _ = task.spawn(fn() { 1 / 0 })
-   |                             ^ task <handle:0> failed and was never joined: division by zero
+ 4 |   let _ = task.spawn({ -> 1 / 0 })
+   |                           ^ task <handle:0> failed and was never joined: division by zero
   = help: join the task with task.join to handle its error, or cancel it with task.cancel
 ```
 
@@ -491,7 +491,7 @@ task.
 ### Scoped deadlines: `task.deadline(dur, fn)`
 
 ```silt
-let outcome = task.deadline(time.ms(200), fn() {
+let outcome = task.deadline(time.ms(200), { ->
   io.read_file("/var/log/slow.log")
 })
 ```
@@ -523,7 +523,7 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.ms(200), fn() {
+  let outcome = task.deadline(time.ms(200), { ->
     io.read_file("/var/log/slow.log")
   })
   match outcome {
@@ -539,14 +539,14 @@ Signature: `task.deadline(dur: Duration, f: () -> a) -> a`.
 ### Bounded spawn: `task.spawn_until(dur, fn)`
 
 ```silt
-let h = task.spawn_until(time.seconds(2), fn() {
+let h = task.spawn_until(time.seconds(2), { ->
   io.read_file("/tmp/maybe_slow.txt")
 })
 ```
 
 `task.spawn_until(dur, f)` spawns `f` as a task with a bounded
 wall-clock deadline. It is equivalent to
-`task.spawn(fn() { task.deadline(dur, f) })` but with one less closure
+`task.spawn({ -> task.deadline(dur, f) })` but with one less closure
 wrapper. The returned `Handle(a)` resolves to the function's result if
 it finishes in time, or to the deadline error inside any I/O builtin
 the task was blocked on when the deadline fired — the same typed
@@ -565,7 +565,7 @@ import task
 import time
 
 fn main() {
-  let h = task.spawn_until(time.seconds(2), fn() {
+  let h = task.spawn_until(time.seconds(2), { ->
     io.read_file("/tmp/maybe_slow.txt")
   })
   match task.join(h) {
@@ -699,14 +699,14 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let producer = task.spawn(fn() {
+  let producer = task.spawn({ ->
     channel.send(ch, "hello")
     channel.send(ch, "from")
     channel.send(ch, "silt")
     channel.close(ch)
   })
 
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn({ ->
     channel.each(ch) { msg ->
       println(msg)
     }
@@ -755,7 +755,7 @@ fn main() {
 
   -- Spawn three workers
   let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
+    task.spawn({ ->
       channel.each(jobs) { n ->
         channel.send(results, n * 2)
       }
@@ -801,7 +801,7 @@ fn main() {
   let doubled = channel.new(10)
 
   -- Stage 1: produce raw values
-  let s1 = task.spawn(fn() {
+  let s1 = task.spawn({ ->
     channel.send(raw, 1)
     channel.send(raw, 2)
     channel.send(raw, 3)
@@ -809,7 +809,7 @@ fn main() {
   })
 
   -- Stage 2: double each value
-  let s2 = task.spawn(fn() {
+  let s2 = task.spawn({ ->
     channel.each(raw) { n ->
       channel.send(doubled, n * 2)
     }
@@ -817,7 +817,7 @@ fn main() {
   })
 
   -- Stage 3: consume the doubled values
-  let s3 = task.spawn(fn() {
+  let s3 = task.spawn({ ->
     channel.each(doubled) { n ->
       println("stage 3 got: {n}")
     }
@@ -850,13 +850,13 @@ fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
 
-  task.spawn(fn() {
+  task.spawn({ ->
     channel.send(logs, "background task done")
     channel.send(logs, "log rotation complete")
     channel.close(logs)
   })
 
-  task.spawn(fn() {
+  task.spawn({ ->
     channel.send(alerts, "disk full!")
     channel.close(alerts)
   })
@@ -904,7 +904,7 @@ fn main() {
   let done = channel.new(1)
 
   -- Worker processes until the work channel closes
-  let worker = task.spawn(fn() {
+  let worker = task.spawn({ ->
     channel.each(work) { item ->
       println("processing: {item}")
     }
@@ -945,7 +945,7 @@ fn main() {
   let results = channel.new(10)
 
   let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
+    task.spawn({ ->
       channel.send(results, id * 10)
     })
   }
@@ -1029,7 +1029,7 @@ fn worker_body(id, jobs, outcomes) {
 }
 
 fn spawn_worker(id, jobs, outcomes) {
-  task.spawn(fn() { worker_body(id, jobs, outcomes) })
+  task.spawn({ -> worker_body(id, jobs, outcomes) })
 }
 
 fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
@@ -1061,7 +1061,7 @@ fn main() {
   -- Two workers are spawned, so two outcomes are expected before the
   -- supervisor returns. Each restart-on-Crashed adds one more outcome
   -- to wait for; the bounded restart budget caps that growth.
-  let sup = task.spawn(fn() { supervise(jobs, outcomes, 2, 3) })
+  let sup = task.spawn({ -> supervise(jobs, outcomes, 2, 3) })
 
   channel.send(jobs, "a")
   channel.send(jobs, "b")
@@ -1306,11 +1306,11 @@ tasks that are stuck while `main` is not waiting on them stay parked.
 | Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
 | Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, ChannelError)` -- `Ok(val)`, `Err(ChannelTimeout)`, or `Err(ChannelClosed)`; a buffered value wins over an expired timer |
-| Spawn task | `task.spawn(fn() { ... })` | `Handle` |
+| Spawn task | `task.spawn({ -> ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |
-| Scoped deadline | `task.deadline(dur, fn() { ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
-| Bounded spawn | `task.spawn_until(dur, fn() { ... })` | `Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
+| Scoped deadline | `task.deadline(dur, { -> ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
+| Bounded spawn | `task.spawn_until(dur, { -> ... })` | `Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization

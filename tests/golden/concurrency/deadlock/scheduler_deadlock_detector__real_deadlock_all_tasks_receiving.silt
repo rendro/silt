@@ -8,13 +8,13 @@ import task
 
 fn main() {
   let ch = channel.new(0)
-  let _h1 = task.spawn(fn() {
+  let _h1 = task.spawn({ ->
     match channel.receive(ch) {
       Message(_) -> 0
       _ -> 0
     }
   })
-  let _h2 = task.spawn(fn() {
+  let _h2 = task.spawn({ ->
     match channel.receive(ch) {
       Message(_) -> 0
       _ -> 0

@@ -1,6 +1,6 @@
 import io
 fn make_multiplier(factor) {
-  fn(x) { x * factor }
+  { x -> x * factor }
 }
 
 fn program() {

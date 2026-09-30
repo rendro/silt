@@ -2,5 +2,5 @@ import list
 type Config { name: String, value: Int }
 fn main() {
   let base = Config { name: "base", value: 0 }
-  println(list.map([1, 2, 3], fn(v) { base.{ value: v } }))
+  println(list.map([1, 2, 3], { v -> base.{ value: v } }))
 }

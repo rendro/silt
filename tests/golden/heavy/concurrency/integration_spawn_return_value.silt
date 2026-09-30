@@ -2,7 +2,7 @@
 import io
 import task
 fn program() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     42
   })
   task.join(h)

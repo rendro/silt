@@ -6,7 +6,7 @@ import task
 import time
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     match channel.recv_timeout(ch, time.ms(50)) {
       Ok(_) -> "got value"
       Err(ChannelTimeout) -> "timed out"

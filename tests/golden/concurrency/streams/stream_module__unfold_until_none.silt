@@ -1,7 +1,7 @@
 import stream
 fn main() {
   -- Generate 1, 2, 3, 4, 5 then None.
-  println(stream.collect(stream.unfold(1, fn(n) {
+  println(stream.collect(stream.unfold(1, { n ->
     match n > 5 {
       true -> None
       false -> Some((n, n + 1))

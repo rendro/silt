@@ -9,7 +9,7 @@ fn main() {
     "",
     "just.a-simple_url.com/path",
   ]
-  list.each(cases, fn(s) {
+  list.each(cases, { s ->
     match encoding.url_decode(encoding.url_encode(s)) {
       Ok(back) -> println("[{back}]")
       Err(e) -> println("error: {e}")

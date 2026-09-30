@@ -12,7 +12,7 @@ fn main() {
   let ch = channel.new(0)
   let done = channel.new(32)
   let senders = 1..32
-    |> list.map { i -> task.spawn(fn() {
+    |> list.map { i -> task.spawn({ ->
       channel.send(ch, i)
       let _ = channel.try_send(done, i)
     }) }

@@ -7,9 +7,9 @@ fn main() {
   let ch = channel.new(10)
 
   -- Spawn a mix of good and bad tasks
-  let good1 = task.spawn(fn() { channel.send(ch, 1) })
-  let bad = task.spawn(fn() { 1 / 0 })
-  let good2 = task.spawn(fn() { channel.send(ch, 2) })
+  let good1 = task.spawn({ -> channel.send(ch, 1) })
+  let bad = task.spawn({ -> 1 / 0 })
+  let good2 = task.spawn({ -> channel.send(ch, 2) })
 
   task.join(good1)
   task.join(good2)

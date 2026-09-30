@@ -8,7 +8,7 @@ fn program() {
   let ping = channel.new()
   let pong = channel.new()
 
-  let t1 = task.spawn(fn() {
+  let t1 = task.spawn({ ->
     -- Send ping, wait for pong, repeat
     channel.send(ping, 1)
     when let Message(v1) = channel.receive(pong) else { panic("pattern did not match") }
@@ -17,7 +17,7 @@ fn program() {
     v2
   })
 
-  let t2 = task.spawn(fn() {
+  let t2 = task.spawn({ ->
     -- Receive ping, send pong, repeat
     when let Message(v1) = channel.receive(ping) else { panic("pattern did not match") }
     channel.send(pong, v1 + 1)

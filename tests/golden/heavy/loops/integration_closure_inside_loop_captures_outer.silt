@@ -8,7 +8,7 @@ fn program() {
     match i > 4 {
       true -> acc
       _ -> {
-        let f = fn() { i * factor }
+        let f = { -> i * factor }
         loop(i + 1, list.append(acc, f()))
       }
     }

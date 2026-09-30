@@ -13,17 +13,17 @@ fn program() {
   channel.send(jobs, 20)
   channel.send(jobs, 30)
 
-  let w1 = task.spawn(fn() {
+  let w1 = task.spawn({ ->
     when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })
 
-  let w2 = task.spawn(fn() {
+  let w2 = task.spawn({ ->
     when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })
 
-  let w3 = task.spawn(fn() {
+  let w3 = task.spawn({ ->
     when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })

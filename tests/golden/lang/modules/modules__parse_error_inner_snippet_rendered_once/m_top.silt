@@ -1,2 +1,2 @@
 import m_inner
-pub fn top() = 1
+pub fn top() { 1 }

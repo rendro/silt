@@ -16,8 +16,8 @@ import time
 fn main() {
   let never = channel.new(0)
   let about_to_fail = channel.new(1)
-  let idle = task.spawn(fn() { channel.receive(never) })
-  let failing = task.spawn(fn() {
+  let idle = task.spawn({ -> channel.receive(never) })
+  let failing = task.spawn({ ->
     channel.send(about_to_fail, 1)
     let zero = 0
     10 / zero

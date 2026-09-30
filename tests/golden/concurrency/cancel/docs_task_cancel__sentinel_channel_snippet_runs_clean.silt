@@ -6,7 +6,7 @@ import channel
 import task
 fn main() {
   let done = channel.new(1)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     -- long-running work
     channel.send(done, 42)
   })

@@ -1,7 +1,7 @@
 import list
 type Point { x: Int, y: Int }
-fn sum(p: Point) -> Int = p.x + p.y
+fn sum(p: Point) -> Int { p.x + p.y }
 fn main() {
   let pts = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
-  println(list.map(pts, fn(p) { sum(p) }))
+  println(list.map(pts, { p -> sum(p) }))
 }

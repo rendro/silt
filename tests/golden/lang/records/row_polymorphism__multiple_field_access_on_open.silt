@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 0
 -- Both `first` and `last` are threaded into the inferred row.
-fn full(p) = p.first + " " + p.last
+fn full(p) { p.first + " " + p.last }
 fn main() {
     let _ = full({first: "A", last: "B", age: 30})
 }

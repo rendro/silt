@@ -7,7 +7,7 @@ trait Greetable {
 }
 
 trait Greetable for Int {
-  fn greet(self) = "hello"
+  fn greet(self) { "hello" }
 }
 
 fn main() { 42 }

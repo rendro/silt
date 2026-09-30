@@ -12,7 +12,7 @@ fn program() {
     match i >= 20 {
       true -> acc
       _ -> {
-        let h = task.spawn(fn() {
+        let h = task.spawn({ ->
           channel.send(ch, i)
         })
         loop(i + 1, list.append(acc, h))

@@ -1,5 +1,5 @@
 trait Baz { fn baz(self) -> String }
-trait Baz for Fun { fn baz(self) -> String = "baz" }
+trait Baz for Fun { fn baz(self) -> String { "baz" } }
 
 pub fn triple(x: Int) -> Int { x * 3 }
 

@@ -1,2 +1,2 @@
 import c_a
-pub fn fc() = 3
+pub fn fc() { 3 }

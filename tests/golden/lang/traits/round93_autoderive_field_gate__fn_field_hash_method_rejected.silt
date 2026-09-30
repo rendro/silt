@@ -5,5 +5,5 @@
 -- stderr-contains: Fn(Int) -> Int
 -- stderr-contains: not hashable
 type H { f: Fn(Int) -> Int }
-fn mk() -> H { H{f: fn(x) { x }} }
+fn mk() -> H { H{f: { x -> x }} }
 fn main() { println(mk().hash()) }

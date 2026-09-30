@@ -2,7 +2,7 @@
 -- stderr-contains: boom
 import list
 fn main() {
-  list.map([1, 2, 3], fn(x) {
+  list.map([1, 2, 3], { x ->
     match x {
       2 -> panic("boom")
       n -> n * 10

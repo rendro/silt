@@ -164,8 +164,9 @@ The type of `alice` is the structural type `{name: String, age: Int}`,
 which can also appear in any annotation:
 
 ```silt
-fn full_name(p: {first: String, last: String}) -> String =
+fn full_name(p: {first: String, last: String}) -> String {
   p.first + " " + p.last
+}
 ```
 
 ### Open rows: `...r`
@@ -176,7 +177,7 @@ fields you happen to have." The function only commits to the fields it
 names; the row variable absorbs whatever else the caller passes:
 
 ```silt
-fn first_name(p: {name: String, ...r}) -> String = p.name
+fn first_name(p: {name: String, ...r}) -> String { p.name }
 
 fn main() {
   println(first_name({name: "Alice", age: 30}))
@@ -192,7 +193,7 @@ A row variable can be threaded into the return type so the caller's
 extra fields survive the round trip:
 
 ```silt
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
 
 fn main() {
   let q = id_name({name: "Alice", age: 30})
@@ -203,7 +204,7 @@ fn main() {
 
 Row variables are inferred at first appearance, just like ordinary type
 variables: a function written without annotations like
-`fn show_name(p) = p.name` is inferred to take an open record carrying
+`fn show_name(p) { p.name }` is inferred to take an open record carrying
 at least a `name` field.
 
 ### Nominal records flow into open rows
@@ -215,7 +216,7 @@ Nominal records widen to open rows automatically, so a fn taking a
 ```silt
 type Person { name: String, age: Int }
 
-fn name(p: {name: String, ...r}) -> String = p.name
+fn name(p: {name: String, ...r}) -> String { p.name }
 
 fn main() {
   println(name(Person { name: "Bob", age: 42 }))   -- Bob
@@ -232,7 +233,7 @@ A record type **without** `...r` is closed: the caller must supply
 exactly the listed fields, no more, no less:
 
 ```silt
-fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
+fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} { x }
 
 ident({a: 1, b: "hi"})            -- OK
 ident({a: 1, b: "hi", c: 9})      -- error: extra field `c`
@@ -308,7 +309,7 @@ type Expr {
 ## Function Type Annotations
 
 ```silt
-let apply: Fn(Int, Int) -> Int = fn(a, b) { a + b }
+let apply: Fn(Int, Int) -> Int = { a, b -> a + b }
 
 type Handler {
   name: String,

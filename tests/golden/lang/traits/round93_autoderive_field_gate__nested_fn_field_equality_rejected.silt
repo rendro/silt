@@ -6,7 +6,7 @@
 type Inner { f: Fn(Int) -> Int }
 type Outer { i: Inner }
 fn main() {
-    let a = Outer{i: Inner{f: fn(x) { x }}}
-    let b = Outer{i: Inner{f: fn(x) { x }}}
+    let a = Outer{i: Inner{f: { x -> x }}}
+    let b = Outer{i: Inner{f: { x -> x }}}
     println(a == b)
 }

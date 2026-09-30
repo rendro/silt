@@ -4,7 +4,7 @@ import list
 fn program() {
   let scale = 10
   let bias = 3
-  [1, 2, 3] |> list.map(fn(x) { x * scale + bias })
+  [1, 2, 3] |> list.map({ x -> x * scale + bias })
 }
 
 fn main() {

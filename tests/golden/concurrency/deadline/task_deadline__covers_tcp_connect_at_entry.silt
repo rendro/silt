@@ -5,7 +5,7 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.ms(0), fn() {
+  let outcome = task.deadline(time.ms(0), { ->
     tcp.connect("127.0.0.1:1")
   })
   match outcome {

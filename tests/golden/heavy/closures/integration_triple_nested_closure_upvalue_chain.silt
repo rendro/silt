@@ -1,7 +1,7 @@
 import io
 fn outer(x) {
-  let middle = fn() {
-    let inner = fn() { x }
+  let middle = { ->
+    let inner = { -> x }
     inner()
   }
   middle()

@@ -3,7 +3,7 @@ import io
 import list
 
 fn make_adder(n) {
-  fn(x) { x + n }
+  { x -> x + n }
 }
 
 fn program() {

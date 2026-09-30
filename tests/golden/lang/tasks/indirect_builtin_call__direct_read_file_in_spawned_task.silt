@@ -5,7 +5,7 @@ import string
 import task
 
 fn main() {
-  let h = task.spawn(fn() { io.read_file("indirect_builtin_call__direct_read_file_in_spawned_task.silt") })
+  let h = task.spawn({ -> io.read_file("indirect_builtin_call__direct_read_file_in_spawned_task.silt") })
   match task.join(h) {
     Ok(s) -> println(string.contains(s, "-- direct call"))
     Err(e) -> println(e.message())

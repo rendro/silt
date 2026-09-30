@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
-fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} = x
+fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} { x }
 fn main() {
     let _ = ident({a: 1, b: "hi", c: 9})
 }

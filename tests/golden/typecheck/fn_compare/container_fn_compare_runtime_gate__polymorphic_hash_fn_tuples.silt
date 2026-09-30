@@ -4,5 +4,5 @@
 -- stderr-contains: 'Fn'
 fn h(a: x) -> Int where x: Hash { a.hash() }
 fn main() {
-  println(h((fn(y) { y }, 1)) == h((fn(z) { z + 5 }, 1)))
+  println(h(({ y -> y }, 1)) == h(({ z -> z + 5 }, 1)))
 }

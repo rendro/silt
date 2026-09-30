@@ -12,7 +12,7 @@ order: 6
 
 ```silt
 -- These are equivalent:
-list.filter(xs, fn(x) { x > 0 })
+list.filter(xs, { x -> x > 0 })
 xs |> list.filter { x -> x > 0 }
 ```
 

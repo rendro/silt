@@ -14,7 +14,7 @@ import time
 fn inner(n) { 10 / n }
 fn outer(n) { inner(n) + 1 }
 fn main() {
-  let _ = task.spawn(fn() { outer(0) })
+  let _ = task.spawn({ -> outer(0) })
   time.sleep(time.ms(300))
   println("main done")
 }

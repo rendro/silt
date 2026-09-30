@@ -1,5 +1,5 @@
 error[parse]: duplicate field 'a' in anon record type
  --> round81_parser_dup_anon_type_field_caret__anon_record_type.silt:4:23
    |
- 4 | fn pluck(r: { a: Int, a: String }) = r.a
+ 4 | fn pluck(r: { a: Int, a: String }) { r.a }
    |                       ^ duplicate field 'a' in anon record type

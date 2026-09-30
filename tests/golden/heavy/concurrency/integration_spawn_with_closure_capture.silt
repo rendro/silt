@@ -6,7 +6,7 @@ fn program() {
   let x = 10
   let ch = channel.new(10)
 
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     channel.send(ch, x * 2)
   })
 

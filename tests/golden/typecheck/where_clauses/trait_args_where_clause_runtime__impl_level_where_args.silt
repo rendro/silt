@@ -4,12 +4,14 @@
 -- stderr-contains: error[type]
 -- stderr-contains: does not implement trait 'Conv(Int)'
 trait Conv(to) { fn conv(self) -> to }
-trait Conv(String) for Int { fn conv(self) -> String = "an int" }
+trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
 trait UseIt { fn use_it(self) -> Int }
 trait UseIt for List(a) where a: Conv(Int) {
-    fn use_it(self) -> Int = match self {
-        [] -> 0
-        [x, ..rest] -> { let n: Int = x.conv() n + rest.use_it() }
+    fn use_it(self) -> Int {
+      match self {
+          [] -> 0
+          [x, ..rest] -> { let n: Int = x.conv() n + rest.use_it() }
+      }
     }
 }
 fn main() {

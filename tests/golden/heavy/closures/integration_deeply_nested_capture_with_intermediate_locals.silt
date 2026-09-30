@@ -4,11 +4,11 @@
 import io
 fn program() {
   let a = 1
-  let f = fn() {
+  let f = { ->
     let b = 10
-    let g = fn() {
+    let g = { ->
       let c = 100
-      let h = fn() { a + b + c }
+      let h = { -> a + b + c }
       h()
     }
     g()

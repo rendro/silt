@@ -3,9 +3,9 @@ import task
 import io
 import stream
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let s = stream.from_list([10, 20, 30])
-    stream.each(s, fn(x) {
+    stream.each(s, { x ->
       let _ = io.read_file("vm_higher_order_yield__stream_each_callback_yield.silt")
       println(x)
     })

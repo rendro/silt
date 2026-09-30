@@ -6,5 +6,5 @@ fn maybe_double(x) {
   }
 }
 fn main() {
-  println(list.map([1, 2, 3, 4], fn(x) { maybe_double(x) }))
+  println(list.map([1, 2, 3, 4], { x -> maybe_double(x) }))
 }

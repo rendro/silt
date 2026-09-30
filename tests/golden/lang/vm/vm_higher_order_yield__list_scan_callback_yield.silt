@@ -4,8 +4,8 @@ import io
 import list
 fn main() {
   let xs: List(Int) = [1, 2, 3]
-  let h = task.spawn(fn() {
-    list.scan(xs, 0, fn(acc, x) {
+  let h = task.spawn({ ->
+    list.scan(xs, 0, { acc, x ->
       let _ = io.read_file("vm_higher_order_yield__list_scan_callback_yield.silt")
       acc + x
     })

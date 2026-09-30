@@ -1,7 +1,7 @@
 import list
 -- `?` on None inside the closure returns None from the closure only.
 fn try_extract() -> Option(List(Option(Int))) {
-  Some(list.map([Some(1), None, Some(3)], fn(x) {
+  Some(list.map([Some(1), None, Some(3)], { x ->
     let v = x?
     Some(v * 10)
   }))

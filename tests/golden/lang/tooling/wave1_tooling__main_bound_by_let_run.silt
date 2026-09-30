@@ -1,1 +1,1 @@
-let main = fn() { println("from let") }
+let main = { -> println("from let") }

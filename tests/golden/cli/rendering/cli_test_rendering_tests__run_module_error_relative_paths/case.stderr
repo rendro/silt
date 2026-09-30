@@ -1,7 +1,7 @@
 error[runtime]: division by zero
  --> helper.silt:1:19
    |
- 1 | pub fn kaboom() = 1 / 0
+ 1 | pub fn kaboom() { 1 / 0 }
    |                   ^ division by zero
 
 call stack:

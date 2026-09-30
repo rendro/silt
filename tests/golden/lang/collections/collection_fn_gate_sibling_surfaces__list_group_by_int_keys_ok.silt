@@ -1,6 +1,6 @@
 import list
 import map
 fn main() {
-  let groups = list.group_by([1, 2, 3, 4], fn(x){ x > 2 })
+  let groups = list.group_by([1, 2, 3, 4], { x -> x > 2 })
   println(list.length(map.entries(groups)))
 }

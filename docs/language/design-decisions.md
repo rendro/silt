@@ -20,7 +20,7 @@ Heterogeneous maps would defeat the purpose of static typing.
 
 ## No Nested Named Functions
 
-Named functions are top-level only. `let f = fn(x) { ... }` for local
+Named functions are top-level only. `let f = { x -> ... }` for local
 helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
 
 ## Pipe First-Argument Insertion

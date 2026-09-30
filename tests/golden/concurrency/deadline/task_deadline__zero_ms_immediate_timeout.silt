@@ -5,7 +5,7 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.ms(0), fn() {
+  let outcome = task.deadline(time.ms(0), { ->
     io.read_file("/tmp/silt_td_unused.txt")
   })
   match outcome {

@@ -1,2 +1,2 @@
-pub fn add(a, b) = a + b
-fn secret(x) = x * 2
+pub fn add(a, b) { a + b }
+fn secret(x) { x * 2 }

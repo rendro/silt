@@ -4,7 +4,7 @@
 -- stderr-contains: 'Fn'
 fn neq(a: x, b: x) -> Bool { a != b }
 fn main() {
-  let a = (1, fn(y) { y })
-  let b = (1, fn(y) { y })
+  let a = (1, { y -> y })
+  let b = (1, { y -> y })
   println(neq(a, b))
 }

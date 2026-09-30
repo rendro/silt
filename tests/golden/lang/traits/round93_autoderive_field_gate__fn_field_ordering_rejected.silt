@@ -5,7 +5,7 @@
 -- stderr-contains: Fn(Int) -> Int
 -- stderr-contains: not comparable
 type H { f: Fn(Int) -> Int }
-fn mk() -> H { H{f: fn(x) { x }} }
+fn mk() -> H { H{f: { x -> x }} }
 fn main() {
     let a = mk()
     let b = mk()

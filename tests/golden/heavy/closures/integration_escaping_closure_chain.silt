@@ -2,8 +2,8 @@
 -- creating a chain of escaping closures with layered captures.
 import io
 fn outer(a) {
-  fn(b) {
-    fn(c) { a + b + c }
+  { b ->
+    { c -> a + b + c }
   }
 }
 

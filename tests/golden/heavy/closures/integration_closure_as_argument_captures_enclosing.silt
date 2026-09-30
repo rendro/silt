@@ -7,7 +7,7 @@ fn apply(f, x) {
 
 fn program() {
   let multiplier = 7
-  let result = apply(fn(x) { x * multiplier }, 6)
+  let result = apply({ x -> x * multiplier }, 6)
   result
 }
 

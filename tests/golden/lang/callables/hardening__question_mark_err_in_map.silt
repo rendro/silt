@@ -3,7 +3,7 @@ import list
 -- list.map receives Err("fail") as that element's result and the
 -- enclosing function still returns Ok.
 fn try_map() -> Result(List(Result(Int, String)), String) {
-  Ok(list.map([Ok(1), Err("fail"), Ok(3)], fn(x) {
+  Ok(list.map([Ok(1), Err("fail"), Ok(3)], { x ->
     let v = x?
     Ok(v * 10)
   }))

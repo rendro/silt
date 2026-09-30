@@ -6,9 +6,11 @@ trait Cast(to) { fn cast(self) -> to }
 trait Cast(Float) for Int { fn cast(self) -> Float { 1.5 } }
 trait Use { fn use_it(self) -> Float }
 trait Use for List(a) where a: Cast(Int, String) {
-    fn use_it(self) -> Float = match self {
-        [] -> 0.0
-        [x, ..rest] -> x.cast() + rest.use_it()
+    fn use_it(self) -> Float {
+      match self {
+          [] -> 0.0
+          [x, ..rest] -> x.cast() + rest.use_it()
+      }
     }
 }
 fn main() {

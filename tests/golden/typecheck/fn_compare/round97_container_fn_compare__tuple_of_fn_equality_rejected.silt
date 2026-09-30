@@ -4,7 +4,7 @@
 -- stderr-contains: element type is not equatable
 -- `==` on tuples holding a function is a compile error.
 fn main() {
-  let a = (1, fn(x) { x })
-  let b = (1, fn(x) { x })
+  let a = (1, { x -> x })
+  let b = (1, { x -> x })
   print(a == b)
 }

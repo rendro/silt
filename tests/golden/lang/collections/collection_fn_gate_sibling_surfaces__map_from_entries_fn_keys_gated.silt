@@ -3,8 +3,8 @@
 import map
 import list
 fn main() {
-  let f = fn(y){ y }
-  let g = fn(z){ z * 2 }
+  let f = { y -> y }
+  let g = { z -> z * 2 }
   let m = map.from_entries([(f, 1), (g, 2)])
   println(list.length(map.entries(m)))
 }

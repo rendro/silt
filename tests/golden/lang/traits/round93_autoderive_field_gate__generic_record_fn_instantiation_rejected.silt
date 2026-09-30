@@ -5,7 +5,7 @@
 -- stderr-contains: not equatable
 type Box(a) { v: a }
 fn main() {
-    let c = Box{v: fn(x) { x }}
-    let d = Box{v: fn(x) { x }}
+    let c = Box{v: { x -> x }}
+    let d = Box{v: { x -> x }}
     println(c == d)
 }

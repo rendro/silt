@@ -3,5 +3,5 @@
 -- stderr-not-contains: error
 type Point { x: Int, y: Int }
 trait Show { fn show(self) -> String }
-trait Show for Point { fn show(self) -> String = "p" }
+trait Show for Point { fn show(self) -> String { "p" } }
 fn main() { }

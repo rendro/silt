@@ -19,7 +19,7 @@ fn main() {
   let results = channel.new(10)
   let ids = 1..40
   ids |> list.each { i ->
-    let _ = task.spawn(fn() { channel.send(results, i * i) })
+    let _ = task.spawn({ -> channel.send(results, i * i) })
     ()
   }
   let total = collect(results, 40, 0)

@@ -1,6 +1,6 @@
 import channel
 trait Show { fn show(self) -> String }
-trait Show for Channel(a) { fn show(self) -> String = "chan-impl" }
+trait Show for Channel(a) { fn show(self) -> String { "chan-impl" } }
 fn main() {
   let c: Channel(Int) = channel.new(1)
   println(c.show())

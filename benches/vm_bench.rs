@@ -207,7 +207,7 @@ fn main() {
 import list
 fn main() {
   let xs = list.reverse(1..5001)
-  list.sort_by(xs, fn(x) { x })
+  list.sort_by(xs, { x -> x })
   |> list.length
 }
     "#,
@@ -373,7 +373,9 @@ fn main() {
         "closure: capture + call 100K",
         r#"
 import list
-fn make_adder(n) = fn(x) { x + n }
+fn make_adder(n) {
+  { x -> x + n }
+}
 fn main() {
   let add5 = make_adder(5)
   list.map(1..100001) { n -> add5(n) }
@@ -386,10 +388,12 @@ fn main() {
         "closure: nested composition",
         r#"
 import list
-fn compose(f, g) = fn(x) { f(g(x)) }
+fn compose(f, g) {
+  { x -> f(g(x)) }
+}
 fn main() {
-  let double = fn(x) { x * 2 }
-  let inc = fn(x) { x + 1 }
+  let double = { x -> x * 2 }
+  let inc = { x -> x + 1 }
   let double_then_inc = compose(inc, double)
   list.map(1..50001) { n -> double_then_inc(n) }
   |> list.fold(0) { acc, x -> acc + x }
@@ -455,7 +459,7 @@ import task
 import list
 fn main() {
   let tasks = list.map(1..11) { n ->
-    task.spawn(fn() { n * n })
+    task.spawn({ -> n * n })
   }
   list.map(tasks) { t -> task.join(t) }
   |> list.fold(0) { acc, x -> acc + x }

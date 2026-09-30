@@ -6,7 +6,7 @@ trait Numeric {
 }
 
 trait Numeric for Int {
-  fn double(self) -> String = "wrong"
+  fn double(self) -> String { "wrong" }
 }
 
 fn main() { 42 }

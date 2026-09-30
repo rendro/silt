@@ -1,11 +1,13 @@
 -- Positive control: a matching-arity impl-level bound checks and runs (prints 6).
 trait Conv(to) { fn conv(self) -> to }
-trait Conv(Int) for Int { fn conv(self) -> Int = self }
+trait Conv(Int) for Int { fn conv(self) -> Int { self } }
 trait Use { fn use_it(self) -> Int }
 trait Use for List(a) where a: Conv(Int) {
-    fn use_it(self) -> Int = match self {
-        [] -> 0
-        [x, ..rest] -> x.conv() + rest.use_it()
+    fn use_it(self) -> Int {
+      match self {
+          [] -> 0
+          [x, ..rest] -> x.conv() + rest.use_it()
+      }
     }
 }
 fn main() {

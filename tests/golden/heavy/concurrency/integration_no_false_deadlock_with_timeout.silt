@@ -8,7 +8,7 @@ fn program() {
   let timer = channel.timeout(50)
 
   -- Nobody sends to ch, but timer will fire
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn({ ->
     match channel.select([Recv(ch), Recv(timer)]) {
       (_, Closed) -> "timeout_broke_deadlock"
       (_, Message(v)) -> "got_message"

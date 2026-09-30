@@ -7,7 +7,7 @@ import io
 import task
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let a = match int.parse("x") {
       Ok(_) -> "ok"
       Err(e) -> e.message()

@@ -23,10 +23,10 @@ fn recv_n(ch, n, acc) {
 fn main() {
   let ch = channel.new(3)
   let senders = [1, 2, 3, 4, 5, 6, 7, 8] |> list.map { i ->
-    task.spawn(fn() { channel.send(ch, i) })
+    task.spawn({ -> channel.send(ch, i) })
   }
   time.sleep(time.ms(200))
-  let receiver = task.spawn(fn() { recv_n(ch, 8, 0) })
+  let receiver = task.spawn({ -> recv_n(ch, 8, 0) })
   let total = task.join(receiver)
   println("total {total}")
 }

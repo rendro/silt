@@ -58,10 +58,11 @@ fn add(a, b) {
 
 The last expression is the return value. No `return` keyword needed (though it exists for early exits).
 
-Anonymous functions:
+Closures are written in braces, parameters before the `->`:
 
 ```silt
-let double = fn(x) { x * 2 }
+let double = { x -> x * 2 }
+let add = { x: Int, y: Int -> x + y }
 ```
 
 ## 3. Pattern matching
@@ -188,7 +189,7 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let worker = task.spawn(fn() {
+  let worker = task.spawn({ ->
     channel.each(ch) { msg ->
       println("got: {msg}")
     }

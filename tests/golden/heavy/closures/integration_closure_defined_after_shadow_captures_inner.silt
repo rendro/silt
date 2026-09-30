@@ -4,7 +4,7 @@ fn program() {
   let x = 1
   let result = {
     let x = 2
-    let f = fn() { x }
+    let f = { -> x }
     f()
   }
   result

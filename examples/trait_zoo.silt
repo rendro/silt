@@ -60,7 +60,9 @@ trait Display for Styled {
 -- Custom trait: Area
 
 trait Area {
-  fn area(self) -> Float = ()
+  fn area(self) -> Float {
+    ()
+  }
 }
 
 trait Area for Shape {
@@ -81,7 +83,9 @@ trait Area for Shape {
 -- Custom trait: Perimeter
 
 trait Perimeter {
-  fn perimeter(self) -> Float = ()
+  fn perimeter(self) -> Float {
+    ()
+  }
 }
 
 trait Perimeter for Shape {

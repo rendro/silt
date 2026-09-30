@@ -3,7 +3,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: zzznosuchfield
-fn pluck(r) = r.zzznosuchfield
+fn pluck(r) { r.zzznosuchfield }
 fn main() {
     let p = {a: 1, b: 2}
     let _ = pluck(p)

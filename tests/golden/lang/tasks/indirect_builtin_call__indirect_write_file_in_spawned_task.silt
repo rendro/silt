@@ -5,7 +5,7 @@ import task
 
 fn main() {
   let write = io.write_file
-  let h = task.spawn(fn() { write("indirect_write.txt", "written indirectly") })
+  let h = task.spawn({ -> write("indirect_write.txt", "written indirectly") })
   match task.join(h) {
     Ok(_) -> println("ok")
     Err(e) -> println(e.message())

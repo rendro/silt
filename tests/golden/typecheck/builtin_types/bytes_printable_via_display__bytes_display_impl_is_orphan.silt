@@ -5,6 +5,6 @@
 -- stderr-not-contains: not a declared type
 import bytes
 trait Display for Bytes {
-  fn display(b) -> String = "x"
+  fn display(b) -> String { "x" }
 }
 fn main() {}

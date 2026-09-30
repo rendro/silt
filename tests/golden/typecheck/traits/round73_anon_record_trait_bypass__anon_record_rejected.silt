@@ -5,7 +5,7 @@
 -- stderr-contains: does not implement trait 'MyTrait'
 -- stderr-contains: <anon>
 trait MyTrait { fn ident(self) -> Int }
-trait MyTrait for Int { fn ident(self) = self }
+trait MyTrait for Int { fn ident(self) { self } }
 fn use_it(x: a) -> Int where a: MyTrait { x.ident() }
 fn main() {
   let r = {x: 1, y: 2}

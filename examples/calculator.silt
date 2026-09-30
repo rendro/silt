@@ -18,7 +18,9 @@ fn print_help() {
   println("")
 }
 
-fn format(f) = float.to_string(f, 4)
+fn format(f) {
+  float.to_string(f, 4)
+}
 
 fn apply_binary(stack, op_name, op_fn) {
   match list.length(stack) >= 2 {

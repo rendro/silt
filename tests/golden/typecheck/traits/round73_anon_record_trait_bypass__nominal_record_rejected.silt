@@ -4,7 +4,7 @@
 -- stderr-contains: does not implement trait 'MyTrait'
 -- stderr-contains: Foo
 trait MyTrait { fn ident(self) -> Int }
-trait MyTrait for Int { fn ident(self) = self }
+trait MyTrait for Int { fn ident(self) { self } }
 type Foo { x: Int }
 fn use_it(x: a) -> Int where a: MyTrait { x.ident() }
 fn main() {

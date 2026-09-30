@@ -1,4 +1,4 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: expected identifier
-fn f(x: a) where a: Equal + = x
+fn f(x: a) where a: Equal + { x }

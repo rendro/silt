@@ -14,14 +14,14 @@ fn busy(id, n) {
 }
 
 fn main() {
-  let h1 = task.spawn(fn() { busy(1, 400) })
-  let h2 = task.spawn(fn() { busy(2, 400) })
-  let h3 = task.spawn(fn() { busy(3, 400) })
-  let h4 = task.spawn(fn() { busy(4, 400) })
-  let h5 = task.spawn(fn() { busy(5, 400) })
-  let h6 = task.spawn(fn() { busy(6, 400) })
-  let h7 = task.spawn(fn() { busy(7, 400) })
-  let h8 = task.spawn(fn() { busy(8, 400) })
+  let h1 = task.spawn({ -> busy(1, 400) })
+  let h2 = task.spawn({ -> busy(2, 400) })
+  let h3 = task.spawn({ -> busy(3, 400) })
+  let h4 = task.spawn({ -> busy(4, 400) })
+  let h5 = task.spawn({ -> busy(5, 400) })
+  let h6 = task.spawn({ -> busy(6, 400) })
+  let h7 = task.spawn({ -> busy(7, 400) })
+  let h8 = task.spawn({ -> busy(8, 400) })
   let _ = task.join(h1)
   let _ = task.join(h2)
   let _ = task.join(h3)

@@ -1,2 +1,2 @@
 pub type ColorA { Red, Blue }
-pub fn mka() -> ColorA = Red
+pub fn mka() -> ColorA { Red }
