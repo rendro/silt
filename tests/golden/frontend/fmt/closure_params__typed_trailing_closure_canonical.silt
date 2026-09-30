@@ -1,0 +1,12 @@
+-- cmd: fmt --check
+-- exit: 0
+-- A closure with typed and destructuring parameters is canonical as a
+-- trailing closure.
+
+import list
+
+fn main() {
+  let ys = list.map([1, 2]) { x: Int -> x + 1 }
+  let zs = list.map([(1, 2)]) { (a, b): (Int, Int) -> a + b }
+  println("{ys} {zs}")
+}

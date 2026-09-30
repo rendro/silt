@@ -9543,7 +9543,13 @@ mod self_check_tests {
 
     #[test]
     fn a_result_that_does_not_parse_is_refused() {
-        let e = refusal("fn main() {\n  list.map([1, 2], fn(x: Int) { x + 1 })\n}\n");
+        // No input is known to make the printer produce text that does
+        // not parse, so the check is fed such a result directly.
+        let src = "fn main() {\n  1\n}\n";
+        let (tokens, comments) = Lexer::new(src).tokenize_with_comments().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let e = self_check::verify(&program, &comments, "fn main() {\n  (1\n}\n")
+            .expect_err("an unparseable result must be refused");
         assert!(e.message.contains("would not parse"), "{}", e.message);
         assert!(e.span.is_none());
     }

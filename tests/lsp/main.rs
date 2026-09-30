@@ -10,6 +10,7 @@ mod lsp;
 mod lsp_anon_record_field_completion_tests;
 mod lsp_builtin_doc_extraction_tests;
 mod lsp_chained_hover_tests;
+mod lsp_closure_params_tests;
 mod lsp_code_action_tests;
 mod lsp_destructured_binding_tests;
 mod lsp_diagnostics_completion_symbols_tests;

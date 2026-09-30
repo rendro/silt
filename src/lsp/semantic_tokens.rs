@@ -358,6 +358,20 @@ fn emit_expr_tokens(
                 emit_stmt_tokens(stmt, source, doc, server, out);
             }
         }
+        ExprKind::Lambda { params, body } => {
+            // Closure parameters: PARAMETER on a plain name, like a fn
+            // param; the binders of a destructuring pattern are
+            // VARIABLEs, like a `let` pattern's.
+            for param in params {
+                match &param.pattern.kind {
+                    PatternKind::Ident(name) => {
+                        emit_binding_token(source, &param.pattern.span, *name, TT_PARAMETER, out);
+                    }
+                    _ => emit_pattern_binding_tokens(&param.pattern, source, out),
+                }
+            }
+            emit_expr_tokens(body, source, doc, server, out);
+        }
         _ => {
             visit_expr_children(expr, |child| {
                 emit_expr_tokens(child, source, doc, server, out);

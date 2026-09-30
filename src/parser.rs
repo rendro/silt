@@ -3355,12 +3355,21 @@ impl Parser {
     }
 
     /// True when the current token is a `{` whose contents start like a
-    /// closure: `params ->`.
+    /// closure: `params ->`. A parameter is a pattern with an optional
+    /// `: Type` annotation, so the scan accepts, at the brace's own
+    /// depth, identifiers, `,`, `:`, `::`, `.`, `type` and the openers
+    /// of nested groups (whose contents it skips), and answers true at
+    /// the first `->`. Anything else at that depth, including the
+    /// closing `}`, means a block or a record literal: neither can put
+    /// a `->` at its own depth after only those tokens. `{ a: Int -> a }`
+    /// is a closure; `{ a: Int }` and `{ a: 1 }` are record literals.
+    /// A function type in an annotation (`{ f: Fn(Int) -> Int -> ... }`)
+    /// answers true at its own arrow, which is the right answer too.
     fn lbrace_starts_closure(&self) -> bool {
-        // Check if the current `{` starts a trailing closure by looking for `->`.
         if self.peek() != &Token::LBrace {
             return false;
         }
+        let inside = self.delim_depth_at(self.pos) + 1;
         let mut i = self.pos + 1; // skip `{`
         // Skip leading newlines to find the first real token
         while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
@@ -3378,13 +3387,27 @@ impl Parser {
                 _ => {}
             }
         }
-        let mut depth = 0;
         while i < self.tokens.len() {
+            if self.delim_depth_at(i) > inside {
+                i += 1;
+                continue;
+            }
             match &self.tokens[i].0 {
-                Token::Arrow if depth == 0 => return true,
-                Token::LParen => depth += 1,
-                Token::RParen if depth > 0 => depth -= 1,
-                Token::Newline | Token::Ident(_) | Token::Comma => {}
+                Token::Arrow => return true,
+                Token::Newline
+                | Token::Ident(_)
+                | Token::Comma
+                | Token::Colon
+                | Token::ColonColon
+                | Token::Dot
+                | Token::Type
+                | Token::LParen
+                | Token::LBracket
+                | Token::LBrace
+                | Token::HashBrace => {}
+                // The closer of a nested group sits one level deeper
+                // than the brace's own contents and was skipped above;
+                // a closer at this depth ends the braces.
                 _ => return false,
             }
             i += 1;
@@ -3471,33 +3494,39 @@ impl Parser {
         ))
     }
 
+    /// Closure parameters: the data-parameter grammar of a named
+    /// function, `pattern` or `pattern: Type`, separated by commas and
+    /// ended by `->`. The pattern may destructure (`(a, b)`,
+    /// `Point { x, y }`, `{ name, ... }`); there is no return-type
+    /// annotation, the body's type is the closure's return type.
     fn parse_closure_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
         loop {
             self.skip_nl();
-            match self.peek() {
-                Token::Arrow => break,
-                Token::LParen => {
-                    // Destructuring pattern like (a, b)
-                    let pattern = self.parse_pattern()?;
-                    params.push(Param {
-                        kind: ParamKind::Data,
-                        pattern,
-                        ty: None,
-                    });
-                }
-                Token::Ident(_) => {
-                    let pattern = self.parse_pattern()?;
-                    params.push(Param {
-                        kind: ParamKind::Data,
-                        pattern,
-                        ty: None,
-                    });
-                }
-                _ => break,
+            if self.at(&Token::Arrow) {
+                break;
             }
-            // Closure params terminate at `->`, not a closing bracket; we
-            // reuse the list-sep helper with the arrow as the "closer".
+            if self.at(&Token::Type) {
+                return Err(ParseError {
+                    message: "a closure cannot take a 'type' parameter; declare a named function"
+                        .to_string(),
+                    span: self.span(),
+                });
+            }
+            let pattern = self.parse_pattern()?;
+            let ty = if self.peek_skip_nl() == &Token::Colon {
+                self.advance();
+                self.skip_nl();
+                Some(self.parse_type_expr()?)
+            } else {
+                None
+            };
+            params.push(Param {
+                kind: ParamKind::Data,
+                pattern,
+                ty,
+            });
+            // Closure params terminate at `->`, not a closing bracket.
             self.skip_nl();
             if self.at(&Token::Arrow) {
                 break;
@@ -4542,6 +4571,38 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 1);
+    }
+
+    /// The brace shapes that the closure-parameter grammar must keep
+    /// apart: a typed closure, a record literal with the same prefix, a
+    /// block holding a tuple, a destructuring closure, a closure whose
+    /// annotation is a function type, and a parameterless closure.
+    #[test]
+    fn test_closure_param_brace_disambiguation() {
+        let kind_of = |body: &str| -> String {
+            let prog = parse(&format!("fn main() {{\n  {body}\n}}"));
+            match &last_expr_of_main(&prog).kind {
+                ExprKind::Lambda { params, .. } => format!(
+                    "lambda/{}/{}",
+                    params.len(),
+                    params.iter().filter(|p| p.ty.is_some()).count()
+                ),
+                ExprKind::AnonRecord { .. } => "record".to_string(),
+                ExprKind::Block(_) => "block".to_string(),
+                other => format!("{other:?}"),
+            }
+        };
+        assert_eq!(kind_of("{ a: Int -> a }"), "lambda/1/1");
+        assert_eq!(kind_of("{ a: 1 }"), "record");
+        assert_eq!(kind_of("{ a: Int }"), "record");
+        assert_eq!(kind_of("{ x -> x }"), "lambda/1/0");
+        assert_eq!(kind_of("{ (a, b) }"), "block");
+        assert_eq!(kind_of("{ (a, b): (Int, Int) -> a }"), "lambda/1/1");
+        assert_eq!(kind_of("{ Point { x, y } -> x }"), "lambda/1/0");
+        assert_eq!(kind_of("{ { name, ...rest } -> name }"), "lambda/1/0");
+        assert_eq!(kind_of("{ f: Fn(Int) -> Int, x -> f(x) }"), "lambda/2/1");
+        assert_eq!(kind_of("{ -> 1 }"), "lambda/0/0");
+        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "record");
     }
 
     #[test]

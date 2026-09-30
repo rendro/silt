@@ -623,6 +623,11 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &m
     if let ExprKind::Lambda { params, .. } = &expr.kind {
         for p in params {
             find_ident_in_pattern(&p.pattern, cursor, source, best);
+            // A typed closure parameter's annotation (`{ p: Point -> ... }`)
+            // is a type-position reference, like a fn param's.
+            if let Some(ty) = &p.ty {
+                find_ident_in_type_expr(ty, cursor, best);
+            }
         }
     }
     // Round-101: ascription types (`expr: Point`) are type-position

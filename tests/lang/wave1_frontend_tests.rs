@@ -252,22 +252,6 @@ fn main() {
     );
 }
 
-/// A lambda with a typed parameter as the last argument is printed as a
-/// trailing closure, and a closure cannot have a typed parameter.
-#[test]
-fn fmt_refuses_a_typed_lambda_in_last_argument_position() {
-    assert_fmt_refuses(
-        "typed_lambda",
-        r#"import list
-fn main() {
-  let ys = list.map([1, 2], fn(x: Int) { x + 1 })
-  println("{ys}")
-}
-"#,
-        "the result would not parse",
-    );
-}
-
 /// A lambda argument in a match scrutinee is printed as a trailing
 /// closure, which a scrutinee cannot hold.
 #[test]
