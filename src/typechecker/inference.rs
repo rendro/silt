@@ -965,12 +965,9 @@ impl TypeChecker {
             // Classify the op based on its recorded tag (string literals set
             // at the binary-op or unary-op site).
             let valid = match op_desc {
-                // Arithmetic that allows strings (Add).
-                "'+'" => is_valid_arith_operand(&resolved, true),
                 // Numeric-only arithmetic.
-                "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => {
-                    is_valid_arith_operand(&resolved, false)
-                        && !matches!(resolved, Type::String | Type::Var(_))
+                "'+'" | "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => {
+                    is_valid_arith_operand(&resolved)
                 }
                 // Equality: anything comparable.
                 "'=='/'!='" => is_valid_compare_operand(&resolved, true),
@@ -979,9 +976,11 @@ impl TypeChecker {
                 _ => true,
             };
             if !valid {
+                if matches!(op_desc, "'+'" | "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'") {
+                    self.error(arith_operand_message(op_desc, &resolved), span);
+                    continue;
+                }
                 let domain = match op_desc {
-                    "'+'" => "Int, Float, ExtFloat, or String",
-                    "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => "Int, Float, or ExtFloat",
                     "'=='/'!='" => "a comparable type",
                     "ordering comparison" => {
                         "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
@@ -3261,73 +3260,9 @@ impl TypeChecker {
                     // this widening logic; otherwise mixed Float/ExtFloat
                     // expressions will produce a unification error.
                     // ─────────────────────────────────────────────────────────
-                    BinOp::Add => {
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
-                        match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
-                            _ => {
-                                // Round 100: `unify_binop_operands` emits at
-                                // most ONE correctly-directed diagnostic —
-                                // the left operand establishes the
-                                // expectation, and a lone out-of-domain
-                                // operand gets the operator-domain message
-                                // instead of a misdirected mismatch (see its
-                                // doc comment). On error it returns `true`
-                                // and we return `Type::Error` instead of
-                                // `lt` so the outer ascribed-let
-                                // (`let n: Int = s + 1`) hits the
-                                // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`) and doesn't re-emit
-                                // (G2, round 60).
-                                let unify_errored = self.unify_binop_operands(
-                                    &lt,
-                                    &rt,
-                                    lhs_span,
-                                    rhs_span,
-                                    |t| is_valid_arith_operand(t, true),
-                                    |t| {
-                                        format!(
-                                            "operator '+' requires Int, Float, ExtFloat, or String, got '{t}'"
-                                        )
-                                    },
-                                );
-                                // F1 (round 67): if a mismatch was already
-                                // reported, skip the operand-domain check
-                                // below — a second diagnostic at the same
-                                // expression would be pure noise.
-                                if !unify_errored {
-                                    // B2: enforce operand domain — Add accepts
-                                    // Int/Float/ExtFloat or String (concatenation).
-                                    let resolved = self.apply(&lt);
-                                    match &resolved {
-                                        Type::Var(_) => {
-                                            // Still unresolved — defer to final pass.
-                                            self.pending_numeric_checks.push((
-                                                resolved.clone(),
-                                                "'+'",
-                                                span,
-                                            ));
-                                        }
-                                        _ if !is_valid_arith_operand(&resolved, true) => {
-                                            self.error(
-                                                format!(
-                                                    "operator '+' requires Int, Float, ExtFloat, or String, got '{resolved}'"
-                                                ),
-                                                span,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if unify_errored { Type::Error } else { lt }
-                            }
-                        }
-                    }
-                    BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                         let op_str = match op {
+                            BinOp::Add => "'+'",
                             BinOp::Sub => "'-'",
                             BinOp::Mul => "'*'",
                             BinOp::Mod => "'%'",
@@ -3339,38 +3274,40 @@ impl TypeChecker {
                             (Type::Float, Type::ExtFloat)
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            // An operand already in error (e.g. the left
+                            // side of `a + "b" + "c"`) was reported once;
+                            // stay quiet. `Type::Error` keeps an ascribed
+                            // let from re-reporting the result.
+                            (Type::Error, Type::String) | (Type::String, Type::Error) => {
+                                Type::Error
+                            }
                             (Type::String, _) | (_, Type::String) => {
-                                self.error(
-                                    format!(
-                                        "operator {op_str} requires Int, Float, or ExtFloat — \
-                                         got String; use `string.concat` or `+` to join strings"
-                                    ),
-                                    span,
-                                );
-                                lt
+                                self.error(arith_operand_message(op_str, &Type::String), span);
+                                Type::Error
                             }
                             _ => {
-                                // Round 100 (+ F1 round 67): mirror the Add
-                                // arm — `unify_binop_operands` emits at most
-                                // one correctly-directed diagnostic, so the
+                                // Round 100: `unify_binop_operands` emits at
+                                // most ONE correctly-directed diagnostic —
+                                // the left operand establishes the
+                                // expectation, and a lone out-of-domain
+                                // operand gets the operator-domain message
+                                // instead of a misdirected mismatch (see its
+                                // doc comment). F1 (round 67): the
                                 // operand-domain check below is skipped when
                                 // it errored (the second domain message
                                 // would be noise). Also return `Type::Error`
                                 // on unify failure so an outer ascribed-let
                                 // (`let n: Int = s - 1`) hits the
                                 // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`).
+                                // (`mod.rs:1387`) and doesn't re-emit
+                                // (G2, round 60).
                                 let unify_errored = self.unify_binop_operands(
                                     &lt,
                                     &rt,
                                     lhs_span,
                                     rhs_span,
-                                    |t| is_valid_arith_operand(t, false),
-                                    |t| {
-                                        format!(
-                                            "operator {op_str} requires Int, Float, or ExtFloat, got '{t}'"
-                                        )
-                                    },
+                                    is_valid_arith_operand,
+                                    |t| arith_operand_message(op_str, t),
                                 );
                                 if !unify_errored {
                                     // B2: enforce numeric-only operand domain.
@@ -3383,11 +3320,9 @@ impl TypeChecker {
                                                 span,
                                             ));
                                         }
-                                        _ if !is_valid_arith_operand(&resolved, false) => {
+                                        _ if !is_valid_arith_operand(&resolved) => {
                                             self.error(
-                                                format!(
-                                                    "operator {op_str} requires Int, Float, or ExtFloat, got '{resolved}'"
-                                                ),
+                                                arith_operand_message(op_str, &resolved),
                                                 span,
                                             );
                                         }
@@ -3408,7 +3343,7 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
                                 // Round 100 (+ F1 round 72): mirror the
-                                // Add/Sub arms — `unify_binop_operands`
+                                // `+`/`-`/`*`/`%` arm — `unify_binop_operands`
                                 // emits at most one correctly-directed
                                 // diagnostic, so the operand-domain check
                                 // below is skipped when it errored (the
@@ -3423,12 +3358,8 @@ impl TypeChecker {
                                     &rt,
                                     lhs_span,
                                     rhs_span,
-                                    |t| is_valid_arith_operand(t, false),
-                                    |t| {
-                                        format!(
-                                            "operator '/' requires Int, Float, or ExtFloat, got '{t}'"
-                                        )
-                                    },
+                                    is_valid_arith_operand,
+                                    |t| arith_operand_message("'/'", t),
                                 );
                                 if !unify_errored {
                                     // B2: enforce numeric-only operand domain.
@@ -3441,11 +3372,9 @@ impl TypeChecker {
                                                 span,
                                             ));
                                         }
-                                        _ if !is_valid_arith_operand(&resolved, false) => {
+                                        _ if !is_valid_arith_operand(&resolved) => {
                                             self.error(
-                                                format!(
-                                                    "operator '/' requires Int, Float, or ExtFloat, got '{resolved}'"
-                                                ),
+                                                arith_operand_message("'/'", &resolved),
                                                 span,
                                             );
                                         }
@@ -5656,10 +5585,9 @@ pub(super) fn resolve_supertrait_arg(
 }
 
 /// Returns true if the given type is a valid operand for arithmetic operators.
-/// `allow_string` widens the domain for `+`, which supports string concatenation.
 /// Type variables and `Type::Error` are treated as "maybe valid" (caller handles
 /// the Var case via deferred checks).
-pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
+pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
     match ty {
         Type::Int | Type::Float | Type::ExtFloat | Type::Error | Type::Never => true,
         Type::Var(_) => true,
@@ -5669,8 +5597,19 @@ pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
         // once a trait impl binds it, and the concrete check fires at the
         // instantiation site (or as a VM operator error) just as for Var.
         Type::AssocProj { .. } => true,
-        Type::String if allow_string => true,
         _ => false,
+    }
+}
+
+/// The operand-domain diagnostic for an arithmetic operator (`op_str` is
+/// the quoted operator, e.g. `'+'`). A String operand of `+` also names
+/// the way to build strings: interpolation.
+pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
+    let msg = format!("operator {op_str} requires Int, Float, or ExtFloat, got '{ty}'");
+    if op_str == "'+'" && matches!(ty, Type::String) {
+        format!("{msg}; build strings with interpolation, e.g. \"{{a}}{{b}}\"")
+    } else {
+        msg
     }
 }
 
@@ -6132,16 +6071,17 @@ fn main() {
         );
     }
 
-    // ── B2: String Sub/Mul/Mod should be rejected ──────────────────
+    // ── B2: arithmetic on String should be rejected ────────────────
 
     #[test]
-    fn test_string_add_is_allowed() {
-        assert_no_errors(
+    fn test_string_add_is_rejected_naming_interpolation() {
+        assert_has_error(
             r#"
 fn main() {
   "hello" + " world"
 }
         "#,
+            "build strings with interpolation",
         );
     }
 
@@ -6192,7 +6132,7 @@ fn main() {
   let int_box = Box { value: 42 }
   let str_box = Box { value: "hello" }
   int_box.value + 1
-  str_box.value + " world"
+  str_box.value == "hello"
 }
         "#,
         );

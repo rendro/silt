@@ -91,9 +91,6 @@ impl Vm {
                 // means this only runs with at least one ExtFloat operand.
                 Value::ExtFloat(if result == 0.0 { 0.0 } else { result })
             }
-            (Value::String(a), Value::String(b)) if op == Op::Add => {
-                Value::String(format!("{a}{b}"))
-            }
             _ => {
                 let op_name = match op {
                     Op::Add => "+",
@@ -112,8 +109,16 @@ impl Vm {
                         "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion".to_string()
                     ));
                 }
+                // Mirror the typechecker's operand-domain message: a
+                // String reaching `+` (e.g. through a polymorphic
+                // `fn add(a, b) { a + b }`) gets the same pointer.
+                let hint = if op == Op::Add && (a_type == "String" || b_type == "String") {
+                    "; build strings with interpolation, e.g. \"{a}{b}\""
+                } else {
+                    ""
+                };
                 return Err(VmError::new(format!(
-                    "cannot apply '{op_name}' to {a_type} and {b_type}",
+                    "cannot apply '{op_name}' to {a_type} and {b_type}{hint}",
                 )));
             }
         };

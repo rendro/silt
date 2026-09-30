@@ -1,6 +1,6 @@
 //! Round-71 DOC drift locks.
 //!
-//! These pin two audit-flagged BROKEN findings as source-grep locks
+//! These pin an audit-flagged BROKEN finding as source-grep locks
 //! against `docs/language/*.md`. The bug class — "documented snippet
 //! contradicts the implementation" — is best caught with bad-string
 //! locks: we assert that the offending text is no longer present in
@@ -16,18 +16,6 @@
 //!   pattern. The bare `trait Display` token *does* legitimately
 //!   appear in `trait Display for X { ... }` impl blocks, so the
 //!   pattern must be tighter than the bare name.
-//!
-//! - DOC-3: `docs/language/design-decisions.md` and
-//!   `docs/language/loops-and-pipes.md` claimed string `+` was not
-//!   supported and that interpolation was the *only* way to build
-//!   strings. In fact the typechecker accepts `+` on strings (see
-//!   `is_valid_arith_operand` in `src/typechecker/inference.rs`), and
-//!   `docs/language/types.md` already uses `p.first + " " + p.last`
-//!   in a walker-tested example. Lock that the false claim and the
-//!   anti-pattern wording are gone from both pages.
-
-const DESIGN_DECISIONS_MD: &str = include_str!("../../docs/language/design-decisions.md");
-const LOOPS_AND_PIPES_MD: &str = include_str!("../../docs/language/loops-and-pipes.md");
 
 // ────────────────────────────────────────────────────────────────────
 // DOC-2: doc fences must not redeclare *any* built-in trait
@@ -151,66 +139,5 @@ fn no_doc_fence_redeclares_a_builtin_trait() {
         violations.is_empty(),
         "doc fences must not redeclare any built-in trait:\n{}",
         violations.join("\n")
-    );
-}
-
-// ────────────────────────────────────────────────────────────────────
-// DOC-3: design-decisions.md and loops-and-pipes.md must not claim
-// silt has no string concatenation operator.
-// ────────────────────────────────────────────────────────────────────
-
-#[test]
-fn design_decisions_md_no_string_concat_claim_removed() {
-    // The old section heading.
-    assert!(
-        !DESIGN_DECISIONS_MD.contains("No String Concatenation Operator"),
-        "design-decisions.md must not contain the section heading \
-         `No String Concatenation Operator` — string `+` is \
-         supported (see is_valid_arith_operand in \
-         src/typechecker/inference.rs)."
-    );
-    // Lowercase variant — guards against a renamed-but-still-wrong
-    // section.
-    assert!(
-        !DESIGN_DECISIONS_MD.contains("no string concatenation operator"),
-        "design-decisions.md must not contain the prose claim \
-         `no string concatenation operator`."
-    );
-    // The anti-pattern wording that anchored the false claim.
-    assert!(
-        !DESIGN_DECISIONS_MD.contains("\"hello \" + name + \"!\""),
-        "design-decisions.md must not call `\"hello \" + name + \"!\"` \
-         an anti-pattern — string `+` is the supported builder."
-    );
-    // Stronger absolute claim: "is the only inline way" wording.
-    assert!(
-        !DESIGN_DECISIONS_MD.contains("is the only inline way"),
-        "design-decisions.md must not claim interpolation is the \
-         only inline way to build strings — string `+` is also \
-         supported."
-    );
-}
-
-#[test]
-fn loops_and_pipes_md_no_string_concat_claim_removed() {
-    assert!(
-        !LOOPS_AND_PIPES_MD.contains("No string concatenation operator exists"),
-        "loops-and-pipes.md must not claim no string concatenation \
-         operator exists — `+` on strings is supported."
-    );
-    assert!(
-        !LOOPS_AND_PIPES_MD.contains("no string concatenation operator"),
-        "loops-and-pipes.md must not contain the prose claim `no \
-         string concatenation operator`."
-    );
-    assert!(
-        !LOOPS_AND_PIPES_MD.contains("\"hello \" + name + \"!\""),
-        "loops-and-pipes.md must not call `\"hello \" + name + \"!\"` \
-         an anti-pattern — string `+` is the supported builder."
-    );
-    assert!(
-        !LOOPS_AND_PIPES_MD.contains("is the only inline way to build strings"),
-        "loops-and-pipes.md must not claim interpolation is the only \
-         inline way to build strings — string `+` is also supported."
     );
 }

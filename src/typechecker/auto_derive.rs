@@ -198,7 +198,7 @@ fn let_stmt(name: Symbol, value: Expr) -> Stmt {
 /// Semantics caveat for callers: this changes the *grouping* of
 /// `combine` applications, so it is only valid when `combine` is
 /// associative AND its evaluation order over the leaves matches the
-/// left fold's (true for `&&`, string `+`, and the compare
+/// left fold's (true for `&&` and the compare
 /// first-non-zero combinator used below — each evaluates its left
 /// operand fully before deciding whether to evaluate the right one,
 /// so leaves still run strictly left-to-right with identical
@@ -219,13 +219,38 @@ fn balanced_fold(mut items: Vec<Expr>, combine: &mut dyn FnMut(Expr, Expr) -> Ex
     items.pop().expect("balanced_fold invariant: one item left")
 }
 
-/// Balanced string concatenation: `+`-join the pieces with O(log N)
-/// nesting. String concatenation is associative and `+` always
-/// evaluates left then right, so the resulting string — and the order
-/// in which the embedded `.display()` calls run — is identical to the
-/// left-fold chain this replaces.
+/// Join display pieces into one string with interpolation. Literal
+/// pieces become literal segments (adjacent ones merged) and the
+/// `.display()` calls become interpolated segments, which run strictly
+/// left to right. An interpolation holds at most 255 segments (the
+/// compiler's `StringConcat` count is a `u8`), so a wider join nests
+/// interpolations of at most 255 segments each: depth O(log N).
 fn concat_all(pieces: Vec<Expr>) -> Expr {
-    balanced_fold(pieces, &mut |a, b| bin(a, BinOp::Add, b))
+    let mut parts: Vec<StringPart> = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        match piece.kind {
+            ExprKind::StringLit(lit, _) => match parts.last_mut() {
+                Some(StringPart::Literal(prev)) => prev.push_str(&lit),
+                _ => parts.push(StringPart::Literal(lit)),
+            },
+            _ => parts.push(StringPart::Expr(piece)),
+        }
+    }
+    const MAX_SEGMENTS: usize = u8::MAX as usize;
+    while parts.len() > MAX_SEGMENTS {
+        let mut chunks = Vec::with_capacity(parts.len().div_ceil(MAX_SEGMENTS));
+        let mut iter = parts.into_iter().peekable();
+        while iter.peek().is_some() {
+            let chunk: Vec<StringPart> = iter.by_ref().take(MAX_SEGMENTS).collect();
+            chunks.push(StringPart::Expr(interp_expr(chunk)));
+        }
+        parts = chunks;
+    }
+    interp_expr(parts)
+}
+
+fn interp_expr(parts: Vec<StringPart>) -> Expr {
+    Expr::new(ExprKind::StringInterp(parts), Span::synthetic())
 }
 
 /// Balanced `&&`-join. `&&` is associative, and the balanced grouping
@@ -828,10 +853,9 @@ pub(super) fn synth_display_impl_for_enum(
             if arg_names.is_empty() {
                 string_expr(&tag_name)
             } else {
-                // "Tag(" + a0.display() + ", " + a1.display() + ... + ")"
-                // — balanced concat (round 92): identical string and
-                // identical left-to-right `.display()` call order, but
-                // O(log n) deep instead of O(n).
+                // `Tag(<a0>, <a1>, ...)` from each argument's
+                // `.display()` — one interpolation, flat regardless of
+                // arity.
                 let mut pieces: Vec<Expr> = vec![string_expr(&tag_name), string_expr("(")];
                 for (i, arg_name) in arg_names.iter().enumerate() {
                     if i > 0 {
@@ -1051,9 +1075,8 @@ pub(super) fn synth_hash_impl_for_record(
 // ── Display on record ────────────────────────────────────────────────
 
 fn build_record_display_concat(name_str: &str, self_sym: Symbol, fields: &[RecordField]) -> Expr {
-    // "Name { f0: " + self.f0.display() + ", f1: " + self.f1.display() + " }"
-    // — balanced concat (round 92): identical string and identical
-    // left-to-right `.display()` call order, O(log n) deep.
+    // `Name { f0: <f0>, f1: <f1> }` from each field's `.display()` —
+    // one interpolation, flat regardless of width.
     let mut pieces: Vec<Expr> = vec![string_expr(&format!("{name_str} {{ "))];
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {

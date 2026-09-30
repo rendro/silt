@@ -1,0 +1,9 @@
+error[runtime]: cannot apply '+' to String and String; build strings with interpolation, e.g. "{a}{b}"
+ --> error__runtime_polymorphic_string_plus.silt:4:16
+   |
+ 4 | fn add(a, b) { a + b }
+   |                ^ cannot apply '+' to String and String; build strings with interpolation, e.g. "{a}{b}"
+
+call stack:
+  -> add  at error__runtime_polymorphic_string_plus.silt:4:16
+  -> main  at error__runtime_polymorphic_string_plus.silt:6:11

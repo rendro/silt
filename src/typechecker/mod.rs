@@ -9715,7 +9715,7 @@ fn main() {
         assert_has_error(
             r#"
 fn main() {
-  let x = 42 + "hello"
+  let x = 42 + 1.5
   x
 }
             "#,
@@ -10704,14 +10704,14 @@ fn main() {
 
     #[test]
     fn test_arithmetic_on_string_and_int() {
-        // String + Int should produce a type mismatch
+        // String + Int is rejected: `+` is numeric only
         assert_has_error(
             r#"
 fn main() {
   "hello" + 42
 }
             "#,
-            "type mismatch",
+            "requires Int, Float, or ExtFloat",
         );
     }
 

@@ -2611,7 +2611,7 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
             import list
             fn main() {
                 ["a", "b", "c"] |> list.fold("", { acc, s ->
-                    task.join(task.spawn({ -> acc + s }))
+                    task.join(task.spawn({ -> "{acc}{s}" }))
                 })
             }
             "#,

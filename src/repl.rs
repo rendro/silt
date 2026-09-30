@@ -1735,8 +1735,8 @@ mod tests {
     fn type_error_does_not_crash() {
         let mut vm = Vm::new();
         let mut ctx = ReplTypeContext::new();
-        // `1 + "hi"` is a type error.
-        let err = eval_expression_value(&mut vm, &mut ctx, r#"1 + "hi""#);
+        // `1 + 2.5` is a type error (Int and Float do not mix).
+        let err = eval_expression_value(&mut vm, &mut ctx, "1 + 2.5");
         assert!(err.is_err(), "type error should return Err");
         // Next input must still work.
         let value = eval_expression_value(&mut vm, &mut ctx, "7").unwrap();
