@@ -3,7 +3,8 @@
 -- stderr-contains: type name 'point' must start with an uppercase letter
 -- stderr-contains: `type Point`
 -- stderr-not-contains: error[runtime]
--- stderr-contains: wave2_sweep__lowercase_record_type_name_rejected__run.silt:7:6
+-- stderr-contains: wave2_sweep__lowercase_record_type_name_rejected__run.silt:8:6
+-- stderr-not-contains: expected a newline
 type point { x: Int, y: Int }
 fn main() {
   let p = point { x: 1, y: 2 }

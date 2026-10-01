@@ -2400,12 +2400,26 @@ impl Parser {
         self.skip_nl();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
-            if Self::starts_statement(self.peek()) {
+            if Self::starts_statement(self.peek()) && !self.at_lowercase_record_literal_brace() {
                 return Err(self.same_line_err("statement"));
             }
             self.skip_nl();
         }
         Ok(stmts)
+    }
+
+    /// True at the `{` of `point { x: 1 }` or `util.pt { x: 1 }`: a
+    /// statement that ended at a name followed by `{` on the same line.
+    /// That is a record literal with a lowercase type name, not two
+    /// statements on one line, so the newline error is skipped and the
+    /// name is left to the typechecker's "undefined variable" (and the
+    /// lowercase type-name error where a `type point` exists).
+    fn at_lowercase_record_literal_brace(&self) -> bool {
+        self.at(&Token::LBrace)
+            && matches!(
+                self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+                Some((Token::Ident(_), _))
+            )
     }
 
     /// True when `tok` could begin a statement or a declaration. Such a

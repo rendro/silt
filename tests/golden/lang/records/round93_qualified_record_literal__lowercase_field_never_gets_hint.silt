@@ -1,6 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-not-contains: qualified record construction
+-- stderr-contains: undefined variable 'util'
+-- stderr-not-contains: expected a newline
 fn main() {
   let a = util.pt { x: 1 }
   ()
