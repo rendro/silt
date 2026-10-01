@@ -140,7 +140,7 @@ fn print_monthly_summary(transactions) {
   let v3 = string.pad_left(fmt_currency(net), 15, " ")
   println("{l3}{v3}")
   let savings_rate = match {
-    income > 0.0 -> (net / income else 0.0) * 100.0
+    income > 0.0 -> net / income * 100.0
     _ -> 0.0
   }
   let l4 = string.pad_right("  Savings Rate:", 25, " ")
@@ -256,7 +256,10 @@ fn print_forecast(transactions) {
     |> option.unwrap_or(0.0)
     let spent = float.abs(map.get(spending, cat)
     |> option.unwrap_or(0.0))
-    let daily_rate = spent / days_elapsed else 0.0
+    let daily_rate = match days_elapsed {
+      0.0 -> 0.0
+      _ -> spent / days_elapsed
+    }
     let projected = daily_rate * days_in_month
     let forecast = match {
       projected > limit -> "OVER by {fmt_currency(projected - limit)}"
