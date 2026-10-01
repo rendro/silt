@@ -1,0 +1,17 @@
+-- A destructuring parameter of a named function survives `silt fmt`
+-- unchanged.
+-- cmd: fmt --check
+-- exit: 0
+
+type P {
+  x: Int,
+  y: Int
+}
+
+fn g(P { x, y }: P, (a, b): (Int, String)) -> Int {
+  x + y + a
+}
+
+fn main() {
+  println(g(P { x: 1, y: 2 }, (3, "s")))
+}

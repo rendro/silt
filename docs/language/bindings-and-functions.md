@@ -179,6 +179,18 @@ fn add(a, b) {
 fn square(x) { x * x }
 ```
 
+**Parameters** of named functions, trait methods and closures take the same
+forms: a name or an irrefutable destructuring pattern (a tuple, a record, or
+the constructor of a single-variant type), each with an optional type
+annotation. A refutable pattern such as `Some(x)` or `[a, b]` is rejected;
+bind a name and `match` on it in the body instead.
+
+```silt
+fn add(x: Int, y: Int) { x + y }
+fn first((a, b): (Int, String)) { a }
+fn area(Point { width, height }) { width * height }
+```
+
 **Closures** are values that close over their environment. A closure is
 written in braces: its parameters, `->`, and its body:
 
@@ -192,14 +204,10 @@ fn make_adder(n) {
 let answer = { -> 42 }   -- no parameters
 ```
 
-Closure parameters take the same forms as a named function's: a name or a
-destructuring pattern, each with an optional type annotation. A closure has
-no return-type annotation; its type is the type of its body.
+A closure has no return-type annotation; its type is the type of its body:
 
 ```silt
-let add = { x: Int, y: Int -> x + y }
 let swap = { (a, b): (Int, String) -> (b, a) }
-let area = { Point { width, height } -> width * height }
 ```
 
 **No nested named functions.** Use `let f = { x -> ... }` for local helpers.

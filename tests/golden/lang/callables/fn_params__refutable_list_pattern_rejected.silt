@@ -1,0 +1,12 @@
+-- A list pattern can fail to match, so it is rejected as a function
+-- parameter.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: refutable pattern in function parameter: list patterns can fail to match
+fn f([a, b]) {
+  a
+}
+
+fn main() {
+  println(f([1, 2]))
+}

@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: parse error at broken.silt:1:15 — expected parameter name, found {
--- stderr-contains: parse error at broken.silt:4:14 — expected parameter name, found {
--- stderr-contains: parse error at broken.silt:7:15 — expected parameter name, found {
+-- stderr-contains: parse error at broken.silt:1:15 — expected parameter name, found =
+-- stderr-contains: parse error at broken.silt:4:14 — expected parameter name, found =
+-- stderr-contains: parse error at broken.silt:7:15 — expected parameter name, found =
 import broken
 
 fn main() {

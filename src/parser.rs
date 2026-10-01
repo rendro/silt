@@ -1583,9 +1583,10 @@ impl Parser {
                         span: type_span,
                     });
                 }
-                let pattern = self.parse_simple_param_pattern()?;
+                let pattern = self.parse_param_pattern()?;
                 let ty = if self.peek_skip_nl() == &Token::Colon {
                     self.advance();
+                    self.skip_nl();
                     Some(self.parse_type_expr()?)
                 } else {
                     None
@@ -1600,6 +1601,25 @@ impl Parser {
         }
         self.expect(&Token::RParen)?;
         Ok(params)
+    }
+
+    /// A data parameter of a named function, trait method or closure: a
+    /// name or a destructuring pattern (the type annotation is parsed
+    /// by the caller). A token that cannot start a pattern is reported
+    /// as a missing parameter name.
+    fn parse_param_pattern(&mut self) -> Result<Pattern> {
+        self.skip_nl();
+        let start = self.pos;
+        self.parse_pattern().map_err(|err| {
+            if self.pos == start && err.message.starts_with("expected pattern") {
+                ParseError {
+                    message: format!("expected parameter name, found {}", self.peek()),
+                    span: err.span,
+                }
+            } else {
+                err
+            }
+        })
     }
 
     fn parse_simple_param_pattern(&mut self) -> Result<Pattern> {
@@ -3619,7 +3639,7 @@ impl Parser {
     /// Closure parameters: the data-parameter grammar of a named
     /// function, `pattern` or `pattern: Type`, separated by commas and
     /// ended by `->`. The pattern may destructure (`(a, b)`,
-    /// `Point { x, y }`, `{ name, ... }`); there is no return-type
+    /// `Point { x, y }`, `User { name, .. }`); there is no return-type
     /// annotation, the body's type is the closure's return type.
     fn parse_closure_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
@@ -3635,7 +3655,7 @@ impl Parser {
                     span: self.span(),
                 });
             }
-            let pattern = self.parse_pattern()?;
+            let pattern = self.parse_param_pattern()?;
             let ty = if self.peek_skip_nl() == &Token::Colon {
                 self.advance();
                 self.skip_nl();

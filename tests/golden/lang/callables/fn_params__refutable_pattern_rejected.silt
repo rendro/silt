@@ -1,0 +1,13 @@
+-- A refutable pattern is rejected as a function parameter, as it is
+-- for a closure parameter.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: refutable pattern in function parameter
+fn f(Some(x)) {
+  x
+}
+
+fn main() {
+  println(f(Some(1)))
+}
