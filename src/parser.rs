@@ -671,6 +671,10 @@ pub struct Parser {
     /// exit so nested-but-illegal forms (parser doesn't allow nested
     /// traits, so this is purely defensive) cannot leak between siblings.
     current_trait_name: Option<Symbol>,
+    /// What a top-level item is called in the same-line error: a
+    /// "declaration" in a file, a "statement" in the REPL, whose entries
+    /// are statements (see `for_repl`).
+    top_level_item: &'static str,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -712,6 +716,7 @@ impl Parser {
             in_fn_recovery: false,
             doc_index: None,
             current_trait_name: None,
+            top_level_item: "declaration",
         }
     }
 
@@ -732,7 +737,16 @@ impl Parser {
             in_fn_recovery: false,
             doc_index: Some(DocIndex::from_source(source)),
             current_trait_name: None,
+            top_level_item: "declaration",
         }
+    }
+
+    /// A parser for a REPL entry: its top-level items are statements, so
+    /// two on one line get "each statement must start on its own line",
+    /// as inside a function body.
+    pub fn for_repl(mut self) -> Self {
+        self.top_level_item = "statement";
+        self
     }
 
     /// Delimiter depth of the token at `index` (see `delim_depth`).
@@ -1050,8 +1064,8 @@ impl Parser {
         self.skip_nl();
         while !self.at(&Token::Eof) {
             decls.push(self.parse_decl()?);
-            if Self::starts_statement(self.peek()) {
-                return Err(self.same_line_err("declaration"));
+            if let Some(err) = self.same_line_decl_err() {
+                return Err(err);
             }
             self.skip_nl();
         }
@@ -1156,10 +1170,26 @@ impl Parser {
     /// `parse_program`: record the error and parse the next declaration
     /// where it starts.
     fn recover_same_line_decl(&mut self) {
-        if Self::starts_statement(self.peek()) {
-            let err = self.same_line_err("declaration");
+        if let Some(err) = self.same_line_decl_err() {
             self.errors.push(err);
         }
+    }
+
+    /// The same-line check after a top-level declaration. Only a token
+    /// that starts a declaration is a second declaration on the line;
+    /// any other token (`with`, `5`, `!`, ...) is left to the plain
+    /// "expected declaration" error the next `parse_decl` reports.
+    fn same_line_decl_err(&self) -> Option<ParseError> {
+        let starts_decl = matches!(
+            self.peek(),
+            Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
+        );
+        let after_foreign_keyword = matches!(
+            self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+            Some((Token::Ident(prev), _)) if Self::foreign_keyword_hint(&intern::resolve(*prev)).is_some()
+        );
+        (starts_decl || after_foreign_keyword && Self::starts_statement(self.peek()))
+            .then(|| self.same_line_err(self.top_level_item))
     }
 
     /// Skip tokens until we find one that could start a new declaration.

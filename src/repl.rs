@@ -559,7 +559,7 @@ fn eval_declaration(
             return;
         }
     };
-    let mut program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens).for_repl().parse_program() {
         Ok(p) => p,
         Err(e) => {
             let source_err = SourceError::from_parse_error(&e, input, "<repl>");
