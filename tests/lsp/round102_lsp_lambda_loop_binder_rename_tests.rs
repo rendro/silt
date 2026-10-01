@@ -5,11 +5,11 @@
 //! `workspace::collect_references_in_expr` had no `ExprKind::Lambda`
 //! arm, and its `_` fallback (`visit_expr_children`) walks only the
 //! lambda BODY. So renaming a lambda param from a body use-site edited
-//! the uses but not the `fn(n)` / `{ n -> ... }` binder token — the
-//! applied WorkspaceEdit produced `fn(n) { m * 2 }`, which fails
+//! the uses but not the `{ n -> ... }` binder token — the
+//! applied WorkspaceEdit produced `{ n -> m * 2 }`, which fails
 //! `silt check` with an undefined variable. `textDocument/references`
 //! likewise omitted the binder, and renaming a user type missed lambda
-//! param annotations (`fn(p: Point) { ... }`) because `Param.ty` was
+//! param annotations (`{ p: Point -> ... }`) because `Param.ty` was
 //! never walked. Same class: `ExprKind::Loop { bindings, .. }` binders
 //! (`loop acc = 0`) carry only a `Symbol` (no span) and were never
 //! collected, so body uses were renamed while the binder was not.
@@ -122,37 +122,37 @@ fn rename_edits(client: &mut LspClient, uri: &str, pos: (u64, u64), new_name: &s
 
 // ── Tests ──────────────────────────────────────────────────────────
 
-/// `fn(n) { n * 2 }`: rename from the body USE must also edit the
-/// `fn(n)` binder token. Pre-fix: only the use was edited, and the
-/// applied text (`fn(n) { m * 2 }`) failed the front end.
-const FN_LAMBDA_SRC: &str = "fn apply(f, x) { f(x) }\n\
+/// A closure argument `{ n -> n * 2 }`: rename from the body USE must
+/// also edit the `n ->` binder token. Pre-fix: only the use was edited,
+/// and the applied text (`{ n -> m * 2 }`) failed the front end.
+const CLOSURE_ARG_SRC: &str = "fn apply(f, x) { f(x) }\n\
                              \n\
                              fn main() {\n  \
-                             let doubled = apply(fn(n) { n * 2 }, 3)\n  \
+                             let doubled = apply({ n -> n * 2 }, 3)\n  \
                              println(\"{doubled}\")\n\
                              }\n";
 
 #[test]
-fn rename_fn_lambda_param_from_body_use_edits_binder_and_use() {
-    front_end_errors(FN_LAMBDA_SRC).expect("fixture must lex/parse/typecheck cleanly");
+fn rename_closure_arg_param_from_body_use_edits_binder_and_use() {
+    front_end_errors(CLOSURE_ARG_SRC).expect("fixture must lex/parse/typecheck cleanly");
 
     let mut client = LspClient::spawn();
-    let uri = "file:///tmp/silt_r102_rn_fn_lambda_param.silt";
-    client.did_open_and_wait(uri, FN_LAMBDA_SRC);
+    let uri = "file:///tmp/silt_r102_rn_closure_arg_param.silt";
+    client.did_open_and_wait(uri, CLOSURE_ARG_SRC);
 
     // Cursor on the `n` of `n * 2` (body use-site).
-    let use_pos = pos_of(FN_LAMBDA_SRC, "n * 2", 0);
+    let use_pos = pos_of(CLOSURE_ARG_SRC, "n * 2", 0);
     let edits = rename_edits(&mut client, uri, use_pos, "m");
 
     assert_eq!(
         edits.len(),
         2,
-        "expected exactly 2 edits (the `fn(n)` binder + the `n * 2` use); got {edits:#?}"
+        "expected exactly 2 edits (the `{{ n ->` binder + the `n * 2` use); got {edits:#?}"
     );
 
-    let applied = apply_edits(FN_LAMBDA_SRC, &edits);
+    let applied = apply_edits(CLOSURE_ARG_SRC, &edits);
     assert!(
-        applied.contains("fn(m) { m * 2 }"),
+        applied.contains("{ m -> m * 2 }"),
         "binder AND use must be renamed; got:\n{applied}"
     );
     front_end_errors(&applied).unwrap_or_else(|e| {
@@ -165,9 +165,9 @@ fn rename_fn_lambda_param_from_body_use_edits_binder_and_use() {
 fn references_on_lambda_param_use_include_binder() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_r102_refs_lambda_param.silt";
-    client.did_open_and_wait(uri, FN_LAMBDA_SRC);
+    client.did_open_and_wait(uri, CLOSURE_ARG_SRC);
 
-    let use_pos = pos_of(FN_LAMBDA_SRC, "n * 2", 0);
+    let use_pos = pos_of(CLOSURE_ARG_SRC, "n * 2", 0);
     let resp = client.request(
         "textDocument/references",
         json!({
@@ -181,10 +181,10 @@ fn references_on_lambda_param_use_include_binder() {
         .and_then(|r| r.as_array())
         .unwrap_or_else(|| panic!("references must return an array; got {resp}"));
 
-    // Binder `n` in `fn(n)`: the char right after `fn(`.
+    // Binder `n` in `{ n ->`: two chars after the `{`.
     let binder_pos = {
-        let (l, c) = pos_of(FN_LAMBDA_SRC, "fn(n)", 0);
-        (l, c + 3)
+        let (l, c) = pos_of(CLOSURE_ARG_SRC, "{ n ->", 0);
+        (l, c + 2)
     };
     let has_binder = refs.iter().any(|loc| {
         loc.pointer("/range/start/line").and_then(|v| v.as_u64()) == Some(binder_pos.0)
@@ -195,7 +195,7 @@ fn references_on_lambda_param_use_include_binder() {
     });
     assert!(
         has_binder,
-        "references must include the `fn(n)` binder at {binder_pos:?}; got {refs:#?}"
+        "references must include the `{{ n ->` binder at {binder_pos:?}; got {refs:#?}"
     );
     client.shutdown();
 }
@@ -238,11 +238,11 @@ fn rename_trailing_closure_param_from_body_use_edits_binder_and_use() {
 }
 
 /// Renaming a user TYPE must rewrite lambda param annotations
-/// (`fn(p: Point) { ... }`) — `Param.ty` was never walked for lambdas.
+/// (`{ p: Point -> ... }`) — `Param.ty` was never walked for lambdas.
 const TYPE_ANNOTATION_SRC: &str = "type Point { x: Int, y: Int }\n\
                                    \n\
                                    fn main() {\n  \
-                                   let getx = fn(p: Point) { p.x }\n  \
+                                   let getx = { p: Point -> p.x }\n  \
                                    let pt = Point { x: 7, y: 1 }\n  \
                                    let gx = getx(pt)\n  \
                                    println(\"{gx}\")\n\
@@ -265,12 +265,12 @@ fn rename_type_updates_lambda_param_annotation() {
     assert_eq!(
         edits.len(),
         3,
-        "expected 3 edits (decl, `fn(p: Point)` annotation, `Point {{ x: 7` head); got {edits:#?}"
+        "expected 3 edits (decl, `p: Point` annotation, `Point {{ x: 7` head); got {edits:#?}"
     );
 
     let applied = apply_edits(TYPE_ANNOTATION_SRC, &edits);
     assert!(
-        applied.contains("fn(p: Pt) { p.x }"),
+        applied.contains("{ p: Pt -> p.x }"),
         "lambda param annotation must be renamed; got:\n{applied}"
     );
     assert!(

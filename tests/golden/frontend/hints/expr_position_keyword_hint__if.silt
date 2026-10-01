@@ -1,10 +1,10 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: undefined variable 'if'
+-- stderr-contains: error[parse]
 -- stderr-contains: silt has no 'if' keyword
 -- stderr-contains: match cond
 fn main() {
     let x: Bool = true
-    let r = if x { 1 } else { 0 }
+    let r = if x { 1 }
     println(r)
 }

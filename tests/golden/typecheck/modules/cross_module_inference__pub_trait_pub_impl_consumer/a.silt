@@ -3,5 +3,5 @@ trait Greet {
 }
 
 trait Greet for Int {
-    fn greet(self) -> String = "int-{self}"
+    fn greet(self) -> String { "int-{self}" }
 }

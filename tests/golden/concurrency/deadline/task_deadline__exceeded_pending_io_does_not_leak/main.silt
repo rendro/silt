@@ -8,7 +8,7 @@ import task
 import time
 
 fn main() {
-  let first = task.deadline(time.ms(1), fn() {
+  let first = task.deadline(time.ms(1), { ->
     io.read_file("fixture.txt")
   })
   let second = io.read_file("fixture.txt")

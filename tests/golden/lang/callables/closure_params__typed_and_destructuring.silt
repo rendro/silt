@@ -1,0 +1,44 @@
+-- Closure parameters take the full data-parameter grammar of a named
+-- function: a pattern with an optional `: Type` annotation, in every
+-- position a closure can appear.
+import list
+
+type Point { x: Int, y: Int }
+
+fn apply(f: Fn(Int) -> Int, v: Int) -> Int {
+  f(v)
+}
+
+fn main() {
+  -- let binding, typed params
+  let add = { x: Int, y: Int -> x + y }
+  println(add(1, 2))
+  -- tuple pattern with a tuple annotation
+  let swap = { (a, b): (Int, String) -> (b, a) }
+  println(swap((1, "s")))
+  -- record pattern
+  let area = { Point { x, y } -> x * y }
+  println(area(Point { x: 3, y: 4 }))
+  -- anonymous record pattern with a rest binder
+  let name_of = { { name, ...rest } -> name }
+  println(name_of({ name: "ada", age: 36 }))
+  -- a function type in the annotation
+  let at_ten = { f: Fn(Int) -> Int -> f(10) }
+  println(at_ten({ z -> z * 2 }))
+  -- no parameters
+  let answer = { -> 42 }
+  println(answer())
+  -- pipe right-hand side, trailing closure
+  println([1, 2, 3] |> list.map { n: Int -> n + 1 })
+  -- plain argument
+  println(apply({ n: Int -> n * 3 }, 5))
+  -- trailing closure with a destructuring typed param and a block body
+  let sums = list.map([(1, 2), (3, 4)]) { (a, b): (Int, Int) ->
+    let s = a + b
+    s * 10
+  }
+  println(sums)
+  -- annotation split across lines
+  println(list.map([1]) { x:
+    Int -> x })
+}

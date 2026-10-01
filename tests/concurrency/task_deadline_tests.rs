@@ -125,7 +125,7 @@ import io
 import task
 
 fn main() {
-  let handle = task.spawn(fn() {
+  let handle = task.spawn({ ->
     match io.read_line() {
       Ok(_) -> "unexpected_ok"
       Err(e) -> e.message()
@@ -231,16 +231,16 @@ import time
 fn main() {{
   match tcp.connect("{addr}") {{
     Ok(s) -> {{
-      let outcome = task.spawn_until(time.ms(50), fn() {{
+      let outcome = task.spawn_until(time.ms(50), {{ ->
         match tcp.read(s, 1024) {{
           Ok(_) -> "unexpected-ok"
           Err(TcpTimeout) -> "tcp-timeout"
-          Err(other) -> "other:" + other.message()
+          Err(other) -> "other:{{other.message()}}"
         }}
       }})
       println(task.join(outcome))
     }}
-    Err(e) -> println("connect-err:" + e.message())
+    Err(e) -> println("connect-err:{{e.message()}}")
   }}
 }}
 "#

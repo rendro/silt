@@ -5,7 +5,7 @@
 import io
 fn program() {
   let x = 100
-  let f = fn() { x }
+  let f = { -> x }
   let x = 999
   f()
 }

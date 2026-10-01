@@ -86,57 +86,45 @@ fn redact(lines, pattern) {
 -- make_grep: returns a closure that greps for a specific pattern
 
 fn make_grep(pattern) {
-  fn(lines) {
-    grep(lines, pattern)
-  }
+  { lines -> grep(lines, pattern) }
 }
 
 -- make_reject: returns a closure that rejects lines matching a pattern
 
 fn make_reject(pattern) {
-  fn(lines) {
-    reject(lines, pattern)
-  }
+  { lines -> reject(lines, pattern) }
 }
 
 -- make_prefix: returns a closure that adds a prefix to every line
 
 fn make_prefix(prefix) {
-  fn(lines) {
-    lines
-    |> list.map { line -> "{prefix}{line}" }
-  }
+  { lines -> lines
+  |> list.map { line -> "{prefix}{line}" } }
 }
 
 -- make_contains_any: returns a closure that keeps lines matching any of the given patterns
 
 fn make_contains_any(patterns) {
-  fn(lines) {
-    lines
-    |> list.filter { line -> patterns
-    |> list.any { pat -> string.contains(line, pat) } }
-  }
+  { lines -> lines
+  |> list.filter { line -> patterns
+  |> list.any { pat -> string.contains(line, pat) } } }
 }
 
 -- make_truncate: returns a closure that truncates lines to max_len chars with "..."
 
 fn make_truncate(max_len) {
-  fn(lines) {
-    lines
-    |> list.map { line -> match string.length(line) > max_len {
-      true -> "{string.slice(line, 0, max_len)}..."
-      _ -> line
-    } }
-  }
+  { lines -> lines
+  |> list.map { line -> match string.length(line) > max_len {
+    true -> "{string.slice(line, 0, max_len)}..."
+    _ -> line
+  } } }
 }
 
 -- make_replace: returns a closure that applies regex.replace_all_with to each line
 
 fn make_replace(pattern, transform) {
-  fn(lines) {
-    lines
-    |> list.map { line -> regex.replace_all_with(pattern, line, transform) }
-  }
+  { lines -> lines
+  |> list.map { line -> regex.replace_all_with(pattern, line, transform) } }
 }
 
 -- ============================================================

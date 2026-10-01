@@ -1,5 +1,5 @@
 trait Pretty { fn pretty(self) -> String }
-trait Pretty for List { fn pretty(self) -> String = "list" }
+trait Pretty for List { fn pretty(self) -> String { "list" } }
 fn show(x: a) -> String where a: Pretty { x.pretty() }
 fn main() {
   println([1, 2].pretty())

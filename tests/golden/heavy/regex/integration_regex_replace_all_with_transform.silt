@@ -1,7 +1,7 @@
 import io
 import regex
 fn program() {
-  regex.replace_all_with("[a-z]+", "hello world", fn(m) { "[" + m + "]" })
+  regex.replace_all_with("[a-z]+", "hello world", { m -> "[{m}]" })
 }
 
 fn main() {

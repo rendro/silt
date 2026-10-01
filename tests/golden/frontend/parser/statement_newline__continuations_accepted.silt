@@ -1,0 +1,16 @@
+-- One statement per line; a statement may still continue on the next line
+-- after a leading infix operator or pipe, and a block or closure may hold
+-- a single statement on the line of its braces.
+import list
+
+fn main() {
+  let a = 1
+  let b = a
+    * 3
+  let xs = [1, 2, 3]
+    |> list.map { x -> x + b }
+  let c = { 10 }
+  println(b)
+  println(xs)
+  println(c)
+}

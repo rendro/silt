@@ -7,12 +7,12 @@ import task
 
 fn main() {
   let x = channel.new(0)
-  let waiter = task.spawn(fn() {
+  let waiter = task.spawn({ ->
     let t = channel.timeout(600)
     let _ = channel.receive(t)
     channel.send(x, 7)
   })
-  let relay = task.spawn(fn() {
+  let relay = task.spawn({ ->
     match channel.receive(x) {
       Message(v) -> v * 2
       _ -> 0 - 1

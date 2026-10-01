@@ -1,7 +1,7 @@
 import io
 fn program() {
   let x = 10
-  let f = fn() { x + x + x }
+  let f = { -> x + x + x }
   f()
 }
 

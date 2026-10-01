@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: a closure cannot take a 'type' parameter
+-- A closure has no `type` parameters; they belong to named functions.
+fn main() {
+  let f = { x, type a -> x }
+  println(f(1))
+}

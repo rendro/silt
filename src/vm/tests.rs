@@ -897,7 +897,7 @@ fn test_closure_capture() {
     let result = run_vm(
         r#"
             fn make_adder(n) {
-                fn(x) { x + n }
+                { x -> x + n }
             }
             fn main() {
                 let add5 = make_adder(5)
@@ -916,7 +916,7 @@ fn test_closure_in_map() {
 
             fn main() {
                 let factor = 10
-                [1, 2, 3] |> list.map(fn(x) { x * factor })
+                [1, 2, 3] |> list.map({ x -> x * factor })
             }
         "#,
     );
@@ -938,7 +938,7 @@ fn test_higher_order() {
                 f(f(x))
             }
             fn main() {
-                let double = fn(x) { x * 2 }
+                let double = { x -> x * 2 }
                 apply_twice(double, 3)
             }
         "#,
@@ -954,10 +954,10 @@ fn test_closure_counter() {
             import list
 
             fn main() {
-                let fns = [1, 2, 3] |> list.map(fn(n) {
-                    fn() { n * 10 }
+                let fns = [1, 2, 3] |> list.map({ n ->
+                    { -> n * 10 }
                 })
-                fns |> list.map(fn(f) { f() })
+                fns |> list.map({ f -> f() })
             }
         "#,
     );
@@ -976,7 +976,7 @@ fn test_closure_multiple_captures() {
     let result = run_vm(
         r#"
             fn make_linear(a, b) {
-                fn(x) { a * x + b }
+                { x -> a * x + b }
             }
             fn main() {
                 let f = make_linear(3, 7)
@@ -993,8 +993,8 @@ fn test_closure_transitive_capture() {
     let result = run_vm(
         r#"
             fn outer(x) {
-                let make_inner = fn() {
-                    fn() { x }
+                let make_inner = { ->
+                    { -> x }
                 }
                 make_inner()
             }
@@ -1013,7 +1013,7 @@ fn test_closure_no_capture() {
     let result = run_vm(
         r#"
             fn main() {
-                let f = fn(x) { x + 1 }
+                let f = { x -> x + 1 }
                 f(10)
             }
         "#,
@@ -1029,7 +1029,7 @@ fn test_closure_with_filter() {
 
             fn main() {
                 let threshold = 3
-                [1, 2, 3, 4, 5] |> list.filter(fn(x) { x > threshold })
+                [1, 2, 3, 4, 5] |> list.filter({ x -> x > threshold })
             }
         "#,
     );
@@ -1047,7 +1047,7 @@ fn test_closure_with_fold() {
 
             fn main() {
                 let offset = 100
-                [1, 2, 3] |> list.fold(offset, fn(acc, x) { acc + x })
+                [1, 2, 3] |> list.fold(offset, { acc, x -> acc + x })
             }
         "#,
     );
@@ -1086,7 +1086,7 @@ fn test_closure_returned_from_fn() {
     let result = run_vm(
         r#"
             fn multiplier(factor) {
-                fn(x) { x * factor }
+                { x -> x * factor }
             }
             fn main() {
                 let times3 = multiplier(3)
@@ -1096,25 +1096,6 @@ fn test_closure_returned_from_fn() {
         "#,
     );
     assert_eq!(result, Value::Int(65));
-}
-
-#[test]
-fn test_closure_with_pipe_and_fn_syntax() {
-    // Pipe with explicit fn(x) { ... } closure
-    let result = run_vm(
-        r#"
-            import list
-
-            fn main() {
-                let base = 5
-                [1, 2, 3] |> list.map(fn(x) { x + base })
-            }
-        "#,
-    );
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)]))
-    );
 }
 
 #[test]
@@ -1168,8 +1149,8 @@ fn test_chained_pipes_with_closures() {
                 let offset = 10
                 let cutoff = 13
                 [1, 2, 3, 4, 5]
-                    |> list.map(fn(x) { x + offset })
-                    |> list.filter(fn(x) { x > cutoff })
+                    |> list.map({ x -> x + offset })
+                    |> list.filter({ x -> x > cutoff })
             }
         "#,
     );
@@ -2255,7 +2236,7 @@ fn test_spawn_join() {
             import task
 
             fn main() {
-                let t = task.spawn(fn() { 42 })
+                let t = task.spawn({ -> 42 })
                 task.join(t)
             }
         "#,
@@ -2274,7 +2255,7 @@ fn test_spawn_join_already_completed() {
 
             fn main() {
                 let ch = channel.new(1)
-                let t = task.spawn(fn() {
+                let t = task.spawn({ ->
                     channel.send(ch, "done")
                     99
                 })
@@ -2298,15 +2279,15 @@ fn test_spawn_join_multiple_completed() {
 
             fn main() {
                 let ch = channel.new(10)
-                let t1 = task.spawn(fn() {
+                let t1 = task.spawn({ ->
                     channel.send(ch, 1)
                     10
                 })
-                let t2 = task.spawn(fn() {
+                let t2 = task.spawn({ ->
                     channel.send(ch, 2)
                     20
                 })
-                let t3 = task.spawn(fn() {
+                let t3 = task.spawn({ ->
                     channel.send(ch, 3)
                     30
                 })
@@ -2477,7 +2458,7 @@ fn test_scheduler_task_completes() {
         r#"
             import task
             fn main() {
-                let t = task.spawn(fn() { 42 })
+                let t = task.spawn({ -> 42 })
                 task.join(t)
             }
             "#,
@@ -2492,8 +2473,8 @@ fn test_scheduler_multiple_tasks() {
             import task
             import list
             fn main() {
-                let tasks = [1, 2, 3] |> list.map(fn(n) { task.spawn(fn() { n * 10 }) })
-                tasks |> list.map(fn(t) { task.join(t) })
+                let tasks = [1, 2, 3] |> list.map({ n -> task.spawn({ -> n * 10 }) })
+                tasks |> list.map({ t -> task.join(t) })
             }
             "#,
     );
@@ -2523,7 +2504,7 @@ fn test_scheduler_channel_communication() {
             import channel
             fn main() {
                 let ch = channel.new()
-                task.spawn(fn() { channel.send(ch, 99) })
+                task.spawn({ -> channel.send(ch, 99) })
                 channel.receive(ch)
             }
             "#,
@@ -2543,7 +2524,7 @@ fn test_scheduler_deadlock_detection() {
             import channel
             fn main() {
                 let ch = channel.new()
-                let t = task.spawn(fn() { channel.receive(ch) })
+                let t = task.spawn({ -> channel.receive(ch) })
                 task.join(t)
             }
             "#,
@@ -2570,7 +2551,7 @@ fn test_scheduler_task_failure_propagates() {
         r#"
             import task
             fn main() {
-                let t = task.spawn(fn() { 1 / 0 })
+                let t = task.spawn({ -> 1 / 0 })
                 task.join(t)
             }
             "#,
@@ -2610,8 +2591,8 @@ fn test_scheduler_list_fold_with_yielding_callback() {
             import task
             import list
             fn main() {
-                [1, 2, 3, 4, 5] |> list.fold(0, fn(acc, n) {
-                    task.join(task.spawn(fn() { acc + n }))
+                [1, 2, 3, 4, 5] |> list.fold(0, { acc, n ->
+                    task.join(task.spawn({ -> acc + n }))
                 })
             }
             "#,
@@ -2629,8 +2610,8 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
             import task
             import list
             fn main() {
-                ["a", "b", "c"] |> list.fold("", fn(acc, s) {
-                    task.join(task.spawn(fn() { acc + s }))
+                ["a", "b", "c"] |> list.fold("", { acc, s ->
+                    task.join(task.spawn({ -> "{acc}{s}" }))
                 })
             }
             "#,
@@ -2648,8 +2629,8 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
             import task
             import list
             fn main() {
-                [1, 2, 3, 4, 5, 6] |> list.filter(fn(n) {
-                    task.join(task.spawn(fn() { n % 2 == 0 }))
+                [1, 2, 3, 4, 5, 6] |> list.filter({ n ->
+                    task.join(task.spawn({ -> n % 2 == 0 }))
                 })
             }
             "#,
@@ -2774,7 +2755,7 @@ fn test_regex_cache_eviction_correctness() {
             import regex
             fn main() {
                 -- Force compilation of 260 distinct patterns.
-                1..260 |> list.each(fn(n) {
+                1..260 |> list.each({ n ->
                     regex.is_match("pat{n}", "pat{n}")
                 })
                 -- After eviction, verify correct match results on

@@ -8,7 +8,7 @@ import task
 
 fn main() {
   let x = channel.new(0)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let t = channel.timeout(600)
     let _ = channel.receive(t)
     channel.send(x, 1)

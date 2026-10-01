@@ -231,8 +231,7 @@ fn locator_lines(stderr: &str) -> Vec<&str> {
 fn a_type_error_in_a_dependency_escapes_the_locator_path() {
     for subcommand in ["check", "run"] {
         let ws = fresh_workspace("locator_type");
-        let app =
-            package_with_tab_dependency(&ws, "pub fn f(n: Int) -> String {\n  n + \"a\"\n}\n");
+        let app = package_with_tab_dependency(&ws, "pub fn f(n: Int) -> Int {\n  n + 1.5\n}\n");
         let out = silt(&ws, &app, &[subcommand]);
         let context = format!("silt {subcommand}");
         assert_failed_printably(&out, &context);

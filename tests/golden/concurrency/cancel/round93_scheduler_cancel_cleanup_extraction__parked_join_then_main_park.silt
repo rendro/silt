@@ -7,14 +7,14 @@ import time
 
 fn main() {
   let dead = channel.new(0)
-  let joinee = task.spawn(fn() { channel.receive(dead) })
-  let victim = task.spawn(fn() { task.join(joinee) })
+  let joinee = task.spawn({ -> channel.receive(dead) })
+  let victim = task.spawn({ -> task.join(joinee) })
   time.sleep(time.ms(50))
   task.cancel(victim)
   task.cancel(joinee)
   time.sleep(time.ms(50))
   let ch = channel.new(0)
-  let feeder = task.spawn(fn() { channel.send(ch, 42) })
+  let feeder = task.spawn({ -> channel.send(ch, 42) })
   let got = match channel.receive(ch) {
     Message(v) -> v
     _ -> 0

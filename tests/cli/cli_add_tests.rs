@@ -50,7 +50,7 @@ fn test_add_to_fresh_manifest() {
     let app = ws.join("app");
     let calc = ws.join("calc");
     write_app_package(&app, "the_app", "fn main() {}\n");
-    write_lib_package(&calc, "calc", "pub fn one() = 1\n");
+    write_lib_package(&calc, "calc", "pub fn one() { 1 }\n");
 
     let out = silt_cmd()
         .args(["add", "calc", "--path", "../calc"])
@@ -95,7 +95,7 @@ fn test_add_when_dependencies_section_missing() {
     let app = ws.join("app");
     let calc = ws.join("calc");
     write_app_package(&app, "no_deps_yet", "fn main() {}\n");
-    write_lib_package(&calc, "calc", "pub fn x() = 1\n");
+    write_lib_package(&calc, "calc", "pub fn x() { 1 }\n");
 
     // Sanity check: manifest currently has no [dependencies] header.
     let pre = fs::read_to_string(app.join("silt.toml")).unwrap();
@@ -127,8 +127,8 @@ fn test_add_when_dependencies_section_exists() {
     let app = ws.join("app");
     let calc = ws.join("calc");
     let extra = ws.join("extra");
-    write_lib_package(&calc, "calc", "pub fn one() = 1\n");
-    write_lib_package(&extra, "extra", "pub fn two() = 2\n");
+    write_lib_package(&calc, "calc", "pub fn one() { 1 }\n");
+    write_lib_package(&extra, "extra", "pub fn two() { 2 }\n");
 
     fs::create_dir_all(&app).unwrap();
     fs::write(
@@ -165,7 +165,7 @@ fn test_add_preserves_formatting() {
     let ws = fresh_workspace("preserve_fmt");
     let app = ws.join("app");
     let calc = ws.join("calc");
-    write_lib_package(&calc, "calc", "pub fn one() = 1\n");
+    write_lib_package(&calc, "calc", "pub fn one() { 1 }\n");
 
     // Manifest with comments and unusual whitespace in unrelated tables.
     fs::create_dir_all(&app).unwrap();
@@ -186,7 +186,7 @@ fn test_add_preserves_formatting() {
     // `silt add` regenerates one — make `other` resolvable so the
     // lock step doesn't error.
     let other = ws.join("other");
-    write_lib_package(&other, "other", "pub fn other() = 1\n");
+    write_lib_package(&other, "other", "pub fn other() { 1 }\n");
 
     let out = silt_cmd()
         .args(["add", "calc", "--path", "../calc"])
@@ -232,7 +232,7 @@ fn test_add_fails_on_duplicate() {
     let app = ws.join("app");
     let foo = ws.join("foo");
     write_app_package(&app, "dup_app", "fn main() {}\n");
-    write_lib_package(&foo, "foo", "pub fn x() = 1\n");
+    write_lib_package(&foo, "foo", "pub fn x() { 1 }\n");
 
     let first = silt_cmd()
         .args(["add", "foo", "--path", "../foo"])
@@ -301,7 +301,7 @@ fn test_add_fails_on_invalid_name() {
     let app = ws.join("app");
     let foo = ws.join("foo");
     write_app_package(&app, "bad_name_app", "fn main() {}\n");
-    write_lib_package(&foo, "foo", "pub fn x() = 1\n");
+    write_lib_package(&foo, "foo", "pub fn x() { 1 }\n");
 
     let out = silt_cmd()
         .args(["add", "Foo", "--path", "../foo"])
@@ -325,7 +325,7 @@ fn test_add_fails_on_builtin_collision() {
     let app = ws.join("app");
     let pkg = ws.join("listpkg");
     write_app_package(&app, "builtin_clash_app", "fn main() {}\n");
-    write_lib_package(&pkg, "listpkg", "pub fn x() = 1\n");
+    write_lib_package(&pkg, "listpkg", "pub fn x() { 1 }\n");
 
     let out = silt_cmd()
         .args(["add", "list", "--path", "../listpkg"])
@@ -772,7 +772,7 @@ fn make_local_git_silt_package(workspace: &Path) -> (String, String) {
     )
     .unwrap();
     fs::create_dir_all(staging.join("src")).unwrap();
-    fs::write(staging.join("src/lib.silt"), "pub fn answer() = 42\n").unwrap();
+    fs::write(staging.join("src/lib.silt"), "pub fn answer() { 42 }\n").unwrap();
 
     let run = |cwd: &Path, args: &[&str]| {
         let out = Command::new("git")
@@ -809,7 +809,7 @@ fn test_add_then_run_works() {
     let app = ws.join("app");
     let calc = ws.join("calc");
     write_app_package(&app, "e2e_app", "fn main() {}\n");
-    write_lib_package(&calc, "calc", "pub fn add(a, b) = a + b\n");
+    write_lib_package(&calc, "calc", "pub fn add(a, b) { a + b }\n");
 
     let add = silt_cmd()
         .args(["add", "calc", "--path", "../calc"])

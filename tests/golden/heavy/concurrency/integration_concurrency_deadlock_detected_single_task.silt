@@ -8,7 +8,7 @@ import channel
 import task
 fn main() {
   let ch = channel.new(1)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     channel.receive(ch)
   })
   task.join(h)

@@ -1,2 +1,2 @@
 import c_c
-pub fn fb() = 2
+pub fn fb() { 2 }

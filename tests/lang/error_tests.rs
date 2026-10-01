@@ -3,9 +3,8 @@
 //! Each program below is rejected by the typechecker (or, for a missing
 //! `main`, by the compiler), so `silt run` never gets to the VM. These
 //! tests run the VM in process with the typechecker's verdict discarded,
-//! to lock the runtime defences that back up the static checks. Two more
-//! stay here: float division by zero (asserts an `ExtFloat`, which stage 4
-//! removes) and the `(break)` formatter round trip (uses the formatter
+//! to lock the runtime defences that back up the static checks. One more
+//! stays here: the `(break)` formatter round trip (uses the formatter
 //! API). Every other test of this file is a golden case under
 //! `tests/golden/lang/errors/error__*`.
 
@@ -13,7 +12,6 @@ use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
 
@@ -44,25 +42,6 @@ fn run_err(input: &str) -> String {
         Err(e) => format!("{e}"),
         Ok(v) => panic!("expected runtime error, got: {v:?}"),
     }
-}
-
-/// Compile and run, returning the value. Panics on any error.
-fn run(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
-}
-
-#[test]
-fn test_runtime_float_division_by_zero() {
-    // Float division by zero now produces ExtFloat(Infinity) instead of a runtime error
-    let result = run("fn main() { 1.0 / 0.0 }");
-    assert_eq!(result, Value::ExtFloat(f64::INFINITY));
 }
 
 #[test]
@@ -243,7 +222,7 @@ fn test_program_without_main() {
     // silent success or wrong-message regression is caught. The
     // previous body discarded `catch_unwind`'s result, so any behaviour
     // (including the program succeeding) satisfied the test.
-    let err = run_err("fn helper(x) = x + 1");
+    let err = run_err("fn helper(x) { x + 1 }");
     assert!(
         err.contains("undefined global: main"),
         "expected undefined-main runtime error, got: {err}"
@@ -257,7 +236,7 @@ fn test_pipe_into_wrong_arity() {
     // ("function 'no_args' expects 0 arguments, got 1").
     let err = run_err(
         r#"
-fn no_args() = 42
+fn no_args() { 42 }
 fn main() { 1 |> no_args() }
     "#,
     );
@@ -413,7 +392,7 @@ fn test_runtime_call_wrong_arity() {
     // check ("function 'add' expects 2 arguments, got 3").
     let err = run_err(
         r#"
-fn add(a, b) = a + b
+fn add(a, b) { a + b }
 fn main() { add(1, 2, 3) }
     "#,
     );

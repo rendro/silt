@@ -18,7 +18,9 @@ fn print_help() {
   println("")
 }
 
-fn format(f) = float.to_string(f, 4)
+fn format(f) {
+  float.to_string(f, 4)
+}
 
 fn apply_binary(stack, op_name, op_fn) {
   match list.length(stack) >= 2 {
@@ -155,21 +157,31 @@ fn main() {
             }
           }
           "/" -> {
-            let (s, e) = apply_binary(stack, "/") { a, b -> a / b }
+            let (s, e) = apply_binary(stack, "/") { a, b -> match b {
+              0.0 -> 0.0
+              _ -> a / b
+            } }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
             }
           }
           "sqrt" -> {
-            let (s, e) = apply_unary(stack, "sqrt") { a -> math.sqrt(a) else 0.0 }
+            let (s, e) = apply_unary(stack, "sqrt") { a -> match {
+              a < 0.0 -> 0.0
+              _ -> math.sqrt(a)
+            } }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
             }
           }
           "pow" -> {
-            let (s, e) = apply_binary(stack, "pow") { a, b -> math.pow(a, b) else 0.0 }
+            let (s, e) = apply_binary(stack, "pow") { a, b -> match {
+              a == 0.0 && b < 0.0 -> 0.0
+              a < 0.0 && float.floor(b) != b -> 0.0
+              _ -> math.pow(a, b)
+            } }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
@@ -190,7 +202,10 @@ fn main() {
             }
           }
           "log" -> {
-            let (s, e) = apply_unary(stack, "log") { a -> math.log(a) else 0.0 }
+            let (s, e) = apply_unary(stack, "log") { a -> match {
+              a <= 0.0 -> 0.0
+              _ -> math.log(a)
+            } }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)

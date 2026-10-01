@@ -1,0 +1,12 @@
+-- An import and a top-level `fn` may not bind the same name.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'double' is bound twice at the top level: by the import at line 6 and by the function here
+-- stderr-contains: main.silt:8:4
+import a.{ double }
+
+fn double(x: Int) -> Int { x }
+
+fn main() {
+  println(double(2))
+}

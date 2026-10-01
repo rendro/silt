@@ -16,21 +16,21 @@ fn type_definition_jumps_to_user_type() {
     let file = "file:///tmp/silt_typedef_point.silt";
     // Line 0: `type Point { x: Int, y: Int }`
     // Line 1: (blank)
-    // Line 2: `fn main() { let p = Point { x: 1, y: 2 } p }`
-    let src = "type Point { x: Int, y: Int }\n\nfn main() { let p = Point { x: 1, y: 2 } p }\n";
+    // Line 2: `fn main() {`
+    // Line 3: `  let p = Point { x: 1, y: 2 }`
+    // Line 4: `  p`
+    let src =
+        "type Point { x: Int, y: Int }\n\nfn main() {\n  let p = Point { x: 1, y: 2 }\n  p\n}\n";
     client.did_open_and_wait(file, src);
 
-    // Click on the trailing `p` at the end of main's body. The `p` we
-    // land on sits right before the closing `}`. Its inferred type is
-    // the record `Point`, so typeDefinition should jump to the type
-    // decl on line 0.
-    let line2 = "fn main() { let p = Point { x: 1, y: 2 } p }";
-    let p_col = line2.rfind(" p ").unwrap() + 1; // index of the trailing `p`
+    // Click on the trailing `p` at the end of main's body. Its inferred
+    // type is the record `Point`, so typeDefinition should jump to the
+    // type decl on line 0.
     let resp = client.request(
         "textDocument/typeDefinition",
         json!({
             "textDocument": { "uri": file },
-            "position": { "line": 2, "character": p_col }
+            "position": { "line": 4, "character": 2 }
         }),
     );
     let result = resp

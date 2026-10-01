@@ -183,11 +183,15 @@ fn emit_fn_decl_tokens(f: &FnDecl, source: &str, out: &mut Vec<RawToken>) {
         push_token_at_offset(source, off, &name_str, TT_FUNCTION, out);
     }
 
-    // Fn parameters: param patterns carry their own span already at the
-    // ident, so we can use that directly.
+    // Fn parameters: PARAMETER on a plain name (its pattern span is at
+    // the ident); the binders of a destructuring pattern are VARIABLEs,
+    // as for a closure parameter.
     for param in &f.params {
-        if let PatternKind::Ident(name) = &param.pattern.kind {
-            emit_binding_token(source, &param.pattern.span, *name, TT_PARAMETER, out);
+        match &param.pattern.kind {
+            PatternKind::Ident(name) => {
+                emit_binding_token(source, &param.pattern.span, *name, TT_PARAMETER, out);
+            }
+            _ => emit_pattern_binding_tokens(&param.pattern, source, out),
         }
     }
 
@@ -357,6 +361,20 @@ fn emit_expr_tokens(
             for stmt in stmts {
                 emit_stmt_tokens(stmt, source, doc, server, out);
             }
+        }
+        ExprKind::Lambda { params, body } => {
+            // Closure parameters: PARAMETER on a plain name, like a fn
+            // param; the binders of a destructuring pattern are
+            // VARIABLEs, like a `let` pattern's.
+            for param in params {
+                match &param.pattern.kind {
+                    PatternKind::Ident(name) => {
+                        emit_binding_token(source, &param.pattern.span, *name, TT_PARAMETER, out);
+                    }
+                    _ => emit_pattern_binding_tokens(&param.pattern, source, out),
+                }
+            }
+            emit_expr_tokens(body, source, doc, server, out);
         }
         _ => {
             visit_expr_children(expr, |child| {

@@ -1,6 +1,6 @@
 import list
 trait Sum { fn sum_of(self) -> Int }
-trait Sum for List(a) { fn sum_of(self) -> Int = list.sum(self) }
+trait Sum for List(a) { fn sum_of(self) -> Int { list.sum(self) } }
 fn main() {
     println((2..4).sum_of())
 }

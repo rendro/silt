@@ -35,7 +35,7 @@ mod patterns;
 //
 // A descriptor is one of
 //
-//   Int  Float  ExtFloat  String  Bool  Date  Time  DateTime
+//   Int  Float  String  Bool  Date  Time  DateTime
 //   List:<d>   Option:<d>   Map:<d>   Tuple(<d>,<d>,...)   Record:<name>
 //   Unsupported:<type as written>
 //
@@ -58,7 +58,7 @@ const DECODING_BUILTINS: &[&str] = &[
 ];
 
 /// The field types the decoders support, as shown in compile errors.
-const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, ExtFloat, String, \
+const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
      Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
 
@@ -263,6 +263,12 @@ pub struct CompileWarning {
 }
 
 // ── Compiler errors ─────────────────────────────────────────────────
+
+/// The compiler's error for a `loop(...)` with no enclosing loop in the
+/// same function. The typechecker reports every such call first (outside
+/// any loop, or inside a closure in a loop body), so the CLI pipeline
+/// drops this error when a type error stands at the same place.
+pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
 
 #[derive(Debug, Clone)]
 pub struct CompileError {
@@ -705,7 +711,7 @@ pub struct Compiler {
     /// in lockstep across the typecheck → compile boundary. The
     /// resolver flows in through `pre_typecheck_imports` (where each
     /// per-module typecheck threads it via
-    /// `check_with_package_and_imports_options_resolver`) and out
+    /// `check_with_package_and_imports_resolver`) and out
     /// again so the next module / entrypoint typecheck sees the
     /// accumulated state. See commit 6364552 for the migration
     /// rationale.
@@ -1092,21 +1098,6 @@ impl Compiler {
     /// are types; `Point.origin()` stays a qualified call.
     fn collect_selective_imports(&mut self, program: &Program) {
         let current = self.current_program();
-        // A name the program binds itself at top level (`let` or `fn`)
-        // shadows the import, in a file module as in the entry program: a
-        // call of it is not a decoder call.
-        let own_names: HashSet<String> = program
-            .decls
-            .iter()
-            .filter_map(|decl| match decl {
-                Decl::Fn(f) => Some(resolve(f.name)),
-                Decl::Let { pattern, .. } => match &pattern.kind {
-                    PatternKind::Ident(name) => Some(resolve(*name)),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect();
         for decl in &program.decls {
             let Decl::Import(ImportTarget::Items(module_name, items), _) = decl else {
                 continue;
@@ -1114,9 +1105,7 @@ impl Compiler {
             let mod_str = resolve(*module_name);
             for item in items {
                 let item_str = resolve(*item);
-                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_')
-                    && !own_names.contains(&item_str)
-                {
+                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_') {
                     self.selective_imports.insert(
                         (current.clone(), item_str.clone()),
                         format!("{mod_str}.{item_str}"),
@@ -1459,7 +1448,7 @@ impl Compiler {
                 // `() -> Unit`, and user-alias routing (see
                 // `src/types/canonical.rs::canonicalize_type_name`) —
                 // all apply here. For example, a
-                // `trait Foo for Range(a) { fn bar(self) = ... }` impl
+                // `trait Foo for Range(a) { fn bar(self) { ... } }` impl
                 // emits `"List.bar"` here, matches the `"List.bar"` key
                 // the typechecker registered, and is found by the VM
                 // when dispatching on a `Value::Range` (or `Value::List`)
@@ -1995,11 +1984,10 @@ impl Compiler {
             // module registers stay visible to downstream importers.
             let resolver = std::mem::take(&mut self.resolver);
             let (module_errors, exports, resolver) =
-                typechecker::check_with_package_and_imports_options_resolver(
+                typechecker::check_with_package_and_imports_resolver(
                     &mut program,
                     self.current_package(),
                     self.module_exports.clone(),
-                    false,
                     Some(resolver),
                 );
             self.resolver = resolver;
@@ -2144,11 +2132,10 @@ impl Compiler {
         self.pre_typecheck_user_imports(&program);
         let resolver = std::mem::take(&mut self.resolver);
         let (module_type_errors, this_exports, resolver) =
-            typechecker::check_with_package_and_imports_options_resolver(
+            typechecker::check_with_package_and_imports_resolver(
                 &mut program,
                 self.current_package(),
                 self.module_exports.clone(),
-                false,
                 Some(resolver),
             );
         self.resolver = resolver;
@@ -2456,7 +2443,7 @@ impl Compiler {
                 // Else block: condition was false
                 self.patch_jump(else_jump, condition.span)?;
                 self.compile_expr(else_body)?;
-                // The else body must diverge (return or panic).
+                // The else body must diverge (return, panic or loop(...)).
                 // If it doesn't, we just pop its value and continue.
                 self.current_chunk().emit_op(Op::Pop, condition.span);
 
@@ -3054,7 +3041,7 @@ impl Compiler {
                 if params.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: format!(
-                            "lambda has {} parameters; silt functions are limited to 255",
+                            "closure has {} parameters; silt functions are limited to 255",
                             params.len()
                         ),
                         span,
@@ -3384,7 +3371,7 @@ impl Compiler {
 
             ExprKind::Recur(args) => {
                 let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
-                    message: "recur outside of loop".into(),
+                    message: LOOP_CALL_OUTSIDE_LOOP.into(),
                     span,
                 })?;
                 let first_slot = loop_info.first_slot;
@@ -3411,7 +3398,7 @@ impl Compiler {
                 if args.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: format!(
-                            "recur has {} arguments; silt recur is limited to 255",
+                            "`loop(...)` has {} arguments; silt loops are limited to 255 bindings",
                             args.len()
                         ),
                         span,
@@ -3433,13 +3420,6 @@ impl Compiler {
                 jumpback_fits_u16(jump_back_dist, span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::JumpBack, jump_back_dist as u16, span);
-            }
-
-            ExprKind::FloatElse(expr, fallback) => {
-                self.compile_expr(expr)?;
-                let jump = self.current_chunk().emit_jump(Op::NarrowFloat, span);
-                self.compile_expr(fallback)?;
-                self.patch_jump(jump, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -3590,7 +3570,9 @@ impl Compiler {
             }
         }
 
-        // No arm matched — panic
+        // No arm matched — panic. The typechecker requires a final `_`
+        // arm, so like the scrutinee form's non-exhaustive panic this is
+        // only a backstop.
         let msg_idx = self.add_constant(
             Value::String("non-exhaustive match: no condition was true".into()),
             span,
@@ -3826,10 +3808,9 @@ impl Compiler {
         // is described like the list type it is the same type as.
         let canonical = resolve(canonicalize_type_name(&self.resolver, name));
         match (canonical.as_str(), args) {
-            (
-                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime",
-                [],
-            ) => Ok(canonical.clone()),
+            ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
+                Ok(canonical.clone())
+            }
             ("List", [elem]) => Ok(format!(
                 "List:{}",
                 self.describe_field_type(elem, open_aliases, records)?
@@ -3990,7 +3971,7 @@ impl Compiler {
         );
         if is_container || (is_primitive && !decodes_primitives) {
             let accepted = if decodes_primitives {
-                "Int, Float, ExtFloat, String, Bool, or a record type"
+                "Int, Float, String, Bool, or a record type"
             } else {
                 "a record type"
             };
@@ -4609,7 +4590,7 @@ mod tests {
 
     #[test]
     fn test_compile_lambda() {
-        let fns = compile("fn main() { let f = fn(x) { x + 1 }\n f(5) }");
+        let fns = compile("fn main() { let f = { x -> x + 1 }\n f(5) }");
         let main = find_fn(&fns, "main");
         // Lambda is compiled as a VmClosure constant
         assert!(
@@ -4625,7 +4606,7 @@ mod tests {
         let fns = compile(
             r#"
 fn make_adder(n) {
-    fn(x) { x + n }
+    { x -> x + n }
 }
 "#,
         );
@@ -5293,12 +5274,15 @@ fn f(x) {
         assert!(has_op(&f.chunk, Op::JumpIfFalse));
     }
 
-    // ── Recur outside loop is an error ─────────────────────────────
+    // ── `loop(...)` outside a loop is an error ─────────────────────
 
     #[test]
     fn test_compile_recur_outside_loop() {
         let err = compile_err("fn f() { loop(1) }");
-        assert!(err.message.contains("recur outside of loop"));
+        assert!(
+            err.message
+                .contains("`loop(...)` can only appear inside a `loop` body")
+        );
     }
 
     // ── Record field metadata ──────────────────────────────────────

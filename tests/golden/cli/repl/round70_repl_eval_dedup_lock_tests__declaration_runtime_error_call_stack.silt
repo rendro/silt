@@ -1,2 +1,2 @@
 -- cmd: repl
--- stdin: fn deep(){1/0}\nfn shallow(){deep()}\nlet x: int = shallow()\n:quit\n
+-- stdin: fn deep(){1/0}\nfn shallow(){deep()}\nlet x: Int = shallow()\n:quit\n

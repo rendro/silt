@@ -1,0 +1,12 @@
+-- `price quantity` is not two statements: the second name is rejected
+-- instead of silently starting a new statement.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected a newline before 'quantity'
+fn main() {
+  let price = 3
+  let quantity = 4
+  let total = price quantity
+  println(total)
+}

@@ -1,5 +1,5 @@
-error[type]: operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'
+error[type]: operator '+' requires Int or Float, got 'Bool'
  --> binop_mismatch_direction_round100__bool_plus_int_names_bool.silt:4:11
    |
  4 |   let x = true + 1
-   |           ^ operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'
+   |           ^ operator '+' requires Int or Float, got 'Bool'

@@ -1,5 +1,5 @@
 trait Foo { fn bar(self) -> Int }
-trait Foo for Range(a) { fn bar(self) -> Int = 99 }
+trait Foo for Range(a) { fn bar(self) -> Int { 99 } }
 fn main() {
     let r = 1..5
     println(r.bar())

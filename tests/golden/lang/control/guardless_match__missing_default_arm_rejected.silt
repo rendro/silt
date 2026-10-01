@@ -1,0 +1,17 @@
+-- A match without a scrutinee must end with a `_` arm: when no condition
+-- is true there is no value.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: a `match` without a scrutinee must end with a `_ -> ...` arm
+-- stderr-contains: guardless_match__missing_default_arm_rejected.silt:9:3
+fn size(n: Int) -> String {
+  match {
+    n > 100 -> "big"
+    n > 10 -> "medium"
+  }
+}
+
+fn main() {
+  println(size(50))
+}

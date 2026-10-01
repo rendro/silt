@@ -1,0 +1,7 @@
+-- Nested equality over floats and ints compares element by element.
+fn main() {
+    println([1.0] == [1.0])
+    println([1, 2] == [1, 2])
+    println((1.0, 2) == (1.0, 2))
+    println([1, 2] == [1, 3])
+}

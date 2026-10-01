@@ -63,80 +63,6 @@ enum BuiltinValueCall {
     },
 }
 
-/// Language-level equality for the `==` / `!=` operators.
-///
-/// For almost all value kinds this delegates to `PartialEq for Value`, but
-/// floats are handled specially: `PartialEq` on `ExtFloat` uses
-/// `to_bits()` equality so that NaN is self-equal (needed for
-/// `Ord`/`Eq` consistency on keys used in sets, maps, and
-/// deduplication — see the comment at `src/value.rs`). The user-facing
-/// `==` operator instead follows IEEE-754: `NaN == NaN` is `false`.
-///
-/// Crucially, this IEEE-754 rule must apply at **every** level of a nested
-/// value, not just the top: `[nan] == [nan]` and `(nan, 1) == (nan, 1)`
-/// must both be `false`. So for every container kind (List, Tuple, Map,
-/// Set, Record, Variant) we recurse element-by-element through
-/// `language_eq` rather than delegating to `PartialEq for Value`, which
-/// would re-introduce the bitwise (self-equal NaN) comparison on nested
-/// floats. `PartialEq`/`Hash`/`Ord` are left untouched because they still
-/// back collection keying and dedup, where a NaN key must remain
-/// self-equal.
-fn language_eq(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        // Float comparisons: IEEE-754 (NaN != NaN), including mixed
-        // Float / ExtFloat which `PartialEq` already treats as bitwise.
-        (Value::Float(x), Value::Float(y))
-        | (Value::ExtFloat(x), Value::ExtFloat(y))
-        | (Value::Float(x), Value::ExtFloat(y))
-        | (Value::ExtFloat(x), Value::Float(y)) => x == y,
-
-        // Containers: recurse so the IEEE-754 float rule applies at every
-        // nesting level instead of falling through to bitwise `PartialEq`.
-        (Value::List(x), Value::List(y)) => {
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
-        }
-        (Value::Tuple(x), Value::Tuple(y)) => {
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
-        }
-        (Value::Set(x), Value::Set(y)) => {
-            // Sets are `BTreeSet`s ordered by `Ord` (total_cmp on floats), so
-            // a positional zip over the sorted elements is a valid pairing.
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| language_eq(a, b))
-        }
-        (Value::Map(x), Value::Map(y)) => {
-            // Keys are `Ord`-sorted identically in both maps, so zip pairs
-            // matching keys. Both keys and values go through `language_eq`,
-            // making a NaN-keyed map unequal to any other map (NaN != NaN).
-            x.len() == y.len()
-                && x.iter()
-                    .zip(y.iter())
-                    .all(|((ka, va), (kb, vb))| language_eq(ka, kb) && language_eq(va, vb))
-        }
-        (Value::Record(na, fa), Value::Record(nb, fb)) => {
-            // Mirror the `<anon>` wildcard rule from `PartialEq for Value`
-            // (see src/value.rs): an anon-record literal compares fields-only
-            // against a nominal record of the same shape (the typechecker has
-            // already decided they share a type). Two distinct nominal names
-            // stay unequal. Values still recurse through `language_eq` so the
-            // IEEE-754 NaN rule applies to nested floats.
-            let names_ok = record_tag_matches(na, nb) || nb.as_str() == ANON_RECORD_TAG;
-            names_ok
-                && fa.len() == fb.len()
-                && fa
-                    .iter()
-                    .zip(fb.iter())
-                    .all(|((ka, va), (kb, vb))| ka == kb && language_eq(va, vb))
-        }
-        (Value::Variant(na, xa), Value::Variant(nb, xb)) => {
-            na == nb
-                && xa.len() == xb.len()
-                && xa.iter().zip(xb.iter()).all(|(a, b)| language_eq(a, b))
-        }
-
-        _ => a == b,
-    }
-}
-
 /// Gate the language-level `==` / `!=` operators against function-shaped
 /// values, returning the canonical surface name (`"Fn"`) to name in the
 /// error if the value cannot participate in equality, or `None` if it can.
@@ -161,7 +87,7 @@ fn language_eq(a: &Value, b: &Value) -> bool {
 /// direct `Type::Fun` values; the recursion (via `Vm::value_contains_fn`,
 /// src/vm/mod.rs) mirrors the round-97 container gate, whose
 /// `operand_builtin_trait_violation` walker rejects the concrete forms
-/// (`[fn(x) { x }] == [fn(x) { x }]`, tuples/records/variants wrapping
+/// (`[{ x -> x }] == [{ x -> x }]`, tuples/records/variants wrapping
 /// functions) at compile time. Without the recursion, laundering the same
 /// values through a polymorphic wrapper (`fn eq(a: x, b: x) -> Bool
 /// { a == b }`) silently produced an `Arc::ptr_eq`-based Bool. Channel /
@@ -1511,13 +1437,7 @@ impl Vm {
                         "type '{name}' does not implement Equal"
                     )));
                 }
-                // The language-level `==` operator follows IEEE-754 for
-                // `ExtFloat` (so NaN != NaN). `PartialEq for Value` on
-                // `ExtFloat` uses `to_bits()` equality so that NaN is
-                // self-equal — that is required for `Ord`/`Eq`
-                // consistency on keys used in sets, maps, and
-                // deduplication. See `src/value.rs`.
-                self.push(Value::Bool(language_eq(&a, &b)));
+                self.push(Value::Bool(a == b));
             }
             Op::Neq => {
                 let b = self.pop()?;
@@ -1530,7 +1450,7 @@ impl Vm {
                         "type '{name}' does not implement Equal"
                     )));
                 }
-                self.push(Value::Bool(!language_eq(&a, &b)));
+                self.push(Value::Bool(a != b));
             }
             Op::Lt => self.compare(|ord| ord.is_lt())?,
             Op::Gt => self.compare(|ord| ord.is_gt())?,
@@ -1548,17 +1468,6 @@ impl Vm {
                     Value::Float(n) => {
                         let result = if -n == 0.0 { 0.0 } else { -n };
                         self.push(Value::Float(result));
-                    }
-                    Value::ExtFloat(n) => {
-                        // Canonicalize -0.0 -> +0.0 to match every other
-                        // ExtFloat producer (Div in arithmetic.rs, NarrowFloat,
-                        // the numeric builtins). ExtFloat Eq is bitwise and
-                        // Ord is total_cmp (value.rs); a stray ExtFloat(-0.0) would
-                        // be a distinct container key from ExtFloat(+0.0) even
-                        // though the `==` operator (IEEE) calls them equal —
-                        // letting a set/map hold two "equal" elements.
-                        let result = -n;
-                        self.push(Value::ExtFloat(if result == 0.0 { 0.0 } else { result }));
                     }
                     other => {
                         return Err(VmError::new(format!(
@@ -2603,28 +2512,6 @@ impl Vm {
                         return Err(VmError::new(format!(
                             "no method '{method_name}' for type '{type_name}'"
                         )));
-                    }
-                }
-            }
-            Op::NarrowFloat => {
-                let offset = self.read_u16()? as usize;
-                let val = self.peek()?.clone();
-                match val {
-                    Value::ExtFloat(f) if f.is_finite() => {
-                        self.pop()?;
-                        self.push(Value::Float(if f == 0.0 { 0.0 } else { f }));
-                        self.current_frame_mut()?.ip += offset;
-                    }
-                    Value::ExtFloat(_) => {
-                        self.pop()?;
-                    }
-                    Value::Float(_) => {
-                        self.current_frame_mut()?.ip += offset;
-                    }
-                    _ => {
-                        return Err(VmError::new(
-                            "NarrowFloat: expected float value".to_string(),
-                        ));
                     }
                 }
             }

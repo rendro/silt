@@ -49,7 +49,7 @@ fn run_for_err(src: &str) -> String {
 
 /// End-to-end: route an Int through a generic `id` function so the
 /// typechecker can't reject the wrong-kind argument at the call site,
-/// then call `stream.fold(id(123), 0, fn(a,b){a})`. The call reaches the
+/// then call `stream.fold(id(123), 0, { a, b -> a })`. The call reaches the
 /// runtime and trips `require_channel`. The error must follow the
 /// canonical `"<fn> requires <Kind>, got <kind>"` shape.
 #[test]
@@ -65,7 +65,7 @@ import stream
 fn id(x) { x }
 
 fn main() {
-  stream.fold(id(123), 0, fn(a, b) { a })
+  stream.fold(id(123), 0, { a, b -> a })
 }
 "#;
     let msg = run_for_err(src);

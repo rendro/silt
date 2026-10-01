@@ -11,7 +11,7 @@ import task
 fn main() {
   let x = channel.new(0)
   let dead = channel.new(0)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let t = channel.timeout(100)
     let _ = channel.receive(t)
     println("timer fired")

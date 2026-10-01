@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: loop has 1 binding, but recur supplies 2 arguments
+-- stderr-contains: error[type]: loop has 1 binding, but `loop(...)` supplies 2 arguments
 -- stderr-not-contains: warning[type]: loop has
 fn main() {
   loop n = 0 {

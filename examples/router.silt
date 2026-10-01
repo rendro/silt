@@ -82,7 +82,7 @@ fn match_route(method, path, routes) {
 -- Handler factory: returns a closure that formats handler output with params
 
 fn make_handler(name) {
-  fn(params) {
+  { params ->
     let param_str = map.entries(params)
     |> list.map { entry -> match entry {
       (k, v) -> "{k}={v}"

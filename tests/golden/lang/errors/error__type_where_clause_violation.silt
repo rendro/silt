@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: not introduced in the function signature
-fn show(x) where x: Display = x.display()
+fn show(x) where x: Display { x.display() }
 fn main() {
-  show(fn() { 1 })
+  show({ -> 1 })
 }

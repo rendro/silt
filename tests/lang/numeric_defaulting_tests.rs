@@ -25,7 +25,7 @@
 //!    the spec's example `let n = 0; println(n)` already produces
 //!    `n: Int` directly, no defaulting needed.
 //!
-//! 3. **Arithmetic on tyvars unifies them.** `fn add(a, b) = a + b`
+//! 3. **Arithmetic on tyvars unifies them.** `fn add(a, b) { a + b }`
 //!    reaches `BinOp::Add` with `lt = Var(M1), rt = Var(M2)`, then
 //!    calls `self.unify(&lt, &rt, span)` (see
 //!    `src/typechecker/inference.rs`). The two vars merge but never
@@ -36,16 +36,15 @@
 //!    polymorphic.
 //!
 //! 4. **Defaulting would harm useful polymorphism.** `let plus = add`
-//!    binds `plus: forall a. (a, a) -> a` today, allowing
-//!    `plus("foo", "bar")` to typecheck (string concatenation via
-//!    `+`'s String widening). Defaulting `a` to `Int` at the let's
-//!    generalization scope would reject the String call site —
-//!    a strict expressiveness regression. The audit decision is to
+//!    binds `plus: forall a. (a, a) -> a` today, allowing both
+//!    `plus(1, 2)` and `plus(1.5, 2.5)` to typecheck. Defaulting `a`
+//!    to `Int` at the let's generalization scope would reject the
+//!    Float call site — a strict expressiveness regression. The audit decision is to
 //!    keep let-polymorphism unchanged for arithmetic-template fns.
 //!
 //! What silt does instead (already in place):
 //!
-//! - Literals carry concrete types (`Int`, `Float`, `ExtFloat`),
+//! - Literals carry concrete types (`Int`, `Float`),
 //!   so any expression whose value-side is a literal does not
 //!   produce a stuck tyvar.
 //! - Generalization preserves polymorphism for arithmetic templates
@@ -56,8 +55,8 @@
 //!   that is the safety net for genuinely-stuck tyvars.
 //!
 //! The locks are golden cases
-//! `tests/golden/lang/typecheck/numeric_defaulting__*`. The one test left
-//! here uses string `+` as its polymorphism witness, which stage 4 removes.
+//! `tests/golden/lang/typecheck/numeric_defaulting__*`, plus the test
+//! below.
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -79,18 +78,18 @@ fn errors_only(errs: &[typechecker::TypeError]) -> Vec<&typechecker::TypeError> 
 
 #[test]
 fn arithmetic_template_fn_can_be_bound_and_called_at_int() {
-    // `fn add(a, b) = a + b` infers `forall a. (a, a) -> a` and
+    // `fn add(a, b) { a + b }` infers `forall a. (a, a) -> a` and
     // every call-site instantiates `a` concretely. A defaulting
     // rule pinning `a` to `Int` at the `let plus = add` binding
-    // site would reject string concatenation via `plus("a", "b")`.
-    // The status quo permits both.
+    // site would reject the Float call `plus(1.5, 2.5)`. The status
+    // quo permits both.
     let source = r#"
-fn add(a, b) = a + b
+fn add(a, b) { a + b }
 
 fn main() {
   let plus = add
   let n = plus(1, 2)
-  let s = plus("foo", "bar")
+  let f = plus(1.5, 2.5)
   n
 }
 "#;
@@ -98,7 +97,7 @@ fn main() {
     let real_errors = errors_only(&errs);
     assert!(
         real_errors.is_empty(),
-        "let-bound arithmetic template must stay polymorphic across literal & string callers: {:?}",
+        "let-bound arithmetic template must stay polymorphic across Int & Float callers: {:?}",
         real_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

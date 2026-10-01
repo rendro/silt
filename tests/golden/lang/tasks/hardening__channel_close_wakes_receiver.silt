@@ -2,7 +2,7 @@ import channel
 import task
 fn main() {
   let ch = channel.new(0)
-  let sender = task.spawn(fn() {
+  let sender = task.spawn({ ->
     channel.close(ch)
   })
   let r = channel.receive(ch)

@@ -4,7 +4,7 @@ import io
 import task
 
 fn make_bump() -> Fn() -> Int {
-  fn() {
+  { ->
     println("before-io")
     let _ = io.read_file("round77-no-such-file.txt")
     println("after-io")
@@ -15,7 +15,7 @@ fn make_bump() -> Fn() -> Int {
 type Holder { bump: Fn() -> Int }
 
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let r = Holder { bump: make_bump() }
     r.bump()
   })

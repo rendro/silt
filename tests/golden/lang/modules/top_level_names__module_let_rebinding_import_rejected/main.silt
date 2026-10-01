@@ -1,0 +1,6 @@
+-- A file module may not bind a top-level name it also imports.
+-- exit: 1
+-- stderr-contains: 'parse_list' is bound twice at the top level: by the import at line 1 and by the let binding here
+import util
+
+fn main() { println(util.go()) }

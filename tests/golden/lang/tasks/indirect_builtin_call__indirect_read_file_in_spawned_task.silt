@@ -8,7 +8,7 @@ import task
 
 fn main() {
   let read = io.read_file
-  let h = task.spawn(fn() { read("indirect_builtin_call__indirect_read_file_in_spawned_task.silt") })
+  let h = task.spawn({ -> read("indirect_builtin_call__indirect_read_file_in_spawned_task.silt") })
   match task.join(h) {
     Ok(s) -> println(string.contains(s, "-- hello from indirect"))
     Err(e) -> println(e.message())

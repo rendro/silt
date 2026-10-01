@@ -3,9 +3,9 @@
 import io
 import task
 fn program() {
-  let h = task.spawn(fn() {
-    let inner = task.spawn(fn() {
-      let innermost = task.spawn(fn() {
+  let h = task.spawn({ ->
+    let inner = task.spawn({ ->
+      let innermost = task.spawn({ ->
         42
       })
       task.join(innermost) + 1

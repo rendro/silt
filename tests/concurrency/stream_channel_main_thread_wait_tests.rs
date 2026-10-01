@@ -223,8 +223,8 @@ fn main() {
 const STREAM_TEST: &str = r#"
 fn test_a_stream_pipeline() {
   let squares = stream.from_range(1, 100)
-    |> stream.filter(fn(n) { n % 2 == 1 })
-    |> stream.map(fn(n) { n * n })
+    |> stream.filter({ n -> n % 2 == 1 })
+    |> stream.map({ n -> n * n })
     |> stream.take(5)
     |> stream.collect
   test.assert_eq(squares, [1, 9, 25, 49, 81])

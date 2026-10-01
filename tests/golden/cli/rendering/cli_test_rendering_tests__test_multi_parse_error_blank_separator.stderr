@@ -1,14 +1,14 @@
-error[parse]: expected parameter name, found {
+error[parse]: expected parameter name, found =
  --> cli_test_rendering_tests__test_multi_parse_error_blank_separator.silt:3:12
    |
- 3 | fn test_a( {
-   |            ^ expected parameter name, found {
+ 3 | fn test_a( = {
+   |            ^ expected parameter name, found =
 
-error[parse]: expected parameter name, found {
+error[parse]: expected parameter name, found =
  --> cli_test_rendering_tests__test_multi_parse_error_blank_separator.silt:5:12
    |
- 5 | fn test_b( {
-   |            ^ expected parameter name, found {
+ 5 | fn test_b( = {
+   |            ^ expected parameter name, found =
 cli_test_rendering_tests__test_multi_parse_error_blank_separator.silt: failed to compile — parse errors (see above)
 
 0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

@@ -1,7 +1,7 @@
 import io
 fn make_counter(start) {
   let base = start * 10
-  fn(n) { base + n }
+  { n -> base + n }
 }
 
 fn program() {

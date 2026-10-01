@@ -145,7 +145,7 @@ impl Server {
         let mut items = Vec::new();
 
         // 1. Builtin module → return its functions and constants with type signatures.
-        //    Module constants (e.g. `math.pi`, `float.infinity`) are distinct from
+        //    Module constants (e.g. `math.pi`, `float.max_value`) are distinct from
         //    functions and must be surfaced here so editor autocompletion after
         //    `math.` / `float.` offers them alongside `sin`, `cos`, `parse`, etc.
         if module::is_builtin_module(prefix) {
@@ -410,7 +410,7 @@ impl Server {
 /// through `program.decls` naturally — no entry needed here.
 fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
     // Source: src/typechecker/mod.rs::register_builtin_trait_impls
-    //   - Int/Float/ExtFloat/Bool/String/Unit + List → all four traits
+    //   - Int/Float/Bool/String/Unit + List → all four traits
     //     (Equal, Compare, Hash, Display).
     //   - Tuple/Map/Set → Equal/Hash/Display only (no Compare).
     //
@@ -424,7 +424,7 @@ fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
     // only trait registered for the bytes-specific stamp; the rest
     // route through List's entry below.
     match canon_name {
-        "Int" | "Float" | "ExtFloat" | "Bool" | "String" | "Unit" | "List" => {
+        "Int" | "Float" | "Bool" | "String" | "Unit" | "List" => {
             &["display", "compare", "equal", "hash"]
         }
         "Tuple" | "Map" | "Set" => &["display", "equal", "hash"],

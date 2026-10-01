@@ -4,7 +4,7 @@
 //! `order: 6` (operators.md and loops-and-pipes.md), which made the
 //! generated guide-sidebar ordering non-deterministic between renders.
 //!
-//! Finding DOC-L2 (LATENT): `docs/strict-effects-migration.md` used
+//! Finding DOC-L2 (LATENT): one top-level guide used
 //! `section: "Guides"` (plural) while every other top-level guide used
 //! `section: "Guide"` (singular), splitting the doc into a phantom
 //! section in the generated TOC.

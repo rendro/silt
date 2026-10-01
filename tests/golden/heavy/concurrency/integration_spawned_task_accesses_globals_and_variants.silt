@@ -2,7 +2,7 @@
 import io
 import task
 fn program() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let x = Some(42)
     match x {
       Some(n) -> n

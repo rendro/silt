@@ -1,0 +1,7 @@
+-- A token that starts a declaration (here `let`) after a declaration on
+-- the same line gets the newline hint.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected a newline before 'let': each declaration must start on its own line
+type A { x: Int } let a = 1
+fn main() { println(a) }

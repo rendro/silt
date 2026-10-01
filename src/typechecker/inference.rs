@@ -19,7 +19,7 @@ pub(super) enum BindingSite {
     Let,
     /// A parameter of a named function or of a trait-impl method.
     FnParam,
-    /// A parameter of a closure, `{ pattern -> body }` or `fn(x) { body }`.
+    /// A parameter of a closure, `{ pattern -> body }`.
     ClosureParam,
 }
 
@@ -41,6 +41,28 @@ impl BindingSite {
                 "bind the parameter to a name and use a `match` or `when let ... else` \
                  in the body instead"
             }
+        }
+    }
+}
+
+/// Where an expression stands relative to its enclosing `loop`, for the
+/// check that `loop(...)` is in tail position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurPos {
+    /// The loop's result: a `loop(...)` here restarts the loop.
+    Tail,
+    /// Somewhere whose value is used.
+    NotTail,
+    /// Inside a closure in the loop body.
+    InClosure,
+}
+
+impl RecurPos {
+    /// The position of a sub-expression whose value is used.
+    fn inner(self) -> RecurPos {
+        match self {
+            RecurPos::InClosure => RecurPos::InClosure,
+            RecurPos::Tail | RecurPos::NotTail => RecurPos::NotTail,
         }
     }
 }
@@ -104,143 +126,6 @@ enum CtorQualifierResolution {
     Module(Symbol, EnumInfo),
     /// Diagnostic already emitted; bind sub-patterns to fresh vars.
     Invalid,
-}
-
-/// Render a copy-paste-ready fn header carrying the supplied effect
-/// annotation. Used by the Phase D strict-effects diagnostic to emit
-/// the literal text the user can paste straight back into their fn
-/// signature — e.g. given the source `fn read_settings(path: String) -> Settings`
-/// and the inferred set `!{fs, io}`, returns
-/// `fn read_settings(path: String) -> Settings !{fs, io}`.
-///
-/// Mirrors `formatter.rs::format_fn_with_comments` but keeps the
-/// renderer minimal (no comment threading, no multi-line layout) —
-/// the help-line text needs to be a single short sentence, not a
-/// faithful reformat of the user's whole header. Where clauses are
-/// included so a fn whose annotation lives between the return type
-/// and a where-clause still emits a header that roundtrips through
-/// the parser.
-pub(super) fn format_suggested_fn_header(
-    f: &FnDecl,
-    effects: crate::types::effects::EffectSet,
-) -> String {
-    use crate::ast::{ParamKind, PatternKind};
-    let name = resolve(f.name);
-    let params: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| {
-            // Render the binding pattern. For the help-line use case the
-            // patterns we care about are `Ident(x)` and `Wildcard`; we
-            // fall back to `_` for anything more exotic so the suggested
-            // header stays compact.
-            let pat = match &p.pattern.kind {
-                PatternKind::Ident(n) => resolve(*n),
-                PatternKind::Wildcard => "_".to_string(),
-                _ => "_".to_string(),
-            };
-            match p.kind {
-                ParamKind::Type => format!("type {pat}"),
-                ParamKind::Data => match &p.ty {
-                    Some(ty) => format!("{pat}: {}", render_type_expr(ty)),
-                    None => pat,
-                },
-            }
-        })
-        .collect();
-    let mut header = format!("fn {}({})", name, params.join(", "));
-    if let Some(ret) = &f.return_type {
-        header.push_str(&format!(" -> {}", render_type_expr(ret)));
-    }
-    // BROKEN (round 62 B3): `Display for EffectSet` renders the
-    // const `EffectSet::TOP` as `!*` — a token reserved for the
-    // "no annotation declared" gradual-rollout default. Splicing
-    // it into a `help: annotate as ...` suggestion produces text
-    // the parser cannot accept (the parser only accepts `!{...}`).
-    // When the inferred effects bitset matches TOP, render the
-    // explicit set form instead so the user can copy-paste the
-    // suggestion straight back into their source.
-    if effects == crate::types::effects::EffectSet::TOP {
-        header.push_str(" !{fs, io, net, random, time}");
-    } else {
-        header.push_str(&format!(" {effects}"));
-    }
-    if !f.where_clauses.is_empty() {
-        let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
-        for wc in &f.where_clauses {
-            let n = &wc.type_param;
-            let t = &wc.trait_name;
-            let args = &wc.trait_args;
-            let rendered = if args.is_empty() {
-                resolve(*t)
-            } else {
-                let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
-                format!("{}({})", resolve(*t), arg_strs.join(", "))
-            };
-            if let Some(entry) = grouped.iter_mut().find(|(k, _)| k == n) {
-                entry.1.push(rendered);
-            } else {
-                grouped.push((*n, vec![rendered]));
-            }
-        }
-        let clauses: Vec<String> = grouped
-            .iter()
-            .map(|(n, traits)| format!("{}: {}", resolve(*n), traits.join(" + ")))
-            .collect();
-        header.push_str(&format!(" where {}", clauses.join(", ")));
-    }
-    header
-}
-
-/// Render a TypeExpr as the user would write it. Local copy of the
-/// `formatter.rs` helper; we duplicate it here rather than reach into
-/// the formatter module so the typechecker stays free of formatter
-/// dependencies. The Phase D strict-effects diagnostic is the only
-/// caller — its needs are narrow (named, generic, tuple, function
-/// types; no comment threading) so the duplication stays small.
-fn render_type_expr(ty: &TypeExpr) -> String {
-    match &ty.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
-            let arg_strs: Vec<String> = args.iter().map(render_type_expr).collect();
-            format!("{}({})", resolve(*name), arg_strs.join(", "))
-        }
-        TypeExprKind::Tuple(elems) => {
-            let items: Vec<String> = elems.iter().map(render_type_expr).collect();
-            format!("({})", items.join(", "))
-        }
-        TypeExprKind::Function(params, ret) => {
-            let param_strs: Vec<String> = params.iter().map(render_type_expr).collect();
-            format!("Fn({}) -> {}", param_strs.join(", "), render_type_expr(ret))
-        }
-        TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => {
-            if matches!(receiver.kind, TypeExprKind::SelfType) {
-                format!("Self::{}", resolve(*assoc_name))
-            } else {
-                format!(
-                    "<{} as {}>::{}",
-                    render_type_expr(receiver),
-                    resolve(*trait_name),
-                    resolve(*assoc_name)
-                )
-            }
-        }
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut items: Vec<String> = fields
-                .iter()
-                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
-                .collect();
-            if let Some(rname) = tail {
-                items.push(format!("...{}", resolve(*rname)));
-            }
-            format!("{{ {} }}", items.join(", "))
-        }
-    }
 }
 
 /// Format an "undefined variable '<typo>'" error message with an
@@ -874,121 +759,6 @@ impl TypeChecker {
         self.fn_body_types
             .insert(lookup_name, constrained_fn.clone());
 
-        // Phase A of the effect-rows proposal: walk the (now type-checked)
-        // body and record the inferred effect set.
-        let inferred_effects = super::effects_infer::infer_expr_effects(&f.body, &local_env);
-        self.fn_body_effects.insert(lookup_name, inferred_effects);
-        // Phase B: write the inferred set back onto the FnDecl AST so
-        // the LSP `build_definitions` pass can surface the body effects
-        // on hover without having to keep a parallel side-channel
-        // mapping for every consumer.
-        f.inferred_effects = Some(inferred_effects);
-
-        // Phase B annotation enforcement: when the user declared a
-        // narrower set than the body computed, emit a diagnostic.
-        // We skip enforcement when no annotation was written so
-        // legacy code keeps typechecking unchanged. Recovery stubs
-        // never have meaningful inferred sets — their synthetic empty
-        // bodies trivially infer EMPTY but the user's broken header
-        // is the real problem and we don't pile on.
-        //
-        // Pivot on `f.is_annotated` rather than the bit-equality
-        // `f.declared_effects != EffectSet::TOP`: an explicit
-        // `!{io, fs, net, time, random}` annotation has the same
-        // bitset as TOP, and the old pivot silently skipped
-        // enforcement on those fns. Under --strict-effects the same
-        // bug would land in reverse (un-annotated fn flipped to
-        // EMPTY but compared via TOP-equality and excluded).
-        if !f.is_recovery_stub && f.is_annotated && !inferred_effects.is_subset(f.declared_effects)
-        {
-            // Compute the offending bits — effects in the body that the
-            // signature didn't declare. Display in alphabetic order
-            // (the EffectSet iterator's canonical order) so diagnostics
-            // are stable regardless of which sub-expression contributed
-            // each effect.
-            let mut offending = crate::types::effects::EffectSet::EMPTY;
-            for e in inferred_effects.iter() {
-                if !f.declared_effects.contains(e) {
-                    offending = offending.insert(e);
-                }
-            }
-            // Pick a representative effect for the headline. The
-            // "first offending in alphabetic order" rule keeps the
-            // headline deterministic across inference paths.
-            let representative = offending
-                .iter()
-                .next()
-                .map(|e| format!("!{{{e}}}"))
-                .unwrap_or_else(|| "!{}".to_string());
-
-            // Phase D strict-effects-mode diagnostic shape: when this
-            // fn was flipped from TOP→EMPTY by the strict-effects
-            // pre-pass (i.e. the user did NOT write a `!{...}`
-            // annotation; the flag treated absent-annotation as
-            // pure), surface a tailored message that names strict
-            // mode AND ships a copy-paste-ready annotation in the
-            // `help:` line. The literal annotation suffix the user
-            // can paste straight back into their fn header is the
-            // load-bearing part of the migration story — see
-            // `docs/strict-effects-migration.md`.
-            //
-            // Otherwise (the user explicitly wrote `!{...}` and the
-            // body went wider), keep the original Phase B diagnostic
-            // shape so existing locks and tooling stay valid.
-            let was_strict_flipped = self.strict_effects_flipped.contains(&f.span.offset);
-            let message = if was_strict_flipped {
-                let suggested_header = format_suggested_fn_header(f, inferred_effects);
-                // GAP (round 62 G7): drop the single-quotes around
-                // the row syntax. `'!{IO}'` reads as a single
-                // weirdly-named effect; the non-strict branch below
-                // names a singleton `representative` like `!{fs}`
-                // and never wraps it in extra quotes inside the
-                // body sentence. Mirror that here so the strict
-                // diagnostic is uniform.
-                //
-                // Also: when the body inferred TOP, render it as
-                // the explicit five-effect form rather than the
-                // `!*` token. `!*` is the "no annotation" sigil,
-                // not a parseable annotation — splicing it into
-                // diagnostic text is misleading and the help line
-                // already substitutes the explicit form.
-                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
-                    "!{fs, io, net, random, time}".to_string()
-                } else {
-                    format!("{inferred_effects}")
-                };
-                format!(
-                    "function '{}' uses effect {} but is declared pure (no annotation under --strict-effects)\n\
-                     fn body uses {}; under --strict-effects, missing annotation means !{{}}\n\
-                     help: annotate as `{}` to make the effect explicit, or wrap the IO behind a callable passed in by the caller",
-                    crate::intern::resolve(f.name),
-                    inferred_render,
-                    inferred_render,
-                    suggested_header,
-                )
-            } else {
-                // BROKEN (round 62 B3): also avoid splicing `!*`
-                // (TOP's Display) into the user-facing message —
-                // the `!*` sigil is the "no annotation" gradual
-                // default, not a parseable effect annotation.
-                // Render the explicit five-effect form when the
-                // body's inferred set covers all five.
-                let inferred_render = if inferred_effects == crate::types::effects::EffectSet::TOP {
-                    "!{fs, io, net, random, time}".to_string()
-                } else {
-                    format!("{inferred_effects}")
-                };
-                format!(
-                    "effect '{}' not declared in fn '{}'\nfn body uses {}; signature declares {}",
-                    representative,
-                    crate::intern::resolve(f.name),
-                    inferred_render,
-                    f.declared_effects,
-                )
-            };
-            self.error(message, f.body.span);
-        }
-
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
@@ -1217,12 +987,9 @@ impl TypeChecker {
             // Classify the op based on its recorded tag (string literals set
             // at the binary-op or unary-op site).
             let valid = match op_desc {
-                // Arithmetic that allows strings (Add).
-                "'+'" => is_valid_arith_operand(&resolved, true),
                 // Numeric-only arithmetic.
-                "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => {
-                    is_valid_arith_operand(&resolved, false)
-                        && !matches!(resolved, Type::String | Type::Var(_))
+                "'+'" | "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => {
+                    is_valid_arith_operand(&resolved)
                 }
                 // Equality: anything comparable.
                 "'=='/'!='" => is_valid_compare_operand(&resolved, true),
@@ -1231,13 +998,13 @@ impl TypeChecker {
                 _ => true,
             };
             if !valid {
+                if matches!(op_desc, "'+'" | "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'") {
+                    self.error(arith_operand_message(op_desc, &resolved), span);
+                    continue;
+                }
                 let domain = match op_desc {
-                    "'+'" => "Int, Float, ExtFloat, or String",
-                    "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => "Int, Float, or ExtFloat",
                     "'=='/'!='" => "a comparable type",
-                    "ordering comparison" => {
-                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
-                    }
+                    "ordering comparison" => "Int, Float, String, List, Range, Record, or Variant",
                     _ => "a valid operand",
                 };
                 self.error(
@@ -1810,8 +1577,7 @@ impl TypeChecker {
     /// module-call detection, qualified record literals and variant
     /// patterns) so they all agree; the compiler applies the same rule
     /// via its `resolve_local`/upvalue/`top_level_value_globals`
-    /// checks, and the effects walker via
-    /// `effects_infer`'s rebound/value-binding gate.
+    /// checks.
     pub(super) fn value_binding_shadows_module(&self, env: &TypeEnv, name: Symbol) -> bool {
         let Some(scheme) = env.lookup(name) else {
             return false;
@@ -3247,8 +3013,7 @@ impl TypeChecker {
                         Type::Error
                     }
                     // Primitive types — check method table for trait methods.
-                    // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:8276`); Channel and Fn are not
+                    // Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
@@ -3259,7 +3024,6 @@ impl TypeChecker {
                     // — round 71 follow-up unified all four sites on `"Fn"`.
                     Type::Int
                     | Type::Float
-                    | Type::ExtFloat
                     | Type::Bool
                     | Type::String
                     | Type::Unit
@@ -3268,7 +3032,6 @@ impl TypeChecker {
                         let type_name = match &obj_ty {
                             Type::Int => intern("Int"),
                             Type::Float => intern("Float"),
-                            Type::ExtFloat => intern("ExtFloat"),
                             Type::Bool => intern("Bool"),
                             Type::String => intern("String"),
                             // Round 75 TYPE-3 LATENT: canonical key is
@@ -3443,7 +3206,7 @@ impl TypeChecker {
                             // is not a known method (registered impl OR
                             // declared on any trait), generate an open
                             // anon-record constraint so
-                            // `fn first_name(p) = p.name` infers
+                            // `fn first_name(p) { p.name }` infers
                             // `p: {name: a, ...r} -> a`. When the field
                             // is a method name, fall back to the legacy
                             // deferred-check path so trait dispatch keeps
@@ -3497,90 +3260,9 @@ impl TypeChecker {
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
-                    // ── Implicit Float → ExtFloat widening ─────────────────
-                    //
-                    // Mixed Float/ExtFloat operands are widened to ExtFloat
-                    // *without* going through unification. This is intentional:
-                    // Float and ExtFloat are distinct concrete types that do not
-                    // unify, but arithmetic between them should silently promote
-                    // to the wider type (analogous to f32 → f64 in other
-                    // languages).
-                    //
-                    // For Div the result is always ExtFloat when *either* operand
-                    // is a float type, because division may produce fractional
-                    // results even from two Floats.
-                    //
-                    // IMPORTANT: any new numeric binary operators must replicate
-                    // this widening logic; otherwise mixed Float/ExtFloat
-                    // expressions will produce a unification error.
-                    // ─────────────────────────────────────────────────────────
-                    BinOp::Add => {
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
-                        match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
-                            _ => {
-                                // Round 100: `unify_binop_operands` emits at
-                                // most ONE correctly-directed diagnostic —
-                                // the left operand establishes the
-                                // expectation, and a lone out-of-domain
-                                // operand gets the operator-domain message
-                                // instead of a misdirected mismatch (see its
-                                // doc comment). On error it returns `true`
-                                // and we return `Type::Error` instead of
-                                // `lt` so the outer ascribed-let
-                                // (`let n: Int = s + 1`) hits the
-                                // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`) and doesn't re-emit
-                                // (G2, round 60).
-                                let unify_errored = self.unify_binop_operands(
-                                    &lt,
-                                    &rt,
-                                    lhs_span,
-                                    rhs_span,
-                                    |t| is_valid_arith_operand(t, true),
-                                    |t| {
-                                        format!(
-                                            "operator '+' requires Int, Float, ExtFloat, or String, got '{t}'"
-                                        )
-                                    },
-                                );
-                                // F1 (round 67): if a mismatch was already
-                                // reported, skip the operand-domain check
-                                // below — a second diagnostic at the same
-                                // expression would be pure noise.
-                                if !unify_errored {
-                                    // B2: enforce operand domain — Add accepts
-                                    // Int/Float/ExtFloat or String (concatenation).
-                                    let resolved = self.apply(&lt);
-                                    match &resolved {
-                                        Type::Var(_) => {
-                                            // Still unresolved — defer to final pass.
-                                            self.pending_numeric_checks.push((
-                                                resolved.clone(),
-                                                "'+'",
-                                                span,
-                                            ));
-                                        }
-                                        _ if !is_valid_arith_operand(&resolved, true) => {
-                                            self.error(
-                                                format!(
-                                                    "operator '+' requires Int, Float, ExtFloat, or String, got '{resolved}'"
-                                                ),
-                                                span,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if unify_errored { Type::Error } else { lt }
-                            }
-                        }
-                    }
-                    BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                         let op_str = match op {
+                            BinOp::Add => "'+'",
                             BinOp::Sub => "'-'",
                             BinOp::Mul => "'*'",
                             BinOp::Mod => "'%'",
@@ -3589,41 +3271,40 @@ impl TypeChecker {
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
                         match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            // An operand already in error (e.g. the left
+                            // side of `a + "b" + "c"`) was reported once;
+                            // stay quiet. `Type::Error` keeps an ascribed
+                            // let from re-reporting the result.
+                            (Type::Error, Type::String) | (Type::String, Type::Error) => {
+                                Type::Error
+                            }
                             (Type::String, _) | (_, Type::String) => {
-                                self.error(
-                                    format!(
-                                        "operator {op_str} requires Int, Float, or ExtFloat — \
-                                         got String; use `string.concat` or `+` to join strings"
-                                    ),
-                                    span,
-                                );
-                                lt
+                                self.error(arith_operand_message(op_str, &Type::String), span);
+                                Type::Error
                             }
                             _ => {
-                                // Round 100 (+ F1 round 67): mirror the Add
-                                // arm — `unify_binop_operands` emits at most
-                                // one correctly-directed diagnostic, so the
+                                // Round 100: `unify_binop_operands` emits at
+                                // most ONE correctly-directed diagnostic —
+                                // the left operand establishes the
+                                // expectation, and a lone out-of-domain
+                                // operand gets the operator-domain message
+                                // instead of a misdirected mismatch (see its
+                                // doc comment). F1 (round 67): the
                                 // operand-domain check below is skipped when
                                 // it errored (the second domain message
                                 // would be noise). Also return `Type::Error`
                                 // on unify failure so an outer ascribed-let
                                 // (`let n: Int = s - 1`) hits the
                                 // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`).
+                                // (`mod.rs:1387`) and doesn't re-emit
+                                // (G2, round 60).
                                 let unify_errored = self.unify_binop_operands(
                                     &lt,
                                     &rt,
                                     lhs_span,
                                     rhs_span,
-                                    |t| is_valid_arith_operand(t, false),
-                                    |t| {
-                                        format!(
-                                            "operator {op_str} requires Int, Float, or ExtFloat, got '{t}'"
-                                        )
-                                    },
+                                    is_valid_arith_operand,
+                                    |t| arith_operand_message(op_str, t),
                                 );
                                 if !unify_errored {
                                     // B2: enforce numeric-only operand domain.
@@ -3636,11 +3317,9 @@ impl TypeChecker {
                                                 span,
                                             ));
                                         }
-                                        _ if !is_valid_arith_operand(&resolved, false) => {
+                                        _ if !is_valid_arith_operand(&resolved) => {
                                             self.error(
-                                                format!(
-                                                    "operator {op_str} requires Int, Float, or ExtFloat, got '{resolved}'"
-                                                ),
+                                                arith_operand_message(op_str, &resolved),
                                                 span,
                                             );
                                         }
@@ -3652,62 +3331,43 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Div => {
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
-                        match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::Float)
-                            | (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
-                            _ => {
-                                // Round 100 (+ F1 round 72): mirror the
-                                // Add/Sub arms — `unify_binop_operands`
-                                // emits at most one correctly-directed
-                                // diagnostic, so the operand-domain check
-                                // below is skipped when it errored (the
-                                // second message would be redundant noise).
-                                // Also return `Type::Error` on unify
-                                // failure so an outer ascribed-let
-                                // (`let n: Int = b / 1`) hits the
-                                // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`).
-                                let unify_errored = self.unify_binop_operands(
-                                    &lt,
-                                    &rt,
-                                    lhs_span,
-                                    rhs_span,
-                                    |t| is_valid_arith_operand(t, false),
-                                    |t| {
-                                        format!(
-                                            "operator '/' requires Int, Float, or ExtFloat, got '{t}'"
-                                        )
-                                    },
-                                );
-                                if !unify_errored {
-                                    // B2: enforce numeric-only operand domain.
-                                    let resolved = self.apply(&lt);
-                                    match &resolved {
-                                        Type::Var(_) => {
-                                            self.pending_numeric_checks.push((
-                                                resolved.clone(),
-                                                "'/'",
-                                                span,
-                                            ));
-                                        }
-                                        _ if !is_valid_arith_operand(&resolved, false) => {
-                                            self.error(
-                                                format!(
-                                                    "operator '/' requires Int, Float, or ExtFloat, got '{resolved}'"
-                                                ),
-                                                span,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
+                        // Round 100 (+ F1 round 72): mirror the
+                        // `+`/`-`/`*`/`%` arm — `unify_binop_operands`
+                        // emits at most one correctly-directed
+                        // diagnostic, so the operand-domain check
+                        // below is skipped when it errored (the
+                        // second message would be redundant noise).
+                        // Also return `Type::Error` on unify
+                        // failure so an outer ascribed-let
+                        // (`let n: Int = b / 1`) hits the
+                        // cascade-suppression branch in `unify`
+                        // (`mod.rs:1387`).
+                        let unify_errored = self.unify_binop_operands(
+                            &lt,
+                            &rt,
+                            lhs_span,
+                            rhs_span,
+                            is_valid_arith_operand,
+                            |t| arith_operand_message("'/'", t),
+                        );
+                        if !unify_errored {
+                            // B2: enforce numeric-only operand domain.
+                            let resolved = self.apply(&lt);
+                            match &resolved {
+                                Type::Var(_) => {
+                                    self.pending_numeric_checks.push((
+                                        resolved.clone(),
+                                        "'/'",
+                                        span,
+                                    ));
                                 }
-                                if unify_errored { Type::Error } else { lt }
+                                _ if !is_valid_arith_operand(&resolved) => {
+                                    self.error(arith_operand_message("'/'", &resolved), span);
+                                }
+                                _ => {}
                             }
                         }
+                        if unify_errored { Type::Error } else { lt }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
                         let is_equality = matches!(op, BinOp::Eq | BinOp::Neq);
@@ -3720,8 +3380,6 @@ impl TypeChecker {
                             BinOp::Geq => "'>='",
                             _ => unreachable!(),
                         };
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
                         // Round 100 (+ F1 round 72): `unify_binop_operands`
                         // emits at most one correctly-directed diagnostic,
                         // so the operand-domain check below is skipped when
@@ -3731,31 +3389,25 @@ impl TypeChecker {
                         // for most cases (e.g. Bool is a valid equality
                         // operand) so the dual diagnostic doesn't surface,
                         // but apply uniformly to close the latent door.
-                        let unify_errored = match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat) | (Type::ExtFloat, Type::Float) => {
-                                // Accept mixed Float/ExtFloat without unification
-                                false
-                            }
-                            _ => self.unify_binop_operands(
-                                &lt,
-                                &rt,
-                                lhs_span,
-                                rhs_span,
-                                |t| is_valid_compare_operand(t, is_equality),
-                                |t| {
-                                    let domain = if is_equality {
-                                        "a comparable type"
-                                    } else {
-                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
-                                    };
-                                    format!("operator {op_str} requires {domain}, got '{t}'")
-                                },
-                            ),
-                        };
+                        let unify_errored = self.unify_binop_operands(
+                            &lt,
+                            &rt,
+                            lhs_span,
+                            rhs_span,
+                            |t| is_valid_compare_operand(t, is_equality),
+                            |t| {
+                                let domain = if is_equality {
+                                    "a comparable type"
+                                } else {
+                                    "Int, Float, String, List, Range, Record, or Variant"
+                                };
+                                format!("operator {op_str} requires {domain}, got '{t}'")
+                            },
+                        );
                         if !unify_errored {
                             // B3: enforce comparison operand domain. The VM's
                             // compare() (src/vm/arithmetic.rs) only supports
-                            // Int/Float/ExtFloat/String/List/Range/Record/Variant
+                            // Int/Float/String/List/Range/Record/Variant
                             // for ordering. Equality additionally supports
                             // Tuple/Map/Set/Bool/Unit/Channel and closed-row
                             // AnonRecord via Value's PartialEq.
@@ -3777,7 +3429,7 @@ impl TypeChecker {
                                     let domain = if is_equality {
                                         "a comparable type"
                                     } else {
-                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                                        "Int, Float, String, List, Range, Record, or Variant"
                                     };
                                     self.error(
                                         format!(
@@ -3822,7 +3474,7 @@ impl TypeChecker {
                     UnaryOp::Neg => {
                         let resolved = self.apply(&t);
                         match &resolved {
-                            Type::Int | Type::Float | Type::ExtFloat => {}
+                            Type::Int | Type::Float => {}
                             Type::Error | Type::Never => {}
                             Type::Var(_) => {
                                 // B5: unresolved — defer until after all bodies are
@@ -3836,10 +3488,7 @@ impl TypeChecker {
                             }
                             _ => {
                                 self.error(
-                                    format!(
-                                        "unary '-' requires Int, Float, or ExtFloat, got '{}'",
-                                        resolved
-                                    ),
+                                    format!("unary '-' requires Int or Float, got '{}'", resolved),
                                     operand_span,
                                 );
                             }
@@ -4383,12 +4032,7 @@ impl TypeChecker {
                 result_ty
             }
 
-            ExprKind::Lambda {
-                params,
-                body,
-                effects,
-                is_annotated,
-            } => {
+            ExprKind::Lambda { params, body } => {
                 let mut local_env = env.child();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
@@ -4438,48 +4082,6 @@ impl TypeChecker {
 
                 self.current_return_type = prev_return_type;
                 self.current_qmark_spans = prev_qmark_spans;
-
-                // Round-65: enforce `fn(...) !{...} { ... }` annotations
-                // the same way `register_fn_decl` enforces FnDecl-level
-                // annotations. Mirror the FnDecl narrowing path: walk
-                // the body's inferred effects, compare to the declared
-                // set, emit a diagnostic if the body uses anything not
-                // in the declaration. Trailing-closure form
-                // `{ params -> body }` has no syntactic slot for an
-                // annotation so `is_annotated` is always false there
-                // and this branch is a no-op — effects remain inferred.
-                if *is_annotated {
-                    let inferred = super::effects_infer::infer_expr_effects(body, &local_env);
-                    if !inferred.is_subset(*effects) {
-                        let mut offending = crate::types::effects::EffectSet::EMPTY;
-                        for e in inferred.iter() {
-                            if !effects.contains(e) {
-                                offending = offending.insert(e);
-                            }
-                        }
-                        let representative = offending
-                            .iter()
-                            .next()
-                            .map(|e| format!("!{{{e}}}"))
-                            .unwrap_or_else(|| "!{}".to_string());
-                        // Match the FnDecl strict-effects diagnostic:
-                        // render TOP as the explicit five-effect form
-                        // rather than the `!*` "no annotation" sigil,
-                        // which is not a parseable annotation.
-                        let inferred_render = if inferred == crate::types::effects::EffectSet::TOP {
-                            "!{fs, io, net, random, time}".to_string()
-                        } else {
-                            format!("{inferred}")
-                        };
-                        self.error(
-                            format!(
-                                "effect '{}' not declared in lambda\nlambda body uses {}; signature declares {}",
-                                representative, inferred_render, effects,
-                            ),
-                            body.span,
-                        );
-                    }
-                }
 
                 // `lambda_ret` rather than `body_type`: identical when the
                 // unify above succeeded, and on failure it carries any
@@ -5042,7 +4644,42 @@ impl TypeChecker {
                         }
                     }
                     None => {
-                        // Guardless match: each arm's guard is a boolean condition
+                        // Guardless match: each arm's guard is a boolean
+                        // condition. When no condition holds there is no
+                        // value, so the last arm must be the `_` default,
+                        // and there is exactly one: arms after a `_` never
+                        // run.
+                        let defaults: Vec<usize> = arms
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, arm)| arm.guard.is_none())
+                            .map(|(i, _)| i)
+                            .collect();
+                        match defaults.first() {
+                            None => self.error(
+                                "a `match` without a scrutinee must end with a `_ -> ...` arm \
+                                 for when no condition is true"
+                                    .to_string(),
+                                span,
+                            ),
+                            Some(&first) => {
+                                if arms[first + 1..].iter().any(|arm| arm.guard.is_some()) {
+                                    self.error(
+                                        "the `_` arm must be last: it always matches, so the \
+                                         arms after it never run"
+                                            .to_string(),
+                                        arms[first].pattern.span,
+                                    );
+                                }
+                                for &i in &defaults[1..] {
+                                    self.error(
+                                        "unreachable `_` arm: an earlier `_` arm always matches"
+                                            .to_string(),
+                                        arms[i].pattern.span,
+                                    );
+                                }
+                            }
+                        }
                         let result_ty = self.fresh_var();
                         // Same rule as the scrutinee form: arms that all
                         // diverge make the match diverge.
@@ -5063,7 +4700,6 @@ impl TypeChecker {
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
 
-                        // No exhaustiveness checking for guardless match
                         if every_arm_diverges {
                             Type::Never
                         } else {
@@ -5104,6 +4740,7 @@ impl TypeChecker {
                     binding_types.push(ty.clone());
                     loop_env.define(*name, Scheme::mono(ty));
                 }
+                self.check_recur_tail_positions(body, RecurPos::Tail);
                 let prev_loop = self.loop_binding_types.take();
                 self.loop_binding_types = Some(binding_types);
                 let result = self.infer_expr(body, &mut loop_env);
@@ -5122,7 +4759,7 @@ impl TypeChecker {
                         let bindings_n = binding_types.len();
                         self.error(
                             format!(
-                                "loop has {} {}, but recur supplies {} {}",
+                                "loop has {} {}, but `loop(...)` supplies {} {}",
                                 bindings_n,
                                 plural(bindings_n, "binding", "bindings"),
                                 recur_count,
@@ -5139,26 +4776,173 @@ impl TypeChecker {
                     }
                 } else {
                     self.error(
-                        "`recur` can only appear inside a `loop(...)` body — it jumps \
-                         to the enclosing loop with new binding values"
+                        "`loop(...)` can only appear inside a `loop` body — it restarts \
+                         the enclosing loop with new binding values"
                             .to_string(),
                         span,
                     );
                 }
-                self.fresh_var()
-            }
-
-            ExprKind::FloatElse(expr, fallback) => {
-                let expr_ty = self.infer_expr(expr, env);
-                let fallback_ty = self.infer_expr(fallback, env);
-                self.unify(&expr_ty, &Type::ExtFloat, expr.span);
-                self.unify(&fallback_ty, &Type::Float, fallback.span);
-                Type::Float
+                // `loop(...)` jumps back to the top of the loop and never
+                // produces a value here.
+                Type::Never
             }
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
         resolved
+    }
+
+    /// Reject a `loop(...)` call that is not in tail position of its
+    /// loop. `loop(...)` restarts the loop, so nothing may use its result:
+    /// it must be the last expression of the loop body, or of a block,
+    /// match arm or `when ... else` body that is itself in tail position.
+    /// `pos` says where `expr` stands. A nested `loop` starts its own
+    /// tail context, checked when that loop is inferred, so only its
+    /// binding initialisers are walked here.
+    fn check_recur_tail_positions(&mut self, expr: &Expr, pos: RecurPos) {
+        let inner = pos.inner();
+        match &expr.kind {
+            ExprKind::Recur(args) => {
+                match pos {
+                    RecurPos::Tail => {}
+                    RecurPos::NotTail => self.error(
+                        "`loop(...)` must be in tail position: it restarts the loop, so \
+                         nothing can use its result — make it the last expression of \
+                         the loop body, or of a block, match arm or `when ... else` body \
+                         in tail position"
+                            .to_string(),
+                        expr.span,
+                    ),
+                    RecurPos::InClosure => self.error(
+                        "`loop(...)` inside a closure is not the loop's tail: the closure \
+                         runs when it is called, not as the loop body, so it cannot \
+                         restart the loop — return a value from the closure and call \
+                         `loop(...)` in the loop body"
+                            .to_string(),
+                        expr.span,
+                    ),
+                }
+                for arg in args {
+                    self.check_recur_tail_positions(arg, inner);
+                }
+            }
+            ExprKind::Loop { bindings, .. } => {
+                for (_, value) in bindings {
+                    self.check_recur_tail_positions(value, inner);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                let last = stmts.len().saturating_sub(1);
+                for (i, stmt) in stmts.iter().enumerate() {
+                    match stmt {
+                        Stmt::Let { value, .. } => self.check_recur_tail_positions(value, inner),
+                        Stmt::When {
+                            expr: value,
+                            else_body,
+                            ..
+                        } => {
+                            self.check_recur_tail_positions(value, inner);
+                            self.check_recur_tail_positions(else_body, pos);
+                        }
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
+                            self.check_recur_tail_positions(condition, inner);
+                            self.check_recur_tail_positions(else_body, pos);
+                        }
+                        Stmt::Expr(e) => {
+                            self.check_recur_tail_positions(e, if i == last { pos } else { inner })
+                        }
+                    }
+                }
+            }
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
+                if let Some(scrutinee) = scrutinee {
+                    self.check_recur_tail_positions(scrutinee, inner);
+                }
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.check_recur_tail_positions(guard, inner);
+                    }
+                    self.check_recur_tail_positions(&arm.body, pos);
+                }
+            }
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::StringLit(..)
+            | ExprKind::Ident(_)
+            | ExprKind::Unit
+            | ExprKind::Return(None) => {}
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.check_recur_tail_positions(e, inner);
+                    }
+                }
+            }
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) | ListElem::Spread(e) => {
+                            self.check_recur_tail_positions(e, inner)
+                        }
+                    }
+                }
+            }
+            ExprKind::Map(entries) => {
+                for (k, v) in entries {
+                    self.check_recur_tail_positions(k, inner);
+                    self.check_recur_tail_positions(v, inner);
+                }
+            }
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+                for e in elems {
+                    self.check_recur_tail_positions(e, inner);
+                }
+            }
+            ExprKind::FieldAccess(e, _)
+            | ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, inner),
+            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
+                self.check_recur_tail_positions(l, inner);
+                self.check_recur_tail_positions(r, inner);
+            }
+            ExprKind::Call(callee, args) => {
+                self.check_recur_tail_positions(callee, inner);
+                for arg in args {
+                    self.check_recur_tail_positions(arg, inner);
+                }
+            }
+            ExprKind::Lambda { body, .. } => {
+                self.check_recur_tail_positions(body, RecurPos::InClosure)
+            }
+            ExprKind::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, inner);
+                }
+            }
+            ExprKind::RecordUpdate { expr: base, fields } => {
+                self.check_recur_tail_positions(base, inner);
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, inner);
+                }
+            }
+            ExprKind::AnonRecord { spread, fields } => {
+                if let Some(base) = spread {
+                    self.check_recur_tail_positions(base, inner);
+                }
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, inner);
+                }
+            }
+        }
     }
 
     // ── Statement type inference ────────────────────────────────────
@@ -5186,20 +4970,11 @@ impl TypeChecker {
                 // with mutable state (e.g. channels) that must remain
                 // monomorphic so that the element type is shared across
                 // all uses.
-                let mut scheme = if is_value {
+                let scheme = if is_value {
                     self.generalize(env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
-                // BROKEN (round 64): `generalize` and `Scheme::mono` both
-                // hardcode `effects: EffectSet::TOP`. For an aliasing
-                // bind (`let alias = doit` where `doit` is a fn-typed
-                // name in scope), copy the source scheme's effects so
-                // the alias preserves the callee's declared effect set
-                // rather than widening every aliased call to TOP. Same
-                // shape for FieldAccess (`let alias = mod.func`).
-                propagate_alias_effects(&value.kind, env, &mut scheme);
-
                 // Bind names in the pattern
                 // For let-polymorphism we need to bind with the generalized scheme
                 match &pattern.kind {
@@ -5239,7 +5014,9 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
-                        "'when let' else body must diverge — use 'return' or 'panic'".to_string(),
+                        "'when let' else body must diverge — end it with 'return', 'panic' or, \
+                         inside a loop, 'loop(...)'"
+                            .to_string(),
                         else_body.span,
                     );
                 }
@@ -5268,7 +5045,9 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
-                        "'when' else body must diverge — use 'return' or 'panic'".to_string(),
+                        "'when' else body must diverge — end it with 'return', 'panic' or, \
+                         inside a loop, 'loop(...)'"
+                            .to_string(),
                         else_body.span,
                     );
                 }
@@ -5871,7 +5650,7 @@ impl TypeChecker {
 /// `trait_arg_compatible_canon` compares them structurally and
 /// `canonicalize()` does not collapse `Generic("List", …)` onto
 /// `Type::List` (etc.). Non-canonical output makes every builtin
-/// container / ExtFloat / Unit supertrait arg spuriously incompatible
+/// container / Unit supertrait arg spuriously incompatible
 /// with its own impl.
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
@@ -5888,16 +5667,15 @@ pub(super) fn resolve_supertrait_arg(
             // Bare type name that isn't a trait param — interpret as a
             // concrete type reference (Int, String, or user type).
             // Round 101: mirror `resolve_type_expr` (mod.rs Named arm)
-            // exactly for primitives — ExtFloat and Unit/() previously
+            // exactly for primitives — Unit/() previously
             // fell through to `Type::Generic`, which never compares
-            // equal to the canonical `Type::ExtFloat`/`Type::Unit` the
+            // equal to the canonical `Type::Unit` the
             // impl side produces, spuriously failing
             // `trait_arg_compatible_canon` with identical Display
             // strings on both sides of the error.
             match resolve(*sym).as_str() {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
-                "ExtFloat" => Type::ExtFloat,
                 "Bool" => Type::Bool,
                 "String" => Type::String,
                 "()" | "Unit" => Type::Unit,
@@ -5965,12 +5743,11 @@ pub(super) fn resolve_supertrait_arg(
 }
 
 /// Returns true if the given type is a valid operand for arithmetic operators.
-/// `allow_string` widens the domain for `+`, which supports string concatenation.
 /// Type variables and `Type::Error` are treated as "maybe valid" (caller handles
 /// the Var case via deferred checks).
-pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
+pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
     match ty {
-        Type::Int | Type::Float | Type::ExtFloat | Type::Error | Type::Never => true,
+        Type::Int | Type::Float | Type::Error | Type::Never => true,
         Type::Var(_) => true,
         // Round 92: an abstract associated-type projection (`<a as T>::Item`
         // with the receiver still a where-bound type variable) is "maybe
@@ -5978,8 +5755,19 @@ pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
         // once a trait impl binds it, and the concrete check fires at the
         // instantiation site (or as a VM operator error) just as for Var.
         Type::AssocProj { .. } => true,
-        Type::String if allow_string => true,
         _ => false,
+    }
+}
+
+/// The operand-domain diagnostic for an arithmetic operator (`op_str` is
+/// the quoted operator, e.g. `'+'`). A String operand of `+` also names
+/// the way to build strings: interpolation.
+pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
+    let msg = format!("operator {op_str} requires Int or Float, got '{ty}'");
+    if op_str == "'+'" && matches!(ty, Type::String) {
+        format!("{msg}; build strings with interpolation, e.g. \"{{a}}{{b}}\"")
+    } else {
+        msg
     }
 }
 
@@ -6008,7 +5796,6 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     match ty {
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::String
         | Type::List(_)
         | Type::Range(_)
@@ -6070,74 +5857,6 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
             fields.iter().all(|(_, e)| is_syntactic_value(&e.kind))
         }
         _ => false,
-    }
-}
-
-/// BROKEN (round 64): close the alias effect-widening hole.
-///
-/// `let alias = doit` (where `doit` is a fn-typed name in scope) used
-/// to widen the alias's declared effects to `EffectSet::TOP`. Both
-/// let-binding sites (top-level in `mod.rs`, inline in `infer_stmt`)
-/// build their scheme via `generalize` / `Scheme::mono`, both of which
-/// hardcode `effects: EffectSet::TOP` (see the doc-comment on
-/// `generalize` at `mod.rs:1834-1842` warning every caller MUST
-/// overwrite the field). Neither caller did, so an alias call became
-/// `!*`-equivalent and any caller fn declared with anything narrower
-/// than the full five-effect row started failing the body-subset
-/// check with an off-target `effect '!{fs}' not declared` diagnostic.
-///
-/// This helper inspects the bound value expression and, if it's a
-/// simple aliasing reference (Ident or dotted FieldAccess), copies
-/// the source scheme's `effects` onto the freshly-built alias scheme.
-/// It also covers Phase A's higher-order=TOP gap for the Ident-callee
-/// case at the typechecker level — the matching effects-walker fix in
-/// `effects_infer.rs::stmt_effects` mirrors the alias map into the
-/// effects pass, since the typechecker's let-bound env is dropped
-/// before `infer_expr_effects` runs over the body.
-///
-/// More elaborate value shapes (lambdas with effectful bodies,
-/// arbitrary call/field chains) intentionally remain untouched; the
-/// goal is the alias case (BROKEN repro) and the LATENT Phase-A
-/// higher-order=TOP case for simple Ident / dotted-path callees.
-pub(super) fn propagate_alias_effects(kind: &ExprKind, env: &TypeEnv, scheme: &mut Scheme) {
-    match kind {
-        ExprKind::Ident(name) => {
-            if let Some(src) = env.lookup(*name) {
-                scheme.effects = src.effects;
-            }
-        }
-        // Dotted path `mod.func` is parsed as
-        // `FieldAccess(Ident(mod), func)`. `effects_infer.rs::callee_name`
-        // joins the two halves with `.` to look up the builtin scheme;
-        // mirror that here so `let alias = io.println` (or any other
-        // builtin) preserves its `!{io, ...}` annotation.
-        //
-        // Round 94 (module-shadowing): when a VALUE binding shadows the
-        // base name, the dotted path is field access on the binding,
-        // not a module member — copying the same-named MODULE fn's
-        // effects onto the alias would mis-attribute effects in both
-        // directions. Leave the scheme's conservative default instead.
-        // (Type-name `TypeOf(..)` descriptor bindings don't count,
-        // mirroring `TypeChecker::value_binding_shadows_module`.)
-        ExprKind::FieldAccess(obj, field) => {
-            if let ExprKind::Ident(base) = &obj.kind {
-                let base_shadowed = env.lookup(*base).is_some_and(|s| {
-                    !matches!(
-                        &s.ty,
-                        Type::Generic(g, args) if resolve(*g) == "TypeOf" && args.len() == 1
-                    )
-                });
-                if base_shadowed {
-                    return;
-                }
-                let joined = format!("{}.{}", resolve(*base), resolve(*field));
-                let key = intern(&joined);
-                if let Some(src) = env.lookup(key) {
-                    scheme.effects = src.effects;
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -6335,8 +6054,8 @@ fn main() {
     fn test_pipe_chains_types() {
         assert_no_errors(
             r#"
-fn double(x) = x * 2
-fn add_one(x) = x + 1
+fn double(x) { x * 2 }
+fn add_one(x) { x + 1 }
 fn main() {
   5 |> double |> add_one
 }
@@ -6509,16 +6228,17 @@ fn main() {
         );
     }
 
-    // ── B2: String Sub/Mul/Mod should be rejected ──────────────────
+    // ── B2: arithmetic on String should be rejected ────────────────
 
     #[test]
-    fn test_string_add_is_allowed() {
-        assert_no_errors(
+    fn test_string_add_is_rejected_naming_interpolation() {
+        assert_has_error(
             r#"
 fn main() {
   "hello" + " world"
 }
         "#,
+            "build strings with interpolation",
         );
     }
 
@@ -6530,7 +6250,7 @@ fn main() {
   "hello" - "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -6542,7 +6262,7 @@ fn main() {
   "hello" * "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -6554,7 +6274,7 @@ fn main() {
   "hello" % "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -6569,7 +6289,7 @@ fn main() {
   let int_box = Box { value: 42 }
   let str_box = Box { value: "hello" }
   int_box.value + 1
-  str_box.value + " world"
+  str_box.value == "hello"
 }
         "#,
         );

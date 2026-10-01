@@ -1,0 +1,13 @@
+-- `fn(Int) -> Int` in a type position is the keyword spelling of a
+-- function type; the error suggests `Fn(Int) -> Int`.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: a function type is written with `Fn`; did you mean `Fn(Int, String) -> Bool`?
+fn apply(f: fn(Int, String) -> Bool) -> Bool {
+  f(1, "a")
+}
+
+fn main() {
+  println(apply({ n, s -> n > 0 }))
+}

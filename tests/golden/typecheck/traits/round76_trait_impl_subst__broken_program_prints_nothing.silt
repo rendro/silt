@@ -3,7 +3,7 @@
 -- exit: 1
 -- stderr-contains: error[type]
 trait Foo(a) { fn produce(self) -> a }
-trait Foo(Int) for String { fn produce(self) -> String = "haha" }
+trait Foo(Int) for String { fn produce(self) -> String { "haha" } }
 fn use_foo(s: a) -> Int where a: Foo(Int) {
   s.produce()
 }

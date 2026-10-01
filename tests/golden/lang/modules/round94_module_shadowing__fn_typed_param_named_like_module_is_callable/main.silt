@@ -1,6 +1,6 @@
 import other
 fn f(other: Fn(Int) -> Int) -> Int { other(3) }
 fn main() {
-  println(f(fn(x) { x + 100 }))
+  println(f({ x -> x + 100 }))
   println(other.double(3))
 }

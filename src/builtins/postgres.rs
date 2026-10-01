@@ -447,7 +447,12 @@ fn wrap_v_str(s: String) -> Value {
 fn wrap_v_bool(b: bool) -> Value {
     Value::Variant("VBool".into(), vec![Value::Bool(b)])
 }
+/// A silt `Float` is always finite, so a column holding `NaN` or
+/// `±Infinity` decodes like any other value that has no silt form.
 fn wrap_v_float(f: f64) -> Value {
+    if !f.is_finite() {
+        return wrap_v_str(format!("<decode error: non-finite float {f}>"));
+    }
     Value::Variant(
         "VFloat".into(),
         vec![crate::builtins::numeric::float_value(f)],

@@ -1,0 +1,13 @@
+-- Two imports may not bind the same name: which one `double` meant would
+-- depend on their order.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: 'double' is bound twice at the top level: by the import at line 8 and by the import here
+-- stderr-contains: main.silt:9:1
+import a.{ double }
+import b.{ double }
+
+fn main() {
+  println(double(2))
+}

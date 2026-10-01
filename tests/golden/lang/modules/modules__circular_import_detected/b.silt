@@ -1,2 +1,2 @@
 import a
-pub fn fb() = 2
+pub fn fb() { 2 }

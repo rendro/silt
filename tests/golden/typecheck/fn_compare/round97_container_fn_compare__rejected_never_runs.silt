@@ -2,7 +2,7 @@
 -- stderr-contains: cannot derive 'Compare'
 -- `silt run` of the list-of-fn ordering program fails before the VM and prints nothing.
 fn main() {
-  let xs = [fn(x) { x }]
-  let ys = [fn(x) { x }]
+  let xs = [{ x -> x }]
+  let ys = [{ x -> x }]
   print(xs < ys)
 }

@@ -73,8 +73,8 @@ fn read_head(path: String) -> Result(String, IoError) {
 
 ### `?` and the pipe operator
 
-`?` binds one step looser than `|>`, so a trailing `?` applies to the whole
-pipeline — no parentheses needed:
+A `?` that ends a pipeline applies to the whole pipeline — no parentheses
+needed:
 
 ```silt
 import io
@@ -99,10 +99,10 @@ fn main() {
 still works too — the `?` on the left is already attached by the time the
 pipe sees the value.
 
-Arithmetic operators (`+`, `-`, `*`, `/`, `%`), `..` (range), and `as` bind
-tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison (`==`, `!=`,
-`<`, `>`, `<=`, `>=`), boolean (`&&`, `||`), and `else` bind looser, so
-`a == b?` is still `a == (b?)`.
+Everywhere else `?` binds tightly, like a call: it applies to the operand
+right before it. `int.parse(a)? + int.parse(b)?` adds two unwrapped values,
+`a == b?` is `a == (b?)`, and `-x?` is `-(x?)`. To unwrap the result of an
+infix expression, parenthesise it: `(a + b)?`.
 
 ### `Err` escaping `main`
 
@@ -217,12 +217,12 @@ fn get_or_die(opt) {
 ## Result and Option Utilities
 
 ```silt
-result.map_ok(Ok(1), fn(x) { x + 1 })        -- Ok(2)
-result.flat_map(Ok(1), fn(x) { Ok(x + 1) })   -- Ok(2)
+result.map_ok(Ok(1), { x -> x + 1 })        -- Ok(2)
+result.flat_map(Ok(1), { x -> Ok(x + 1) })   -- Ok(2)
 result.unwrap_or(Err("x"), 0)                  -- 0
 
-option.map(Some(1), fn(x) { x + 1 })          -- Some(2)
-option.flat_map(Some(1), fn(x) { Some(x + 1) })  -- Some(2)
+option.map(Some(1), { x -> x + 1 })          -- Some(2)
+option.flat_map(Some(1), { x -> Some(x + 1) })  -- Some(2)
 option.unwrap_or(None, 0)                      -- 0
 ```
 

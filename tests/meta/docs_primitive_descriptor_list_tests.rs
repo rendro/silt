@@ -1,10 +1,9 @@
 //! Regression lock for GAP(round 59): the `Globals` stdlib doc and
 //! `docs/language/bindings-and-functions.md` both enumerate the set of
 //! primitive type descriptors available in the global namespace
-//! (`Int`, `Float`, `String`, `Bool`, …). Round 58 added `ExtFloat` to
-//! the typechecker registration in `src/typechecker/builtins.rs`, but
-//! both docs were not updated, leaving `ExtFloat` undocumented as a
-//! top-level descriptor even though it works identically to the others.
+//! (`Int`, `Float`, `String`, `Bool`, …). A descriptor added to the
+//! typechecker registration in `src/typechecker/builtins.rs` once went
+//! undocumented in both docs; this test keeps them in step.
 //!
 //! Round 62 phase-2 inlined the former `docs/stdlib/globals.md` into
 //! `src/typechecker/builtins/docs.rs::GLOBALS_MD`. We now look up
@@ -13,8 +12,8 @@
 //!
 //! This test walks `src/typechecker/builtins.rs` to extract the
 //! authoritative list of primitive descriptor names (the string
-//! literals inside the `&["Int", "Float", "ExtFloat", "String",
-//! "Bool"]` slice used by the registration loop) and asserts every one
+//! literals inside the `&["Int", "Float", "String", "Bool"]` slice used
+//! by the registration loop) and asserts every one
 //! of those names appears in both docs. If someone adds a new
 //! primitive descriptor in the future, this test fires until the docs
 //! list it too.
@@ -88,19 +87,4 @@ fn bindings_and_functions_md_lists_every_primitive_descriptor() {
              lists `Int`, `Float`, …"
         );
     }
-}
-
-/// Sanity check: the source of truth (`module::BUILTIN_PRIMITIVE_NAMES`,
-/// hoisted in round-73 BLOAT-2) actually contains `ExtFloat` (the
-/// round-58 addition). If this fires, the constant lost an entry —
-/// either the GAP regressed or the round-73 hoist dropped a name.
-#[test]
-fn scraper_finds_extfloat_in_builtins_rs() {
-    let names = primitive_descriptor_names();
-    assert!(
-        names.iter().any(|n| n == "ExtFloat"),
-        "scraper did not find `ExtFloat` among {names:?}; if round 58's \
-         addition is still in module::BUILTIN_PRIMITIVE_NAMES, update \
-         the scraper in this test. Otherwise the GAP regressed."
-    );
 }

@@ -594,7 +594,7 @@ mod tests {
     // compile until they thread a span through the error path.
     #[test]
     fn test_runtime_at_is_the_sole_runtime_constructor() {
-        let source = "fn main() = 42";
+        let source = "fn main() { 42 }";
         let err = SourceError::runtime_at(
             "division by zero",
             Span::with_offset(1, 1, 0),
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn test_from_compile_error_clamps_eof_span() {
         // Same idea as above but for CompileError.
-        let source = "fn main() = 42";
+        let source = "fn main() { 42 }";
         let compile_err = CompileError {
             message: "some compile error".to_string(),
             span: Span::with_offset(10, 1, 99),
@@ -764,7 +764,7 @@ mod tests {
         let err = SourceError::from_compile_error(&compile_err, source, "test.silt");
         // Span should be clamped to line 1 (only line)
         assert_eq!(err.span.line, 1);
-        assert_eq!(err.source_line, Some("fn main() = 42".to_string()));
+        assert_eq!(err.source_line, Some("fn main() { 42 }".to_string()));
     }
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
         // Source has 1 line but the runtime error span points at line 5
         // (past EOF). After clamping, the error should have a source
         // snippet from the last line.
-        let source = "fn main() = 42";
+        let source = "fn main() { 42 }";
         let err = SourceError::runtime_at(
             "division by zero",
             Span::with_offset(5, 1, 99),
@@ -807,11 +807,11 @@ mod tests {
         );
         // Span should be clamped to line 1 (only line)
         assert_eq!(err.span.line, 1);
-        assert_eq!(err.source_line, Some("fn main() = 42".to_string()));
+        assert_eq!(err.source_line, Some("fn main() { 42 }".to_string()));
         // The rendered output should contain the source snippet
         let output = format!("{err}");
         assert!(
-            output.contains("fn main() = 42"),
+            output.contains("fn main() { 42 }"),
             "expected clamped source snippet in output:\n{output}"
         );
     }

@@ -1,7 +1,6 @@
 use crate::intern::Symbol;
 use crate::lexer::Span;
 use crate::types::Type;
-use crate::types::effects::EffectSet;
 
 // ── Expressions ──────────────────────────────────────────────────────
 
@@ -48,8 +47,6 @@ pub enum ExprKind {
     Pipe(Box<Expr>, Box<Expr>),
     Range(Box<Expr>, Box<Expr>),
     QuestionMark(Box<Expr>),
-    /// Float else: `expr else fallback` — narrows ExtFloat to Float.
-    FloatElse(Box<Expr>, Box<Expr>),
     Ascription(Box<Expr>, TypeExpr),
 
     // Function-related
@@ -57,36 +54,6 @@ pub enum ExprKind {
     Lambda {
         params: Vec<Param>,
         body: Box<Expr>,
-        /// Effect annotation declared on the lambda, if any.
-        ///
-        /// Phase B of the effect-rows proposal: lambdas may carry an
-        /// explicit `!{set}` annotation between their parameter list and
-        /// body (`fn() !{io} { ... }`). When absent at the surface, the
-        /// parser fills in `EffectSet::TOP` — the gradual-rollout
-        /// permissive default. The typechecker does not yet enforce the
-        /// annotation on lambdas (Phase A's inference pass also doesn't
-        /// thread lambda effects through values), but the field is
-        /// populated so the formatter can round-trip the syntax and
-        /// future phases can wire it in without an AST shape change.
-        ///
-        /// IMPORTANT: bit-equality `== EffectSet::TOP` cannot be used to
-        /// detect "user wrote no annotation" because `!{io, fs, net, time,
-        /// random}` is the same bitset. Always pivot on `is_annotated`
-        /// for that question.
-        effects: EffectSet,
-        /// `true` when the user wrote a literal `!{...}` annotation in the
-        /// source on the `fn(...)` lambda form. `false` when the parser
-        /// filled in the gradual-rollout default (`EffectSet::TOP`)
-        /// because no annotation was present, or for the trailing-closure
-        /// form `{ x, y -> body }` which has no syntactic slot for an
-        /// effect annotation.
-        ///
-        /// Disambiguates `EffectSet::TOP` from a hand-written full
-        /// `!{io, fs, net, time, random}` — both share the same bitset,
-        /// but the formatter must behave differently between the two
-        /// cases (mirrors `FnDecl::is_annotated`; see round 62 audit
-        /// fix for the same root-cause bug on top-level fn decls).
-        is_annotated: bool,
     },
 
     // Records
@@ -447,37 +414,6 @@ pub struct FnDecl {
     /// synthesized FnDecls (auto-derive, recovery stubs, builtin trait
     /// signatures) this falls back to `span`.
     pub name_span: Span,
-    /// Declared effect annotation parsed from the source.
-    ///
-    /// Phase B of the effect-rows proposal: a fn signature may carry an
-    /// explicit `!{set}` annotation immediately after its return-type
-    /// arrow (`fn read() -> String !{io, fs}`). When present, the
-    /// typechecker enforces `inferred ⊆ declared` at body-check time.
-    /// When absent, the parser fills in `EffectSet::TOP` — the gradual
-    /// rollout's permissive default — and no enforcement runs.
-    ///
-    /// IMPORTANT: bit-equality `== EffectSet::TOP` cannot be used to
-    /// detect "user wrote no annotation" because `!{io, fs, net, time,
-    /// random}` is the same bitset. Always pivot on
-    /// [`FnDecl::is_annotated`] for that question.
-    pub declared_effects: EffectSet,
-    /// `true` when the user wrote a literal `!{...}` annotation in the
-    /// source. `false` when the parser filled in the gradual-rollout
-    /// default (`EffectSet::TOP`) because no annotation was present, or
-    /// when this `FnDecl` was synthesized internally (auto-derive,
-    /// trait-decl signatures, recovery stubs).
-    ///
-    /// Disambiguates `EffectSet::TOP` from a hand-written full
-    /// `!{io, fs, net, time, random}` — both share the same bitset, but
-    /// the formatter, strict-effects flip, body-subset check and
-    /// suggestion text behave differently between the two cases.
-    pub is_annotated: bool,
-    /// Inferred effect set computed by the body-effects pass after
-    /// typechecking. `None` until `check_fn_body_with_name` populates
-    /// it. Surfaced on LSP hover so the user sees the actual body
-    /// effects alongside the declared bound; also fed back into the
-    /// declared-vs-inferred mismatch diagnostic.
-    pub inferred_effects: Option<EffectSet>,
     /// True when this declaration was synthesized by parser error recovery
     /// (Option B: salvage the header and emit a stub so downstream references
     /// to `name` do not cascade into "undefined variable" errors). The body
@@ -486,12 +422,12 @@ pub struct FnDecl {
     /// enough to return a fresh type variable (no arity/arg-type cascade).
     pub is_recovery_stub: bool,
     /// True when this is an abstract trait method (signature only, no body).
-    /// Set by the parser when neither `= expr` nor `{ block }` follows the
-    /// method header. The `body` field still holds an `ExprKind::Unit`
-    /// placeholder so the AST shape stays uniform, but downstream consumers
-    /// (typechecker default-method synthesis, formatter) use this flag to
-    /// distinguish abstract methods from methods that legitimately return
-    /// unit via an explicit `= ()` or `{ }` body.
+    /// Set by the parser when no `{ block }` follows the method header.
+    /// The `body` field still holds an `ExprKind::Unit` placeholder so the
+    /// AST shape stays uniform, but downstream consumers (typechecker
+    /// default-method synthesis, formatter) use this flag to distinguish
+    /// abstract methods from methods that legitimately return unit via an
+    /// explicit `{ }` body.
     pub is_signature_only: bool,
     /// Doc comment immediately preceding the decl token (or the `pub`
     /// keyword on a `pub fn`). Collected by the parser from `--` line
@@ -658,9 +594,11 @@ pub struct TraitImpl {
     /// (Display / Compare / Equal / Hash for user-declared enums and
     /// records). Synthesized impls register their methods into the
     /// method_table with `is_auto_derived: true` so that a subsequent
-    /// user-written `trait Compare for Color { ... }` is allowed to
+    /// user-written `trait Display for Color { ... }` is allowed to
     /// override the generated body without colliding with the
-    /// duplicate-impl coherence check in `register_trait_impl`.
+    /// duplicate-impl coherence check in `register_trait_impl`. (A
+    /// user-written impl of the sealed Equal / Compare / Hash is an
+    /// error.)
     /// Default false for parser-produced impls.
     pub is_auto_derived: bool,
 }

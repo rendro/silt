@@ -86,7 +86,6 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "Int",
         Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
         Value::Bool(_) => "Bool",
         Value::String(_) => "String",
         Value::List(_) => "List",

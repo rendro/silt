@@ -5,5 +5,5 @@
 trait Greetable { fn greet(self) -> String }
 trait Greetable for String { fn greet(self) -> String { self } }
 fn use_g(x: a) -> String where a: Greetable { x.greet() }
-let f = fn(x) { use_g(x) }
+let f = { x -> use_g(x) }
 fn main() { f(42) }

@@ -7,7 +7,6 @@ use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has
 use super::conversions::position_to_offset;
 use super::fields::find_field_type_at_offset;
 use super::local_bindings::find_local_binding_at_offset;
-use super::state::DefInfo;
 
 impl Server {
     // ── Hover ──────────────────────────────────────────────────────
@@ -170,50 +169,6 @@ impl Server {
                 value.push_str(&format!("```silt\n{t}\n```"));
             }
         }
-        // Phase B of the effect-rows proposal: render the declared
-        // effect set on every fn (and the inferred set when it differs)
-        // between the type signature and the doc-comment separator.
-        // The block is plain markdown — no fenced code block — so it
-        // sits visually between the signature code-fence and the
-        // `---` doc separator.
-        let effect_block = if let Some(def) = def_entry {
-            render_effects(def)
-        } else {
-            // Phase C: the cursor is on a stdlib call (`io.read_file`,
-            // `list.map`, …). The user-document `DefInfo` map has no
-            // entry for those, so fall through to the cached
-            // `builtin_effects` map populated from
-            // `typechecker::builtin_effects()`. Lookup mirrors the
-            // doc-text fallback chain above (bare → qualified-via-name
-            // → qualified-via-source-scan).
-            let mut effects = None;
-            if let Some(name) = ident_at_cursor {
-                let bare = crate::intern::resolve(name);
-                if let Some(e) = self.builtin_effects.get(&bare) {
-                    effects = Some(*e);
-                } else if let Some(qualified) = qualified_name_at(&doc.source, cursor, &bare)
-                    && let Some(e) = self.builtin_effects.get(&qualified)
-                {
-                    effects = Some(*e);
-                }
-            }
-            if effects.is_none()
-                && let Some(tok) = qualified_token_at(&doc.source, cursor)
-                && let Some(e) = self.builtin_effects.get(&tok)
-            {
-                effects = Some(*e);
-            }
-            match effects {
-                Some(e) => format!("effects: {e}"),
-                None => String::new(),
-            }
-        };
-        if !effect_block.is_empty() {
-            if !value.is_empty() {
-                value.push_str("\n\n");
-            }
-            value.push_str(&effect_block);
-        }
         if let Some(d) = doc_text {
             if !value.is_empty() {
                 value.push_str("\n\n---\n\n");
@@ -335,38 +290,4 @@ pub(super) fn qualified_token_at(source: &str, cursor: usize) -> Option<String> 
     }
     let module = std::str::from_utf8(&bytes[mod_start..dot_pos]).ok()?;
     Some(format!("{module}.{bare}"))
-}
-
-/// Render the effect-annotation block for hover.
-///
-/// Phase B of the effect-rows proposal — Part 7 of
-/// `docs/proposals/effect-rows.md` specifies the placement (between
-/// the signature code fence and the `\n---\n` doc separator) and the
-/// markdown body shape (`effects: !{io, fs}` for the simple case).
-///
-/// Three cases:
-///   - non-fn def (`declared_effects == None`) → empty string, no
-///     block rendered.
-///   - declared and inferred match (or inferred is unknown) → a single
-///     line `effects: <set>`. `EffectSet::TOP` renders as `!*` so
-///     hover loudly signals "no constraint declared" — the gradual-
-///     rollout state is supposed to be visible.
-///   - declared and inferred differ → render BOTH lines, labelled, so
-///     the user can see whether the annotation is too wide (declared
-///     `!{io}`, inferred `!{}`) or too narrow (which would have been
-///     rejected by enforcement and only happens during the typechecker
-///     error-recovery edge cases).
-pub(super) fn render_effects(def: &DefInfo) -> String {
-    let Some(declared) = def.declared_effects else {
-        return String::new();
-    };
-    match def.inferred_effects {
-        Some(inferred) if inferred != declared => {
-            // Dual render. Useful even now (helps users tighten over-
-            // wide annotations) and load-bearing in Phase D when the
-            // gradual-rollout default flips.
-            format!("effects: {declared}    (declared)\ninferred: {inferred}    (body)")
-        }
-        _ => format!("effects: {declared}"),
-    }
 }

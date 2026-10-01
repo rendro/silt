@@ -44,7 +44,10 @@ fn avg_salary(employees) {
   let total = employees
   |> list.fold(0) { acc, e -> acc + e.salary }
   let count = list.length(employees)
-  int.to_float(total) / int.to_float(count) else 0.0
+  match count {
+    0 -> 0.0
+    _ -> int.to_float(total) / int.to_float(count)
+  }
 }
 
 -- Find top N earners from a list of employees

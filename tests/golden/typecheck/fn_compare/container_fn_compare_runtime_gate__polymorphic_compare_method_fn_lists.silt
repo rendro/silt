@@ -4,5 +4,5 @@
 -- stderr-contains: 'Fn'
 fn cmpm(a: t, b: t) -> Int where t: Compare { a.compare(b) }
 fn main() {
-  println(cmpm([fn(y) { y }], [fn(y) { y }]))
+  println(cmpm([{ y -> y }], [{ y -> y }]))
 }

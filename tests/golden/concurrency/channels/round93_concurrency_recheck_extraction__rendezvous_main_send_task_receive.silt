@@ -9,7 +9,7 @@ fn main() {
       true -> println("done")
       _ -> {
         let ch = channel.new(0)
-        let consumer = task.spawn(fn() {
+        let consumer = task.spawn({ ->
           match channel.receive(ch) {
             Message(v) -> v
             _ -> -1

@@ -11,7 +11,7 @@
 //!   them (find references on an ident inside an anon-record literal).
 //! - **B11** — `Decl::Trait` walks default-method param patterns and
 //!   bodies (cursor on `x` in
-//!   `trait T { fn foo(x: Int) -> Int = x + 1 }` returns a symbol).
+//!   `trait T { fn foo(x: Int) -> Int { x + 1 } }` returns a symbol).
 //! - **G6** — completion + REPL `builtin_names` surface primitive /
 //!   container type names from `BUILTIN_TYPES` (so `Int`, `Bool`,
 //!   `List`, etc. appear in identifier completion).
@@ -179,7 +179,7 @@ fn find_references_inside_anon_record_literal_field_value() {
 
 #[test]
 fn prepare_rename_on_trait_default_method_param_returns_edit() {
-    // `trait T { fn foo(x: Int) -> Int = x + 1 }`
+    // `trait T { fn foo(x: Int) -> Int { x + 1 } }`
     // cursor on `x` parameter binder at line 0.
     //  0         1         2
     //  012345678901234567890
@@ -187,7 +187,7 @@ fn prepare_rename_on_trait_default_method_param_returns_edit() {
     //                   ^ char=17
     let mut client = LspClient::spawn();
     let uri = unique_uri("trait_default_method");
-    let text = "trait T { fn foo(x: Int) -> Int = x + 1 }\nfn main() { 0 }\n";
+    let text = "trait T { fn foo(x: Int) -> Int { x + 1 } }\nfn main() { 0 }\n";
     client.did_open_and_wait(&uri, text);
 
     let resp = client.request(
@@ -278,8 +278,8 @@ fn repl_builtin_names_includes_primitive_types() {
     // Spot-check every primitive (audit's "primitive type names") and a
     // representative slice of containers.
     for required in &[
-        "Int", "Float", "ExtFloat", "Bool", "String", "Unit", "List", "Range", "Map", "Set",
-        "Channel", "Tuple", "Fn", "Fun", "Handle",
+        "Int", "Float", "Bool", "String", "Unit", "List", "Range", "Map", "Set", "Channel",
+        "Tuple", "Fn", "Fun", "Handle",
     ] {
         assert!(
             names.iter().any(|n| n == required),

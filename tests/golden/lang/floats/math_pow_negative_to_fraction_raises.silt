@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: math.pow of a negative number to a fractional power: -8 ^ 0.5
+import math
+fn main() {
+  println(math.pow(-8.0, 0.5))
+}

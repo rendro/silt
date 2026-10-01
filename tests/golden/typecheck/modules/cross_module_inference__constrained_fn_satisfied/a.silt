@@ -1,1 +1,1 @@
-pub fn show(x: a) -> String where a: Display = x.display()
+pub fn show(x: a) -> String where a: Display { x.display() }

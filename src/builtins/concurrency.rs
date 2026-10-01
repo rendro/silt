@@ -703,7 +703,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         "spawn_until" => {
             // task.spawn_until(dur, fn) — spawn a task that runs with a
             // scoped wall-clock deadline. Equivalent to
-            // `task.spawn(fn() { task.deadline(dur, fn) })` minus the
+            // `task.spawn { -> task.deadline(dur, fn) }` minus the
             // closure-wrapping boilerplate.
             if args.len() != 2 {
                 return Err(VmError::new(

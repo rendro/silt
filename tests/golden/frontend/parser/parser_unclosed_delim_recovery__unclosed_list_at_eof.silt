@@ -5,4 +5,4 @@
 -- stderr-contains: list literal
 -- stderr-contains: starting at line 8
 -- stderr-not-contains: expected (, found b
-fn a() = [1, 2,
+fn a() { [1, 2,

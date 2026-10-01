@@ -11,7 +11,7 @@ import task
 import time
 
 fn main() {
-  task.join(task.spawn(fn() { 1 }))
+  task.join(task.spawn({ -> 1 }))
   let out = stream.from_list([1, 2, 3]) |> stream.map { x ->
     time.sleep(time.ms(300))
     x * 10

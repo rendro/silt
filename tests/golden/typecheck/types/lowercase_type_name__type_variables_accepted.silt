@@ -1,0 +1,17 @@
+-- Ordinary type variables, including one-letter names that match a
+-- declared type case-insensitively, stay type variables.
+type T { T(Int) }
+
+fn first(xs: List(t), fallback: t) -> t {
+  match xs {
+    [x] -> x
+    _ -> fallback
+  }
+}
+
+fn pair(a: elem, b: elem) -> (elem, elem) { (a, b) }
+
+fn main() {
+  println(first([1], 0))
+  println(pair("a", "b"))
+}

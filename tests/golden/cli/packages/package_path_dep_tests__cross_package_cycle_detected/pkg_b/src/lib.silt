@@ -1,2 +1,2 @@
 import pkg_a
-pub fn go() = pkg_a.helper()
+pub fn go() { pkg_a.helper() }

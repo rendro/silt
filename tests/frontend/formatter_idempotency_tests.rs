@@ -61,7 +61,7 @@ import string\n\
 \"####.#.#.#\", \"#....#...#\", \"#.####.#.#\", \"#.#....#.#\", \"#...####E#\", \
 \"###import list\n\
 import map\n\
-import option\n\
+import result\n\
 \n\
 -- Search algorithms using loop\n\
 --\n\
@@ -85,7 +85,7 @@ import option\n\
 \n\
 -- foo ###import list\n\
 import map\n\
-import option\n";
+import result\n";
     assert_idempotent(source);
 }
 
@@ -123,7 +123,7 @@ import b\n\
 -- why we use a\n\
 import a\n\
 \n\
-fn main() = 1\n";
+fn main() { 1 }\n";
     assert_idempotent(source);
 }
 
@@ -161,49 +161,6 @@ fn fizzbuzz(n) {
     assert!(
         formatted.contains("(_0,)"),
         "single-element tuple pattern must keep trailing comma; got:\n{formatted}"
-    );
-}
-
-#[test]
-fn test_closure_with_tuple_param_pattern_roundtrips_cleanly() {
-    // Round-33 fuzz repro shape (`fuzz_roundtrip` saw `expected
-    // parameter name, found (` after one format pass on a non-trailing
-    // closure with a tuple-destructuring parameter).
-    //
-    // The parser accepts richer parameter patterns inside closure form
-    // `{ (a, b) -> ... }` (see `parse_closure_params`) but the `fn(...)`
-    // form only accepts plain identifiers (see `parse_simple_param_pattern`,
-    // which fails with `expected parameter name, found <tok>`).
-    //
-    // Before the fix, the formatter emitted any non-trailing Lambda as
-    // `fn(<pattern>) { ... }` regardless of the parameter shape, so a
-    // tuple-pattern closure used as a value (or as a Call's callee, not
-    // its trailing arg) round-tripped to invalid syntax.
-    let source = "let f = ({ (a, b) -> a + b })(1, 2)\n";
-    assert_formatted_parses(source);
-    assert_idempotent(source);
-    let formatted = silt::formatter::format(source).unwrap();
-    assert!(
-        formatted.contains("{ (a, b) -> a + b }"),
-        "tuple-pattern closure must keep closure form; got:\n{formatted}"
-    );
-    assert!(
-        !formatted.contains("fn((a, b))"),
-        "must not emit `fn((a, b))` (parser rejects); got:\n{formatted}"
-    );
-}
-
-#[test]
-fn test_closure_with_constructor_param_pattern_roundtrips_cleanly() {
-    // Same root cause, different non-Ident pattern: a constructor
-    // pattern as a closure parameter.
-    let source = "let f = ({ Some(x) -> x })(Some(1))\n";
-    assert_formatted_parses(source);
-    assert_idempotent(source);
-    let formatted = silt::formatter::format(source).unwrap();
-    assert!(
-        !formatted.contains("fn(Some("),
-        "constructor-pattern closure must not be emitted as `fn(...)`; got:\n{formatted}"
     );
 }
 
@@ -392,7 +349,7 @@ fn test_string_interp_with_dashes_in_nested_string_idempotent() {
     // expression is a string literal containing `--`. The formatter
     // must not see the outer `"`-`"` pair as bracketing the whole
     // string (the inner `"-- ..."` is a nested string inside an interp).
-    let source = "fn main() = \"{\"-- not a comment\"}\"\n";
+    let source = "fn main() { \"{\"-- not a comment\"}\" }\n";
     assert_idempotent(source);
     let formatted = silt::formatter::format(source).unwrap();
     assert!(
@@ -405,7 +362,7 @@ fn test_string_interp_with_dashes_in_nested_string_idempotent() {
 fn test_string_interp_with_real_trailing_comment_idempotent() {
     // Counter-test: an actual `--` trailing comment AFTER a string
     // interpolation must still be detected as trailing.
-    let source = "fn main() = \"{x}\" -- real trailing\n";
+    let source = "fn main() { \"{x}\" } -- real trailing\n";
     assert_idempotent(source);
     let formatted = silt::formatter::format(source).unwrap();
     assert!(
@@ -421,18 +378,18 @@ fn test_string_interp_dashes_variants_idempotent() {
     // and must not gain a phantom trailing comment between passes.
     for src in [
         // Dashes inside a nested string inside an interp.
-        "fn main() = \"{\"--\"}\"\n",
+        "fn main() { \"{\"--\"}\" }\n",
         // Multiple interps, dashes inside one of them.
-        "fn main() = \"{a}{b}{\"-- inert\"}{c}\"\n",
+        "fn main() { \"{a}{b}{\"-- inert\"}{c}\" }\n",
         // Block comment inside an interp expression.
-        "fn main() = \"{a {- inline -} + 1}\"\n",
+        "fn main() { \"{a {- inline -} + 1}\" }\n",
         // Negation inside an interp expression — `{-x}` must NOT be
         // misread as a block-comment open.
-        "fn main() = \"{-x}\"\n",
+        "fn main() { \"{-x}\" }\n",
         // Escaped brace before an interp on the same line.
-        "fn main() = \"\\{not interp \\\"--\\\"}\"\n",
+        "fn main() { \"\\{not interp \\\"--\\\"}\" }\n",
         // Interp expression that itself contains another interp string.
-        "fn main() = \"{\"{\"-- z\"}\"}\"\n",
+        "fn main() { \"{\"{\"-- z\"}\"}\" }\n",
     ] {
         let first = silt::formatter::format(src)
             .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
@@ -569,16 +526,16 @@ fn test_triple_string_dashes_variants_idempotent() {
         // Same shape in let-binding.
         "let s = \"\"\"\"--\"\"\"\n",
         // Dashes inside a triple-quoted string at top level with content.
-        "fn main() = \"\"\"foo--bar\"\"\"\n",
+        "fn main() { \"\"\"foo--bar\"\"\" }\n",
         // Two adjacent triple-quoted strings on the same line, one with
         // dashes inside.
-        "fn main() = \"\"\"--\"\"\" + \"\"\"x\"\"\"\n",
+        "fn main() { (\"\"\"--\"\"\", \"\"\"x\"\"\") }\n",
         // Triple-quoted string in match-arm body with dashes inside.
         "fn main() {\n  match x {\n    Foo -> \"\"\"a--b\"\"\"\n    Bar -> 0\n  }\n}\n",
         // 5-quote opener (one literal `\"` inside, then `--`, then close).
-        "fn i() = \"\"\"\"\"--\"\"\"\n",
+        "fn i() { \"\"\"\"\"--\"\"\" }\n",
         // Triple + real trailing comment after the close.
-        "fn i() = \"\"\"--\"\"\" -- real trailing\n",
+        "fn i() { \"\"\"--\"\"\" } -- real trailing\n",
     ] {
         let first = silt::formatter::format(src)
             .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
@@ -1088,7 +1045,7 @@ fn test_fuzz_repro_round_call_arg_wrap_followup_idempotent() {
     // The original input contains NUL bytes inside `--:` line comments
     // — the lexer tolerates them as comment content. Use a byte literal
     // to preserve them exactly.
-    let source_bytes: &[u8] = b"fn anic() {\n--:\x00\x00 wodc listanic() {\n--:\x00\x00 wodc list\n-henath%\n\n-- Trait simorpt litsim() {\n-\n-pcmi- omrpimpowheh-tn-\na\n Traiz s\n-- BFn?-- Hy dent,\n-- coim() {\n--:\x00n\n}\n";
+    let source_bytes: &[u8] = b"fn anic() {\n--:\x00\x00 wodc listanic() {\n--:\x00\x00 wodc list\n-henath%\n\n-- Trait simorpt litsim() {\n-\n-pcmi- omrpimpowheh-tn-\na\n Traiz\ns\n-- BFn?-- Hy dent,\n-- coim() {\n--:\x00n\n}\n";
     let source = std::str::from_utf8(source_bytes).expect("corpus is utf-8 with embedded NULs");
     assert_idempotent(source);
 }
@@ -1155,20 +1112,6 @@ fn test_multiple_trailing_comments_after_triple_string_idempotent() {
 }
 
 #[test]
-fn test_fuzz_repro_round_comment_attach_followup_new_bug_idempotent() {
-    // Verbatim 1553-byte input from
-    // fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt.
-    // Pre-fix, the first formatting pass produced a 1436-byte output
-    // and the second pass produced a 1362-byte output (dropping the
-    // last two trailing comments inside the outer fn body) — a clear
-    // idempotency break. The root cause is documented on
-    // `test_trailing_comment_after_triple_string_with_imbalanced_quotes_idempotent`.
-    let source =
-        include_str!("../../fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt");
-    assert_idempotent(source);
-}
-
-#[test]
 fn test_triple_string_content_ending_in_quote_idempotent() {
     // Hand-minimized repro for the post-2c979d4 fuzz finding
     // `round-triple-fold-tail.silt`. Source has a triple-quoted string
@@ -1209,18 +1152,4 @@ fn test_triple_string_content_single_quote_idempotent() {
         !formatted.contains("\"\"\"\"\"\"\""),
         "must not emit 7 consecutive `\"` (single-line form would lex as triple+leftover):\n{formatted}"
     );
-}
-
-#[test]
-fn test_fuzz_repro_round_triple_fold_tail_idempotent() {
-    // Verbatim 221-byte input from
-    // fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt.
-    // Pre-fix, pass 1 emitted a triple-string content-ending-in-quote
-    // as a single-line `"""""""""` run that pass 2 re-lexed into two
-    // separate string tokens (`""""""` triple-empty + `""` regular),
-    // changing both content and statement count. See
-    // `test_triple_string_content_ending_in_quote_idempotent` for the
-    // root cause.
-    let source = include_str!("../../fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt");
-    assert_idempotent(source);
 }

@@ -53,7 +53,6 @@ use silt::vm::Vm;
 struct AllVariants {
     int: Value,
     float: Value,
-    ext_float: Value,
     bool_: Value,
     string: Value,
     list: Value,
@@ -104,7 +103,6 @@ fn build_all_variants() -> AllVariants {
     AllVariants {
         int: Value::Int(7),
         float: Value::Float(1.5),
-        ext_float: Value::ExtFloat(2.5),
         bool_: Value::Bool(true),
         string: Value::String("hi".to_string()),
         list: Value::List(Arc::new(vec![Value::Int(1)])),
@@ -156,7 +154,6 @@ fn expected_kind(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "Int",
         Value::Float(_) => "Float",
-        Value::ExtFloat(_) => "ExtFloat",
         Value::Bool(_) => "Bool",
         Value::String(_) => "String",
         Value::List(_) => "List",
@@ -192,10 +189,9 @@ fn expected_kind(v: &Value) -> &'static str {
 /// variant added to `Value` makes `expected_kind` fail to compile, so this
 /// lock cannot go green while a variant is uncovered.
 fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) {
-    let samples: [&Value; 23] = [
+    let samples: [&Value; 22] = [
         &av.int,
         &av.float,
-        &av.ext_float,
         &av.bool_,
         &av.string,
         &av.list,
@@ -255,7 +251,7 @@ fn from_value_error_messages_use_canonical_kind_for_all_variants() {
 
     // Each FromValue impl's expected target name. We skip the variant
     // whose name matches (it would succeed), and for the variants the
-    // impl coerces (e.g. f64 accepts Int/Float/ExtFloat) we also skip.
+    // impl coerces (e.g. f64 accepts Int/Float) we also skip.
     fn check_i64_err(v: &Value, expected_kind: &str, vm: &Vm) {
         if matches!(v, Value::Int(_)) {
             return;
@@ -275,8 +271,8 @@ fn from_value_error_messages_use_canonical_kind_for_all_variants() {
     }
 
     fn check_f64_err(v: &Value, expected_kind: &str, vm: &Vm) {
-        // f64 accepts Int, Float, ExtFloat — skip those.
-        if matches!(v, Value::Int(_) | Value::Float(_) | Value::ExtFloat(_)) {
+        // f64 accepts Int and Float — skip those.
+        if matches!(v, Value::Int(_) | Value::Float(_)) {
             return;
         }
         let err = f64::from_value(v).expect_err("non-numeric should fail");
@@ -522,8 +518,8 @@ fn three_way_kind_parity_holds_for_every_value_variant() {
     // exhaustive `expected_kind` match; if a variant is added it must be
     // enrolled there (compile error) and here, keeping the lock honest.
     assert_eq!(
-        covered, 23,
-        "expected to cover all 23 Value variants; covered {covered}. \
+        covered, 22,
+        "expected to cover all 22 Value variants; covered {covered}. \
          If Value grew, enroll the new variant in expected_kind, \
          build_all_variants, and the samples array."
     );

@@ -116,8 +116,7 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
 /// contains a function-shaped value. Mirrors the `Op::Eq` gate in
 /// src/vm/execute.rs; deliberately NOT enforced as a static `where`
 /// bound on the builtin signatures because that would reject currently
-/// working programs (e.g. sorting tuples or NaN-bearing floats via
-/// `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
+/// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///
 /// The contains-a-fn walk delegates to `Vm::value_contains_fn`
 /// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
@@ -881,16 +880,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            // Preserve the silt-wide invariant that every `Value::Float` is
-            // finite. If the accumulator overflowed to ±inf (or somehow
-            // became NaN), widen to `ExtFloat` — mirroring the `float.min`
-            // / `float.max` / `float.clamp` treatment in
-            // `src/builtins/numeric.rs`.
-            if total.is_finite() {
-                Ok(crate::builtins::numeric::float_value(total))
-            } else {
-                Ok(Value::ExtFloat(total))
-            }
+            // A finite sum only ever overflows to ±inf, and the sum
+            // cannot come back from there, so one check at the end sees it.
+            crate::builtins::numeric::checked_float(total, || "list.sum_float overflow".into())
         }
         "product" => {
             if args.len() != 1 {
@@ -928,13 +920,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            // Same finiteness guard as `sum_float`: ±inf / NaN widens to
-            // `ExtFloat` to preserve the `Value::Float` finite invariant.
-            if total.is_finite() {
-                Ok(crate::builtins::numeric::float_value(total))
-            } else {
-                Ok(Value::ExtFloat(total))
-            }
+            // As in `sum_float`: once the product leaves the finite range
+            // it stays out, so one check at the end sees it.
+            crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
         }
         "scan" => {
             if args.len() != 3 {

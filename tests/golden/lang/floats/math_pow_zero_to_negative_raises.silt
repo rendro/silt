@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: math.pow of zero to a negative power: 0 ^ -1
+import math
+fn main() {
+  println(math.pow(0.0, -1.0))
+}

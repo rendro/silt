@@ -3,7 +3,7 @@
 import map
 import list
 fn main() {
-  let f = fn(y){ y }
-  let m = map.update(map.from_entries([]), f, 1, fn(v){ v + 1 })
+  let f = { y -> y }
+  let m = map.update(map.from_entries([]), f, 1, { v -> v + 1 })
   println(list.length(map.entries(m)))
 }

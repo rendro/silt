@@ -12,7 +12,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // the last parameter optional, so `test.assert(cond)` is accepted.
     env.define(
         intern("test.assert"),
-        Scheme::pure_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::Bool, Type::String],
             Box::new(Type::Unit),
         ))
@@ -29,7 +29,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: true,
             },
         );
@@ -45,7 +44,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: true,
             },
         );

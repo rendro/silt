@@ -1,0 +1,10 @@
+-- `loop(...)` with no enclosing loop is one error, the typechecker's;
+-- the compiler's duplicate at the same place is dropped.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: `loop(...)` can only appear inside a `loop` body
+-- stderr-not-contains: error[compile]
+-- stderr-not-contains: recur
+fn main() {
+  loop(1, 2)
+}

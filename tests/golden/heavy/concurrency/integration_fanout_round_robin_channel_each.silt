@@ -23,19 +23,19 @@ fn program() {
   let jobs = channel.new(1)
   let results = channel.new(32)
 
-  let w1 = task.spawn(fn() {
+  let w1 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, 100 + n)
     }
   })
 
-  let w2 = task.spawn(fn() {
+  let w2 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, 200 + n)
     }
   })
 
-  let w3 = task.spawn(fn() {
+  let w3 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, 300 + n)
     }

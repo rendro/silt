@@ -1,8 +1,0 @@
-type Box(a) { Boxed(a), }
-trait Compare for Box(a) where a: Compare {
-    fn compare(self: Box(a), other: Box(a)) -> Int = -42
-}
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn main() {
-    println(cmp_gen(Boxed(1), Boxed(2)))
-}

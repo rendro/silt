@@ -5,6 +5,6 @@
 -- stderr-not-contains: not a declared type
 
 trait Display for TcpStream {
-  fn display(b) -> String = "x"
+  fn display(b) -> String { "x" }
 }
 fn main() {}

@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
 use silt::ast::{Decl, ImportTarget, Program};
@@ -17,7 +17,6 @@ use silt::compiler::Compiler;
 use silt::errors::SourceError;
 use silt::intern::{Symbol, resolve};
 use silt::lexer::Lexer;
-use silt::manifest::Manifest;
 use silt::module;
 use silt::parser::Parser;
 use silt::typechecker;
@@ -84,33 +83,11 @@ pub(crate) struct CompilePipelineResult {
 ///   package, regenerate `silt.lock` if it's missing or stale before
 ///   compilation. Set to `false` for read-only commands like `silt
 ///   disasm` and `silt fmt` so they don't mutate user files.
-/// Resolve the effective strict-effects setting for `path`. CLI flag
-/// (Some) wins; otherwise consult the enclosing `silt.toml`'s
-/// `[lints] strict-effects` field; otherwise default `false`.
-///
-/// Phase D of the effect-rows proposal — see
-/// `docs/strict-effects-migration.md`.
-pub(crate) fn resolve_strict_effects(path: &str, cli_flag: Option<bool>) -> bool {
-    if let Some(v) = cli_flag {
-        return v;
-    }
-    match Manifest::discover(Path::new(path)) {
-        Ok(Some(m)) => m.lints.strict_effects,
-        _ => false,
-    }
-}
-
-/// Phase D variant of [`run_compile_pipeline_with_options`] is the
-/// canonical entry point — it threads the `strict_effects` flag
-/// through to the typechecker. The `silt check`/`silt run`/`silt
-/// test` dispatchers call this once they've resolved the effective
-/// flag from CLI + manifest.
 pub(crate) fn run_compile_pipeline_with_options(
     path: &str,
     skip_compile: bool,
     typecheck_on_parse_errors: bool,
     auto_update_lock: bool,
-    strict_effects: bool,
 ) -> CompilePipelineResult {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
@@ -130,7 +107,6 @@ pub(crate) fn run_compile_pipeline_with_options(
         emit,
         typecheck_on_parse_errors,
         auto_update_lock,
-        strict_effects,
     )
 }
 
@@ -174,7 +150,6 @@ pub(crate) fn analyse_parsed_entry_file(
     emit: Emit,
     typecheck_on_parse_errors: bool,
     auto_update_lock: bool,
-    strict_effects: bool,
 ) -> CompilePipelineResult {
     let ParsedEntryFile {
         source,
@@ -252,11 +227,10 @@ pub(crate) fn analyse_parsed_entry_file(
     let mut type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
         let resolver = compiler.take_resolver();
         let (raw_type_errors, _entry_exports, resolver) =
-            typechecker::check_with_package_and_imports_options_resolver(
+            typechecker::check_with_package_and_imports_resolver(
                 &mut program,
                 Some(local_pkg),
                 module_exports,
-                strict_effects,
                 Some(resolver),
             );
         compiler.put_resolver(resolver);
@@ -341,7 +315,16 @@ pub(crate) fn analyse_parsed_entry_file(
             // Primary first, then the rest in source order. This matches
             // how the entrypoint's own parse errors flow (all pushed,
             // parse-source order) so the composite output is uniform.
-            let mut compile_errors = vec![SourceError::from_compile_error(&e, &source, path)];
+            // A `loop(...)` outside its loop is already a type error at
+            // the same place; report it once.
+            let already_reported = e.message == silt::compiler::LOOP_CALL_OUTSIDE_LOOP
+                && type_errors
+                    .iter()
+                    .any(|t| !t.is_warning && t.span.offset == e.span.offset);
+            let mut compile_errors = Vec::new();
+            if !already_reported {
+                compile_errors.push(SourceError::from_compile_error(&e, &source, path));
+            }
             compile_errors.extend(
                 compiler
                     .module_parse_errors()
@@ -450,11 +433,10 @@ pub(crate) fn register_dep_import_exports(
         let (mut dep_program, _dep_parse_errors) = Parser::new(tokens).parse_program_recovering();
         let resolver = compiler.take_resolver();
         let (_dep_errors, dep_exports, resolver) =
-            typechecker::check_with_package_and_imports_options_resolver(
+            typechecker::check_with_package_and_imports_resolver(
                 &mut dep_program,
                 Some(module_sym),
                 module_exports.clone(),
-                false,
                 Some(resolver),
             );
         compiler.put_resolver(resolver);
@@ -641,17 +623,14 @@ pub(crate) fn pipeline_has_real_hard_errors(result: &CompilePipelineResult) -> b
 }
 
 /// Compile a file end-to-end (lex → parse → typecheck → compile),
-/// printing diagnostics and exiting on hard errors. Two knobs:
+/// printing diagnostics and exiting on hard errors.
 /// `auto_update_lock` controls whether stale lockfiles are silently
-/// regenerated (read-only callers like `silt disasm` pass `false`),
-/// and `strict_effects` propagates Phase D's effect-row enforcement
-/// through to the typechecker.
+/// regenerated (read-only callers like `silt disasm` pass `false`).
 pub(crate) fn compile_file_with_options(
     path: &str,
     auto_update_lock: bool,
-    strict_effects: bool,
 ) -> (Vec<Function>, String) {
-    let compiled = compile_file(path, auto_update_lock, strict_effects);
+    let compiled = compile_file(path, auto_update_lock);
     (compiled.functions, compiled.source)
 }
 
@@ -667,13 +646,8 @@ pub(crate) struct CompiledFile {
 
 /// [`compile_file_with_options`], for callers that also ask questions
 /// about the file's declarations.
-pub(crate) fn compile_file(
-    path: &str,
-    auto_update_lock: bool,
-    strict_effects: bool,
-) -> CompiledFile {
-    let result =
-        run_compile_pipeline_with_options(path, false, false, auto_update_lock, strict_effects);
+pub(crate) fn compile_file(path: &str, auto_update_lock: bool) -> CompiledFile {
+    let result = run_compile_pipeline_with_options(path, false, false, auto_update_lock);
 
     // See `pipeline_has_real_hard_errors` for what counts as "real".
     let has_real_hard_errors = pipeline_has_real_hard_errors(&result);

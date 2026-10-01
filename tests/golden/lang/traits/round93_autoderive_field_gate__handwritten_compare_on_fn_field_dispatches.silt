@@ -1,9 +1,0 @@
-type H { f: Fn(Int) -> Int }
-trait Compare for H {
-    fn compare(a: H, b: H) -> Int { 42 }
-}
-fn main() {
-    let a = H{f: fn(x) { x }}
-    let b = H{f: fn(x) { x }}
-    println(a.compare(b))
-}

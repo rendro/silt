@@ -7,7 +7,7 @@
 //! ## Background
 //!
 //! Module constants (`math.pi`, `math.e`, `float.epsilon`,
-//! `float.infinity`, …) live hand-encoded across FOUR parallel surfaces:
+//! `float.max_value`, …) live hand-encoded across FOUR parallel surfaces:
 //!
 //! 1. typechecker schemes   — `src/typechecker/builtins/float.rs`,
 //!    `.../math.rs` (`intern("math.pi")`, …);
@@ -127,8 +127,8 @@ fn main() {{
     // refactor that makes `builtin_module_constants` return `vec![]` for
     // everything would otherwise make this test vacuously pass).
     assert!(
-        checked >= 9,
-        "expected at least the 9 known module constants (math.pi/e + 7 \
+        checked >= 6,
+        "expected at least the 6 known module constants (math.pi/e + 4 \
          float.*); only enumerated {checked} — registry regressed?"
     );
 }

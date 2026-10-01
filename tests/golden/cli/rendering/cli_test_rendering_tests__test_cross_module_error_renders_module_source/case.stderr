@@ -2,7 +2,7 @@
     error[runtime]: division by zero
      --> calc.silt:1:23
        |
-     1 | pub fn divide(a, b) = a / b
+     1 | pub fn divide(a, b) { a / b }
        |                       ^ division by zero
 
     call stack:

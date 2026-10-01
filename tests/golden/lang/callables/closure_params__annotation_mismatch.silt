@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: String
+-- A closure parameter's annotation is checked against its uses: an
+-- `Int` parameter cannot be passed a `String`.
+fn main() {
+  let inc = { n: Int -> n + 1 }
+  println(inc("one"))
+}

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- `+` is numeric only; the diagnostic names interpolation, once per chain.
+fn main() {
+  let name = "silt"
+  let s = "hello, " + name + "!"
+  println(s)
+}

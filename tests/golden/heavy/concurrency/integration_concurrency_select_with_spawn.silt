@@ -6,7 +6,7 @@ fn program() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
 
-  let p = task.spawn(fn() {
+  let p = task.spawn({ ->
     channel.send(ch1, "first")
   })
   task.join(p)

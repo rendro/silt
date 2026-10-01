@@ -15,7 +15,7 @@ import time
 let about_to_fail = channel.new(1)
 
 fn test_a_spawns_late_failure() {
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     time.sleep(time.ms(100))
     channel.send(about_to_fail, 1)
     let zero = 0

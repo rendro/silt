@@ -95,7 +95,7 @@ fn matches_manifest_does_not_shell_out_to_git_for_valid_lock() {
         "[package]\nname = \"remote\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(cache_dir.join("src").join("lib.silt"), "pub fn f() = 1\n").unwrap();
+    fs::write(cache_dir.join("src").join("lib.silt"), "pub fn f() { 1 }\n").unwrap();
 
     let lock = Lockfile {
         version: 1,
@@ -207,7 +207,7 @@ fn matches_manifest_accepts_path_deps_offline() {
     .unwrap();
     fs::write(
         dep.join("src").join("lib.silt"),
-        "pub fn add(a, b) = a + b\n",
+        "pub fn add(a, b) { a + b }\n",
     )
     .unwrap();
 

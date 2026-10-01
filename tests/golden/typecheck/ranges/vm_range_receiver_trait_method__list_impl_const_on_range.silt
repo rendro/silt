@@ -1,5 +1,5 @@
 trait Foo { fn bar(self) -> Int }
-trait Foo for List(a) { fn bar(self) -> Int = 42 }
+trait Foo for List(a) { fn bar(self) -> Int { 42 } }
 fn main() {
     let r = 1..5
     println(r.bar())

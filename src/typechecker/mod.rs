@@ -9,7 +9,6 @@
 
 mod auto_derive;
 mod builtins;
-mod effects_infer;
 mod exhaustiveness;
 mod inference;
 mod resolve;
@@ -42,6 +41,10 @@ enum TypeBodyKind {
 /// different signatures) and produce nonsensical cascade errors when
 /// the preregistered impls get revalidated against the user's body.
 pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+
+/// The built-in traits a program cannot implement by hand: they are
+/// derived structurally (see `reject_sealed_trait_impls`).
+pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash"];
 
 /// Round 93: human adjective for the gated built-in traits, used by
 /// the field-aware auto-derive gate's diagnostics ("... which is not
@@ -375,14 +378,6 @@ pub(super) fn free_vars_in_types(types: &[Type]) -> Vec<TyVar> {
 /// remapping. Producer ids in `tv_remap` keys map to consumer ids in
 /// `tv_remap` values; any tyvar absent from the map is left alone (it's
 /// outside the snapshot's reach).
-///
-/// BROKEN (round 62 B5): previously hardcoded `effects: EffectSet::TOP`,
-/// which silently dropped cross-module declared effects. A producer
-/// module's `pub fn read_file() !{io, fs}` would arrive at the consumer
-/// looking like `!*`, so a consumer fn declared `!{io}` calling it
-/// would error that its body uses unspecified effects. Carry
-/// `scheme.effects` through the remap instead — the bitset doesn't
-/// reference any tyvars so it remaps trivially as identity.
 pub(super) fn remap_scheme(
     scheme: &Scheme,
     tv_remap: &HashMap<TyVar, TyVar>,
@@ -403,8 +398,7 @@ pub(super) fn remap_scheme(
         vars: new_vars,
         ty: new_ty,
         constraints: new_constraints,
-        effects: scheme.effects,
-        // Part of the signature, like the effects: carried as is.
+        // Part of the signature: carried as is.
         optional_last_param: scheme.optional_last_param,
     }
 }
@@ -545,22 +539,14 @@ pub struct TypeChecker {
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
     /// user-declared record / enum CANNOT soundly support the built-in
     /// trait because some field / variant payload does not satisfy it
-    /// (computed structurally and recursively, IGNORING hand-written
-    /// impls — `==` / `<` lower to Value-level opcodes that never
-    /// dispatch to a user impl, so a manual `trait Compare for H`
-    /// cannot make `h1 < h2` deterministic). Value = full diagnostic
-    /// message naming the offending field and its type. Consulted by
-    /// the operator-operand checks in `inference.rs`.
-    pub(super) auto_derive_operator_negatives: HashMap<(Symbol, Symbol), String>,
-    /// Round 93: like `auto_derive_operator_negatives`, but computed
-    /// WITH hand-written impls counted as satisfying the trait (method
-    /// calls like `.compare()` dispatch through the impl table, so a
-    /// manual impl genuinely rescues the type). Every pair in this map
+    /// (computed structurally and recursively). Value = full diagnostic
+    /// message naming the offending field and its type. Every pair here
     /// had its pre-stamped `trait_impl_set` entry and auto-derived
-    /// `method_table` entry removed by `synthesize_auto_derive_impls`;
-    /// the stored message enriches the resulting "unknown method"
-    /// diagnostics at method-call sites.
-    pub(super) auto_derive_dispatch_negatives: HashMap<(Symbol, Symbol), String>,
+    /// `method_table` entry removed by `synthesize_auto_derive_impls`.
+    /// Consulted by the operator-operand checks in `inference.rs` and to
+    /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
+    /// / `.hash()` call sites.
+    pub(super) auto_derive_negatives: HashMap<(Symbol, Symbol), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -633,15 +619,6 @@ pub struct TypeChecker {
     pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
     /// Maps function names to their body-constrained types (populated during check_fn_body).
     pub(super) fn_body_types: HashMap<Symbol, Type>,
-    /// Maps function names to the effect set inferred from their body
-    /// (populated during `check_fn_body`). Phase A of the effect-rows
-    /// proposal: every function body has its effects computed and
-    /// stored here, but Phase A does not yet enforce that the inferred
-    /// set is a subset of the function's annotated set — that lands in
-    /// Phase B/D. The map exists so future phases (LSP hover, strict-
-    /// effects flag, capability boundaries) have a populated cache to
-    /// read from. See `docs/proposals/effect-rows.md`.
-    pub(super) fn_body_effects: HashMap<Symbol, EffectSet>,
     /// Deferred checks for field access on type variables (B4).
     /// Each entry is `(object_type, field_name, result_type, span)`.
     /// Re-examined after all function bodies are inferred: if the object type
@@ -668,11 +645,6 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
-    /// Names that have been registered as user-defined top-level declarations
-    /// (functions, let bindings, type/record/enum names). Used by G1 to
-    /// detect duplicate top-level definitions without also flagging
-    /// user code that shadows a builtin (which remains a warning).
-    pub(super) top_level_names: std::collections::HashSet<Symbol>,
     /// Set by the exhaustiveness checker when its recursion depth bound is
     /// exceeded during a single `check_exhaustiveness` call. Interior
     /// mutability lets the `&self`-taking `is_useful` recursion record the
@@ -805,33 +777,10 @@ pub struct TypeChecker {
     /// annotated fn's scheme: only fns that actually recurse need
     /// the lock — every other annotated fn keeps the legacy
     /// narrowing behaviour so existing test invariants (e.g.
-    /// `fn grab(b: Box) -> Int = b.value` narrowing the bare `Box`
+    /// `fn grab(b: Box) -> Int { b.value }` narrowing the bare `Box`
     /// param to `Int` and then surfacing a "type mismatch" at the
     /// caller) keep firing.
     pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
-    /// Phase D of the effect-rows proposal: when `true`, an
-    /// unannotated user function defaults to `EffectSet::EMPTY`
-    /// (pure) rather than the gradual-rollout `EffectSet::TOP`
-    /// permissive default. The body-inference subset check then
-    /// catches any effectful builtin call from such a fn and emits
-    /// the strict-mode diagnostic (with a copy-paste annotation in
-    /// the `help:` line). Off by default so legacy programs typecheck
-    /// unchanged. Surface: `silt check --strict-effects`,
-    /// `silt run --strict-effects`, `silt test --strict-effects`,
-    /// or `[lints] strict-effects = true` in `silt.toml`.
-    pub(super) strict_effects: bool,
-    /// Phase D companion of [`strict_effects`]: the byte offsets of
-    /// the fn declarations whose `declared_effects` was flipped from
-    /// `EffectSet::TOP` to `EffectSet::EMPTY` by the strict-mode
-    /// pre-pass in `check_program_returning_env`. Consulted by the
-    /// body-inference enforcement diagnostic so it can emit the
-    /// strict-mode-specific message (with the copy-paste annotation
-    /// in `help:`) for fns the user did NOT annotate, while still
-    /// emitting the original Phase B "user wrote `!{...}` and the
-    /// body went wider" diagnostic for fns that DID get an explicit
-    /// annotation. Keyed by `f.span.offset` because `Symbol` keys
-    /// would conflate trait impl methods sharing a name.
-    pub(super) strict_effects_flipped: std::collections::HashSet<usize>,
     /// Compile-session-scoped storage for the canonical alias /
     /// associated-type-binding registries. Populated as the
     /// typechecker processes user `type ... = ...` decls and trait
@@ -867,8 +816,7 @@ impl TypeChecker {
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
-            auto_derive_operator_negatives: HashMap::new(),
-            auto_derive_dispatch_negatives: HashMap::new(),
+            auto_derive_negatives: HashMap::new(),
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
             impl_trait_args: HashMap::new(),
@@ -880,12 +828,10 @@ impl TypeChecker {
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
-            fn_body_effects: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
-            top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
             recovery_stub_names: std::collections::HashSet::new(),
             type_aliases: std::collections::HashSet::new(),
@@ -901,8 +847,6 @@ impl TypeChecker {
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
-            strict_effects: false,
-            strict_effects_flipped: std::collections::HashSet::new(),
             resolver: crate::types::canonical::Resolver::new(),
         }
     }
@@ -922,14 +866,6 @@ impl TypeChecker {
     /// recover the shared resolver after typechecking finishes.
     pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
         std::mem::take(&mut self.resolver)
-    }
-
-    /// Toggle Phase D strict-effects mode. When enabled, unannotated
-    /// user fn declarations default to `EffectSet::EMPTY` (pure) and
-    /// the body-inference subset check fires on any effectful call.
-    /// See `docs/strict-effects-migration.md` for the migration story.
-    pub fn set_strict_effects(&mut self, on: bool) {
-        self.strict_effects = on;
     }
 
     /// Sentinel package symbol used as the `defined_in` for built-in
@@ -1389,7 +1325,6 @@ impl TypeChecker {
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
-            | (Type::ExtFloat, Type::ExtFloat)
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => {}
@@ -1832,16 +1767,6 @@ impl TypeChecker {
     /// include those constraints in the resulting scheme. This ensures that
     /// `let f = constrained_fn` and `let f = { x -> constrained_fn(x) }`
     /// preserve where-clause obligations.
-    ///
-    /// IMPORTANT (round 62 B4): the produced `Scheme::effects` is
-    /// always `EffectSet::TOP` — a placeholder. Every caller MUST
-    /// overwrite the field with the originating fn-decl's
-    /// `declared_effects` (or with the previous scheme's `effects` on
-    /// re-narrow) before storing the scheme in the env. The pass-3
-    /// narrowing path historically forgot to do this, which caused
-    /// `fn doit() !{io} { println("hi") }` to appear as `!*` to
-    /// callers after narrowing — see the `final_scheme.effects =
-    /// original_scheme.effects` line at the narrowing site.
     pub(super) fn generalize(&self, env: &TypeEnv, ty: &Type) -> Scheme {
         let ty = self.apply(ty);
         let env_fvs = env.free_vars(self);
@@ -1871,7 +1796,6 @@ impl TypeChecker {
             vars,
             ty,
             constraints,
-            effects: EffectSet::TOP,
             optional_last_param: false,
         }
     }
@@ -2083,7 +2007,6 @@ impl TypeChecker {
             Type::Set(_) => Some(intern("Set")),
             Type::Channel(_) => Some(intern("Channel")),
             Type::Tuple(_) => Some(intern("Tuple")),
-            Type::ExtFloat => Some(intern("ExtFloat")),
             // Function values resolve to the canonical name `"Fn"` so
             // `where a: Trait` constraints route into the same impl table
             // the compiler emits globals for and `dispatch_name_for_value`
@@ -2432,7 +2355,6 @@ impl TypeChecker {
             (Type::Var(_), _) | (_, Type::Var(_)) => true,
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
-            | (Type::ExtFloat, Type::ExtFloat)
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => true,
@@ -2550,26 +2472,39 @@ impl TypeChecker {
         });
     }
 
-    /// Round 75 DEAD-3: emit the canonical "duplicate top-level
-    /// definition" error if `name` is already registered, then
-    /// register it. Three byte-identical call sites (top-level `let`
-    /// in `check_program`, top-level `fn` in `register_fn_decl`, and
-    /// the REPL `let` path in `eval_declaration`) share this exact
-    /// shape; centralising the message + insert keeps the wording
-    /// pinned in one place. Tests that asserted on the old wording
-    /// `"duplicate top-level definition of '<n>'; names must be
-    /// unique at module scope"` continue to match — the helper emits
-    /// the same string.
-    pub(super) fn define_top_level_unique(&mut self, name: Symbol, span: Span) {
-        if self.top_level_names.contains(&name) {
-            self.error(
-                format!(
-                    "duplicate top-level definition of '{name}'; names must be unique at module scope"
-                ),
-                span,
-            );
+    /// The known type that `name`, a name in a type annotation, spells
+    /// in the wrong case: `int` → `Int`, `INT` → `Int`, `option` →
+    /// `Option`. Type names are case-sensitive and declarations must be
+    /// capitalised, so such a name can only be a typo for that type.
+    /// Unless `name` is applied to arguments (`q(Int)`), one-letter
+    /// names are left alone: `a`, `e`, `t` are the usual type variables,
+    /// whatever types a program declares.
+    fn case_mismatched_type_name(&self, name: &str, applied: bool) -> Option<String> {
+        if !applied && name.chars().count() < 2 {
+            return None;
         }
-        self.top_level_names.insert(name);
+        let matches = |candidate: &str| candidate != name && candidate.eq_ignore_ascii_case(name);
+        crate::types::builtins::BUILTIN_TYPES
+            .iter()
+            .map(|t| t.name.to_string())
+            .chain(self.records.keys().map(|s| resolve(*s)))
+            .chain(self.enums.keys().map(|s| resolve(*s)))
+            .chain(self.type_aliases.iter().map(|s| resolve(*s)))
+            .filter(|candidate| matches(candidate))
+            .min()
+    }
+
+    /// The "unknown type" error for `name`, with a hint when it is a
+    /// known type in the wrong case (see `case_mismatched_type_name`).
+    fn unknown_type_message(&self, name: &str, applied: bool) -> String {
+        match self.case_mismatched_type_name(name, applied) {
+            Some(type_name) => format!(
+                "unknown type '{name}' — did you mean `{type_name}`? (type names are \
+                 case-sensitive and start with a capital letter; a lowercase name in a \
+                 type is a type variable)"
+            ),
+            None => format!("unknown type '{name}'"),
+        }
     }
 
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
@@ -2919,7 +2854,6 @@ impl TypeChecker {
             vars: fvs,
             ty: ty.clone(),
             constraints: Vec::new(),
-            effects: EffectSet::TOP,
             optional_last_param: false,
         }
     }
@@ -3055,17 +2989,6 @@ impl TypeChecker {
         }
 
         exports
-    }
-
-    /// Look up the inferred effect set for a function by its bare name
-    /// (or impl-qualified name like `MyType.method` for trait methods).
-    /// Returns `None` if the name was never registered as a function or
-    /// if its body was never inferred (e.g. a recovery stub).
-    ///
-    /// Phase A of the effect-rows proposal — see
-    /// `docs/proposals/effect-rows.md` and `effects_infer.rs`.
-    pub fn fn_body_effects_for(&self, name: Symbol) -> Option<EffectSet> {
-        self.fn_body_effects.get(&name).copied()
     }
 
     // ── Check a full program ────────────────────────────────────────
@@ -3314,62 +3237,9 @@ impl TypeChecker {
         // impls — producing real `<TypeName>.<method>` globals so
         // `Op::CallMethod`'s qualified-global lookup finds them at
         // runtime, never falling through to `dispatch_trait_method`.
+        // Hand-written impls of the sealed traits are rejected first.
+        self.reject_sealed_trait_impls(&mut program.decls);
         self.synthesize_auto_derive_impls(&mut program.decls);
-
-        // Phase D of the effect-rows proposal: when strict-effects mode
-        // is enabled, flip the gradual-rollout `EffectSet::TOP` default
-        // to `EffectSet::EMPTY` (pure) for every UN-annotated user fn
-        // before registration runs. The body-inference subset check
-        // (in `check_fn_body_with_name`) then rejects any effectful
-        // call from such a fn unless the user adds an explicit
-        // annotation. The flip is gated to:
-        //   - `!is_recovery_stub`: parse-recovery stubs keep TOP so
-        //     their downstream call sites don't cascade.
-        //   - `f.span.line != 0`: auto-derived methods (synthesized
-        //     with line 0 sentinel spans) keep TOP — they are not
-        //     user-authored code. Default trait method bodies copied
-        //     by `synthesize_default_methods` carry their original
-        //     trait-decl spans, so they ARE flipped (they're user
-        //     code, just placed into impls that omitted them).
-        //   - `!f.is_annotated`: only the gradual-rollout default is
-        //     flipped. A user who already wrote `!{io}` keeps that set
-        //     as their declared bound — and a user who wrote the
-        //     full `!{io, fs, net, time, random}` (which shares the
-        //     `EffectSet::TOP` bitset!) is correctly NOT treated as
-        //     un-annotated. Pivoting on the bit-equality `== TOP`
-        //     would silently flip such fns to EMPTY and reject every
-        //     IO call inside them.
-        //
-        // The flip mutates the AST so the LSP's `build_definitions`
-        // pass sees the flipped value via `FnDecl::declared_effects`
-        // and renders it on hover under strict mode.
-        //
-        // See `docs/strict-effects-migration.md` for the user-facing
-        // workflow and `docs/proposals/effect-rows.md` Part 7 Phase D.
-        if self.strict_effects {
-            for decl in program.decls.iter_mut() {
-                match decl {
-                    Decl::Fn(f) if !f.is_recovery_stub && f.span.line != 0 && !f.is_annotated => {
-                        f.declared_effects = EffectSet::EMPTY;
-                        // The flip itself is what counts as the
-                        // synthesized annotation; mark it so the
-                        // body-subset check enforces it.
-                        f.is_annotated = true;
-                        self.strict_effects_flipped.insert(f.span.offset);
-                    }
-                    Decl::TraitImpl(ti) if !ti.is_auto_derived => {
-                        for m in ti.methods.iter_mut() {
-                            if !m.is_recovery_stub && m.span.line != 0 && !m.is_annotated {
-                                m.declared_effects = EffectSet::EMPTY;
-                                m.is_annotated = true;
-                                self.strict_effects_flipped.insert(m.span.offset);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         // 2c: Register fn signatures and trait impls (now seeing
         // synthesized methods alongside explicit ones).
@@ -3413,23 +3283,12 @@ impl TypeChecker {
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
                 }
-                let mut scheme = if is_value {
+                let scheme = if is_value {
                     self.generalize(&env, &val_ty)
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
-                // BROKEN (round 64): `generalize` / `Scheme::mono` both
-                // hardcode `effects: EffectSet::TOP`. For an aliasing
-                // bind (`let alias = doit`) copy the source scheme's
-                // effects so the alias preserves the callee's declared
-                // effect set rather than widening every aliased call to
-                // TOP.
-                inference::propagate_alias_effects(&value.kind, &env, &mut scheme);
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: top-level duplicate let binding (round 75
-                    // DEAD-3: shared with `register_fn_decl` and the
-                    // REPL `let` path via `define_top_level_unique`).
-                    self.define_top_level_unique(*name, span);
                     env.define(*name, scheme);
                 } else {
                     // A top-level `let` has no failure branch either:
@@ -3512,7 +3371,7 @@ impl TypeChecker {
                     // If the body's instantiation would narrow the
                     // scheme — i.e. an annotated polymorphic var was
                     // pinned to a concrete type by body usage (e.g.
-                    // `fn f(x: a) -> Int = x + 1` pins `a` to Int via
+                    // `fn f(x: a) -> Int { x + 1 }` pins `a` to Int via
                     // the `+` operator's unification) — that's a
                     // signature mismatch the user should fix. Record
                     // the violation now and emit the diagnostic after
@@ -3547,17 +3406,6 @@ impl TypeChecker {
                     // Scheme was narrowed — some vars got constrained
                     any_narrowed = true;
                     let mut final_scheme = new_scheme.clone();
-                    // BROKEN (round 62 B4): `generalize` hardcodes
-                    // `effects: EffectSet::TOP`, so narrowing pass-3
-                    // would silently TOP-out the effect annotation
-                    // every caller of this fn was relying on. Copy
-                    // the original scheme's effects across before
-                    // re-defining. Without this, a fn declared
-                    // `!{io}` calling-narrowed scheme appears as
-                    // `!*` to its callers, and a caller declared
-                    // `!{io}` then errors that its body uses
-                    // unspecified effects.
-                    final_scheme.effects = original_scheme.effects;
                     // BROKEN (round 17 F1): `original_scheme.constraints` uses
                     // the pass-2 tyvars, while `new_scheme.vars` uses fresh
                     // pass-3 tyvars from `instantiate_with_constraints` that
@@ -3970,7 +3818,7 @@ impl TypeChecker {
         // Round 80 BROKEN B3: a type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
         // Range, Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
-        // ExtFloat, TcpListener, TcpStream — the authoritative list is
+        // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
         // the builtin binding and then auto-derived Equal/Compare/Hash/
         // Display impls referencing fields that the *builtin* type does
@@ -4025,20 +3873,6 @@ impl TypeChecker {
             );
             return;
         }
-        // G1: Detect duplicate top-level type declarations. Only user-defined
-        // top-level names count; collision with a builtin type (Option,
-        // Result, ChannelResult, Step) is handled by the shadow-warning
-        // path elsewhere.
-        if self.top_level_names.contains(&td.name) {
-            self.error(
-                format!(
-                    "duplicate top-level type declaration '{}'; type names must be unique at module scope",
-                    td.name
-                ),
-                td.span,
-            );
-        }
-        self.top_level_names.insert(td.name);
         // B2: populate the span hint used by `resolve_type_expr` for any
         // arity error on field / variant type annotations.
         let prev_type_span = self.current_type_anno_span.replace(td.span);
@@ -4139,7 +3973,6 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: result_type,
                                 constraints: vec![],
-                                effects: EffectSet::TOP,
                                 optional_last_param: false,
                             },
                         );
@@ -4151,7 +3984,6 @@ impl TypeChecker {
                                 vars: var_ids.clone(),
                                 ty: Type::Fun(field_types, Box::new(result_type)),
                                 constraints: vec![],
-                                effects: EffectSet::TOP,
                                 optional_last_param: false,
                             },
                         );
@@ -4183,9 +4015,9 @@ impl TypeChecker {
                     //      `self.enums[td.name]` entry at this point; the
                     //      insert for the *current* td happens below, so
                     //      any existing key must be a prior registration.
-                    //      Collisions with another user decl are already
-                    //      flagged as a hard error by top_level_names, so
-                    //      anything we see here is a builtin shadow.
+                    //      Two user decls never share a name (the parser
+                    //      rejects it), so anything we see here is a
+                    //      builtin shadow.
                     if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
                         if prev_owner != td.name {
                             self.warning(
@@ -4235,7 +4067,6 @@ impl TypeChecker {
                         vars: var_ids.clone(),
                         ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     };
                     env.define(td.name, scheme);
@@ -4314,7 +4145,6 @@ impl TypeChecker {
                         vars: vec![],
                         ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     }
                 } else {
@@ -4336,7 +4166,6 @@ impl TypeChecker {
                         vars: var_ids,
                         ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
                         constraints: vec![],
-                        effects: EffectSet::TOP,
                         optional_last_param: false,
                     }
                 };
@@ -4376,7 +4205,7 @@ impl TypeChecker {
         // (`compute_auto_derive_field_negatives`) and REMOVES the
         // stamp (plus the auto-derived `method_table` entry) for any
         // `(trait, type)` pair whose fields / variant payloads cannot
-        // satisfy the trait and that no hand-written impl rescues.
+        // satisfy the trait.
         // Before round 93 the stamp stood unconditionally and `==` /
         // `<` / `.compare()` / `.hash()` on e.g. a record wrapping a
         // `Fn(..)` field laundered into nondeterministic Value-level
@@ -4621,8 +4450,8 @@ impl TypeChecker {
                 // Dead-arm cleanup (round 88 item D3): a prior version
                 // also tested `visiting.contains(name)` here, but
                 // `visiting` is seeded only with alias-decl names and
-                // `register_type_decl` rejects duplicate top-level
-                // names — so an alias name can never collide with a
+                // the parser rejects a top-level name bound twice — so
+                // an alias name can never collide with a
                 // record name. The guard was unreachable. Field
                 // recursion below remains: it descends into nested
                 // alias references inside record fields, which IS how
@@ -4667,7 +4496,6 @@ impl TypeChecker {
             }
             Type::Int
             | Type::Float
-            | Type::ExtFloat
             | Type::Bool
             | Type::String
             | Type::Unit
@@ -4720,7 +4548,6 @@ impl TypeChecker {
                 match name_str.as_str() {
                     "Int" => Type::Int,
                     "Float" => Type::Float,
-                    "ExtFloat" => Type::ExtFloat,
                     "Bool" => Type::Bool,
                     "String" => Type::String,
                     "()" | "Unit" => Type::Unit,
@@ -4765,6 +4592,13 @@ impl TypeChecker {
                         // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
                         let first_char = name_str.chars().next().unwrap_or('A');
                         if first_char.is_lowercase() {
+                            // ... unless the name is a known type spelled
+                            // in lowercase (`x: int`): that is a typo for
+                            // the type, not a type variable.
+                            if self.case_mismatched_type_name(&name_str, false).is_some() {
+                                self.error(self.unknown_type_message(&name_str, false), te.span);
+                                return Type::Error;
+                            }
                             let tv = self.fresh_var();
                             param_vars.insert(*name, tv.clone());
                             tv
@@ -4798,7 +4632,7 @@ impl TypeChecker {
                             // record / enum bare-name path).
                             let is_user_alias = self.type_aliases.contains(name);
                             if !is_user_record && !is_user_enum && !is_user_alias {
-                                self.error(format!("unknown type '{name_str}'"), te.span);
+                                self.error(self.unknown_type_message(&name_str, false), te.span);
                                 return Type::Error;
                             }
                             let arity = self
@@ -4918,7 +4752,7 @@ impl TypeChecker {
                         // ghost `Type::Generic("Frobnitz", [Int])` cascaded
                         // into Display / type-mismatch noise.
                         if expected_arity.is_none() {
-                            self.error(format!("unknown type '{name_str}'"), te.span);
+                            self.error(self.unknown_type_message(&name_str, true), te.span);
                             return Type::Error;
                         }
                         if let Some(expected) = expected_arity
@@ -5104,18 +4938,8 @@ impl TypeChecker {
         // Recovery-stub special case (Option B): record the name and bind
         // its signature just like a real fn, so downstream references in
         // unrelated code do not cascade into "undefined variable" errors.
-        // The stub is NOT registered as a "real" top-level name because
-        // duplicate-definition checks shouldn't flag a later *real* fn
-        // with the same name as a stubbed-out earlier one — the user is
-        // fixing the same broken decl, not redeclaring.
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
-        } else {
-            // G1: Detect duplicate top-level function definitions. We only report
-            // a hard error when the name collides with another user-registered
-            // top-level name. Collisions with builtins are handled elsewhere as
-            // a shadow warning. Round 75 DEAD-3: shared helper.
-            self.define_top_level_unique(f.name, f.span);
         }
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
@@ -5184,18 +5008,6 @@ impl TypeChecker {
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
         let mut scheme = self.generalize(env, &fn_type);
-        // Phase B of the effect-rows proposal: the declared annotation
-        // (or the gradual-rollout `TOP` default for un-annotated
-        // functions) becomes the scheme's `effects`. Callers see the
-        // declared bound — the inferred body set is recorded separately
-        // in `fn_body_effects` so the annotation enforcement pass can
-        // compare them at body-check time. Recording the declared
-        // bound here (not the inferred one) preserves opaque-boundary
-        // semantics: a fn that declares `!{io}` advertises `!{io}` to
-        // every caller regardless of whether the body is currently
-        // narrower.
-        scheme.effects = f.declared_effects;
-
         // Round 64 item 6B (annotated polymorphic recursion): record
         // whether the user's signature is fully annotated. A `Data`
         // parameter is annotated iff it carries an explicit `ty`;
@@ -5494,18 +5306,15 @@ impl TypeChecker {
 
     /// Convert a type name Symbol to a Type.
     ///
-    /// Round 74 Fix #1: include `ExtFloat` and `Unit`/`()` arms so a
-    /// user-declared `trait T for ExtFloat { ... }` impl receives a
-    /// `Type::ExtFloat` self_type rather than the `Type::Generic("ExtFloat", [])`
-    /// fallback (which never unifies with the canonical `Type::ExtFloat`
-    /// receiver produced by, e.g., `1.0 / 1.0`). Round 71 fixed only the
-    /// auto-derived path; user impls fell through here.
+    /// Round 74 Fix #1: include the `Unit`/`()` arm so a user-declared
+    /// `trait T for Unit { ... }` impl receives a `Type::Unit` self_type
+    /// rather than the `Type::Generic("Unit", [])` fallback, which never
+    /// unifies with the canonical `Type::Unit` receiver.
     fn type_from_name(name: Symbol) -> Type {
         let name_str = resolve(name);
         match name_str.as_str() {
             "Int" => Type::Int,
             "Float" => Type::Float,
-            "ExtFloat" => Type::ExtFloat,
             "Bool" => Type::Bool,
             "String" => Type::String,
             "Unit" | "()" => Type::Unit,
@@ -5527,19 +5336,47 @@ impl TypeChecker {
     /// loop — already iterates `ti.methods`. Cloning the default into
     /// the impl is the smallest delta that makes the existing code
     /// "just work".
+    /// Reject every hand-written impl of `Equal`, `Compare` or `Hash` and
+    /// drop it from `decls`. These traits are sealed: every type gets
+    /// them derived structurally from its fields (see
+    /// `synthesize_auto_derive_impls`), and `==` / `<` never dispatch to
+    /// an impl, so a hand-written one could only disagree with them.
+    fn reject_sealed_trait_impls(&mut self, decls: &mut Vec<Decl>) {
+        let mut errors = Vec::new();
+        decls.retain(|decl| match decl {
+            Decl::TraitImpl(ti)
+                if !ti.is_auto_derived
+                    && SEALED_TRAIT_NAMES.contains(&resolve(ti.trait_name).as_str()) =>
+            {
+                errors.push((ti.trait_name, ti.span));
+                false
+            }
+            _ => true,
+        });
+        for (trait_name, span) in errors {
+            self.error(
+                format!(
+                    "trait '{trait_name}' cannot be implemented by hand: it is derived \
+                     structurally for every type whose fields support it — remove this \
+                     impl; Equal, Compare and Hash are derived"
+                ),
+                span,
+            );
+        }
+    }
+
     /// Auto-derive `Display`, `Compare`, `Equal`, `Hash` impls for every
-    /// user-declared enum or record that does not already have a manual
-    /// `trait <X> for T` impl. Pushes synthesized [`TraitImpl`] AST nodes
+    /// user-declared enum or record (`Display` only when the type has no
+    /// manual `trait Display for T` impl; the other three are sealed, so
+    /// they are always derived). Pushes synthesized [`TraitImpl`] AST nodes
     /// onto `decls` so they flow through the same registration pipeline
     /// (`register_trait_impl`) and the compiler's `Decl::TraitImpl`
     /// emission path as user-written impls.
     ///
     /// Skipped for:
-    /// - Types with a manual impl of the same trait (existing
-    ///   override-auto-derive logic preserved by setting
-    ///   `is_auto_derived: true` on synthesized impls — the
-    ///   coherence check in `register_trait_impl` lets a user impl
-    ///   override an auto-derived one).
+    /// - `Display` on types with a manual `Display` impl (synthesized
+    ///   impls carry `is_auto_derived: true`, and the coherence check in
+    ///   `register_trait_impl` lets a user `Display` impl override one).
     /// - **Generic** user types (`type Box(a) { Foo(a) }`,
     ///   `type Pair(a, b) { x: a, y: b }`). These keep the prior
     ///   typecheck-stamp + `dispatch_trait_method` behaviour. Synthesis
@@ -5552,23 +5389,22 @@ impl TypeChecker {
     /// - The `Alias` body kind (handled separately by
     ///   `register_type_alias`).
     fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
-        // Scan for user-written impls so we can skip synthesis for
-        // (trait, type) pairs the user already covered. Use the
-        // canonical target-type symbol so `trait Compare for Bytes`
-        // (where `Bytes = List(Int)`) skips synthesis on `Bytes` AND
-        // on any user enum/record under the same canonical name.
-        let mut user_impls: std::collections::HashSet<(Symbol, Symbol)> =
+        let display_sym = intern("Display");
+        // Scan for user-written `Display` impls so we can skip synthesis
+        // for the types the user already covered. Use the canonical
+        // target-type symbol so an impl on an alias skips synthesis on
+        // every type under the same canonical name.
+        let mut user_display_impls: std::collections::HashSet<Symbol> =
             std::collections::HashSet::new();
         for decl in decls.iter() {
             if let Decl::TraitImpl(ti) = decl
                 && !ti.is_auto_derived
+                && ti.trait_name == display_sym
             {
-                let target = canonicalize_type_name(&self.resolver, ti.target_type);
-                user_impls.insert((ti.trait_name, target));
+                user_display_impls.insert(canonicalize_type_name(&self.resolver, ti.target_type));
             }
         }
 
-        let display_sym = intern("Display");
         let compare_sym = intern("Compare");
         let equal_sym = intern("Equal");
         let hash_sym = intern("Hash");
@@ -5630,16 +5466,12 @@ impl TypeChecker {
         // ordering = Arc pointer address under ASLR). Here we compute
         // honest, recursive, field-aware eligibility and UN-stamp the
         // ineligible pairs (recording a precise reason for
-        // diagnostics). Two flavours are computed:
-        //   - dispatch negatives (hand-written impls rescue a type):
-        //     drive stamp/method removal, so `.compare()` etc. on a
-        //     manually-implemented type still dispatches;
-        //   - operator negatives (impls do NOT rescue): drive the
-        //     `==` / `<` operand checks in inference.rs, because those
-        //     opcodes never dispatch to a user impl.
+        // diagnostics). Equal/Compare/Hash are sealed (no hand-written
+        // impl can exist), so one computation serves both the method
+        // calls and the `==` / `<` operand checks in inference.rs.
         // Display is exempt: the runtime display fallback is total and
         // deterministic for every Value shape.
-        self.enforce_auto_derive_field_gate(&user_decl_type_names, &user_impls);
+        self.enforce_auto_derive_field_gate(&user_decl_type_names);
 
         // Built-in enums and records are registered directly into
         // `self.enums` / `self.records` from `register_builtins` and
@@ -5873,7 +5705,7 @@ impl TypeChecker {
                         .collect();
                     if display_ok
                         && policy_allows(display_sym)
-                        && !user_impls.contains(&(display_sym, key))
+                        && !user_display_impls.contains(&key)
                     {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_enum(
@@ -5883,10 +5715,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok
-                        && policy_allows(compare_sym)
-                        && !user_impls.contains(&(compare_sym, key))
-                    {
+                    if compare_ok && policy_allows(compare_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_enum(
                                 type_name,
@@ -5895,18 +5724,14 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok
-                        && policy_allows(equal_sym)
-                        && !user_impls.contains(&(equal_sym, key))
-                    {
+                    if equal_ok && policy_allows(equal_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_equal_impl_for_enum(
                             type_name,
                             &type_params,
                             &ast_variants,
                         )));
                     }
-                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
-                    {
+                    if hash_ok && policy_allows(hash_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_enum(
                             type_name,
                             &type_params,
@@ -5931,7 +5756,7 @@ impl TypeChecker {
                         .collect();
                     if display_ok
                         && policy_allows(display_sym)
-                        && !user_impls.contains(&(display_sym, key))
+                        && !user_display_impls.contains(&key)
                     {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_record(
@@ -5941,10 +5766,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok
-                        && policy_allows(compare_sym)
-                        && !user_impls.contains(&(compare_sym, key))
-                    {
+                    if compare_ok && policy_allows(compare_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_record(
                                 type_name,
@@ -5953,10 +5775,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok
-                        && policy_allows(equal_sym)
-                        && !user_impls.contains(&(equal_sym, key))
-                    {
+                    if equal_ok && policy_allows(equal_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_equal_impl_for_record(
                                 type_name,
@@ -5965,8 +5784,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
-                    {
+                    if hash_ok && policy_allows(hash_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_record(
                             type_name,
                             &type_params,
@@ -5996,31 +5814,21 @@ impl TypeChecker {
     /// gated built-in traits (Equal / Compare / Hash) over every
     /// user-declared type, then un-stamp `trait_impl_set` /
     /// `method_table` for the ineligible pairs and store the reasons
-    /// in `auto_derive_operator_negatives` /
-    /// `auto_derive_dispatch_negatives`. See the call site in
+    /// in `auto_derive_negatives`. See the call site in
     /// `synthesize_auto_derive_impls` for the full rationale.
     fn enforce_auto_derive_field_gate(
         &mut self,
         user_type_names: &std::collections::HashSet<Symbol>,
-        user_impls: &std::collections::HashSet<(Symbol, Symbol)>,
     ) {
-        let no_rescue = std::collections::HashSet::new();
-        let operator_negatives =
-            self.compute_auto_derive_field_negatives(user_type_names, &no_rescue);
-        let dispatch_negatives =
-            self.compute_auto_derive_field_negatives(user_type_names, user_impls);
+        let negatives = self.compute_auto_derive_field_negatives(user_type_names);
 
-        // Un-stamp the dispatch negatives: drop the provisional
-        // `trait_impl_set` entry (so `where a: Trait` obligations and
-        // supertrait checks reject honestly) and the provisional
-        // auto-derived `method_table` entry (so `.compare()` /
-        // `.equal()` / `.hash()` calls are rejected instead of
-        // falling through to `dispatch_trait_method`'s Value-level
-        // behaviour at runtime). Hand-written impls were counted as
-        // rescuing in this flavour, and register_trait_impl runs
-        // AFTER this pass, so a manual impl re-registers its own
-        // entries untouched.
-        for (trait_sym, canon) in dispatch_negatives.keys() {
+        // Un-stamp the negatives: drop the provisional `trait_impl_set`
+        // entry (so `where a: Trait` obligations and supertrait checks
+        // reject honestly) and the provisional auto-derived
+        // `method_table` entry (so `.compare()` / `.equal()` / `.hash()`
+        // calls are rejected instead of falling through to
+        // `dispatch_trait_method`'s Value-level behaviour at runtime).
+        for (trait_sym, canon) in negatives.keys() {
             self.trait_impl_set.remove(&(*trait_sym, *canon));
             let method_sym = match resolve(*trait_sym).as_str() {
                 "Equal" => intern("equal"),
@@ -6047,25 +5855,15 @@ impl TypeChecker {
             .iter()
             .map(|n| canonicalize_type_name(&self.resolver, *n))
             .collect();
-        self.auto_derive_operator_negatives
+        self.auto_derive_negatives
             .retain(|(_, canon), _| !processed.contains(canon));
-        self.auto_derive_dispatch_negatives
-            .retain(|(_, canon), _| !processed.contains(canon));
-
-        self.auto_derive_operator_negatives
-            .extend(operator_negatives);
-        self.auto_derive_dispatch_negatives
-            .extend(dispatch_negatives);
+        self.auto_derive_negatives.extend(negatives);
     }
 
     /// Round 93: fixpoint over the user-declared types computing which
     /// `(trait, type)` pairs canNOT satisfy a gated built-in trait
     /// because of an offending field / variant payload. Returns
     /// `(trait, canonical type name) → full diagnostic message`.
-    ///
-    /// `rescued` pairs are treated as unconditionally satisfying the
-    /// trait (used to thread hand-written impls into the dispatch
-    /// flavour; pass an empty set for the operator flavour).
     ///
     /// Termination / recursion notes: each pass may only ADD
     /// negatives and the pair space is finite, so the loop is bounded
@@ -6078,7 +5876,6 @@ impl TypeChecker {
     fn compute_auto_derive_field_negatives(
         &self,
         user_type_names: &std::collections::HashSet<Symbol>,
-        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
     ) -> HashMap<(Symbol, Symbol), String> {
         let gated_traits = [intern("Equal"), intern("Compare"), intern("Hash")];
 
@@ -6105,15 +5902,11 @@ impl TypeChecker {
             for (name, canon, body) in &entries {
                 for trait_sym in gated_traits {
                     let key = (trait_sym, *canon);
-                    if negatives.contains_key(&key)
-                        || rescued.contains(&key)
-                        || !self.trait_impl_set.contains(&key)
-                    {
+                    if negatives.contains_key(&key) || !self.trait_impl_set.contains(&key) {
                         continue;
                     }
-                    let supports = |fty: &Type| {
-                        self.gate_field_supports_trait(trait_sym, fty, rescued, &negatives, 0)
-                    };
+                    let supports =
+                        |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &negatives, 0);
                     let offending: Option<String> = match body {
                         TypeBodyKind::Record(fields) => fields.iter().find_map(|(fname, fty)| {
                             (!supports(fty)).then(|| {
@@ -6177,7 +5970,6 @@ impl TypeChecker {
         &self,
         trait_sym: Symbol,
         ty: &Type,
-        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
         negatives: &HashMap<(Symbol, Symbol), String>,
         depth: usize,
     ) -> bool {
@@ -6185,16 +5977,12 @@ impl TypeChecker {
             return true;
         }
         let ty = self.apply(ty);
-        let recurse =
-            |t: &Type| self.gate_field_supports_trait(trait_sym, t, rescued, negatives, depth + 1);
+        let recurse = |t: &Type| self.gate_field_supports_trait(trait_sym, t, negatives, depth + 1);
         // Stamp lookup for a nominal/container head, honest w.r.t. the
         // in-progress negatives.
         let head_ok = |head: Symbol| {
             let canon = canonicalize_type_name(&self.resolver, head);
             let key = (trait_sym, canon);
-            if rescued.contains(&key) {
-                return true;
-            }
             if negatives.contains_key(&key) {
                 return false;
             }
@@ -6244,13 +6032,6 @@ impl TypeChecker {
     /// (`is_equality`) and `<`/`>`/`<=`/`>=` on nominal record / enum
     /// operands. Returns the diagnostic to emit when the operand's
     /// type cannot soundly support the Value-level operation.
-    ///
-    /// Hand-written impls deliberately do NOT lift the rejection:
-    /// comparison operators compile to plain `Op::Eq` / `Op::Lt`
-    /// opcodes that use `Value`'s structural PartialEq/Ord — they
-    /// never dispatch through the impl table — so a manual
-    /// `trait Compare for H` cannot change what `h1 < h2` does at
-    /// runtime. Use `.compare()` / `.equal()` for impl dispatch.
     pub(super) fn operand_builtin_trait_violation(
         &self,
         ty: &Type,
@@ -6269,14 +6050,12 @@ impl TypeChecker {
             // types inline — walk them directly.
             Type::Record(name, fields) => {
                 let canon = canonicalize_type_name(&self.resolver, *name);
-                if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+                if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
                     return Some(msg.clone());
                 }
-                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-                    std::collections::HashSet::new();
                 let no_negatives = HashMap::new();
                 return fields.iter().find_map(|(fname, fty)| {
-                    (!self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0))
+                    (!self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0))
                         .then(|| {
                         format!(
                             "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
@@ -6301,28 +6080,20 @@ impl TypeChecker {
             // honestly (and bottoms out at `Type::Fun(..) => false`), so we
             // reuse it and surface the whole container type as the reason.
             Type::List(_) | Type::Range(_) | Type::Tuple(_) | Type::Map(..) | Type::Set(_) => {
-                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-                    std::collections::HashSet::new();
                 let no_negatives = HashMap::new();
-                return (!self.gate_field_supports_trait(
-                    trait_sym,
-                    &resolved,
-                    &no_rescue,
-                    &no_negatives,
-                    0,
-                ))
-                .then(|| {
-                    format!(
-                        "type '{resolved}' cannot derive '{}': element type is not {}",
-                        resolve(trait_sym),
-                        builtin_trait_adjective(trait_sym),
-                    )
-                });
+                return (!self.gate_field_supports_trait(trait_sym, &resolved, &no_negatives, 0))
+                    .then(|| {
+                        format!(
+                            "type '{resolved}' cannot derive '{}': element type is not {}",
+                            resolve(trait_sym),
+                            builtin_trait_adjective(trait_sym),
+                        )
+                    });
             }
             _ => return None,
         };
         let canon = canonicalize_type_name(&self.resolver, name);
-        if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+        if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
             return Some(msg.clone());
         }
         // Instantiation walk: substitute the concrete type args into
@@ -6332,12 +6103,8 @@ impl TypeChecker {
         // is conditionally eligible, while leaving phantom params
         // (`type Tag(a) { name: String }`) unpunished because only
         // the types that actually appear in fields are walked.
-        let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-            std::collections::HashSet::new();
         let no_negatives = HashMap::new();
-        let check = |fty: &Type| {
-            self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0)
-        };
+        let check = |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0);
         if let Some(info) = self.records.get(&name) {
             let mapping: HashMap<TyVar, Type> = self
                 .record_param_var_ids
@@ -6403,9 +6170,7 @@ impl TypeChecker {
             _ => return None,
         };
         let canon = canonicalize_type_name(&self.resolver, type_name);
-        self.auto_derive_dispatch_negatives
-            .get(&(trait_sym, canon))
-            .cloned()
+        self.auto_derive_negatives.get(&(trait_sym, canon)).cloned()
     }
 
     fn synthesize_default_methods(&self, decls: &mut [Decl]) {
@@ -6549,7 +6314,8 @@ impl TypeChecker {
 
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
-            // Allow overriding auto-derived impls.
+            // Allow overriding auto-derived impls (only `Display` can be
+            // written by hand: see `reject_sealed_trait_impls`).
             let first_method = ti
                 .methods
                 .first()
@@ -6865,8 +6631,8 @@ impl TypeChecker {
         // soundness hole where `trait Total for Bytes2` (with
         // `type Bytes2 = List(Int)`) satisfied a where-bound for ANY
         // `List(T)`. Overwrites are fine: coherence rejects duplicate user
-        // impls above, and the one permitted overwrite (user impl
-        // overriding an auto-derived one) should win here too.
+        // impls above, and the one permitted overwrite (a user Display
+        // impl overriding the auto-derived one) should win here too.
         self.impl_self_types
             .insert((ti.trait_name, target_type), self_type.clone());
 
@@ -7703,7 +7469,7 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
 /// stays equal because a row-tail variable happens to replace the
 /// unification variable that got constrained.
 ///
-/// The classic miss: `fn pluck(r) = r.zzznosuchfield`. Pass-2 generalizes
+/// The classic miss: `fn pluck(r) { r.zzznosuchfield }`. Pass-2 generalizes
 /// to `Fn(α) -> β` (vars=[α, β]); body inference unifies `α` with
 /// `AnonRecord{zzznosuchfield: β, ...γ}`, giving `Fn(AnonRecord{..}) -> β`
 /// (vars=[β, γ]). The old `vars.len()` gate compared 2 vs 2 and skipped
@@ -7881,7 +7647,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         }
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit
@@ -7909,7 +7674,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
 ///   used `Type::Fun([fresh, fresh], Int)`.
 /// - `Equal`:   `fn equal(self, other) -> Bool` (signature only).
 /// - `Hash`:    `fn hash(self) -> Int` (signature only).
-/// - `Error: Display { fn message(self) -> String = self.display() }`.
+/// - `Error: Display { fn message(self) -> String { self.display() } }`.
 ///   Carries a real default body so `synthesize_default_methods` can
 ///   clone `self.display()` into impls that omit `message`.
 fn builtin_trait_decls() -> Vec<TraitDecl> {
@@ -7954,13 +7719,6 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             is_recovery_stub: false,
             is_signature_only: true,
             doc: None,
-            // Built-in trait method signatures default to the gradual
-            // rollout's permissive `TOP`. Phase C will tighten the
-            // stdlib-builtin annotations. These are synthesized — not
-            // user-annotated — so `is_annotated = false`.
-            declared_effects: EffectSet::TOP,
-            is_annotated: false,
-            inferred_effects: None,
         }
     }
 
@@ -7989,12 +7747,6 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
-        // Built-in `Error.message` default body — gradual-rollout TOP
-        // until Phase C tightens stdlib annotations. Synthesized, not
-        // user-annotated.
-        declared_effects: EffectSet::TOP,
-        is_annotated: false,
-        inferred_effects: None,
     };
 
     vec![
@@ -8072,7 +7824,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Error: Display { fn message(self) -> String = self.display() }
+        // trait Error: Display { fn message(self) -> String { self.display() } }
         TraitDecl {
             name: intern("Error"),
             name_span: dummy_span,
@@ -8134,18 +7886,13 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
 
     // Primitives + List: all four auto-derived traits.
-    // `ExtFloat` is the widened-float result of `Float / Float` (see
-    // `src/typechecker/inference.rs:3435-3451`); it must auto-derive all
-    // four built-in traits so that a divided Float can flow through a
-    // `Display`/`Equal`/`Compare`/`Hash` trait bound without a spurious
-    // "type 'ExtFloat' does not implement trait ..." rejection.
     register_auto_derived_impls_for(
         checker,
         // Round 75 TYPE-3 LATENT: canonical key for the unit type is
         // "Unit" (matches canonical_name(Type::Unit) and
         // dispatch_name_for_value(Value::Unit)). The "()" alias
         // collapses onto "Unit" via canonicalize_type_name.
-        &["Int", "Float", "ExtFloat", "Bool", "String", "Unit"],
+        &["Int", "Float", "Bool", "String", "Unit"],
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
@@ -8352,44 +8099,13 @@ pub fn check_with_package_and_imports(
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
 ) -> (Vec<TypeError>, ModuleExports) {
-    check_with_package_and_imports_options(program, package, module_exports, false)
-}
-
-/// Phase D entry point: same as [`check_with_package_and_imports`] but
-/// takes an additional `strict_effects` flag that propagates the
-/// `--strict-effects` mode through to the typechecker. When `true`,
-/// unannotated user fns default to `EffectSet::EMPTY` (pure) and the
-/// body-inference subset check rejects effectful calls from such fns
-/// unless an explicit `!{...}` annotation is added. The diagnostic
-/// includes a copy-paste `help:` line with the suggested annotation.
-///
-/// `false` reproduces the legacy behavior — every existing program
-/// continues to typecheck unchanged. CLI plumbing in `silt check`,
-/// `silt run`, and `silt test` reads the bool from the
-/// `--strict-effects` CLI flag (which wins) and from the
-/// `[lints] strict-effects = true` field in `silt.toml`.
-///
-/// See `docs/strict-effects-migration.md` for the user-facing
-/// migration story and `docs/proposals/effect-rows.md` Part 7 Phase D
-/// for the design.
-pub fn check_with_package_and_imports_options(
-    program: &mut Program,
-    package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-    strict_effects: bool,
-) -> (Vec<TypeError>, ModuleExports) {
-    let (errors, exports, _resolver) = check_with_package_and_imports_options_resolver(
-        program,
-        package,
-        module_exports,
-        strict_effects,
-        None,
-    );
+    let (errors, exports, _resolver) =
+        check_with_package_and_imports_resolver(program, package, module_exports, None);
     (errors, exports)
 }
 
 /// Resolver-threaded cross-module entry point. Mirrors
-/// [`check_with_package_and_imports_options`] but accepts an optional
+/// [`check_with_package_and_imports`] but accepts an optional
 /// caller-owned [`crate::types::canonical::Resolver`] so the alias /
 /// associated-type-binding registries are shared across every module
 /// typechecked in one CLI compile invocation. Returns the resolver
@@ -8401,11 +8117,10 @@ pub fn check_with_package_and_imports_options(
 /// resolver is allocated and dropped on return.
 ///
 /// See commit 6364552 for the original migration rationale.
-pub fn check_with_package_and_imports_options_resolver(
+pub fn check_with_package_and_imports_resolver(
     program: &mut Program,
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
-    strict_effects: bool,
     resolver: Option<crate::types::canonical::Resolver>,
 ) -> (
     Vec<TypeError>,
@@ -8418,7 +8133,6 @@ pub fn check_with_package_and_imports_options_resolver(
     };
     checker.current_package = package;
     checker.module_exports = module_exports;
-    checker.set_strict_effects(strict_effects);
     let env = checker.check_program_returning_env(program);
     let exports = checker.collect_module_exports(program, &env);
     let resolver = checker.take_resolver();
@@ -8467,9 +8181,6 @@ impl ReplTypeContext {
     pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
         // Clear errors from the previous input
         self.checker.errors.clear();
-        // G1: REPL inputs naturally redefine names across entries; only
-        // duplicates WITHIN a single input should error.
-        self.checker.top_level_names.clear();
 
         // Process imports. Round 56 item 4: we do NOT clear
         // `self.checker.imported_modules` here — REPL sessions
@@ -8600,8 +8311,9 @@ impl ReplTypeContext {
         // Synthesize default method bodies into impls that omitted them.
         self.checker.synthesize_default_methods(&mut program.decls);
 
-        // Auto-derive Display/Compare/Equal/Hash for user types without
-        // a manual impl. See `check_program` for the rationale.
+        // Auto-derive Display/Compare/Equal/Hash for user types. See
+        // `check_program` for the rationale.
+        self.checker.reject_sealed_trait_impls(&mut program.decls);
         self.checker
             .synthesize_auto_derive_impls(&mut program.decls);
 
@@ -8642,10 +8354,6 @@ impl ReplTypeContext {
                     Scheme::mono(self.checker.apply(&val_ty))
                 };
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: duplicate top-level let binding within a single
-                    // REPL input. Round 75 DEAD-3: shared helper with
-                    // the non-REPL `let`/`fn` paths.
-                    self.checker.define_top_level_unique(*name, span);
                     self.env.define(*name, scheme);
                 } else {
                     // Same rule as `check_program`: a `let` pattern
@@ -8677,7 +8385,7 @@ impl ReplTypeContext {
         // fresh, unconstrained var and fails with "cannot infer the type of
         // g". `check_program` fixes this in-pass via its pass-3 narrowing
         // loop; the REPL needs the equivalent so the resolved type survives
-        // to the next turn. We mirror that loop's effects/constraints
+        // to the next turn. We mirror that loop's constraint
         // preservation and skip annotated-recursive fns (whose authoritative
         // polymorphic signature `check_program` deliberately leaves intact).
         for i in 0..program.decls.len() {
@@ -8704,12 +8412,9 @@ impl ReplTypeContext {
             {
                 continue;
             }
-            // `generalize` hardcodes `effects: TOP`; carry the registered
-            // scheme's declared effects across (see the round-62 B4 note in
-            // `check_program`). Remap the original where-clause constraints
-            // through an old→new tyvar alignment (round-17 F1).
+            // Remap the original where-clause constraints through an
+            // old→new tyvar alignment (round-17 F1).
             let mut final_scheme = new_scheme;
-            final_scheme.effects = original.effects;
             let remap = align_tyvars(&original.ty, &final_scheme.ty);
             for (old_tv, trait_name) in &original.constraints {
                 if let Some(&new_tv) = remap.get(old_tv)
@@ -8975,53 +8680,20 @@ pub fn builtin_docs() -> std::collections::HashMap<String, String> {
     docs
 }
 
-/// Return a map of every function-typed built-in's name (qualified or
-/// bare) to its `EffectSet`. Phase C of the effect-rows proposal: every
-/// builtin is classified, so this map carries the canonical effect set
-/// for each. Surfaced by the LSP hover handler to render
-/// `effects: !{io, fs}` between the signature and the doc separator
-/// for stdlib calls (mirrors the user-fn rendering already wired by
-/// `render_effects`).
-///
-/// Non-function schemes (`None`, `Empty`, primitive descriptors) are
-/// skipped — only function-typed bindings carry meaningful effects.
-/// The map is keyed by the resolved (string) name to be symmetric with
-/// `builtin_type_signatures` and `builtin_docs`.
-pub fn builtin_effects() -> std::collections::HashMap<String, crate::types::effects::EffectSet> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
-    let mut effects = std::collections::HashMap::new();
-    for (name, scheme) in &env.bindings {
-        // Only function-typed schemes carry meaningful effects. Variant
-        // constants (None, Empty, …) and primitive descriptors (Int,
-        // Float, …) are typed as values, not functions; their `effects`
-        // field is a benign placeholder set by the registration site
-        // (typically `pure()`). Surfacing those would render
-        // `effects: !{}` on hover for `None` — accurate but noisy.
-        if matches!(scheme.ty, Type::Fun(_, _)) {
-            effects.insert(resolve(*name), scheme.effects);
-        }
-    }
-    effects
-}
-
-/// Test-only: iterate `(qualified_name, scheme)` for every built-in
-/// binding registered by `register_builtins`. The Phase C
-/// `tests/meta/effect_stdlib_sweep_lock_tests.rs` lock test consumes this
-/// to assert no builtin remains at `EffectSet::TOP` after the sweep.
+/// Test-only: the sorted names (qualified or bare) of every
+/// function-typed binding registered by `register_builtins`.
 #[doc(hidden)]
-pub fn iter_builtins_for_effects_audit() -> Vec<(String, crate::types::effects::EffectSet)> {
+pub fn builtin_function_names() -> Vec<String> {
     let mut checker = TypeChecker::new();
     let mut env = TypeEnv::new();
     checker.register_builtins(&mut env);
-    let mut out: Vec<(String, crate::types::effects::EffectSet)> = env
+    let mut out: Vec<String> = env
         .bindings
         .iter()
         .filter(|(_, s)| matches!(s.ty, Type::Fun(_, _)))
-        .map(|(name, s)| (resolve(*name), s.effects))
+        .map(|(name, _)| resolve(*name))
         .collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.sort();
     out
 }
 
@@ -9421,7 +9093,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn main() {
-  let double = fn(x) { x * 2 }
+  let double = { x -> x * 2 }
   double(5)
 }
         "#,
@@ -9832,22 +9504,6 @@ fn main() {
         );
     }
 
-    // ── Single-expression function ──────────────────────────────────
-
-    #[test]
-    fn test_single_expr_fn() {
-        assert_no_errors(
-            r#"
-fn square(x) = x * x
-fn add(a, b) = a + b
-
-fn main() {
-  add(square(3), square(4))
-}
-        "#,
-        );
-    }
-
     // ── Integration test programs ───────────────────────────────────
 
     #[test]
@@ -9881,7 +9537,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn make_adder(n) {
-  fn(x) { x + n }
+  { x -> x + n }
 }
 
 fn main() {
@@ -9979,7 +9635,7 @@ fn main() {
         assert_has_error(
             r#"
 fn main() {
-  let x = 42 + "hello"
+  let x = 42 + 1.5
   x
 }
             "#,
@@ -10468,7 +10124,7 @@ fn main() {
   let is_s = option.is_some(opt)
   let is_n = option.is_none(opt)
   let val = option.unwrap_or(opt, 0)
-  let mapped = option.map(opt, fn(x) { x + 1 })
+  let mapped = option.map(opt, { x -> x + 1 })
   let res = option.to_result(opt, "no value")
   val
 }
@@ -10500,7 +10156,7 @@ fn main() {
   let xs = [[1, 2], [3, 4], [5]]
   let flat = list.flatten(xs)
   let zipped = list.zip([1, 2, 3], ["a", "b", "c"])
-  let sorted = list.sort_by([3, 1, 2], fn(x) { x })
+  let sorted = list.sort_by([3, 1, 2], { x -> x })
   flat
 }
         "#,
@@ -10587,7 +10243,7 @@ fn main() {
             r#"
 import task
 fn main() {
-  let h = task.spawn(fn() { 42 })
+  let h = task.spawn({ -> 42 })
   let result = task.join(h)
   result
 }
@@ -10968,14 +10624,14 @@ fn main() {
 
     #[test]
     fn test_arithmetic_on_string_and_int() {
-        // String + Int should produce a type mismatch
+        // String + Int is rejected: `+` is numeric only
         assert_has_error(
             r#"
 fn main() {
   "hello" + 42
 }
             "#,
-            "type mismatch",
+            "requires Int or Float",
         );
     }
 
@@ -11085,10 +10741,10 @@ fn main() {
         // many unrelated diagnostics could satisfy it (e.g. any diagnostic
         // that says "unused binding" or "argument count"). The real message
         // produced by typechecker/inference.rs is
-        // `loop has N binding(s), but recur supplies M argument(s)`.
+        // `loop has N binding(s), but `loop(...)` supplies M argument(s)`.
         //
         // Strengthening:
-        //   - AND-chain specific phrases "loop has" && "recur supplies"
+        //   - AND-chain specific phrases "loop has" && "`loop(...)` supplies"
         //   - require Severity::Error (GAP #163 established recur arity
         //     mismatch is an Error, not a Warning)
         //
@@ -11112,11 +10768,11 @@ fn main() {
         );
         let recur_err = errors
             .iter()
-            .find(|e| e.message.contains("loop has") && e.message.contains("recur supplies"))
+            .find(|e| e.message.contains("loop has") && e.message.contains("`loop(...)` supplies"))
             .unwrap_or_else(|| {
                 panic!(
                     "expected a recur arity diagnostic containing both \"loop has\" and \
-                     \"recur supplies\", got: {:?}",
+                     \"`loop(...)` supplies\", got: {:?}",
                     errors.iter().map(|e| &e.message).collect::<Vec<_>>()
                 )
             });
@@ -11292,8 +10948,8 @@ fn main() {
 import list
 fn main() {
   let xs = [1, 2, 3, 4, 5]
-  let doubled = list.map(xs, fn(x) { x * 2 })
-  let evens = list.filter(xs, fn(x) { x > 2 })
+  let doubled = list.map(xs, { x -> x * 2 })
+  let evens = list.filter(xs, { x -> x > 2 })
   doubled
 }
             "#,
@@ -11497,20 +11153,5 @@ fn main() -> Result {
         assert!(tc.errors.is_empty(), "list unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
-    }
-
-    #[test]
-    fn test_comparison_float_extfloat() {
-        // Comparing Float with ExtFloat (e.g. result of division) should succeed
-        // and produce Bool, not a unification error.
-        assert_no_errors(
-            r#"
-fn main() {
-  let x = 10.0 / 3.0
-  let result = x == 1.0
-  result
-}
-            "#,
-        );
     }
 }

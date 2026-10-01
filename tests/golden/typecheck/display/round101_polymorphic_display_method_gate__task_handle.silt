@@ -6,6 +6,6 @@
 import task
 fn show(x: a) -> String { x.display() }
 fn main() {
-  let h = task.spawn(fn() { 42 })
+  let h = task.spawn({ -> 42 })
   println(show(h))
 }

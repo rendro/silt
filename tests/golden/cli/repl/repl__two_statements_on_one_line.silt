@@ -1,0 +1,6 @@
+-- In the REPL, two `let`s on one line are two statements: the error says
+-- "statement", as inside a function body.
+-- cmd: repl
+-- stdin: let a = 1 let b = 2\n:quit\n
+-- stderr-contains: expected a newline before 'let': each statement must start on its own line
+-- stderr-not-contains: each declaration

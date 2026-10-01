@@ -3,8 +3,8 @@
 -- inc() = 11, dec() = 9, total = 20
 import io
 fn make_pair(n) {
-  let inc = fn() { n + 1 }
-  let dec = fn() { n - 1 }
+  let inc = { -> n + 1 }
+  let dec = { -> n - 1 }
   (inc, dec)
 }
 

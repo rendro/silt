@@ -31,7 +31,6 @@ use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 pub(crate) enum FieldType {
     Int,
     Float,
-    ExtFloat,
     String,
     Bool,
     List(Box<FieldType>),
@@ -72,7 +71,6 @@ pub(crate) fn decode_field_type(s: &str) -> FieldType {
         match s {
             "Int" => FieldType::Int,
             "Float" => FieldType::Float,
-            "ExtFloat" => FieldType::ExtFloat,
             "String" => FieldType::String,
             "Bool" => FieldType::Bool,
             "Date" => FieldType::Date,
@@ -348,10 +346,6 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
-        Value::ExtFloat(f) if f.is_finite() => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::ExtFloat(_) => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::List(xs) => {
@@ -891,7 +885,6 @@ fn json_to_map(vm: &mut Vm, value_type: &str, json: &serde_json::Value) -> Resul
         "String" => FieldType::String,
         "Int" => FieldType::Int,
         "Float" => FieldType::Float,
-        "ExtFloat" => FieldType::ExtFloat,
         "Bool" => FieldType::Bool,
         record_name => {
             // Check if it's a known record type
@@ -975,16 +968,6 @@ fn json_to_typed_value(
                 }
             }
             _ => Err(mismatch("Float", json_type_name(json))),
-        },
-        FieldType::ExtFloat => match json {
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Ok(Value::ExtFloat(f))
-                } else {
-                    Err(unknown("expected ExtFloat, got non-numeric number".into()))
-                }
-            }
-            _ => Err(mismatch("ExtFloat", json_type_name(json))),
         },
         FieldType::Bool => match json {
             serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
@@ -1343,12 +1326,11 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             match &args[1] {
                 Value::PrimitiveDescriptor(name) => {
                     // Primitive descriptor path: decode JSON scalars directly
-                    // into `Value::Int / Float / ExtFloat / String / Bool`,
+                    // into `Value::Int / Float / String / Bool`,
                     // returning the typed `Result(a, JsonError)` shape.
                     let field_type = match name.as_str() {
                         "Int" => FieldType::Int,
                         "Float" => FieldType::Float,
-                        "ExtFloat" => FieldType::ExtFloat,
                         "String" => FieldType::String,
                         "Bool" => FieldType::Bool,
                         other => {
@@ -1374,7 +1356,7 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
                 _ => Err(VmError::new(
-                    "json.parse: type argument must be a type (Int, Float, ExtFloat, String, Bool, or a record type)".into(),
+                    "json.parse: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
                 )),
             }
         }

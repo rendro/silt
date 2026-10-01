@@ -63,13 +63,6 @@ displayable builtins, so the obligation is satisfied automatically;
 channels and function values are the exception — they do not implement
 `Display`. The fifth built-in, `Error`, is not auto-derived).
 
-**`Equal` vs `==` for `ExtFloat` (NaN divergence).** For `ExtFloat`,
-`a.equal(b)` is reflexive by bit pattern (so `NaN.equal(NaN) = true`)
-while `a == b` follows IEEE-754 (`NaN == NaN = false`). This makes
-`ExtFloat` usable as a map or set key — lookup relies on `equal` being
-reflexive so the key always finds itself — while preserving standard
-floating-point comparison semantics for the language-level `==` operator.
-
 Multiple supertraits separate with `+`:
 
 ```silt
@@ -113,7 +106,7 @@ Implementing a subtrait without the supertrait fails:
 type MyInt { v: Int }
 trait Ordered for MyInt { ... }
 -- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
--- (only fires when MyInt does not have an Equal impl — auto-derived counts)
+-- (only fires when MyInt cannot derive Equal, e.g. it has a function field)
 ```
 
 ## Default Methods
@@ -163,7 +156,7 @@ specialises per impl:
 ```silt
 trait Describable {
   fn name(self) -> String                              -- abstract
-  fn greet(self) -> String { "hi, " + self.name() }    -- default uses name()
+  fn greet(self) -> String { "hi, {self.name()}" }     -- default uses name()
 }
 
 type Person { who: String }
@@ -411,6 +404,20 @@ auto-derived.
 
 The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
 Write your own `trait Display for T` to override.
+
+`Equal`, `Hash` and `Compare` are **sealed**: they are always derived
+structurally from a type's fields (a type gets them when every field
+supports them), and `==`, `<` and map keys use exactly that structure. A
+hand-written `trait Equal for T`, `trait Compare for T` or
+`trait Hash for T` is an error:
+
+```silt
+type Version { major: Int, minor: Int }
+trait Compare for Version { ... }
+-- error: trait 'Compare' cannot be implemented by hand: it is derived
+-- structurally for every type whose fields support it — remove this
+-- impl; Equal, Compare and Hash are derived
+```
 
 The `Error` trait has supertrait `Display` and one method,
 `message(self) -> String`. Each stdlib error enum (`IoError`,

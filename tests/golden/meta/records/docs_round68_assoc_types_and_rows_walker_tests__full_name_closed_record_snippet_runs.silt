@@ -1,5 +1,6 @@
-fn full_name(p: {first: String, last: String}) -> String =
-  p.first + " " + p.last
+fn full_name(p: {first: String, last: String}) -> String {
+  "{p.first} {p.last}"
+}
 
 fn main() {
   println(full_name({first: "Alice", last: "Smith"}))

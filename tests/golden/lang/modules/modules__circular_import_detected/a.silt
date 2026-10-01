@@ -1,2 +1,2 @@
 import b
-pub fn fa() = 1
+pub fn fa() { 1 }

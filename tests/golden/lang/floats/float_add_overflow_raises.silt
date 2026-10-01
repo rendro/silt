@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: float overflow
+import float
+fn main() {
+  println(float.max_value + float.max_value)
+}

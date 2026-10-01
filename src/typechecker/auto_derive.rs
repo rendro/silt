@@ -1,8 +1,9 @@
 //! Auto-derive synthesis for built-in traits on user-declared types.
 //!
-//! For every user enum or record without a manual `trait <X> for T` impl,
-//! we synthesize a `TraitImpl` AST node for each of Display, Compare,
-//! Equal, and Hash. The synthesized impl's method bodies are real silt
+//! For every user enum or record we synthesize a `TraitImpl` AST node
+//! for each of Compare, Equal and Hash (sealed: they cannot be written
+//! by hand), and for Display unless the type has a manual
+//! `trait Display for T` impl. The synthesized impl's method bodies are real silt
 //! AST (match expressions, let bindings, calls) so they flow through the
 //! typechecker's body-check pass and the compiler's TraitImpl emit path
 //! exactly the same as a user-written impl. The result is that
@@ -40,17 +41,19 @@
 //!
 //! ```silt
 //! trait Compare for Color {
-//!   fn compare(self: Color, other: Color) -> Int = match (self, other) {
-//!     (Red, Red) -> 0
-//!     (Green(xa), Green(xb)) -> xa.compare(xb)
-//!     (Blue(a1, a2), Blue(b1, b2)) -> {
+//!   fn compare(self: Color, other: Color) -> Int {
+//!     match (self, other) {
+//!       (Red, Red) -> 0
+//!       (Green(xa), Green(xb)) -> xa.compare(xb)
+//!       (Blue(a1, a2), Blue(b1, b2)) -> {
 //!         let c1 = a1.compare(b1)
 //!         match c1 { 0 -> a2.compare(b2), _ -> c1 }
-//!     }
-//!     _ -> {
+//!       }
+//!       _ -> {
 //!         let ord_self = match self { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
 //!         let ord_other = match other { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
 //!         ord_self.compare(ord_other)
+//!       }
 //!     }
 //!   }
 //! }
@@ -198,7 +201,7 @@ fn let_stmt(name: Symbol, value: Expr) -> Stmt {
 /// Semantics caveat for callers: this changes the *grouping* of
 /// `combine` applications, so it is only valid when `combine` is
 /// associative AND its evaluation order over the leaves matches the
-/// left fold's (true for `&&`, string `+`, and the compare
+/// left fold's (true for `&&` and the compare
 /// first-non-zero combinator used below — each evaluates its left
 /// operand fully before deciding whether to evaluate the right one,
 /// so leaves still run strictly left-to-right with identical
@@ -219,13 +222,38 @@ fn balanced_fold(mut items: Vec<Expr>, combine: &mut dyn FnMut(Expr, Expr) -> Ex
     items.pop().expect("balanced_fold invariant: one item left")
 }
 
-/// Balanced string concatenation: `+`-join the pieces with O(log N)
-/// nesting. String concatenation is associative and `+` always
-/// evaluates left then right, so the resulting string — and the order
-/// in which the embedded `.display()` calls run — is identical to the
-/// left-fold chain this replaces.
+/// Join display pieces into one string with interpolation. Literal
+/// pieces become literal segments (adjacent ones merged) and the
+/// `.display()` calls become interpolated segments, which run strictly
+/// left to right. An interpolation holds at most 255 segments (the
+/// compiler's `StringConcat` count is a `u8`), so a wider join nests
+/// interpolations of at most 255 segments each: depth O(log N).
 fn concat_all(pieces: Vec<Expr>) -> Expr {
-    balanced_fold(pieces, &mut |a, b| bin(a, BinOp::Add, b))
+    let mut parts: Vec<StringPart> = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        match piece.kind {
+            ExprKind::StringLit(lit, _) => match parts.last_mut() {
+                Some(StringPart::Literal(prev)) => prev.push_str(&lit),
+                _ => parts.push(StringPart::Literal(lit)),
+            },
+            _ => parts.push(StringPart::Expr(piece)),
+        }
+    }
+    const MAX_SEGMENTS: usize = u8::MAX as usize;
+    while parts.len() > MAX_SEGMENTS {
+        let mut chunks = Vec::with_capacity(parts.len().div_ceil(MAX_SEGMENTS));
+        let mut iter = parts.into_iter().peekable();
+        while iter.peek().is_some() {
+            let chunk: Vec<StringPart> = iter.by_ref().take(MAX_SEGMENTS).collect();
+            chunks.push(StringPart::Expr(interp_expr(chunk)));
+        }
+        parts = chunks;
+    }
+    interp_expr(parts)
+}
+
+fn interp_expr(parts: Vec<StringPart>) -> Expr {
+    Expr::new(ExprKind::StringInterp(parts), Span::synthetic())
 }
 
 /// Balanced `&&`-join. `&&` is associative, and the balanced grouping
@@ -349,14 +377,6 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
         is_recovery_stub: false,
         is_signature_only: false,
         doc: None,
-        // Auto-derived methods (Display / Compare / Equal / Hash on
-        // user records and enums) carry the gradual-rollout `TOP`
-        // default so they don't fail enforcement when callers happen
-        // to declare a tighter set on the calling fn. Not user-
-        // annotated.
-        declared_effects: crate::types::effects::EffectSet::TOP,
-        is_annotated: false,
-        inferred_effects: None,
     }
 }
 
@@ -371,7 +391,7 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
 ///   impl, etc.). Phantom params (params not used in any field) still
 ///   receive the bound for consistency: this matches Rust's auto-derive
 ///   behaviour and avoids a special case.
-/// - `is_auto_derived = true` (so user impls can override).
+/// - `is_auto_derived = true` (so a user `Display` impl can override it).
 fn trait_impl(
     trait_name: Symbol,
     type_name: Symbol,
@@ -446,7 +466,7 @@ fn empty_match_body(self_sym: Symbol) -> Expr {
 
 /// Scaffold for binop-shaped enum derives (Compare, Equal).
 ///
-/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> { ... }` where the
 /// body is:
 /// - `match self { }` if `variants` is empty (uninhabited fast path).
 /// - Otherwise `match (self, other) { ...same-tag arms..., (catch-all) }`.
@@ -520,7 +540,7 @@ fn synth_binop_match_enum(
 
 /// Scaffold for unop-shaped enum derives (Hash, Display).
 ///
-/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is:
+/// Builds `fn <method>(self: T) -> <ret_ty> { ... }` where the body is:
 /// - `match self { }` if `variants` is empty (uninhabited fast path).
 /// - Otherwise `match self { ...one arm per variant... }`. The match
 ///   is exhaustive without a wildcard because every variant has its
@@ -574,7 +594,7 @@ fn synth_unop_match_enum(
 
 // ── Compare on enum ──────────────────────────────────────────────────
 
-/// Synthesize a `trait Compare for Enum { fn compare(self: Enum, other: Enum) -> Int = ... }` impl.
+/// Synthesize a `trait Compare for Enum { fn compare(self: Enum, other: Enum) -> Int { ... } }` impl.
 ///
 /// Body shape: nested match on `(self, other)`.
 /// - For each variant: same-tag arm computes lex compare of args (or 0
@@ -836,10 +856,9 @@ pub(super) fn synth_display_impl_for_enum(
             if arg_names.is_empty() {
                 string_expr(&tag_name)
             } else {
-                // "Tag(" + a0.display() + ", " + a1.display() + ... + ")"
-                // — balanced concat (round 92): identical string and
-                // identical left-to-right `.display()` call order, but
-                // O(log n) deep instead of O(n).
+                // `Tag(<a0>, <a1>, ...)` from each argument's
+                // `.display()` — one interpolation, flat regardless of
+                // arity.
                 let mut pieces: Vec<Expr> = vec![string_expr(&tag_name), string_expr("(")];
                 for (i, arg_name) in arg_names.iter().enumerate() {
                     if i > 0 {
@@ -883,7 +902,7 @@ pub(super) fn synth_display_impl_for_enum(
 
 /// Scaffold for binop-shaped record derives (Compare, Equal).
 ///
-/// Builds `fn <method>(self: T, other: T) -> <ret_ty> = ...` where the
+/// Builds `fn <method>(self: T, other: T) -> <ret_ty> { ... }` where the
 /// body is `empty_body` when `fields` is empty, otherwise the result of
 /// `full_body(self_sym, other_sym, fields)`.
 #[allow(clippy::too_many_arguments)]
@@ -916,7 +935,7 @@ fn synth_binop_record_impl(
 
 /// Scaffold for unop-shaped record derives (Hash, Display).
 ///
-/// Builds `fn <method>(self: T) -> <ret_ty> = ...` where the body is
+/// Builds `fn <method>(self: T) -> <ret_ty> { ... }` where the body is
 /// `empty_body` when `fields` is empty, otherwise the result of
 /// `full_body(self_sym, fields)`.
 #[allow(clippy::too_many_arguments)]
@@ -1059,9 +1078,8 @@ pub(super) fn synth_hash_impl_for_record(
 // ── Display on record ────────────────────────────────────────────────
 
 fn build_record_display_concat(name_str: &str, self_sym: Symbol, fields: &[RecordField]) -> Expr {
-    // "Name { f0: " + self.f0.display() + ", f1: " + self.f1.display() + " }"
-    // — balanced concat (round 92): identical string and identical
-    // left-to-right `.display()` call order, O(log n) deep.
+    // `Name { f0: <f0>, f1: <f1> }` from each field's `.display()` —
+    // one interpolation, flat regardless of width.
     let mut pieces: Vec<Expr> = vec![string_expr(&format!("{name_str} {{ "))];
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {

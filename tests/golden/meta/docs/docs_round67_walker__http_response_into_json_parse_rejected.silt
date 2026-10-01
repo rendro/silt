@@ -11,7 +11,7 @@ type Todo {
   title: String,
 }
 
-fn process(t: Todo) -> Todo = t
+fn process(t: Todo) -> Todo { t }
 
 fn fetch_todo(url: String) -> Result(Todo, HttpError) {
   let _x = http.get(url)?

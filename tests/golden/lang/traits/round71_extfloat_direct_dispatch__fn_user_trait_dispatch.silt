@@ -1,6 +1,0 @@
-trait Show { fn show(self) -> String }
-trait Show for Fn { fn show(self) -> String = "fn-impl" }
-fn main() {
-  let f = fn() { 42 }
-  println(f.show())
-}

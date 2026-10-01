@@ -11,7 +11,7 @@ import task
 import time
 fn main() {
   let about_to_fail = channel.new(1)
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     channel.send(about_to_fail, 1)
     let zero = 0
     10 / zero

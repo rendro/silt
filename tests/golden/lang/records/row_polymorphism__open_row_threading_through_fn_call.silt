@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
 fn main() {
     let q = id_name({name: "A", age: 30})
     let _ = q.age

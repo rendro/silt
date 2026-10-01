@@ -5,7 +5,7 @@ import task
 import time
 fn main() {
   let ch = channel.new(0)
-  let _h = task.spawn(fn() {
+  let _h = task.spawn({ ->
     time.sleep(time.ms(20))
     channel.send(ch, 42)
   })

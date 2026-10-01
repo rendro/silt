@@ -8,7 +8,7 @@ import time
 
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn(fn() { channel.receive(ch) })
+  let h = task.spawn({ -> channel.receive(ch) })
   time.sleep(time.ms(200))
   task.cancel(h)
   time.sleep(time.ms(200))
@@ -16,7 +16,7 @@ fn main() {
   -- return false. Before the fix, the cancelled receiver's leaked
   -- recv-waker keeps `waiting_receivers == 1`, and `try_send`
   -- phantom-succeeds (value silently dropped into the handoff slot).
-  let probe = task.spawn(fn() { channel.try_send(ch, 999) })
+  let probe = task.spawn({ -> channel.try_send(ch, 999) })
   let ok = task.join(probe)
   match ok {
     true -> println("BUG:phantom_send_after_cancel")

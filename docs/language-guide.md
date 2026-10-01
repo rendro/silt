@@ -34,4 +34,3 @@ This guide is split into focused pages:
 ## Other Guides
 
 - [Concurrency](concurrency.md) -- CSP model, tasks, channels, select, fan-out patterns
-- [Strict-effects migration guide](strict-effects-migration.md) -- enabling `--strict-effects` to enforce effect annotations on user functions

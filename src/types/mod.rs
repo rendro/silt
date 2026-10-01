@@ -5,14 +5,11 @@
 
 pub mod builtins;
 pub mod canonical;
-pub mod effects;
 
 use std::collections::{BTreeMap, HashMap};
 
 use crate::intern::Symbol;
 use crate::lexer::Span;
-
-pub use crate::types::effects::{Effect, EffectSet};
 
 // ── Type representation ─────────────────────────────────────────────
 
@@ -36,7 +33,6 @@ pub enum RowTail {
 pub enum Type {
     Int,
     Float,
-    ExtFloat,
     Bool,
     String,
     Unit,
@@ -98,7 +94,6 @@ impl std::fmt::Display for Type {
         match self {
             Type::Int => write!(f, "Int"),
             Type::Float => write!(f, "Float"),
-            Type::ExtFloat => write!(f, "ExtFloat"),
             Type::Bool => write!(f, "Bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
@@ -214,12 +209,6 @@ impl std::fmt::Display for Type {
 /// A type scheme represents a polymorphic type: forall vars . ty
 /// The `vars` are the universally quantified type variables.
 /// The `constraints` are trait bounds on type variables (from `where` clauses).
-/// The `effects` field tracks the set of effects the function (if any)
-/// performs. Function-typed schemes carry a meaningful set; non-function
-/// schemes carry `EffectSet::TOP` as a benign placeholder. During the
-/// Phase A rollout every Scheme literal in the codebase defaults its
-/// `effects` to `EffectSet::TOP` (the gradual-rollout permissive
-/// default), which keeps existing programs typechecking unchanged.
 ///
 /// `optional_last_param` is part of a function's signature: when `true`,
 /// a call may leave out the function's last parameter. Only the builtins
@@ -235,7 +224,6 @@ pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
     pub constraints: Vec<(TyVar, Symbol)>,
-    pub effects: EffectSet,
     pub optional_last_param: bool,
 }
 
@@ -245,7 +233,6 @@ impl Scheme {
             vars: Vec::new(),
             ty,
             constraints: Vec::new(),
-            effects: EffectSet::TOP,
             optional_last_param: false,
         }
     }
@@ -255,60 +242,6 @@ impl Scheme {
     pub fn with_optional_last_param(mut self) -> Self {
         self.optional_last_param = true;
         self
-    }
-
-    /// Construct a non-polymorphic scheme with an explicit effect set.
-    /// Used by the Phase C stdlib sweep to attach the actual effect
-    /// classification to each builtin registration site (e.g.
-    /// `Scheme::with_effects(ty, EffectSet::io_fs())` for
-    /// `io.read_file`).
-    pub fn with_effects(ty: Type, effects: EffectSet) -> Self {
-        Scheme {
-            vars: Vec::new(),
-            ty,
-            constraints: Vec::new(),
-            effects,
-            optional_last_param: false,
-        }
-    }
-
-    /// Convenience: a non-polymorphic scheme with `EffectSet::pure()`.
-    /// The most common shape in the Phase C sweep — every list / map /
-    /// set / string / int / float / bytes / encoding / TOML / option /
-    /// result / test builtin uses it. Equivalent to
-    /// `Scheme::with_effects(ty, EffectSet::pure())`.
-    pub fn pure_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::pure())
-    }
-
-    /// Mono scheme tagged `!{io}`. For env.* and stdin/stdout-style
-    /// OS-resource interactions that don't refine to fs/net/time/random.
-    pub fn io_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::io())
-    }
-
-    /// Mono scheme tagged `!{io, fs}`. For every filesystem operation
-    /// (`io.read_file`, `fs.*`, `stream.file_*`, etc).
-    pub fn io_fs_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::io_fs())
-    }
-
-    /// Mono scheme tagged `!{io, net}`. For every network operation
-    /// (`tcp.*`, `http.*`, `postgres.*`).
-    pub fn io_net_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::io_net())
-    }
-
-    /// Mono scheme tagged `!{io, time}`. For wall-clock reads
-    /// (`time.now`, `time.today`, …).
-    pub fn io_time_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::io_time())
-    }
-
-    /// Mono scheme tagged `!{io, random}`. For OS-entropy reads
-    /// (`math.random`, `uuid.v4`, `crypto.random_bytes`).
-    pub fn io_random_mono(ty: Type) -> Self {
-        Scheme::with_effects(ty, EffectSet::io_random())
     }
 }
 
@@ -424,7 +357,6 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
         }
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit

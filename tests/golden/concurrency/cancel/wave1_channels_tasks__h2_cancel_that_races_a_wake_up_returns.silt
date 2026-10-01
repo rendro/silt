@@ -18,9 +18,9 @@ fn go(i, n) {
   match i < n {
     true -> {
       let ch = channel.new(1)
-      let t = task.spawn(fn() { channel.receive(ch) })
+      let t = task.spawn({ -> channel.receive(ch) })
       time.sleep(time.ms(2))
-      let s = task.spawn(fn() { channel.try_send(ch, i) })
+      let s = task.spawn({ -> channel.try_send(ch, i) })
       let _ = spin(i % 30)
       task.cancel(t)
       let _ = task.join(s)

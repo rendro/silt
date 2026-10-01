@@ -1,0 +1,9 @@
+-- After a declaration on the same line, a token that cannot start a
+-- declaration gets the plain 'expected declaration' error, not the
+-- newline hint.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected declaration, found 5
+-- stderr-not-contains: expected a newline
+type A { x: Int } 5
+fn main() { println(1) }

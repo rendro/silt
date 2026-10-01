@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn main_bound_by_let_or_import_is_a_main() {
-        assert!(program_has_main(&parse("let main = fn() { 1 }")));
+        assert!(program_has_main(&parse("let main = { -> 1 }")));
         assert!(program_has_main(&parse("import helper.{ main }")));
         assert!(!program_has_main(&parse("import main")));
     }

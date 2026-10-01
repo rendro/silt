@@ -1,5 +1,5 @@
 error[type]: trait 'Cast' expects 1 type argument in bound, got 2
  --> where_clause_bound_arity_mismatch__method_level_over_arity_once.silt:8:5
    |
- 8 |     fn use_it(self) -> Int where a: Cast(Int, String) = 0
+ 8 |     fn use_it(self) -> Int where a: Cast(Int, String) { 0 }
    |     ^ trait 'Cast' expects 1 type argument in bound, got 2

@@ -1,7 +1,6 @@
 use crate::ast::*;
 use crate::intern::{self, Symbol};
 use crate::lexer::{Span, SpannedToken, Token};
-use crate::types::effects::{Effect, EffectSet};
 use std::fmt;
 
 // ── Error type ───────────────────────────────────────────────────────
@@ -451,9 +450,129 @@ enum Segment {
     },
 }
 
+// ── Top-level names ──────────────────────────────────────────────────
+
+/// The names a top-level declaration binds, each with the span to report
+/// it at and a word for the kind of declaration.
+fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
+    match decl {
+        // A recovery stub stands in for a broken declaration the user is
+        // still fixing; it binds nothing of its own.
+        Decl::Fn(f) if f.is_recovery_stub => Vec::new(),
+        Decl::Fn(f) => vec![(f.name, f.name_span, "function")],
+        Decl::Type(t) => vec![(t.name, t.name_span, "type")],
+        Decl::Trait(t) => vec![(t.name, t.name_span, "trait")],
+        Decl::TraitImpl(_) => Vec::new(),
+        Decl::Import(target, span) => match target {
+            ImportTarget::Module(m) => vec![(*m, *span, "import")],
+            ImportTarget::Items(_, items) => {
+                items.iter().map(|item| (*item, *span, "import")).collect()
+            }
+            ImportTarget::Alias(_, alias) => vec![(*alias, *span, "import")],
+        },
+        Decl::Let { pattern, .. } => {
+            let mut names = Vec::new();
+            pattern_binders(pattern, &mut names);
+            names
+                .into_iter()
+                .map(|(name, span)| (name, span, "let binding"))
+                .collect()
+        }
+    }
+}
+
+/// The names `pattern` binds, with their spans.
+fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
+    match &pattern.kind {
+        PatternKind::Ident(name) => out.push((*name, pattern.span)),
+        PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
+            for part in parts {
+                pattern_binders(part, out);
+            }
+        }
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            for (field, sub) in fields {
+                match sub {
+                    Some(sub) => pattern_binders(sub, out),
+                    None => out.push((*field, pattern.span)),
+                }
+            }
+            if let PatternKind::AnonRecord {
+                rest: Some(rest), ..
+            } = &pattern.kind
+            {
+                out.push((*rest, pattern.span));
+            }
+        }
+        PatternKind::List(elems, rest) => {
+            for elem in elems {
+                pattern_binders(elem, out);
+            }
+            if let Some(rest) = rest {
+                pattern_binders(rest, out);
+            }
+        }
+        // Every alternative binds the same names.
+        PatternKind::Or(alts) => {
+            if let Some(first) = alts.first() {
+                pattern_binders(first, out);
+            }
+        }
+        PatternKind::Map(entries) => {
+            for (_, sub) in entries {
+                pattern_binders(sub, out);
+            }
+        }
+        PatternKind::Wildcard
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => {}
+    }
+}
+
+/// One error for every top-level name bound a second time. A top-level
+/// name is bound once: two imports of the same name, an import and a
+/// declaration, or two declarations may not share it, so which one a use
+/// refers to never depends on their order. (Shadowing inside a function
+/// body is unaffected.)
+fn top_level_name_errors(decls: &[Decl]) -> Vec<ParseError> {
+    let mut first: std::collections::HashMap<Symbol, (Span, &'static str)> =
+        std::collections::HashMap::new();
+    let mut errors = Vec::new();
+    for decl in decls {
+        for (name, span, kind) in top_level_binders(decl) {
+            if intern::resolve(name) == "_" {
+                continue;
+            }
+            match first.get(&name) {
+                Some(&(first_span, first_kind)) => errors.push(ParseError {
+                    message: format!(
+                        "'{name}' is bound twice at the top level: by the {first_kind} at line {} \
+                         and by the {kind} here — a top-level name can be bound only once",
+                        first_span.line
+                    ),
+                    span,
+                }),
+                None => {
+                    first.insert(name, (span, kind));
+                }
+            }
+        }
+    }
+    errors
+}
+
 // ── Parser ───────────────────────────────────────────────────────────
 
 const MAX_DEPTH: usize = 128;
+
+/// Right binding power of `|>`. A pipe stage is parsed at exactly this
+/// power, which is how the postfix `?` arm recognises the end of a stage.
+const PIPE_R_BP: u8 = 56;
 
 /// Upper bound on the number of operations one expression tree may chain
 /// or nest (see `Parser::expr_height`). Every operator, pipe, call, index,
@@ -552,6 +671,10 @@ pub struct Parser {
     /// exit so nested-but-illegal forms (parser doesn't allow nested
     /// traits, so this is purely defensive) cannot leak between siblings.
     current_trait_name: Option<Symbol>,
+    /// What a top-level item is called in the same-line error: a
+    /// "declaration" in a file, a "statement" in the REPL, whose entries
+    /// are statements (see `for_repl`).
+    top_level_item: &'static str,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -593,6 +716,7 @@ impl Parser {
             in_fn_recovery: false,
             doc_index: None,
             current_trait_name: None,
+            top_level_item: "declaration",
         }
     }
 
@@ -613,7 +737,16 @@ impl Parser {
             in_fn_recovery: false,
             doc_index: Some(DocIndex::from_source(source)),
             current_trait_name: None,
+            top_level_item: "declaration",
         }
+    }
+
+    /// A parser for a REPL entry: its top-level items are statements, so
+    /// two on one line get "each statement must start on its own line",
+    /// as inside a function body.
+    pub fn for_repl(mut self) -> Self {
+        self.top_level_item = "statement";
+        self
     }
 
     /// Delimiter depth of the token at `index` (see `delim_depth`).
@@ -708,6 +841,15 @@ impl Parser {
     fn skip_nl(&mut self) {
         while self.at_newline() {
             self.pos += 1;
+        }
+    }
+
+    /// Undo `skip_nl` (and the newline skipping of `peek_skip_nl`): step
+    /// back to just after the last real token, so the newline that ends a
+    /// body-less declaration is seen by the same-line check.
+    fn unskip_nl(&mut self) {
+        while self.pos > 0 && matches!(self.tokens[self.pos - 1].0, Token::Newline) {
+            self.pos -= 1;
         }
     }
 
@@ -831,25 +973,6 @@ impl Parser {
             && std::mem::discriminant(self.peek()) != std::mem::discriminant(our_closer)
     }
 
-    /// True if the current token is `fn` and the next non-newline token is
-    /// an identifier. That shape is unambiguously a top-level `fn NAME(...)`
-    /// declaration — an anonymous-fn expression must be `fn(...)` with
-    /// parens immediately after. Used inside delimited-list parsers so an
-    /// unclosed `[`, `(`, or `{` whose next line begins a fresh `fn` decl
-    /// is blamed on the opener rather than on the innards of a failed
-    /// anon-fn shape. (Round-52 deferred item 3.)
-    fn at_top_level_fn_start(&self) -> bool {
-        if !matches!(self.peek(), Token::Fn) {
-            return false;
-        }
-        // Look ahead past newlines to the next real token.
-        let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
-            i += 1;
-        }
-        matches!(self.tokens.get(i), Some((Token::Ident(_), _)))
-    }
-
     /// Wrap `parse_expr()` so that if it fails because the next token is
     /// EOF or a foreign closer, the error is upgraded to a contextual
     /// unclosed-delimiter message.
@@ -866,11 +989,9 @@ impl Parser {
         if self.at(&Token::Eof) || self.at_foreign_closer(our_closer) {
             return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
         }
-        // If we see `fn NAME`, that's a top-level fn decl — never a valid
-        // anon-fn expression (which must be `fn(...)`). Blame the unclosed
-        // opener instead of letting parse_fn_expr consume the `fn` and
-        // error on the trailing ident. (Round-52 deferred item 3.)
-        if self.at_top_level_fn_start() {
+        // `fn` never starts an expression: it is the next declaration,
+        // so blame the unclosed opener. (Round-52 deferred item 3.)
+        if self.at(&Token::Fn) {
             return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
         }
         self.parse_expr()
@@ -943,7 +1064,13 @@ impl Parser {
         self.skip_nl();
         while !self.at(&Token::Eof) {
             decls.push(self.parse_decl()?);
+            if let Some(err) = self.same_line_decl_err() {
+                return Err(err);
+            }
             self.skip_nl();
+        }
+        if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
+            return Err(err);
         }
         Ok(Program { decls })
     }
@@ -966,7 +1093,10 @@ impl Parser {
             // partial state on failure.
             if self.at(&Token::Fn) {
                 match self.parse_fn_decl_recovering() {
-                    Ok((decl, None)) => decls.push(Decl::Fn(decl)),
+                    Ok((decl, None)) => {
+                        decls.push(Decl::Fn(decl));
+                        self.recover_same_line_decl();
+                    }
                     Ok((stub, Some(err))) => {
                         self.errors.push(err);
                         decls.push(Decl::Fn(stub));
@@ -996,6 +1126,7 @@ impl Parser {
                                 decl.doc = pub_doc;
                             }
                             decls.push(Decl::Fn(decl));
+                            self.recover_same_line_decl();
                         }
                         Ok((mut stub, Some(err))) => {
                             stub.is_pub = true;
@@ -1020,7 +1151,10 @@ impl Parser {
             }
 
             match self.parse_decl() {
-                Ok(decl) => decls.push(decl),
+                Ok(decl) => {
+                    decls.push(decl);
+                    self.recover_same_line_decl();
+                }
                 Err(e) => {
                     self.errors.push(e);
                     self.synchronize();
@@ -1028,7 +1162,34 @@ impl Parser {
             }
             self.skip_nl();
         }
+        self.errors.extend(top_level_name_errors(&decls));
         (Program { decls }, std::mem::take(&mut self.errors))
+    }
+
+    /// The recovering counterpart of the same-line check in
+    /// `parse_program`: record the error and parse the next declaration
+    /// where it starts.
+    fn recover_same_line_decl(&mut self) {
+        if let Some(err) = self.same_line_decl_err() {
+            self.errors.push(err);
+        }
+    }
+
+    /// The same-line check after a top-level declaration. Only a token
+    /// that starts a declaration is a second declaration on the line;
+    /// any other token (`with`, `5`, `!`, ...) is left to the plain
+    /// "expected declaration" error the next `parse_decl` reports.
+    fn same_line_decl_err(&self) -> Option<ParseError> {
+        let starts_decl = matches!(
+            self.peek(),
+            Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
+        );
+        let after_foreign_keyword = matches!(
+            self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+            Some((Token::Ident(prev), _)) if Self::foreign_keyword_hint(&intern::resolve(*prev)).is_some()
+        );
+        (starts_decl || after_foreign_keyword && Self::starts_statement(self.peek()))
+            .then(|| self.same_line_err(self.top_level_item))
     }
 
     /// Skip tokens until we find one that could start a new declaration.
@@ -1146,39 +1307,13 @@ impl Parser {
             None
         };
 
-        // Phase B of the effect-rows proposal: optional `!{set}`
-        // annotation between the return type and the where clause /
-        // body. Absent → `EffectSet::TOP` (gradual-rollout default).
-        // The `_explicit` variant ALSO returns whether an annotation was
-        // present — needed downstream because `!{io, fs, net, time,
-        // random}` and "no annotation" share the same bitset.
-        let (declared_effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
-
         let where_clauses = self.parse_where_clauses_opt()?;
 
         self.skip_nl();
-        let (body, is_signature_only) = if self.at(&Token::Eq) {
-            // Single-expression form: fn square(x) = x * x
-            self.advance();
-            self.skip_nl();
-            // `fn name() = { ... }` is rejected: it overlaps the
-            // block-body form `fn name() { ... }`. silt has one shape
-            // per construct, so the `=` is required to introduce a
-            // non-block expression.
-            if self.at(&Token::LBrace) {
-                return Err(ParseError {
-                    message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
-                    span: self.span(),
-                });
-            }
-            let body = self.parse_expr()?;
-            if let Some(err) = self.expr_body_foreign_keyword_hint(&body) {
-                return Err(err);
-            }
-            (body, false)
-        } else if self.at(&Token::LBrace) {
+        let (body, is_signature_only) = if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
         } else {
+            self.unskip_nl();
             // Abstract method — no body (e.g. trait method declarations).
             // The Unit placeholder keeps the AST shape uniform; the
             // is_signature_only flag is the authoritative signal.
@@ -1197,9 +1332,6 @@ impl Parser {
             is_recovery_stub: false,
             is_signature_only,
             doc,
-            declared_effects,
-            is_annotated,
-            inferred_effects: None,
         })
     }
 
@@ -1293,30 +1425,6 @@ impl Parser {
             None
         };
 
-        // Phase B effect annotation. On failure, fall back to the
-        // gradual-rollout `TOP` default for the recovery stub so the
-        // surrounding decl still produces a usable signature. The
-        // `_explicit` variant also tells us whether the user actually
-        // wrote a `!{...}` annotation so downstream can disambiguate
-        // it from the all-five-effects shape `!{io, fs, net, time,
-        // random}` which shares the same bitset.
-        let (declared_effects, is_annotated) = match self.parse_effect_annotation_opt_explicit() {
-            Ok(pair) => pair,
-            Err(e) => {
-                return Err(Box::new((
-                    self.make_recovery_stub(
-                        name,
-                        name_span,
-                        params,
-                        return_type,
-                        span,
-                        doc.clone(),
-                    ),
-                    e,
-                )));
-            }
-        };
-
         // Try where clauses.
         let where_clauses = if self.peek_skip_nl() == &Token::Where {
             self.advance();
@@ -1372,50 +1480,7 @@ impl Parser {
 
         self.skip_nl();
         // Body. On failure, emit a stub that preserves the header.
-        let (body, is_signature_only) = if self.at(&Token::Eq) {
-            self.advance();
-            self.skip_nl();
-            if self.at(&Token::LBrace) {
-                return Err(Box::new((
-                    self.make_recovery_stub(name, name_span, params, return_type, span, doc.clone()),
-                    ParseError {
-                        message: "expression body cannot be a block — drop the `=` and use `fn name() { ... }`".into(),
-                        span: self.span(),
-                    },
-                )));
-            }
-            match self.parse_expr() {
-                Ok(e) => {
-                    if let Some(err) = self.expr_body_foreign_keyword_hint(&e) {
-                        return Err(Box::new((
-                            self.make_recovery_stub(
-                                name,
-                                name_span,
-                                params,
-                                return_type,
-                                span,
-                                doc.clone(),
-                            ),
-                            err,
-                        )));
-                    }
-                    (e, false)
-                }
-                Err(err) => {
-                    return Err(Box::new((
-                        self.make_recovery_stub(
-                            name,
-                            name_span,
-                            params,
-                            return_type,
-                            span,
-                            doc.clone(),
-                        ),
-                        err,
-                    )));
-                }
-            }
-        } else if self.at(&Token::LBrace) {
+        let (body, is_signature_only) = if self.at(&Token::LBrace) {
             match self.parse_block() {
                 Ok(b) => (b, false),
                 Err(err) => {
@@ -1433,6 +1498,7 @@ impl Parser {
                 }
             }
         } else {
+            self.unskip_nl();
             // Abstract method — no body.
             (Expr::new(ExprKind::Unit, span), true)
         };
@@ -1449,9 +1515,6 @@ impl Parser {
             is_recovery_stub: false,
             is_signature_only,
             doc,
-            declared_effects,
-            is_annotated,
-            inferred_effects: None,
         })
     }
 
@@ -1479,117 +1542,7 @@ impl Parser {
             is_recovery_stub: true,
             is_signature_only: false,
             doc,
-            // Recovery stubs default to the gradual-rollout `TOP` so
-            // any caller that propagates the stub's "effects" sees the
-            // permissive default. They are NOT user-annotated — the
-            // user's source was malformed and we synthesized the stub.
-            declared_effects: EffectSet::TOP,
-            is_annotated: false,
-            inferred_effects: None,
         }
-    }
-
-    /// Parse an optional effect annotation (`!{io, fs}`) at the current
-    /// position. Returns `Ok(EffectSet::TOP)` when no annotation is
-    /// present (the gradual-rollout permissive default applied to any
-    /// un-annotated function).
-    ///
-    /// Phase B of the effect-rows proposal — the annotation slot lives
-    /// between the return-type arrow and the function body / where
-    /// clause. The grammar:
-    ///
-    ///   EffectAnnotation := '!' '{' EffectList '}'
-    ///   EffectList       := (Effect (',' Effect)*)?
-    ///   Effect           := 'io' | 'fs' | 'net' | 'time' | 'random'
-    ///
-    /// The five baked-in v1 effects match the const set in
-    /// `crate::types::effects::Effect`. Unknown identifiers inside the
-    /// braces emit a parser error mentioning the valid set; duplicate
-    /// effects (`!{io, io}`) are de-duplicated silently because the
-    /// underlying bitset is idempotent. Whitespace between tokens is
-    /// tolerated — `!{ io , fs }` and `!{io,fs}` parse identically.
-    ///
-    /// The two-token lookahead (`!` then `{`) keeps a stray `!` as the
-    /// unary-not prefix it always was; only the `! {` pair triggers
-    /// annotation parsing. Newlines inside the annotation are tolerated
-    /// (`skip_nl` is called after each comma) so a long list can wrap.
-    /// Parse an optional `!{...}` effect annotation, returning the
-    /// effect set AND a boolean reporting whether the user actually
-    /// wrote one. The boolean is `true` when an annotation was consumed
-    /// and `false` when the gradual-rollout `EffectSet::TOP` default
-    /// was returned.
-    ///
-    /// Critical for distinguishing `!{io, fs, net, time, random}` (all
-    /// five effects, explicitly written) from no annotation at all —
-    /// both produce the same `EffectSet` bitset, but downstream
-    /// (formatter, strict-effects flip, body subset check, suggestion
-    /// help line) needs to behave differently between the two cases.
-    /// See the `is_annotated` field on `FnDecl` and `ExprKind::Lambda`.
-    fn parse_effect_annotation_opt_explicit(&mut self) -> Result<(EffectSet, bool)> {
-        if self.peek_skip_nl() != &Token::Not {
-            return Ok((EffectSet::TOP, false));
-        }
-        // Confirm the next non-newline token is `{` — without that, the
-        // `!` is a stray prefix-not (e.g. someone wrote `fn f() -> !x`,
-        // ill-formed but recovered by surrounding code) and we leave it
-        // untouched so the body parser can produce its own diagnostic.
-        let mut idx = self.pos + 1;
-        while idx < self.tokens.len() && matches!(self.tokens[idx].0, Token::Newline) {
-            idx += 1;
-        }
-        if !matches!(self.tokens.get(idx).map(|t| &t.0), Some(Token::LBrace)) {
-            return Ok((EffectSet::TOP, false));
-        }
-        // Commit: consume the `!` and the `{`.
-        self.advance();
-        self.skip_nl();
-        self.expect(&Token::LBrace)?;
-        self.skip_nl();
-        let mut set = EffectSet::EMPTY;
-        // Empty annotation `!{}` — pure declared.
-        if self.at(&Token::RBrace) {
-            self.advance();
-            return Ok((set, true));
-        }
-        loop {
-            self.skip_nl();
-            // Each effect is a bare lowercase identifier.
-            let (name_sym, name_span) = self.expect_ident()?;
-            let name = intern::resolve(name_sym);
-            let effect = match name.as_str() {
-                "io" => Effect::Io,
-                "fs" => Effect::Fs,
-                "net" => Effect::Net,
-                "time" => Effect::Time,
-                "random" => Effect::Random,
-                _ => {
-                    return Err(ParseError {
-                        message: format!(
-                            "unknown effect '{name}' in effect annotation; \
-                             valid effects are: fs, io, net, random, time"
-                        ),
-                        span: name_span,
-                    });
-                }
-            };
-            // Idempotent insert; duplicates are silently de-duped because
-            // the bitset can't represent multiplicity.
-            set = set.insert(effect);
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-                // Allow trailing comma before `}`.
-                if self.at(&Token::RBrace) {
-                    break;
-                }
-                continue;
-            }
-            break;
-        }
-        self.skip_nl();
-        self.expect(&Token::RBrace)?;
-        Ok((set, true))
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {
@@ -1630,9 +1583,10 @@ impl Parser {
                         span: type_span,
                     });
                 }
-                let pattern = self.parse_simple_param_pattern()?;
+                let pattern = self.parse_param_pattern()?;
                 let ty = if self.peek_skip_nl() == &Token::Colon {
                     self.advance();
+                    self.skip_nl();
                     Some(self.parse_type_expr()?)
                 } else {
                     None
@@ -1647,6 +1601,25 @@ impl Parser {
         }
         self.expect(&Token::RParen)?;
         Ok(params)
+    }
+
+    /// A data parameter of a named function, trait method or closure: a
+    /// name or a destructuring pattern (the type annotation is parsed
+    /// by the caller). A token that cannot start a pattern is reported
+    /// as a missing parameter name.
+    fn parse_param_pattern(&mut self) -> Result<Pattern> {
+        self.skip_nl();
+        let start = self.pos;
+        self.parse_pattern().map_err(|err| {
+            if self.pos == start && err.message.starts_with("expected pattern") {
+                ParseError {
+                    message: format!("expected parameter name, found {}", self.peek()),
+                    span: err.span,
+                }
+            } else {
+                err
+            }
+        })
     }
 
     fn parse_simple_param_pattern(&mut self) -> Result<Pattern> {
@@ -2134,7 +2107,13 @@ impl Parser {
         let (_, import_span) = self.expect(&Token::Import)?;
         let (name, _) = self.expect_ident()?;
 
+        // `.{ ... }` and `as` may continue the import on the next line;
+        // anything else there starts the next declaration.
+        let saved = self.save();
         self.skip_nl();
+        if !self.at(&Token::Dot) && !self.at(&Token::As) {
+            self.restore(saved);
+        }
         if self.at(&Token::Dot) {
             self.advance();
             self.expect(&Token::LBrace)?;
@@ -2223,6 +2202,24 @@ impl Parser {
         result
     }
 
+    /// The rest of a function type after its `Fn`: `(A, B) -> C`.
+    fn parse_fn_type_rest(&mut self, start: Span) -> Result<TypeExpr> {
+        self.expect(&Token::LParen)?;
+        let mut params = Vec::new();
+        self.skip_nl();
+        while !self.at(&Token::RParen) {
+            params.push(self.parse_type_expr()?);
+            self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
+        }
+        self.expect(&Token::RParen)?;
+        self.expect(&Token::Arrow)?;
+        let ret = self.parse_type_expr()?;
+        Ok(TypeExpr::new(
+            TypeExprKind::Function(params, Box::new(ret)),
+            start,
+        ))
+    }
+
     fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
         // Round-52 deferred item 2: capture the start-of-type-expr span
@@ -2271,20 +2268,23 @@ impl Parser {
                 .unwrap_or(false)
         {
             self.advance();
-            self.expect(&Token::LParen)?;
-            let mut params = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                params.push(self.parse_type_expr()?);
-                self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
-            self.expect(&Token::Arrow)?;
-            let ret = self.parse_type_expr()?;
-            return Ok(TypeExpr::new(
-                TypeExprKind::Function(params, Box::new(ret)),
-                start,
-            ));
+            return self.parse_fn_type_rest(start);
+        }
+        // `fn(Int) -> Int` in a type: the keyword spelling of `Fn`.
+        if self.at(&Token::Fn) && matches!(self.tokens.get(self.pos + 1), Some((Token::LParen, _)))
+        {
+            self.advance();
+            let hint = match self.parse_fn_type_rest(start) {
+                Ok(ty) => format!("`{}`", crate::formatter::format_type_expr(&ty)),
+                Err(_) => "`Fn(...) -> ...`".to_string(),
+            };
+            return Err(ParseError {
+                message: format!(
+                    "expected a type, found fn: a function type is written with `Fn`; \
+                     did you mean {hint}?"
+                ),
+                span: start,
+            });
         }
         // Tuple type: (A, B, ...)
         if self.at(&Token::LParen) {
@@ -2400,17 +2400,92 @@ impl Parser {
         self.skip_nl();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
+            if Self::starts_statement(self.peek()) && !self.at_lowercase_record_literal_brace() {
+                return Err(self.same_line_err("statement"));
+            }
             self.skip_nl();
         }
         Ok(stmts)
+    }
+
+    /// True at the `{` of `point { x: 1 }` or `util.pt { x: 1 }`: a
+    /// statement that ended at a name followed by `{` on the same line.
+    /// That is a record literal with a lowercase type name, not two
+    /// statements on one line, so the newline error is skipped and the
+    /// name is left to the typechecker's "undefined variable" (and the
+    /// lowercase type-name error where a `type point` exists).
+    fn at_lowercase_record_literal_brace(&self) -> bool {
+        self.at(&Token::LBrace)
+            && matches!(
+                self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+                Some((Token::Ident(_), _))
+            )
+    }
+
+    /// True when `tok` could begin a statement or a declaration. Such a
+    /// token right after a complete statement, on the same line, is a
+    /// second statement on that line (see `same_line_err`). Any other
+    /// token there (a stray closer, `,`, `else`, ...) is left to the
+    /// error the next parse step reports for it.
+    fn starts_statement(tok: &Token) -> bool {
+        matches!(
+            tok,
+            Token::Let
+                | Token::When
+                | Token::Match
+                | Token::Return
+                | Token::Loop
+                | Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Int(_)
+                | Token::Float(_)
+                | Token::Bool(_)
+                | Token::StringLit(..)
+                | Token::StringStart(_)
+                | Token::Ident(_)
+                | Token::Minus
+                | Token::Not
+                | Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket
+        )
+    }
+
+    /// The error for a token that follows a complete statement (or
+    /// top-level declaration) on the same line. Statements are separated
+    /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
+    /// are rejected here instead of being read as two statements.
+    fn same_line_err(&self, what: &str) -> ParseError {
+        // `let r = if x { ... }`: the statement ended at a foreign keyword
+        // read as an identifier, so point at the silt equivalent instead.
+        if let Some((Token::Ident(prev), prev_span)) =
+            self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
+            && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
+        {
+            return ParseError {
+                message: hint.into(),
+                span: *prev_span,
+            };
+        }
+        ParseError {
+            message: format!(
+                "expected a newline before '{}': each {what} must start on its own line",
+                self.peek()
+            ),
+            span: self.span(),
+        }
     }
 
     /// G1 hint table: messages for C-family control-flow keywords that
     /// silt deliberately lacks. `if`/`while`/`for` lex as ordinary
     /// identifiers, so a user porting code gets a baffling generic parse
     /// error unless we recognize the shape and point at the silt
-    /// equivalent. Shared by the statement-level guard in `parse_stmt`
-    /// and the expression-body guard in the `fn name(...) = ...` paths.
+    /// equivalent. Used by the statement-level guard in `parse_stmt`.
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
             "if" => {
@@ -2443,37 +2518,6 @@ impl Parser {
                 | Token::LBrace
                 | Token::LBracket
         )
-    }
-
-    /// G1, expression-body variant: after parsing an `=` function body,
-    /// detect the `fn f(n: Int) -> Int = if n == 0 { ... }` mistake.
-    ///
-    /// Fires only when BOTH hold:
-    ///   * the parsed body is a bare `if`/`while`/`for` identifier
-    ///     reference (so `parse_expr` could not attach what follows), and
-    ///   * the next token is an expression-start token, which can never
-    ///     legally follow a completed `=` body (declaration level would
-    ///     reject it with "expected declaration, found ...").
-    ///
-    /// This keeps every accepted program byte-identical: programs that
-    /// genuinely use `if` as a variable (e.g. `fn f() = if` followed by
-    /// a newline, or a call `if(x)`, which parses as a non-Ident body)
-    /// never reach the hint. We only upgrade a guaranteed parse error
-    /// into an actionable one.
-    fn expr_body_foreign_keyword_hint(&self, body: &Expr) -> Option<ParseError> {
-        let ExprKind::Ident(name) = &body.kind else {
-            return None;
-        };
-        let text = intern::resolve(*name).to_string();
-        let msg = Self::foreign_keyword_hint(&text)?;
-        if Self::g1_next_starts_expression(self.peek()) {
-            Some(ParseError {
-                message: msg.into(),
-                span: body.span,
-            })
-        } else {
-            None
-        }
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
@@ -2532,6 +2576,18 @@ impl Parser {
                     span,
                 });
             }
+        }
+
+        // A statement that starts with `else` is almost always the tail of
+        // an `if ... { } else { }` ported from another language: `if`
+        // parses as an identifier and the statement ends before `else`.
+        if self.at(&Token::Else) {
+            return Err(ParseError {
+                message: "'else' only follows a 'when' condition; silt has no 'if' keyword — \
+                          for a conditional value use 'match cond { true -> ..., false -> ... }'"
+                    .into(),
+                span: self.span(),
+            });
         }
 
         match self.peek().clone() {
@@ -2604,9 +2660,7 @@ impl Parser {
             let pattern = self.parse_pattern()?;
             self.expect(&Token::Eq)?;
             self.skip_nl();
-            // Use min_bp=11 to prevent `else` from being consumed as the
-            // infix FloatElse operator (which has l_bp=10).
-            let expr = self.parse_expr_bp(11)?;
+            let expr = self.parse_expr()?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
             return Ok(Stmt::When {
@@ -2617,9 +2671,7 @@ impl Parser {
         }
 
         // Boolean form: when <expr> else { <block> }
-        // Use min_bp=11 to prevent `else` from being consumed as the
-        // infix FloatElse operator (which has l_bp=10).
-        let condition = self.parse_expr_bp(11)?;
+        let condition = self.parse_expr()?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
         Ok(Stmt::WhenBool {
@@ -2637,7 +2689,7 @@ impl Parser {
 
     /// Shared tail for the infix-operator arms of the Pratt loop
     /// (round-93 dedup: this exact sequence was copied verbatim across
-    /// the pipe / range / binary / float-else arms).
+    /// the pipe / range / binary arms).
     ///
     ///   * `l_bp < min_bp` → restore `saved` (undoing the speculative
     ///     newline skip) and return `Ok(None)`; the caller breaks out
@@ -2729,24 +2781,14 @@ impl Parser {
             if !self.has_newline_before() {
                 match self.peek() {
                     Token::Question => {
-                        // `?` binds looser than `|>` (pipe l_bp = 55) so
-                        // a pipeline followed by `?` parses as
-                        // `(x |> f(y))?` — i.e. `?` applies to the full
-                        // piped result, not just to the call-inside-the-pipe.
-                        // Historically `?` was at 110 (higher than every
-                        // infix op), which made `x |> f(y)?` desugar to
-                        // `x |> (f(y)?)` and fail type-check because the
-                        // `?` was attached to a half-applied fn value.
-                        //
-                        // Side effect: expressions like `x + y?` now parse
-                        // as `(x + y)?` instead of the old `x + (y?)`.
-                        // That change is safe in practice — silt's `?`
-                        // requires its LHS to be `Result` or `Option`, so
-                        // `(x + y)?` with non-Result operands is a type
-                        // error either way; users who wanted the old shape
-                        // always needed parens on the RHS anyway.
-                        let bp = 54;
-                        if bp < min_bp {
+                        // `?` is a tight postfix operator: it binds like a
+                        // call, so `int.parse(a)? + int.parse(b)?` unwraps
+                        // each operand and `-x?` negates the unwrapped
+                        // value. The one exception is a pipe stage: a `?`
+                        // that ends a stage (parsed at exactly the pipe's
+                        // right binding power) is left for the pipe loop,
+                        // so `x |> f |> g?` means `(x |> f |> g)?`.
+                        if min_bp == PIPE_R_BP {
                             break;
                         }
                         let span = left.span;
@@ -2911,7 +2953,8 @@ impl Parser {
                     // match body are the match body themselves (see
                     // `is_trailing_closure`):
                     //   match items |> list.head { Some(x) -> … }
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, 56, true)? else {
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, PIPE_R_BP, true)?
+                    else {
                         break;
                     };
                     let span = left.span;
@@ -3027,19 +3070,6 @@ impl Parser {
                     let type_expr = self.parse_type_expr()?;
                     let span = left.span;
                     left = Expr::new(ExprKind::Ascription(Box::new(left), type_expr), span);
-                    continue;
-                }
-
-                // Float narrowing: expr else fallback
-                Token::Else => {
-                    let Some(fallback) = self.parse_infix_rhs(saved, min_bp, 10, 11, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = Expr::new(
-                        ExprKind::FloatElse(Box::new(left), Box::new(fallback)),
-                        span,
-                    );
                     continue;
                 }
 
@@ -3290,7 +3320,6 @@ impl Parser {
             }
             Token::Match => self.parse_match_expr(),
             Token::Loop => self.parse_loop_expr(),
-            Token::Fn => self.parse_fn_expr(),
             Token::Return => {
                 self.advance();
                 // Return may or may not have a value
@@ -3491,8 +3520,7 @@ impl Parser {
                 | Token::Star
                 | Token::Slash
                 | Token::Percent
-                | Token::As
-                | Token::Else,
+                | Token::As,
             ) => true,
             // `+`, `-` and the postfix forms continue it on the same
             // line only.
@@ -3504,12 +3532,21 @@ impl Parser {
     }
 
     /// True when the current token is a `{` whose contents start like a
-    /// closure: `params ->`.
+    /// closure: `params ->`. A parameter is a pattern with an optional
+    /// `: Type` annotation, so the scan accepts, at the brace's own
+    /// depth, identifiers, `,`, `:`, `::`, `.`, `type` and the openers
+    /// of nested groups (whose contents it skips), and answers true at
+    /// the first `->`. Anything else at that depth, including the
+    /// closing `}`, means a block or a record literal: neither can put
+    /// a `->` at its own depth after only those tokens. `{ a: Int -> a }`
+    /// is a closure; `{ a: Int }` and `{ a: 1 }` are record literals.
+    /// A function type in an annotation (`{ f: Fn(Int) -> Int -> ... }`)
+    /// answers true at its own arrow, which is the right answer too.
     fn lbrace_starts_closure(&self) -> bool {
-        // Check if the current `{` starts a trailing closure by looking for `->`.
         if self.peek() != &Token::LBrace {
             return false;
         }
+        let inside = self.delim_depth_at(self.pos) + 1;
         let mut i = self.pos + 1; // skip `{`
         // Skip leading newlines to find the first real token
         while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
@@ -3527,13 +3564,27 @@ impl Parser {
                 _ => {}
             }
         }
-        let mut depth = 0;
         while i < self.tokens.len() {
+            if self.delim_depth_at(i) > inside {
+                i += 1;
+                continue;
+            }
             match &self.tokens[i].0 {
-                Token::Arrow if depth == 0 => return true,
-                Token::LParen => depth += 1,
-                Token::RParen if depth > 0 => depth -= 1,
-                Token::Newline | Token::Ident(_) | Token::Comma => {}
+                Token::Arrow => return true,
+                Token::Newline
+                | Token::Ident(_)
+                | Token::Comma
+                | Token::Colon
+                | Token::ColonColon
+                | Token::Dot
+                | Token::Type
+                | Token::LParen
+                | Token::LBracket
+                | Token::LBrace
+                | Token::HashBrace => {}
+                // The closer of a nested group sits one level deeper
+                // than the brace's own contents and was skipped above;
+                // a closer at this depth ends the braces.
                 _ => return false,
             }
             i += 1;
@@ -3615,47 +3666,44 @@ impl Parser {
             ExprKind::Lambda {
                 params,
                 body: Box::new(body),
-                // Closure-form lambdas (`{ -> body }`) have no syntactic
-                // slot for an effect annotation. Default to the
-                // gradual-rollout `TOP`. The `fn() !{...} { body }` form
-                // is the only way to declare effects on a lambda for
-                // now.
-                effects: EffectSet::TOP,
-                // Trailing-closure form has no annotation slot, so the
-                // user could not have written one. Always `false`.
-                is_annotated: false,
             },
             span,
         ))
     }
 
+    /// Closure parameters: the data-parameter grammar of a named
+    /// function, `pattern` or `pattern: Type`, separated by commas and
+    /// ended by `->`. The pattern may destructure (`(a, b)`,
+    /// `Point { x, y }`, `User { name, .. }`); there is no return-type
+    /// annotation, the body's type is the closure's return type.
     fn parse_closure_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
         loop {
             self.skip_nl();
-            match self.peek() {
-                Token::Arrow => break,
-                Token::LParen => {
-                    // Destructuring pattern like (a, b)
-                    let pattern = self.parse_pattern()?;
-                    params.push(Param {
-                        kind: ParamKind::Data,
-                        pattern,
-                        ty: None,
-                    });
-                }
-                Token::Ident(_) => {
-                    let pattern = self.parse_pattern()?;
-                    params.push(Param {
-                        kind: ParamKind::Data,
-                        pattern,
-                        ty: None,
-                    });
-                }
-                _ => break,
+            if self.at(&Token::Arrow) {
+                break;
             }
-            // Closure params terminate at `->`, not a closing bracket; we
-            // reuse the list-sep helper with the arrow as the "closer".
+            if self.at(&Token::Type) {
+                return Err(ParseError {
+                    message: "a closure cannot take a 'type' parameter; declare a named function"
+                        .to_string(),
+                    span: self.span(),
+                });
+            }
+            let pattern = self.parse_param_pattern()?;
+            let ty = if self.peek_skip_nl() == &Token::Colon {
+                self.advance();
+                self.skip_nl();
+                Some(self.parse_type_expr()?)
+            } else {
+                None
+            };
+            params.push(Param {
+                kind: ParamKind::Data,
+                pattern,
+                ty,
+            });
+            // Closure params terminate at `->`, not a closing bracket.
             self.skip_nl();
             if self.at(&Token::Arrow) {
                 break;
@@ -3838,32 +3886,6 @@ impl Parser {
             ExprKind::Loop {
                 bindings,
                 body: Box::new(body),
-            },
-            span,
-        ))
-    }
-
-    // ── Fn expression ────────────────────────────────────────────────
-
-    fn parse_fn_expr(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::Fn)?;
-        let params = self.parse_fn_params()?;
-        // Optional effect annotation between params and body, matching
-        // top-level fn-decl syntax: `fn() !{io} { ... }`. Use the
-        // `_explicit` variant so we can distinguish "user wrote no
-        // annotation" from "user wrote `!{io, fs, net, time, random}`"
-        // — the two collide on bit-equality (`EffectSet::TOP`) and
-        // were silently dropped by the formatter prior to this fix.
-        let (effects, is_annotated) = self.parse_effect_annotation_opt_explicit()?;
-        self.skip_nl();
-        let body = self.parse_block()?;
-        Ok(Expr::new(
-            ExprKind::Lambda {
-                params,
-                body: Box::new(body),
-                effects,
-                is_annotated,
             },
             span,
         ))
@@ -4711,6 +4733,38 @@ fn main() {
         assert_eq!(prog.decls.len(), 1);
     }
 
+    /// The brace shapes that the closure-parameter grammar must keep
+    /// apart: a typed closure, a record literal with the same prefix, a
+    /// block holding a tuple, a destructuring closure, a closure whose
+    /// annotation is a function type, and a parameterless closure.
+    #[test]
+    fn test_closure_param_brace_disambiguation() {
+        let kind_of = |body: &str| -> String {
+            let prog = parse(&format!("fn main() {{\n  {body}\n}}"));
+            match &last_expr_of_main(&prog).kind {
+                ExprKind::Lambda { params, .. } => format!(
+                    "lambda/{}/{}",
+                    params.len(),
+                    params.iter().filter(|p| p.ty.is_some()).count()
+                ),
+                ExprKind::AnonRecord { .. } => "record".to_string(),
+                ExprKind::Block(_) => "block".to_string(),
+                other => format!("{other:?}"),
+            }
+        };
+        assert_eq!(kind_of("{ a: Int -> a }"), "lambda/1/1");
+        assert_eq!(kind_of("{ a: 1 }"), "record");
+        assert_eq!(kind_of("{ a: Int }"), "record");
+        assert_eq!(kind_of("{ x -> x }"), "lambda/1/0");
+        assert_eq!(kind_of("{ (a, b) }"), "block");
+        assert_eq!(kind_of("{ (a, b): (Int, Int) -> a }"), "lambda/1/1");
+        assert_eq!(kind_of("{ Point { x, y } -> x }"), "lambda/1/0");
+        assert_eq!(kind_of("{ { name, ...rest } -> name }"), "lambda/1/0");
+        assert_eq!(kind_of("{ f: Fn(Int) -> Int, x -> f(x) }"), "lambda/2/1");
+        assert_eq!(kind_of("{ -> 1 }"), "lambda/0/0");
+        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "record");
+    }
+
     #[test]
     fn test_record_create_and_update() {
         let prog = parse(
@@ -4972,6 +5026,48 @@ fn main() {
     }
 
     // ── 1. Error recovery ───────────────────────────────────────────
+
+    #[test]
+    fn test_recovery_reports_same_line_decl_and_keeps_both() {
+        let (prog, errs) = parse_recovering("fn a() { 1 } fn b() { 2 }\n");
+        assert_eq!(prog.decls.len(), 2, "both declarations are kept");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].message.contains("expected a newline before 'fn'"),
+            "{}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn test_recovery_reports_every_top_level_name_bound_twice() {
+        let (prog, errs) =
+            parse_recovering("import a.{ x }\nimport b.{ x }\nfn x() { 1 }\nfn y() { 2 }\n");
+        assert_eq!(prog.decls.len(), 4, "every declaration is kept");
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(
+            errs[0]
+                .message
+                .contains("by the import at line 1 and by the import here")
+        );
+        assert!(
+            errs[1]
+                .message
+                .contains("by the import at line 1 and by the function here")
+        );
+        assert_eq!(errs[1].span.line, 3);
+    }
+
+    #[test]
+    fn test_recovery_stub_does_not_bind_its_name() {
+        // The stub stands in for the broken `f` the user is fixing; the
+        // later real `f` is not a second binding.
+        let (_, errs) = parse_recovering("fn f(\nfn f() { 1 }\n");
+        assert!(
+            errs.iter().all(|e| !e.message.contains("bound twice")),
+            "{errs:?}"
+        );
+    }
 
     #[test]
     fn test_recovery_skips_bad_decl_and_continues() {
@@ -5270,10 +5366,7 @@ fn main() {
     #[test]
     fn test_question_mark_wraps_full_pipe() {
         // `x |> f(y)?` must parse as `(x |> f(y))?` — `?` applies to the
-        // piped result, not to the inner call `f(y)`. Historically `?`
-        // bound tighter than `|>`, which made error-conversion pipelines
-        // like `io.read_file(p) |> result.map_err(Wrap)?` fail to
-        // type-check because `?` was stuck on a half-applied call.
+        // piped result, not to the inner call `f(y)`.
         let prog = parse(
             r#"
             fn main() {
@@ -5295,166 +5388,111 @@ fn main() {
         );
     }
 
+    /// Parse `src` as the body of `main` and return its last expression.
+    fn parse_main_expr(src: &str) -> Expr {
+        let prog = parse(&format!("fn main() {{\n{src}\n}}\n"));
+        last_expr_of_main(&prog).clone()
+    }
+
     #[test]
-    fn test_question_mark_binds_looser_than_plus() {
-        // New precedence: `a + b?` parses as `(a + b)?`. The old high-bp
-        // `?` made this `a + (b?)`. Either way silt's typechecker then
-        // enforces `Result` / `Option` on the `?` LHS, so the surface
-        // meaning of valid programs is unaffected — but the AST shape
-        // flipped and we lock that here.
-        let prog = parse(
-            r#"
-            fn main() {
-                a + b?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
+    fn test_question_mark_is_tight_under_binary_operators() {
+        // `?` binds like a call: under every binary operator it unwraps
+        // just its own operand.
+        for (src, want) in [
+            ("a + b?", BinOp::Add),
+            ("a * b?", BinOp::Mul),
+            ("a == b?", BinOp::Eq),
+            ("a && b?", BinOp::And),
+            ("a < b?", BinOp::Lt),
+        ] {
+            let expr = parse_main_expr(src);
+            let ExprKind::Binary(_, op, rhs) = &expr.kind else {
+                panic!("{src}: expected Binary at top, got {:?}", expr.kind);
+            };
+            assert_eq!(*op, want, "{src}");
+            assert!(
+                matches!(&rhs.kind, ExprKind::QuestionMark(_)),
+                "{src}: expected `?` on the right operand, got {:?}",
+                rhs.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_on_both_operands() {
+        // `int.parse(a)? + int.parse(b)?` adds two unwrapped values.
+        let expr = parse_main_expr("int.parse(a)? + int.parse(b)?");
+        let ExprKind::Binary(lhs, BinOp::Add, rhs) = &expr.kind else {
+            panic!("expected Add at top, got {:?}", expr.kind);
+        };
+        assert!(matches!(&lhs.kind, ExprKind::QuestionMark(_)));
+        assert!(matches!(&rhs.kind, ExprKind::QuestionMark(_)));
+    }
+
+    #[test]
+    fn test_question_mark_is_tight_under_range_and_unary() {
+        let expr = parse_main_expr("a..b?");
+        let ExprKind::Range(_, end) = &expr.kind else {
+            panic!("expected Range at top, got {:?}", expr.kind);
+        };
+        assert!(matches!(&end.kind, ExprKind::QuestionMark(_)));
+
+        let expr = parse_main_expr("-x?");
+        let ExprKind::Unary(UnaryOp::Neg, operand) = &expr.kind else {
+            panic!("expected Neg at top, got {:?}", expr.kind);
+        };
+        assert!(matches!(&operand.kind, ExprKind::QuestionMark(_)));
+    }
+
+    #[test]
+    fn test_question_mark_after_ascription_wraps_it() {
+        // `as` takes a type, so a following `?` applies to the
+        // ascription: `x as Int?` is `(x as Int)?`.
+        let expr = parse_main_expr("x as Int?");
         let ExprKind::QuestionMark(inner) = &expr.kind else {
             panic!("expected `?` at top, got {:?}", expr.kind);
         };
-        assert!(
-            matches!(&inner.kind, ExprKind::Binary(_, _, _)),
-            "expected Binary inside `?`, got {:?}",
-            inner.kind
-        );
+        assert!(matches!(&inner.kind, ExprKind::Ascription(_, _)));
     }
 
     #[test]
-    fn test_question_mark_binds_looser_than_range() {
-        // `a..b?` parses as `(a..b)?` under the new precedence. Checked
-        // separately from `+` because the range operator has its own bp
-        // and lives between `|>` and arithmetic.
-        let prog = parse(
-            r#"
-            fn main() {
-                a..b?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
+    fn test_question_mark_ends_a_whole_pipeline() {
+        // A trailing `?` on a pipeline applies to the whole pipeline.
+        let expr = parse_main_expr("x |> f |> g?");
         let ExprKind::QuestionMark(inner) = &expr.kind else {
             panic!("expected `?` at top, got {:?}", expr.kind);
         };
-        assert!(
-            matches!(&inner.kind, ExprKind::Range(_, _)),
-            "expected Range inside `?`, got {:?}",
-            inner.kind
-        );
+        let ExprKind::Pipe(lhs, _) = &inner.kind else {
+            panic!("expected Pipe inside `?`, got {:?}", inner.kind);
+        };
+        assert!(matches!(&lhs.kind, ExprKind::Pipe(_, _)));
     }
 
     #[test]
-    fn test_question_mark_binds_tighter_than_eq() {
-        // `a == b?` still parses as `a == (b?)` — `?` binds tighter than
-        // comparison operators, matching the old behavior. This is
-        // load-bearing for patterns like `parse(x)? == expected_value`
-        // where `?` is meant to unwrap the LHS of the comparison. Locks
-        // that the new-lower `?` bp (54) still exceeds `==` r_bp (41).
-        let prog = parse(
-            r#"
-            fn main() {
-                a == b?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        // Top-level is Binary(==), NOT QuestionMark — `?` was pulled
-        // into the RHS of `==`.
-        let ExprKind::Binary(_, op, rhs) = &expr.kind else {
-            panic!("expected Binary at top, got {:?}", expr.kind);
+    fn test_question_mark_in_parenthesised_pipe_stage() {
+        // Parentheses keep a `?` on the stage itself.
+        let expr = parse_main_expr("a |> (f?)");
+        let ExprKind::Pipe(_, rhs) = &expr.kind else {
+            panic!("expected Pipe at top, got {:?}", expr.kind);
         };
-        assert_eq!(*op, BinOp::Eq);
-        assert!(
-            matches!(&rhs.kind, ExprKind::QuestionMark(_)),
-            "expected QuestionMark on RHS of ==, got {:?}",
-            rhs.kind
-        );
+        assert!(matches!(&rhs.kind, ExprKind::QuestionMark(_)));
     }
 
     #[test]
-    fn test_question_mark_binds_looser_than_mul() {
-        // Multiplication's (l_bp=80, r_bp=81) are higher than `?`'s
-        // new bp (54), so `a * b?` parses as `(a * b)?`.
-        let prog = parse(
-            r#"
-            fn main() {
-                a * b?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        let ExprKind::QuestionMark(inner) = &expr.kind else {
-            panic!("expected `?` at top, got {:?}", expr.kind);
-        };
-        let ExprKind::Binary(_, op, _) = &inner.kind else {
-            panic!("expected Binary inside `?`, got {:?}", inner.kind);
-        };
-        assert_eq!(*op, BinOp::Mul);
-    }
-
-    #[test]
-    fn test_question_mark_binds_tighter_than_and() {
-        // `&&` at (30, 31) is lower than `?` (54), so `a && b?` parses
-        // as `a && (b?)`. Locks short-circuit semantics: the RHS of
-        // `&&` must be a fully-formed boolean, so `?` on the RHS
-        // unwraps just b's Result and the && fires over the unwrapped
-        // value.
-        let prog = parse(
-            r#"
-            fn main() {
-                a && b?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        let ExprKind::Binary(_, op, rhs) = &expr.kind else {
-            panic!("expected Binary at top, got {:?}", expr.kind);
-        };
-        assert_eq!(*op, BinOp::And);
+    fn test_question_mark_inside_a_stage_operand_is_tight() {
+        // `?` inside a call argument of a stage is not a stage-ending `?`.
+        let expr = parse_main_expr("a |> f(b?)");
         assert!(
-            matches!(&rhs.kind, ExprKind::QuestionMark(_)),
-            "expected `?` on RHS of &&, got {:?}",
-            rhs.kind
-        );
-    }
-
-    #[test]
-    fn test_question_mark_binds_looser_than_as() {
-        // `as` at bp=95 is higher than `?`'s new bp (54), so
-        // `x as Int?` parses as `(x as Int)?`. Minor edge case worth
-        // pinning; the old behavior produced the same shape via a
-        // different path because `?` was also a postfix that happened
-        // to attach to the `as` result.
-        let prog = parse(
-            r#"
-            fn main() {
-                x as Int?
-            }
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        let expr = last_expr_of_main(&prog);
-        let ExprKind::QuestionMark(inner) = &expr.kind else {
-            panic!("expected `?` at top, got {:?}", expr.kind);
-        };
-        assert!(
-            matches!(&inner.kind, ExprKind::Ascription(_, _)),
-            "expected Ascription inside `?`, got {:?}",
-            inner.kind
+            matches!(&expr.kind, ExprKind::Pipe(_, _)),
+            "expected Pipe at top, got {:?}",
+            expr.kind
         );
     }
 
     #[test]
     fn test_question_mark_still_binds_before_pipe_when_on_left() {
-        // `f(a)? |> g` must still parse as `(f(a)?) |> g` — `?` binds to
-        // the preceding call atom before the pipe takes its LHS. This
-        // was the natural reading under the old high-bp `?` and must
-        // stay correct under the new looser `?`.
+        // `f(a)? |> g` parses as `(f(a)?) |> g` — `?` binds to the
+        // preceding call before the pipe takes its LHS.
         let prog = parse(
             r#"
             fn main() {
@@ -5752,7 +5790,7 @@ fn main() {
         let prog = parse(
             r#"
             fn main() {
-                fn(x: Int, y: Int) { x + y }
+                { x: Int, y: Int -> x + y }
             }
         "#,
         );
@@ -5883,23 +5921,6 @@ fn main() {
         "#,
         );
         assert!(err.message.contains("expected declaration"));
-    }
-
-    #[test]
-    fn test_single_expression_fn() {
-        let prog = parse(
-            r#"
-            fn square(x) = x * x
-        "#,
-        );
-        assert_eq!(prog.decls.len(), 1);
-        if let Decl::Fn(ref f) = prog.decls[0] {
-            assert_eq!(f.name, intern::intern("square"));
-            // Body should be a binary expression, not a block
-            assert!(matches!(&f.body.kind, ExprKind::Binary(_, BinOp::Mul, _)));
-        } else {
-            panic!("expected fn decl");
-        }
     }
 
     #[test]

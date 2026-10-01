@@ -13,7 +13,7 @@
 import task
 import time
 fn main() {
-  let _ = task.spawn(fn() { panic("worker failed") })
+  let _ = task.spawn({ -> panic("worker failed") })
   time.sleep(time.ms(500))
   println("main done")
 }

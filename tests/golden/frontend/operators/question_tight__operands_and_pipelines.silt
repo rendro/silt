@@ -1,0 +1,23 @@
+-- `?` is a tight postfix operator: it unwraps the operand right before it,
+-- so both operands of `+` are unwrapped and `-x?` negates the unwrapped
+-- value. A `?` that ends a pipeline applies to the whole pipeline.
+import int
+import list
+import result
+
+fn add(a: String, b: String) -> Result(Int, ParseError) {
+  let total = int.parse(a)? + int.parse(b)?
+  Ok(-int.parse(a)? + total)
+}
+
+fn first_doubled(xs: List(Int)) -> Option(Int) {
+  let n = xs |> list.map { x -> x * 2 } |> list.head?
+  Some(n)
+}
+
+fn main() {
+  println(add("2", "40"))
+  println(add("2", "x") |> result.is_err)
+  println(first_doubled([5, 6]))
+  println(first_doubled([]))
+}

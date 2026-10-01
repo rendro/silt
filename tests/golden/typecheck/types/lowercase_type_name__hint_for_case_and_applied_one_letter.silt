@@ -1,0 +1,19 @@
+-- The hint is case-insensitive (`INT`), covers an applied one-letter
+-- constructor (`q(Int)` when `Q` exists) and gives the full message for
+-- an applied lowercase constructor (`list(Int)`).
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown type 'INT' — did you mean `Int`? (type names are case-sensitive
+-- stderr-contains: unknown type 'q' — did you mean `Q`? (type names are case-sensitive
+-- stderr-contains: unknown type 'list' — did you mean `List`? (type names are case-sensitive
+type Q(a) { v: a }
+
+fn f(x: INT) -> Int { 0 }
+
+fn g(x: q(Int)) -> Int { 0 }
+
+fn h(xs: list(Int)) -> Int { 0 }
+
+fn main() {
+  println(f(1) + g(Q { v: 1 }) + h([1]))
+}

@@ -4,5 +4,5 @@
 -- stderr-contains: 'Fn'
 fn h(a: x) -> Int where x: Hash { a.hash() }
 fn main() {
-  println(h([fn(y) { y }]) == h([fn(z) { z * 99 }]))
+  println(h([{ y -> y }]) == h([{ z -> z * 99 }]))
 }

@@ -212,6 +212,12 @@ fn copy_dir(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).expect("read case dir").flatten() {
         let src = entry.path();
         let dst = to.join(entry.file_name());
+        // A lockfile in a case directory is left over from running the
+        // case by hand; it pins dependencies to absolute paths in the
+        // tree, so it is never copied.
+        if entry.file_name() == "silt.lock" {
+            continue;
+        }
         if src.is_dir() {
             std::fs::create_dir_all(&dst).expect("create dir");
             copy_dir(&src, &dst);

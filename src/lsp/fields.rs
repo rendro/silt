@@ -181,10 +181,6 @@ pub(super) fn find_field_in_expr(
                     }
                 }
             }
-            ExprKind::FloatElse(expr, fallback) => {
-                find_field_in_expr(expr, source, cursor, program, result);
-                find_field_in_expr(fallback, source, cursor, program, result);
-            }
             _ => {}
         }
     }

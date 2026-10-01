@@ -5,15 +5,15 @@ import task
 fn program() {
   let ch = channel.new(10)
 
-  let h1 = task.spawn(fn() {
+  let h1 = task.spawn({ ->
     channel.send(ch, 1)
   })
 
-  let h2 = task.spawn(fn() {
+  let h2 = task.spawn({ ->
     channel.send(ch, 2)
   })
 
-  let h3 = task.spawn(fn() {
+  let h3 = task.spawn({ ->
     channel.send(ch, 3)
   })
 

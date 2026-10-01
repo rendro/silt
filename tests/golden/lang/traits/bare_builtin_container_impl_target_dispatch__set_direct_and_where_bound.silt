@@ -1,6 +1,6 @@
 import set
 trait Pretty { fn pretty(self) -> String }
-trait Pretty for Set { fn pretty(self) -> String = "set" }
+trait Pretty for Set { fn pretty(self) -> String { "set" } }
 fn show(x: a) -> String where a: Pretty { x.pretty() }
 fn main() {
   let s = set.from_list([1, 2])

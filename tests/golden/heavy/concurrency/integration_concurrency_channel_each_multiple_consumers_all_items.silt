@@ -14,12 +14,12 @@ fn program() {
   channel.send(jobs, 4)
   channel.close(jobs)
 
-  let w1 = task.spawn(fn() {
+  let w1 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, n + 100)
     }
   })
-  let w2 = task.spawn(fn() {
+  let w2 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, n + 200)
     }

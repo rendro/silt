@@ -1,2 +1,2 @@
 import leaf
-pub fn foo() = leaf.bar() + 1
+pub fn foo() { leaf.bar() + 1 }

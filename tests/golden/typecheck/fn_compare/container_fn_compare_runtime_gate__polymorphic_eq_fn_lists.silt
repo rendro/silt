@@ -4,7 +4,7 @@
 -- stderr-contains: 'Fn'
 fn eq(a: x, b: x) -> Bool { a == b }
 fn main() {
-  let xs = [fn(y) { y }]
-  let ys = [fn(y) { y }]
+  let xs = [{ y -> y }]
+  let ys = [{ y -> y }]
   println(eq(xs, ys))
 }

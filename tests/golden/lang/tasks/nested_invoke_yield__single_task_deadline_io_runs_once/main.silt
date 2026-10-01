@@ -3,8 +3,8 @@ import io
 import time
 
 fn main() {
-  let h = task.spawn(fn() {
-    task.deadline(time.seconds(10), fn() {
+  let h = task.spawn({ ->
+    task.deadline(time.seconds(10), { ->
       println("enter")
       let _ = io.read_file("data.txt")
       println("exit")

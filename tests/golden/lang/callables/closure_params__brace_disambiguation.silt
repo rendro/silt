@@ -1,0 +1,20 @@
+-- Braces after the closure grammar grew: a record literal, a block and a
+-- closure stay apart. `{ a: Int -> a }` is a closure, `{ a: 1 }` a record,
+-- `{ (a, b) }` and `{ x }` blocks, `{ x -> x }` a closure.
+fn main() {
+  let a = 7
+  let b = 8
+  let x = 9
+  let closure = { a: Int -> a + 1 }
+  let record = { a: 1 }
+  let tuple_block = { (a, b) }
+  let ident_block = { x }
+  let ident_closure = { x -> x }
+  let nested = { a: { v: Int -> v * 2 } }
+  println(closure(1))
+  println(record.a)
+  println(tuple_block)
+  println(ident_block)
+  println(ident_closure("id"))
+  println(nested.a(21))
+}

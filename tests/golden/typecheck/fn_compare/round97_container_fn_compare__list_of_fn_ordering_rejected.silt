@@ -4,7 +4,7 @@
 -- stderr-contains: element type is not comparable
 -- `<` on lists of functions is a compile error.
 fn main() {
-  let xs = [fn(x) { x }]
-  let ys = [fn(x) { x }]
+  let xs = [{ x -> x }]
+  let ys = [{ x -> x }]
   print(xs < ys)
 }

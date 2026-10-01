@@ -6,12 +6,11 @@ order: 10
 
 # Design Trade-offs
 
-## Interpolation Preferred for String Building
+## Interpolation for String Building
 
-String `+` is supported (`p.first + " " + p.last`), but interpolation
-`"{a}{b}"` is the preferred inline form: it reads more naturally for the
-common case and keeps multi-fragment messages punctuation-light. For
-pipelines, use `string.join`.
+`+` is arithmetic only. Strings are built with interpolation
+(`"{p.first} {p.last}"`), which reads naturally and keeps multi-fragment
+messages punctuation-light. For a list of strings, use `string.join`.
 
 ## Homogeneous Maps
 
@@ -20,7 +19,7 @@ Heterogeneous maps would defeat the purpose of static typing.
 
 ## No Nested Named Functions
 
-Named functions are top-level only. `let f = fn(x) { ... }` for local
+Named functions are top-level only. `let f = { x -> ... }` for local
 helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
 
 ## Pipe First-Argument Insertion
@@ -28,13 +27,13 @@ helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
 Matches Elixir convention. Simpler than auto-currying. Trade-off: no partial
 application through pipes.
 
-## `?` Precedence vs. `|>` and Arithmetic
+## `?` Precedence
 
-`?` binds one step looser than `|>`, so `x |> f |> g?` parses as
-`(x |> f |> g)?` — a trailing `?` applies to the whole pipeline without
-parens. Infix arithmetic (`+`, `-`, `*`, `/`, `%`), `..`, and `as` all bind
-tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison, boolean,
-and `else` all bind looser, so `a == b?` is still `a == (b?)`.
+`?` is a tight postfix operator: it binds like a call, so
+`int.parse(a)? + int.parse(b)?` adds two unwrapped values and `-x?` negates
+the unwrapped `x`. One rule covers pipelines: a `?` that ends a pipeline
+applies to the whole pipeline, so `x |> f |> g?` parses as
+`(x |> f |> g)?` — the common shape `pipeline?` needs no parentheses.
 
 ## `fold_until` Same-Type Constraint
 
@@ -53,18 +52,29 @@ the literal `9223372036854775808` is rejected at lex time), and
 
 ## Float Safety
 
-Silt uses two float types: `Float` (guaranteed finite) and `ExtFloat` (full IEEE 754).
-Division and functions that can produce NaN or Infinity return `ExtFloat`. The `else`
-keyword narrows back to `Float` with an inline fallback:
+Silt has one float type, `Float`, and a `Float` is always finite: never NaN,
+never infinite. An operation whose result would be NaN or infinite is a
+**runtime error**, the same rule as integer overflow:
 
 ```silt
-let x: Float = 1.0 / 3.0 else 0.0       -- finite result -> 0.333...
-let y: Float = 1.0 / 0.0 else 0.0       -- infinity -> fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0  -- NaN -> fallback 0.0
+1.0 / 0.0                -- error: float division by zero
+float.max_value * 2.0    -- error: float overflow
+math.sqrt(-4.0)          -- error: math.sqrt of a negative number: -4
+math.log(0.0)            -- error: math.log of a number that is not positive: 0
 ```
 
-Non-division arithmetic (`+`, `-`, `*`) on `Float` values still returns `Float` and
-panics on overflow to Infinity, matching the integer overflow philosophy.
+Where an input can be out of range, guard it explicitly:
+
+```silt
+let ratio = match total {
+  0.0 -> 0.0
+  _ -> part / total
+}
+```
+
+Because every `Float` is finite, `==`, ordering, hashing, sets and maps all
+treat floats as ordinary totally ordered values, and `-0.0` is the same value
+as `0.0` (`0.0 * -1.0` prints `0`).
 
 ## No Negative Indexing
 

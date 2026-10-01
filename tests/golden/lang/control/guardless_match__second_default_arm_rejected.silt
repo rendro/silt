@@ -1,0 +1,17 @@
+-- A second `_` arm can never run: the first one always matches.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unreachable `_` arm: an earlier `_` arm always matches
+-- stderr-contains: guardless_match__second_default_arm_rejected.silt:11:5
+-- stderr-not-contains: must be last
+fn size(n: Int) -> String {
+  match {
+    n > 100 -> "big"
+    _ -> "small"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println(size(50))
+}

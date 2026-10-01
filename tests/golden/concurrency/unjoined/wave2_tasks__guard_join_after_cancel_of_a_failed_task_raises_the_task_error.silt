@@ -11,7 +11,7 @@ import task
 import time
 fn main() {
   let about_to_fail = channel.new(1)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     channel.send(about_to_fail, 1)
     panic("worker failed")
   })

@@ -8,9 +8,9 @@ fn program() {
   let ch2 = channel.new(10)
   let ch3 = channel.new(10)
 
-  let p1 = task.spawn(fn() { channel.send(ch1, 1) })
-  let p2 = task.spawn(fn() { channel.send(ch2, 2) })
-  let p3 = task.spawn(fn() { channel.send(ch3, 3) })
+  let p1 = task.spawn({ -> channel.send(ch1, 1) })
+  let p2 = task.spawn({ -> channel.send(ch2, 2) })
+  let p3 = task.spawn({ -> channel.send(ch3, 3) })
 
   task.join(p1)
   task.join(p2)

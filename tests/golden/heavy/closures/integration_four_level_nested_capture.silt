@@ -1,9 +1,9 @@
 -- Four levels of nesting: each closure captures from every ancestor.
 import io
 fn level0(a) {
-  let level1 = fn(b) {
-    let level2 = fn(c) {
-      let level3 = fn(d) { a + b + c + d }
+  let level1 = { b ->
+    let level2 = { c ->
+      let level3 = { d -> a + b + c + d }
       level3(4)
     }
     level2(3)

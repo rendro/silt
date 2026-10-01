@@ -33,8 +33,8 @@ fn go(i, rounds, lost) {
   match i < rounds {
     true -> {
       let ch = channel.new(8)
-      let c = task.spawn(fn() { consume(ch, 0) })
-      let s = task.spawn(fn() { produce(ch, 0) })
+      let c = task.spawn({ -> consume(ch, 0) })
+      let s = task.spawn({ -> produce(ch, 0) })
       let _ = spin(200 + i % 97)
       channel.close(ch)
       let sent = task.join(s)

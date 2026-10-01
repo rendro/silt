@@ -2,5 +2,5 @@
 -- exit: 1
 -- stderr-contains: trait impl target 'Widget' is not a declared type
 trait Greet { fn hi(self) -> String }
-trait Greet for Widget { fn hi(self) -> String = "hi" }
+trait Greet for Widget { fn hi(self) -> String { "hi" } }
 fn main() { }

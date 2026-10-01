@@ -4,8 +4,8 @@ import math
 
 fn main() {
   let math = 10
-  let outer = fn() {
-    let inner = fn() {
+  let outer = { ->
+    let inner = { ->
       math + 5
     }
     inner()

@@ -3,7 +3,7 @@ import list
 
 fn program() {
   let offset = 100
-  [1, 2, 3] |> list.map(fn(x) { x + offset })
+  [1, 2, 3] |> list.map({ x -> x + offset })
 }
 
 fn main() {

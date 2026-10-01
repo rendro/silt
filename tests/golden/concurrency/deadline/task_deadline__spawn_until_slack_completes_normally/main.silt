@@ -5,7 +5,7 @@ import task
 import time
 
 fn main() {
-  let handle = task.spawn_until(time.seconds(60), fn() {
+  let handle = task.spawn_until(time.seconds(60), { ->
     match io.read_file("fixture.txt") {
       Ok(s) -> s
       Err(e) -> e.message()

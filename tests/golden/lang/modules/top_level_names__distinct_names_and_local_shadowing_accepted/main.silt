@@ -1,0 +1,12 @@
+-- Distinct top-level names are fine, and inside a function a binding may
+-- still shadow an imported name or an earlier local.
+import a.{ double }
+import b as twice
+
+fn main() {
+  let x = double(2)
+  let x = x + twice.double(3)
+  let double = { n -> n * 100 }
+  println(x)
+  println(double(1))
+}

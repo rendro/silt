@@ -3,15 +3,15 @@
 //! L8 — `module::builtin_module_constants` must enumerate every constant
 //!      registered on a builtin module in `src/typechecker/builtins.rs`.
 //!      Before the fix, it only listed `math.{pi,e}` and silently omitted
-//!      all seven `float.*` constants (`max_value`, `min_value`, `epsilon`,
-//!      `min_positive`, `infinity`, `neg_infinity`, `nan`).
+//!      all four `float.*` constants (`max_value`, `min_value`, `epsilon`,
+//!      `min_positive`).
 //!
 //! G5 — LSP dot-completion (`textDocument/completion` after `math.` / `float.`)
 //!      must surface those constants as completion items alongside the
 //!      module's functions. Before the fix, `dot_completions` in
 //!      `src/lsp.rs` only enumerated `builtin_module_functions` and never
 //!      consulted `builtin_module_constants`, so editor autocompletion
-//!      failed to suggest `math.pi`, `float.infinity`, etc.
+//!      failed to suggest `math.pi`, `float.max_value`, etc.
 //!
 //! The L8 checks call into `silt::module` directly. The G5 checks spawn
 //! the compiled `silt lsp` binary and drive it over stdin/stdout using
@@ -48,20 +48,12 @@ fn math_constants_are_listed() {
 
 #[test]
 fn float_constants_are_listed() {
-    // L8 fix: all seven float constants registered by
+    // L8 fix: all four float constants registered by
     // `TypeChecker::register_float_builtins` in src/typechecker/builtins.rs
     // must appear in `builtin_module_constants("float")`. Prior to the fix
     // the function returned an empty Vec for "float".
     let consts = module::builtin_module_constants("float");
-    for expected in [
-        "max_value",
-        "min_value",
-        "epsilon",
-        "min_positive",
-        "infinity",
-        "neg_infinity",
-        "nan",
-    ] {
+    for expected in ["max_value", "min_value", "epsilon", "min_positive"] {
         assert!(
             consts.contains(&expected),
             "expected `float.{expected}` in builtin_module_constants(\"float\"), got: {consts:?}"
@@ -413,15 +405,7 @@ fn lsp_dot_completion_after_float_includes_all_constants() {
     let source = "import float\nfn main() {\n  float.\n}\n";
     let labels = dot_completion_labels(source, 2, 8);
 
-    for expected in [
-        "max_value",
-        "min_value",
-        "epsilon",
-        "min_positive",
-        "infinity",
-        "neg_infinity",
-        "nan",
-    ] {
+    for expected in ["max_value", "min_value", "epsilon", "min_positive"] {
         assert!(
             labels.iter().any(|l| l == expected),
             "expected `float.{expected}` in dot-completion labels, got: {labels:?}"

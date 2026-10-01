@@ -3,6 +3,6 @@
 -- stderr-contains: does not implement Hash
 -- stderr-contains: 'Fn'
 fn main() {
-  let xs = [fn(y) { y }]
+  let xs = [{ y -> y }]
   println(xs.hash())
 }

@@ -226,7 +226,7 @@ import time
 
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     match channel.receive(ch) {
       Message(_) -> 0
       Closed -> 0
@@ -273,7 +273,7 @@ import time
 
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn(fn() { channel.send(ch, 7) })
+  let h = task.spawn({ -> channel.send(ch, 7) })
   time.sleep(time.ms(1))
   task.cancel(h)
   time.sleep(time.ms(10))
@@ -307,7 +307,7 @@ import time
 fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     match channel.select([Recv(a), Recv(b)]) {
       (_, Message(_v)) -> 0
       (_, Closed) -> 0

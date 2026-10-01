@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]
--- stderr-contains: duplicate top-level definition of 'x'
+-- stderr-contains: error[parse]
+-- stderr-contains: 'x' is bound twice at the top level
 let x = 42
 let x = x + 1
 fn main() { println(x) }

@@ -7,13 +7,13 @@ fn program() {
   let ch = channel.new(1)
 
   -- Consumer spawns first but has to wait for producer.
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn({ ->
     when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
     val * 2
   })
 
   -- Producer sends after a moment.
-  let producer = task.spawn(fn() {
+  let producer = task.spawn({ ->
     channel.send(ch, 21)
   })
 

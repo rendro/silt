@@ -40,7 +40,7 @@ fn trailing_block_comment_on_expanding_match_is_not_duplicated() {
 
 #[test]
 fn trailing_block_comment_on_expanding_lambda_is_not_duplicated() {
-    let src = "fn f() {\n  let g = fn(x) { match x { 1 -> a _ -> b } } {- tail -}\n  g\n}\n";
+    let src = "fn f() {\n  let g = { x -> match x { 1 -> a _ -> b } } {- tail -}\n  g\n}\n";
     let out = formatter::format(src).expect("format");
     assert_eq!(
         count_occurrences(&out, "{- tail -}"),

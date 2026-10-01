@@ -3,6 +3,6 @@ type P { double: Fn(Int) -> Int }
 fn f(other: P) -> Int { other.double(5) }
 fn main() {
   -- the field adds 1 (6); the module doubles (10)
-  println(f(P { double: fn(x) { x + 1 } }))
+  println(f(P { double: { x -> x + 1 } }))
   println(other.double(5))
 }

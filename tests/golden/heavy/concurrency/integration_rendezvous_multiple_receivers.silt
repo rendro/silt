@@ -7,15 +7,15 @@ fn program() {
   let ch = channel.new()
   let results = channel.new(10)
 
-  let r1 = task.spawn(fn() {
+  let r1 = task.spawn({ ->
     when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
     channel.send(results, v * 2)
   })
-  let r2 = task.spawn(fn() {
+  let r2 = task.spawn({ ->
     when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
     channel.send(results, v * 2)
   })
-  let r3 = task.spawn(fn() {
+  let r3 = task.spawn({ ->
     when let Message(v) = channel.receive(ch) else { panic("pattern did not match") }
     channel.send(results, v * 2)
   })

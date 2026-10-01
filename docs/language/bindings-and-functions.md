@@ -35,7 +35,7 @@ namespace clean and avoids the PHP problem of too many bare globals.
 
 The following names are always available without an import: `print`,
 `println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the primitive type
-descriptors `Int`, `Float`, `ExtFloat`, `String`, and `Bool` (used with
+descriptors `Int`, `Float`, `String`, and `Bool` (used with
 type-directed APIs like `json.parse_map`). Additional constructors become available with
 imports: `Stop`/`Continue` (require `import list`),
 `Message`/`Closed`/`Empty`/`Sent` (require `import channel`), the
@@ -72,11 +72,15 @@ The trade-off: functions that exist only for side effects return `()` (Unit).
 ### Immutability as Default (and Only Option)
 
 All bindings are immutable. There is no `mut`, no mutable references, no
-assignment to existing bindings. Shadowing is allowed:
+assignment to existing bindings. Inside a function body, shadowing is
+allowed:
 
 ```silt
-let x = 42
-let x = x + 1    -- shadowing, not mutation
+fn main() {
+  let x = 42
+  let x = x + 1    -- shadowing, not mutation
+  println(x)
+}
 ```
 
 Why no mutation at all? (1) Concurrency safety — immutable values need no
@@ -112,12 +116,23 @@ let x = 42
 let name = "Robert"
 ```
 
-**Shadowing** creates a new binding with the same name:
+**Shadowing** creates a new binding with the same name inside a function
+body:
 
 ```silt
-let x = 1
-let x = x + 1   -- x is now 2; the original 1 is untouched
+fn main() {
+  let x = 1
+  let x = x + 1   -- x is now 2; the original 1 is untouched
+  println(x)
+}
 ```
+
+At the top level a name is bound only once. Two top-level declarations
+that bind the same name — two imports of it (`import a.{ x }` and
+`import b.{ x }`), two `import m as n` with the same alias, or an import
+and a top-level `fn`, `type`, `let` or trait — are an error that names
+both sites. Which declaration a top-level name refers to therefore never
+depends on the order of the declarations.
 
 **Destructuring** works in `let` for irrefutable patterns -- tuples and
 records, which always match exactly one shape:
@@ -148,7 +163,7 @@ useful for documentation:
 
 ```silt
 let x: Int = 42
-let transform: Fn(Int) -> Int = fn(x) { x * 2 }
+let transform: Fn(Int) -> Int = { x -> x * 2 }
 ```
 
 
@@ -160,26 +175,42 @@ let transform: Fn(Int) -> Int = fn(x) { x * 2 }
 fn add(a, b) {
   a + b
 }
+
+fn square(x) { x * x }
 ```
 
-**Single-expression shorthand** uses `=`:
+**Parameters** of named functions, trait methods and closures take the same
+forms: a name or an irrefutable destructuring pattern (a tuple, a record, or
+the constructor of a single-variant type), each with an optional type
+annotation. A refutable pattern such as `Some(x)` or `[a, b]` is rejected;
+bind a name and `match` on it in the body instead.
 
 ```silt
-fn square(x) = x * x
-fn greet(name) = "hello {name}"
+fn add(x: Int, y: Int) { x + y }
+fn first((a, b): (Int, String)) { a }
+fn area(Point { width, height }) { width * height }
 ```
 
-**Anonymous functions (closures)** are values that close over their environment:
+**Closures** are values that close over their environment. A closure is
+written in braces: its parameters, `->`, and its body:
 
 ```silt
-let double = fn(x) { x * 2 }
+let double = { x -> x * 2 }
 
 fn make_adder(n) {
-  fn(x) { x + n }
+  { x -> x + n }
 }
+
+let answer = { -> 42 }   -- no parameters
 ```
 
-**No nested named functions.** Use `let f = fn(x) { ... }` for local helpers.
+A closure has no return-type annotation; its type is the type of its body:
+
+```silt
+let swap = { (a, b): (Int, String) -> (b, a) }
+```
+
+**No nested named functions.** Use `let f = { x -> ... }` for local helpers.
 Named functions are always top-level, keeping scoping rules simple.
 
 **Trailing closures:** when the last argument is a closure, write it outside

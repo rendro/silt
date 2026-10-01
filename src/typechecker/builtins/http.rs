@@ -54,7 +54,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         checker
             .variant_to_enum
             .insert(intern(variant), intern("Method"));
-        env.define(intern(variant), Scheme::pure_mono(method_ty.clone()));
+        env.define(intern(variant), Scheme::mono(method_ty.clone()));
     }
     crate::value::register_variant_decl_order(method_variants);
 
@@ -116,7 +116,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // http.get: (String) -> Result(Response, String)
     env.define(
         intern("http.get"),
-        Scheme::io_net_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(result_response.clone()),
         )),
@@ -125,7 +125,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // http.request: (Method, String, String, Map(String, String)) -> Result(Response, String)
     env.define(
         intern("http.request"),
-        Scheme::io_net_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![method_ty, Type::String, Type::String, map_ss],
             Box::new(result_response),
         )),
@@ -136,7 +136,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // expose on all interfaces (0.0.0.0).
     env.define(
         intern("http.serve"),
-        Scheme::io_net_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![
                 Type::Int,
                 Type::Fun(vec![request_ty.clone()], Box::new(response_ty.clone())),
@@ -150,7 +150,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // to `http.serve`.
     env.define(
         intern("http.serve_all"),
-        Scheme::io_net_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![
                 Type::Int,
                 Type::Fun(vec![request_ty], Box::new(response_ty)),
@@ -163,7 +163,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Pure URL-path parser; never touches the network.
     env.define(
         intern("http.segments"),
-        Scheme::pure_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::List(Box::new(Type::String))),
         )),
@@ -176,7 +176,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Pure string parser; never touches the network.
     env.define(
         intern("http.parse_query"),
-        Scheme::pure_mono(Type::Fun(
+        Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Map(
                 Box::new(Type::String),

@@ -8,9 +8,9 @@ import time
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 100)              -- fill the buffer
-  let dead = task.spawn(fn() { channel.send(ch, 999) })   -- blocks
+  let dead = task.spawn({ -> channel.send(ch, 999) })   -- blocks
   time.sleep(time.ms(50))
-  let real = task.spawn(fn() { channel.send(ch, 7) })     -- queued behind
+  let real = task.spawn({ -> channel.send(ch, 7) })     -- queued behind
   time.sleep(time.ms(50))
   task.cancel(dead)
   time.sleep(time.ms(50))

@@ -26,7 +26,7 @@ fn main() {
   let results = channel.new(4)
 
   let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
+    task.spawn({ ->
       loop _ = () {
         match channel.receive(jobs) {
           Message(n) -> {
@@ -39,7 +39,7 @@ fn main() {
     })
   }
 
-  let producer = task.spawn(fn() {
+  let producer = task.spawn({ ->
     1..30 |> list.each { n -> channel.send(jobs, n) }
     channel.close(jobs)
   })

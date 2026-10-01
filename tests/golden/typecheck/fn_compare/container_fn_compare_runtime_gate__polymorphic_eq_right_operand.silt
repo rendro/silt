@@ -4,5 +4,5 @@
 -- stderr-contains: 'Fn'
 fn eq(a: x, b: x) -> Bool { a == b }
 fn main() {
-  println(eq([], [fn(y) { y }]))
+  println(eq([], [{ y -> y }]))
 }

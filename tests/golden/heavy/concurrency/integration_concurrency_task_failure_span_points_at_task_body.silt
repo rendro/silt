@@ -9,7 +9,7 @@
 -- `task.join` site in the parent (line 17).
 import task
 fn main() {
-  let h = task.spawn(fn() {
+  let h = task.spawn({ ->
     let y = 10
     let x = y / 0
     x

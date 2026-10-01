@@ -13,10 +13,22 @@ fn main() {
   let c = channel.new(0)
   let d = channel.new(0)
 
-  let sa = task.spawn(fn() { time.sleep(time.ms(5))  channel.send(a, 1) })
-  let sb = task.spawn(fn() { time.sleep(time.ms(10)) channel.send(b, 2) })
-  let sc = task.spawn(fn() { time.sleep(time.ms(500)) channel.send(c, 3) })  -- slow; will be cancelled
-  let sd = task.spawn(fn() { time.sleep(time.ms(20)) channel.send(d, 4) })
+  let sa = task.spawn({ ->
+    time.sleep(time.ms(5))
+    channel.send(a, 1)
+  })
+  let sb = task.spawn({ ->
+    time.sleep(time.ms(10))
+    channel.send(b, 2)
+  })
+  let sc = task.spawn({ ->  -- slow; will be cancelled
+    time.sleep(time.ms(500))
+    channel.send(c, 3)
+  })
+  let sd = task.spawn({ ->
+    time.sleep(time.ms(20))
+    channel.send(d, 4)
+  })
 
   time.sleep(time.ms(1))
   task.cancel(sc)

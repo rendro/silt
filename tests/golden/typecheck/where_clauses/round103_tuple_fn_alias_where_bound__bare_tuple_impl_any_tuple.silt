@@ -1,4 +1,4 @@
 trait Tag { fn tag(self) -> String }
-trait Tag for Tuple { fn tag(self) -> String = "tuple" }
+trait Tag for Tuple { fn tag(self) -> String { "tuple" } }
 fn tag_it(x: a) -> String where a: Tag { x.tag() }
 fn main() { println(tag_it((1, "x", true))) }

@@ -1,5 +1,5 @@
 trait Foo(a) { fn produce(self) -> a }
-trait Foo(Int) for String { fn produce(self) -> Int = 42 }
+trait Foo(Int) for String { fn produce(self) -> Int { 42 } }
 fn use_foo(s: a) -> Int where a: Foo(Int) {
   s.produce()
 }

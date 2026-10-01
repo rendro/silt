@@ -6,7 +6,7 @@ import task
 import time
 
 fn main() {
-  let handle = task.spawn_until(time.ms(0), fn() {
+  let handle = task.spawn_until(time.ms(0), { ->
     match io.read_file("/tmp/silt_spawn_until_noent") {
       Ok(s) -> s
       Err(e) -> e.message()

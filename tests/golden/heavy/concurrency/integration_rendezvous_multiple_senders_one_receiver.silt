@@ -7,9 +7,9 @@ import list
 fn program() {
   let ch = channel.new()
 
-  let s1 = task.spawn(fn() { channel.send(ch, 10) })
-  let s2 = task.spawn(fn() { channel.send(ch, 20) })
-  let s3 = task.spawn(fn() { channel.send(ch, 30) })
+  let s1 = task.spawn({ -> channel.send(ch, 10) })
+  let s2 = task.spawn({ -> channel.send(ch, 20) })
+  let s3 = task.spawn({ -> channel.send(ch, 30) })
 
   -- Receive all three messages
   when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }

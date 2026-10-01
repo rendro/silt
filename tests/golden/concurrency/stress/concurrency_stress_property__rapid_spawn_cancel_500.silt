@@ -11,7 +11,7 @@ import time
 fn main() {
   -- Spawn 500 long-sleeping tasks.
   let handles = 1..500
-    |> list.map { _ -> task.spawn(fn() {
+    |> list.map { _ -> task.spawn({ ->
       time.sleep(time.ms(5000))
     }) }
   -- Cancel every one of them.

@@ -9,8 +9,8 @@ import time
 
 fn main() {
   let never = channel.new(0)
-  let parked = task.spawn(fn() { channel.receive(never) })
-  let done = task.spawn(fn() { 42 })
+  let parked = task.spawn({ -> channel.receive(never) })
+  let done = task.spawn({ -> 42 })
   time.sleep(time.ms(100))
   task.cancel(parked)
   time.sleep(time.ms(100))

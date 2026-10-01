@@ -109,7 +109,7 @@ fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
 }
 
 /// Pull the keyword tokens out of the vim `siltType` keyword line(s).
-/// Format: `syntax keyword siltType Int Float ExtFloat Bool ...`.
+/// Format: `syntax keyword siltType Int Float Bool ...`.
 ///
 /// Round 82 DX-GAP-1: multiple `syntax keyword siltType ...` lines are
 /// supported (used to separate primitives / generic containers from

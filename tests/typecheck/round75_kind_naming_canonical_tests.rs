@@ -78,7 +78,6 @@ fn run_err(input: &str) -> String {
 struct AllVariants {
     int: Value,
     float: Value,
-    ext_float: Value,
     bool_: Value,
     string: Value,
     list: Value,
@@ -132,7 +131,6 @@ fn build_all_variants() -> AllVariants {
     AllVariants {
         int: Value::Int(7),
         float: Value::Float(1.5),
-        ext_float: Value::ExtFloat(2.5),
         bool_: Value::Bool(true),
         string: Value::String("hi".to_string()),
         list: Value::List(Arc::new(vec![Value::Int(1)])),
@@ -177,7 +175,6 @@ fn build_all_variants() -> AllVariants {
 fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) {
     f(&av.int, "Int");
     f(&av.float, "Float");
-    f(&av.ext_float, "ExtFloat");
     f(&av.bool_, "Bool");
     f(&av.string, "String");
     f(&av.list, "List");

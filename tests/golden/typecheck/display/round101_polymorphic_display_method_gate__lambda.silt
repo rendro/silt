@@ -4,4 +4,4 @@
 -- stderr-contains: 'Fn'
 -- stderr-not-contains: required for string interpolation
 fn show(x: a) -> String { x.display() }
-fn main() { println(show(fn(y) { y })) }
+fn main() { println(show({ y -> y })) }

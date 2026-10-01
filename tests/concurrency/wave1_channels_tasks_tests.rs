@@ -191,13 +191,13 @@ fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
 
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     channel.send(logs, "background task done")
     channel.send(logs, "log rotation complete")
     channel.close(logs)
   })
 
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     channel.send(alerts, "disk full!")
     channel.close(alerts)
   })
@@ -257,15 +257,15 @@ import task
 import time
 fn main() {
   let about_to_fail = channel.new(2)
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     channel.send(about_to_fail, 1)
     panic("first worker failed")
   })
-  let _ = task.spawn(fn() {
+  let _ = task.spawn({ ->
     channel.send(about_to_fail, 2)
     panic("second worker failed")
   })
-  let fine = task.spawn(fn() { 42 })
+  let fine = task.spawn({ -> 42 })
   let _ = channel.receive(about_to_fail)
   let _ = channel.receive(about_to_fail)
   time.sleep(time.ms(300))
@@ -316,8 +316,8 @@ fn collect(ch, n, acc) {
 }
 fn main() {
   let ch = channel.new()
-  let ps = 1..50 |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
-  let r = task.spawn(fn() { collect(ch, 25, 0) })
+  let ps = 1..50 |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
+  let r = task.spawn({ -> collect(ch, 25, 0) })
   let m = collect(ch, 25, 0)
   let t = task.join(r)
   println("total {m + t}")

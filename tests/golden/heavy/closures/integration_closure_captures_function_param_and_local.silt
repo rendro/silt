@@ -3,7 +3,7 @@
 import io
 fn make(param) {
   let local = param * 2
-  fn(x) { param + local + x }
+  { x -> param + local + x }
 }
 
 fn program() {

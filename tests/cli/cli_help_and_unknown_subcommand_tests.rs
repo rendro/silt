@@ -1,113 +1,16 @@
 //! Round-62 audit regressions for `silt` CLI ergonomics.
 //!
-//! Two unrelated gaps land in the same file because they both poke the
-//! top-level dispatcher's user-facing strings:
-//!
-//! - **G5**: `silt run --help` was missing the `--strict-effects` flag
-//!   even though `silt check --help` and `silt test --help` both list
-//!   it and the flag is parsed by `silt run` itself
-//!   (`src/cli/run.rs`). A user reading `run --help` would conclude the
-//!   flag isn't supported there, when in fact it is. Lock the flag's
-//!   presence in the run-help text and verify the existing `check` /
-//!   `test` help paths still advertise it (regression guard).
-//!
-//! - **L8**: invoking `silt rn examples/hello.silt` produces only
-//!   "Unknown command: rn" with no hint that the user probably meant
-//!   `run`. Wire up a Levenshtein-distance suggestion so close typos
-//!   surface a "Did you mean" line, but leave wildly unrelated typos
-//!   (`silt zzzzzz`) alone — a wrong suggestion is worse than no
-//!   suggestion.
+//! **L8**: invoking `silt rn examples/hello.silt` produces only
+//! "Unknown command: rn" with no hint that the user probably meant
+//! `run`. Wire up a Levenshtein-distance suggestion so close typos
+//! surface a "Did you mean" line, but leave wildly unrelated typos
+//! (`silt zzzzzz`) alone — a wrong suggestion is worse than no
+//! suggestion.
 
 use std::process::Command;
 
 fn silt_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_silt"))
-}
-
-// ── G5: run --help lists --strict-effects ──────────────────────────
-
-#[test]
-fn silt_run_help_lists_strict_effects_flag() {
-    // The flag is parsed at src/cli/run.rs:30 — its absence from the
-    // help text was a documentation drift, not a missing feature.
-    let output = silt_cmd()
-        .args(["run", "--help"])
-        .output()
-        .expect("failed to run silt run --help");
-    assert!(
-        output.status.success(),
-        "silt run --help must exit 0, got {:?}",
-        output.status
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--strict-effects"),
-        "silt run --help must list --strict-effects flag, got: {stdout}"
-    );
-    // Match the wording the other subcommands use for consistency.
-    assert!(
-        stdout.contains("Treat unannotated fns as pure (Phase D)"),
-        "silt run --help must use the same phrasing as check/test, got: {stdout}"
-    );
-}
-
-#[test]
-fn silt_check_help_still_lists_strict_effects_flag() {
-    // Regression guard: the `check` subcommand has long advertised
-    // `--strict-effects` in its --help output. Lock that.
-    let output = silt_cmd()
-        .args(["check", "--help"])
-        .output()
-        .expect("failed to run silt check --help");
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--strict-effects"),
-        "silt check --help must list --strict-effects flag, got: {stdout}"
-    );
-}
-
-#[test]
-fn silt_test_help_still_lists_strict_effects_flag() {
-    // Regression guard: ditto for `silt test --help`.
-    let output = silt_cmd()
-        .args(["test", "--help"])
-        .output()
-        .expect("failed to run silt test --help");
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--strict-effects"),
-        "silt test --help must list --strict-effects flag, got: {stdout}"
-    );
-}
-
-// ── Source-grep lock (backup if the binary ever fails to build) ────
-
-#[test]
-fn run_help_text_source_mentions_strict_effects() {
-    // Cheap, build-independent lock: the source of `run_help_text`
-    // mentions the flag. Catches the regression even in workspaces
-    // that don't have the silt binary built yet.
-    let src = std::fs::read_to_string("src/cli/help.rs")
-        .expect("src/cli/help.rs must be readable from the test cwd");
-    // Find the run_help_text fn body.
-    let idx = src
-        .find("fn run_help_text()")
-        .expect("run_help_text fn must exist in src/cli/help.rs");
-    let body = &src[idx..];
-    // Stop at the next top-level fn or end-of-file so we don't
-    // accidentally match the (already-existing) mention in the
-    // `check_usage_banner` doc comment.
-    let end = body[1..]
-        .find("\npub(crate) fn ")
-        .map(|i| i + 1)
-        .unwrap_or(body.len());
-    let body = &body[..end];
-    assert!(
-        body.contains("strict-effects"),
-        "run_help_text body must mention strict-effects, got: {body}"
-    );
 }
 
 // ── L8: unknown-subcommand "did you mean" hint ─────────────────────

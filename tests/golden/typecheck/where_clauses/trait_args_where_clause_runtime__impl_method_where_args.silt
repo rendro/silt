@@ -2,12 +2,17 @@
 -- stderr-contains: error[type]
 -- stderr-contains: does not implement trait 'Conv(Int)'
 trait Conv(to) { fn conv(self) -> to }
-trait Conv(String) for Int { fn conv(self) -> String = "an int" }
+trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
 type Box(a) { Wrap(a) }
 trait Foo { fn do_it(self) -> Int }
 trait Foo for Box(a) {
-    fn do_it(self) -> Int where a: Conv(Int) = match self {
-        Wrap(x) -> { let n: Int = x.conv() n + 100 }
+    fn do_it(self) -> Int where a: Conv(Int) {
+      match self {
+          Wrap(x) -> {
+            let n: Int = x.conv()
+            n + 100
+          }
+      }
     }
 }
 fn main() {

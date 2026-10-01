@@ -111,10 +111,6 @@ pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-
 /// Both the `--help` path and the "no arguments given" path render
 /// from this so they can't drift apart. A regression test in
 /// tests/cli/cli.rs asserts the two banners are byte-identical.
-///
-/// Note: `--strict-effects` (Phase D effect-rows opt-in) is omitted
-/// from the banner to keep the row width bounded — it's documented
-/// in the per-subcommand `--help` output instead.
 pub(crate) fn check_usage_banner() -> &'static str {
     "silt check [--format json] [--watch] <file.silt>"
 }
@@ -172,7 +168,6 @@ pub(crate) fn run_help_text() -> String {
     s.push_str("Options:\n");
     s.push_str("  --watch, -w         Re-run on file changes\n");
     s.push_str("  --disassemble       Show bytecode disassembly instead of running\n");
-    s.push_str("  --strict-effects    Treat unannotated fns as pure (Phase D)\n");
     s.push('\n');
     s.push_str("Examples:\n");
     s.push_str("  silt run                      (inside a package, runs src/main.silt)\n");

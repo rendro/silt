@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: `recur` can only appear inside a `loop(
+-- stderr-contains: `loop(...)` can only appear inside a `loop` body
 fn main() {
   loop(1, 2)
 }

@@ -11,14 +11,14 @@ import task
 
 fn main() {
   let ch = channel.new(0)
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn({ ->
     match channel.receive(ch) {
       Message(v) -> "got {v}"
       Closed -> "closed"
       _ -> "other"
     }
   })
-  let producer = task.spawn(fn() {
+  let producer = task.spawn({ ->
     let zero = 0
     channel.send(ch, 10 / zero)
   })

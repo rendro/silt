@@ -578,7 +578,7 @@ import channel
 import task
 fn main() {
     let ch = channel.new(10)
-    task.spawn(fn() {
+    task.spawn({ ->
         channel.send(ch, 1)
         channel.send(ch, 2)
         channel.close(ch)
@@ -672,7 +672,7 @@ import time
 
 fn main() {
     let ch = channel.new(0)
-    task.spawn(fn() {
+    task.spawn({ ->
         time.sleep(time.ms(50))
         channel.send(ch, 42)
     })
@@ -716,7 +716,7 @@ import task
 fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
-    task.spawn(fn() { channel.send(ch2, "hello") })
+    task.spawn({ -> channel.send(ch2, "hello") })
     match channel.select([Recv(ch1), Recv(ch2)]) {
         (^ch2, Message(val)) -> println(val)  -- hello
         (_, Closed) -> println("closed")
@@ -891,7 +891,7 @@ import channel
 import task
 fn main() {
     let done = channel.new(1)
-    let h = task.spawn(fn() {
+    let h = task.spawn({ ->
         -- long-running work
         channel.send(done, 42)
     })
@@ -924,7 +924,7 @@ instead of relying on `task.join` for the signal.
 ```silt
 import task
 fn main() {
-    let h = task.spawn(fn() { 1 + 2 })
+    let h = task.spawn({ -> 1 + 2 })
     let sum = task.join(h)
     println(sum)  -- 3
 }
@@ -944,7 +944,7 @@ that can be used with `task.join` or `task.cancel`.
 ```silt
 import task
 fn main() {
-    let h = task.spawn(fn() {
+    let h = task.spawn({ ->
         println("running in a task")
         42
     })
@@ -988,7 +988,7 @@ import task
 import time
 
 fn main() {
-    let outcome = task.deadline(time.ms(200), fn() {
+    let outcome = task.deadline(time.ms(200), { ->
         io.read_file("/var/log/slow.log")
     })
     match outcome {
@@ -1007,7 +1007,7 @@ task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)
 ```
 
 Spawns `f` as a task with a bounded wall-clock deadline. Equivalent to
-`task.spawn(fn() { task.deadline(dur, f) })` but with one less closure
+`task.spawn({ -> task.deadline(dur, f) })` but with one less closure
 wrapper. The returned handle resolves to the function's result if it
 finishes in time, or to the deadline error inside any I/O builtin it
 was blocked on when the deadline fired.
@@ -1022,7 +1022,7 @@ import task
 import time
 
 fn main() {
-    let h = task.spawn_until(time.seconds(2), fn() {
+    let h = task.spawn_until(time.seconds(2), { ->
         io.read_file("/tmp/maybe_slow.txt")
     })
     match task.join(h) {
@@ -1518,8 +1518,8 @@ fn load_config(path: String) -> Result(Config, AppError) {
 }
 ```
 
-`?` binds looser than `|>`, so the whole pipeline is a single expression
-terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
+A `?` that ends a pipeline applies to the whole pipeline, so the pipeline
+is a single expression terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
 for a longer walkthrough. A separate proposal
 ([`error-from-trait.md`](../proposals/error-from-trait.md)) tracks the
 design for a `.into()`-based ergonomics layer over this pattern.
@@ -1548,14 +1548,13 @@ No import or qualification needed.
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
 | `None` | `Option(a)` | The absent Option value (not a function) |
 
-Additionally, five **type descriptors** are in the global namespace for use with
+Additionally, four **type descriptors** are in the global namespace for use with
 `json.parse_map` and similar type-directed APIs:
 
 | Name | Description |
 |------|-------------|
 | `Int` | Integer type descriptor |
 | `Float` | Float type descriptor |
-| `ExtFloat` | Extended-float type descriptor (IEEE-754 `f64`, usable as map/set keys) |
 | `String` | String type descriptor |
 | `Bool` | Boolean type descriptor |
 
@@ -1962,7 +1961,7 @@ type User { id: Int, name: String }
 fn main() {
   println("Listening on :8080")
 
-  http.serve(8080, fn(req) {
+  http.serve(8080, { req ->
     match (req.method, http.segments(req.path)) {
       (GET, []) ->
         Response { status: 200, body: "Hello!", headers: #{} }
@@ -2246,11 +2245,13 @@ fn main() {
 
 Functions for parsing, rounding, converting, and comparing floats.
 
-> **Two-tier float system:** `Float` values are guaranteed finite — no NaN, no Infinity.
-> Operations that may produce non-finite results (division, `sqrt`, `log`, `pow`, `exp`,
-> `asin`, `acos`) return `ExtFloat` instead. Use the `else` keyword to narrow back to
-> `Float` with a fallback: `a / b else 0.0`. Non-division arithmetic (`+`, `-`, `*`) on
-> `Float` panics on overflow rather than producing Infinity.
+> **Floats are always finite:** a `Float` is never NaN or infinite. An
+> operation whose result would be NaN or infinite raises a runtime error
+> instead, the way `Int` overflow does: `x / 0.0` raises "float division by
+> zero", `+`, `-` and `*` raise "float overflow", and `math.sqrt` of a
+> negative number, `math.log` of a number that is not positive, and
+> `math.pow` overflow raise too. Guard the input when it can be out of
+> range: `match b { 0.0 -> 0.0, _ -> a / b }`.
 
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
@@ -2263,9 +2264,6 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
 | `clamp` | `(Float, Float, Float) -> Float` | Clamp value to `[lo, hi]` |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
-| `is_finite` | `(ExtFloat) -> Bool` | True iff value is finite |
-| `is_infinite` | `(ExtFloat) -> Bool` | True iff value is `±∞` |
-| `is_nan` | `(ExtFloat) -> Bool` | True iff value is NaN |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
 | `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
@@ -2278,9 +2276,6 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
 | `float.epsilon` | `Float` | Machine epsilon (`2.220446049250313e-16`) |
 | `float.min_positive` | `Float` | Smallest positive normal (`2.2250738585072014e-308`) |
-| `float.infinity` | `ExtFloat` | Positive infinity |
-| `float.neg_infinity` | `ExtFloat` | Negative infinity |
-| `float.nan` | `ExtFloat` | Not a Number |
 
 
 ## `float.abs`
@@ -2326,72 +2321,12 @@ Returns `x` constrained to the inclusive range `[lo, hi]`: `lo` if
 `x < lo`, `hi` if `x > hi`, otherwise `x`. Runtime error if `lo > hi`
 (invalid bounds).
 
-Because `Float` is guaranteed finite, callers should not pass NaN here;
-the output is **undefined for NaN inputs**. Use `float.is_nan` on an
-`ExtFloat` first if you need to guard against this case.
-
 ```silt
 import float
 fn main() {
     println(float.clamp(0.5, 0.0, 1.0))   -- 0.5
     println(float.clamp(-0.2, 0.0, 1.0))  -- 0
     println(float.clamp(1.5, 0.0, 1.0))   -- 1
-}
-```
-
-
-## `float.is_finite`
-
-```
-float.is_finite(x: ExtFloat) -> Bool
-```
-
-Returns `true` iff `x` is a finite number (not NaN, not `±∞`). Takes
-`ExtFloat` because `Float` is guaranteed finite by construction — there
-is no way to produce a non-finite `Float` that would make this predicate
-interesting, so no `Float` overload is provided.
-
-```silt
-import float
-fn main() {
-    println(float.is_finite(float.nan))         -- false
-    println(float.is_finite(float.infinity))    -- false
-    println(float.is_finite(1.0 / 1.0))         -- true (division returns ExtFloat)
-}
-```
-
-
-## `float.is_infinite`
-
-```
-float.is_infinite(x: ExtFloat) -> Bool
-```
-
-Returns `true` iff `x` is positive or negative infinity.
-
-```silt
-import float
-fn main() {
-    println(float.is_infinite(float.infinity))      -- true
-    println(float.is_infinite(float.neg_infinity))  -- true
-    println(float.is_infinite(float.nan))           -- false
-}
-```
-
-
-## `float.is_nan`
-
-```
-float.is_nan(x: ExtFloat) -> Bool
-```
-
-Returns `true` iff `x` is NaN.
-
-```silt
-import float
-fn main() {
-    println(float.is_nan(float.nan))       -- true
-    println(float.is_nan(float.infinity))  -- false
 }
 ```
 
@@ -2454,8 +2389,9 @@ float.parse(s: String) -> Result(Float, ParseError)
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
 `Ok(f)` on success, `Err(ParseError)` on failure — the same typed enum
 `int.parse` uses (`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`,
-`ParseUnderflow`). Strings like `"NaN"` and `"Infinity"` are rejected as
-`ParseInvalidDigit(0)` since silt's `Float` is guaranteed finite.
+`ParseUnderflow`). A `Float` is always finite, so `"NaN"` and `"inf"` are
+rejected as `ParseInvalidDigit(0)`, and a literal outside the `Float` range
+as `ParseOverflow` (`"1e400"`) or `ParseUnderflow` (`"-1e400"`).
 
 ```silt
 import float
@@ -2491,8 +2427,8 @@ fn main() {
 float.to_int(f: Float) -> Int
 ```
 
-Truncates toward zero, converting to an integer. Returns a runtime error if
-the value is NaN or Infinity.
+Truncates toward zero, converting to an integer. Raises a runtime error if
+the value is outside the `Int` range.
 
 ```silt
 import float
@@ -2510,8 +2446,7 @@ float.to_string(f: Float) -> String
 float.to_string(f: Float, decimals: Int) -> String
 ```
 
-Converts a float to its string representation. Accepts both `Float` and
-`ExtFloat` values at runtime.
+Converts a float to its string representation.
 
 - **One-argument form:** returns the shortest round-trippable
   representation. Whole-number floats always include a decimal point
@@ -2541,12 +2476,6 @@ fn main() {
 | `float.min_value` | `Float` | `-1.7976931348623157e+308` |
 | `float.epsilon` | `Float` | `2.220446049250313e-16` |
 | `float.min_positive` | `Float` | `2.2250738585072014e-308` |
-| `float.infinity` | `ExtFloat` | Positive infinity |
-| `float.neg_infinity` | `ExtFloat` | Negative infinity |
-| `float.nan` | `ExtFloat` | Not a Number |
-
-`float.max_value` and `float.min_value` are `Float` values (they're finite). The non-finite
-constants are `ExtFloat` — use `else` to handle them if needed.
 "#;
 
 /// Verbatim former `docs/stdlib/io-fs.md`.
@@ -3219,14 +3148,14 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `json.parse` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+| `json.parse` | `Int`, `Float`, `String`, `Bool`, or a record type |
 | `json.parse_list` | a record type |
-| `json.parse_map` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
 
 The fields of a record type (and of every record type nested in it) may have
 these types:
 
-- `Int`, `Float`, `ExtFloat`, `String`, `Bool`
+- `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
 - `List(T)` and `Range(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -3337,7 +3266,7 @@ json.parse_map(s: String, type v) -> Result(Map(String, v), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
-parameter (`Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type).
+parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 import json
@@ -3956,6 +3885,7 @@ list.product_float(xs: List(Float)) -> Float
 ```
 
 Like `product`, but for lists of floats. Returns `1.0` on an empty list.
+Raises a runtime error when the product is too large for a `Float`.
 
 ```silt
 import list
@@ -4102,6 +4032,7 @@ list.sum_float(xs: List(Float)) -> Float
 ```
 
 Like `sum`, but for lists of floats. Returns `0.0` on an empty list.
+Raises a runtime error when the sum is too large for a `Float`.
 
 ```silt
 import list
@@ -4498,44 +4429,47 @@ order: 11
 
 # math
 
-Mathematical functions and constants. Functions that always produce finite results from
-finite inputs return `Float`. Functions that may produce NaN or Infinity return `ExtFloat`
-— use `else` to narrow back to `Float`.
+Mathematical functions and constants. Every function returns a finite `Float`.
+A function called outside its domain, or whose result is too large for a
+`Float`, raises a runtime error that names the function and the argument:
+`math.sqrt` of a negative number, `math.log` / `math.log10` of a number that
+is not positive, `math.asin` / `math.acos` outside -1..1, and `math.exp` /
+`math.pow` overflow.
 
 ## Summary
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `acos` | `(Float) -> ExtFloat` | Arccosine (radians) |
-| `asin` | `(Float) -> ExtFloat` | Arcsine (radians) |
+| `acos` | `(Float) -> Float` | Arccosine (radians) |
+| `asin` | `(Float) -> Float` | Arcsine (radians) |
 | `atan` | `(Float) -> Float` | Arctangent (radians) |
 | `atan2` | `(Float, Float) -> Float` | Two-argument arctangent |
 | `cos` | `(Float) -> Float` | Cosine |
 | `e` | `Float` | Euler's number (2.71828...) |
-| `exp` | `(Float) -> ExtFloat` | Exponential (e^x) |
-| `log` | `(Float) -> ExtFloat` | Natural logarithm (ln) |
-| `log10` | `(Float) -> ExtFloat` | Base-10 logarithm |
+| `exp` | `(Float) -> Float` | Exponential (e^x) |
+| `log` | `(Float) -> Float` | Natural logarithm (ln) |
+| `log10` | `(Float) -> Float` | Base-10 logarithm |
 | `pi` | `Float` | Pi (3.14159...) |
-| `pow` | `(Float, Float) -> ExtFloat` | Exponentiation |
+| `pow` | `(Float, Float) -> Float` | Exponentiation |
 | `random` | `() -> Float` | Random float in [0.0, 1.0) |
 | `sin` | `(Float) -> Float` | Sine |
-| `sqrt` | `(Float) -> ExtFloat` | Square root |
+| `sqrt` | `(Float) -> Float` | Square root |
 | `tan` | `(Float) -> Float` | Tangent |
 
 
 ## `math.acos`
 
 ```
-math.acos(x: Float) -> ExtFloat
+math.acos(x: Float) -> Float
 ```
 
-Returns the arccosine of `x` in radians. Returns `NaN` for inputs outside [-1, 1].
-Use `else` to narrow:
+Returns the arccosine of `x` in radians. Raises a runtime error for inputs
+outside -1..1.
 
 ```silt
 import math
 fn main() {
-    let angle = math.acos(1.0) else 0.0
+    let angle = math.acos(1.0)
     println(angle)  -- 0  (silt's Float display drops the trailing `.0`
                     --    for integer-valued floats)
 }
@@ -4545,16 +4479,16 @@ fn main() {
 ## `math.asin`
 
 ```
-math.asin(x: Float) -> ExtFloat
+math.asin(x: Float) -> Float
 ```
 
-Returns the arcsine of `x` in radians. Returns `NaN` for inputs outside [-1, 1].
-Use `else` to narrow:
+Returns the arcsine of `x` in radians. Raises a runtime error for inputs
+outside -1..1.
 
 ```silt
 import math
 fn main() {
-    let angle = math.asin(1.0) else 0.0
+    let angle = math.asin(1.0)
     println(angle)  -- 1.5707... (pi/2)
 }
 ```
@@ -4630,16 +4564,16 @@ fn main() {
 ## `math.exp`
 
 ```
-math.exp(x: Float) -> ExtFloat
+math.exp(x: Float) -> Float
 ```
 
-Returns e raised to the power of `x`. May overflow to Infinity for large inputs.
-Use `else` to narrow:
+Returns e raised to the power of `x`. Raises a runtime error when the result
+is too large for a `Float` (`x` above about 709.78).
 
 ```silt
 import math
 fn main() {
-    let e_val = math.exp(1.0) else 0.0
+    let e_val = math.exp(1.0)
     println(e_val)  -- 2.718281828459045
 }
 ```
@@ -4648,16 +4582,16 @@ fn main() {
 ## `math.log`
 
 ```
-math.log(x: Float) -> ExtFloat
+math.log(x: Float) -> Float
 ```
 
-Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
-`NaN` for negative inputs. Use `else` to narrow:
+Returns the natural logarithm (base e) of `x`. Raises a runtime error when
+`x` is zero or negative.
 
 ```silt
 import math
 fn main() {
-    let ln_e = math.log(math.e) else 0.0
+    let ln_e = math.log(math.e)
     println(ln_e)  -- 1
 }
 ```
@@ -4666,16 +4600,16 @@ fn main() {
 ## `math.log10`
 
 ```
-math.log10(x: Float) -> ExtFloat
+math.log10(x: Float) -> Float
 ```
 
-Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
-`NaN` for negative inputs. Use `else` to narrow:
+Returns the base-10 logarithm of `x`. Raises a runtime error when `x` is
+zero or negative.
 
 ```silt
 import math
 fn main() {
-    let log_100 = math.log10(100.0) else 0.0
+    let log_100 = math.log10(100.0)
     println(log_100)  -- 2
 }
 ```
@@ -4701,16 +4635,17 @@ fn main() {
 ## `math.pow`
 
 ```
-math.pow(base: Float, exponent: Float) -> ExtFloat
+math.pow(base: Float, exponent: Float) -> Float
 ```
 
-Returns `base` raised to the power of `exponent`. Returns `ExtFloat` — may be
-Infinity for large results. Use `else` to narrow:
+Returns `base` raised to the power of `exponent`. Raises a runtime error when
+the result is too large for a `Float`, when `base` is zero and `exponent` is
+negative, and when a negative `base` is raised to a fractional `exponent`.
 
 ```silt
 import math
 fn main() {
-    let two_to_ten = math.pow(2.0, 10.0) else 0.0
+    let two_to_ten = math.pow(2.0, 10.0)
     println(two_to_ten)  -- 1024
 }
 ```
@@ -4753,16 +4688,15 @@ fn main() {
 ## `math.sqrt`
 
 ```
-math.sqrt(x: Float) -> ExtFloat
+math.sqrt(x: Float) -> Float
 ```
 
-Returns the square root of `x`. Returns `NaN` for negative inputs. Use `else`
-to narrow:
+Returns the square root of `x`. Raises a runtime error for a negative `x`.
 
 ```silt
 import math
 fn main() {
-    let root = math.sqrt(4.0) else 0.0
+    let root = math.sqrt(4.0)
     println(root)  -- 2
 }
 ```
@@ -4885,7 +4819,7 @@ fn main() {
   match postgres.connect("postgresql://localhost/app") {
     Ok(pool) -> {
       -- Transactional INSERT + SELECT.
-      let result = postgres.transact(pool, fn(tx) {
+      let result = postgres.transact(pool, { tx ->
         let _ = postgres.execute(
           tx,
           "INSERT INTO users (id, name) VALUES ($1, $2)",
@@ -5371,8 +5305,9 @@ fn main() {
 Works well with a variant constructor as the mapping function. Silt
 treats a one-field variant constructor as a first-class `Fn(e) -> Wrap`,
 so `result.map_err(r, Wrap)` lifts a module-specific error into a
-caller-owned enum without a closure. `?` binds looser than `|>`, so
-a pipe followed by `?` composes without parentheses:
+caller-owned enum without a closure. A `?` that ends a pipeline applies
+to the whole pipeline, so a pipe followed by `?` composes without
+parentheses:
 
 ```silt
 import io
@@ -5957,8 +5892,8 @@ import stream
 
 fn main() {
   let squares = stream.from_range(1, 100)
-    |> stream.filter(fn(n) { n % 2 == 1 })
-    |> stream.map(fn(n) { n * n })
+    |> stream.filter({ n -> n % 2 == 1 })
+    |> stream.map({ n -> n * n })
     |> stream.take(5)
     |> stream.collect
   println(squares)
@@ -5972,7 +5907,7 @@ import stream
 
 fn main() {
   -- Generate 1, 2, 3, 4, 5 then None.
-  let xs = stream.collect(stream.unfold(1, fn(n) {
+  let xs = stream.collect(stream.unfold(1, { n ->
     match n > 5 {
       true -> None
       false -> Some((n, n + 1))
@@ -6707,7 +6642,7 @@ fn main() {
       loop {
         match tcp.accept(listener) {
           Ok(conn) -> {
-            let _ = task.spawn(fn() {
+            let _ = task.spawn({ ->
               match tcp.read(conn, 4096) {
                 Ok(buf) -> {
                   let _ = tcp.write(conn, buf)
@@ -7459,12 +7394,12 @@ names the type to decode into:
 |----------|---------------|
 | `toml.parse` | a record type |
 | `toml.parse_list` | a record type |
-| `toml.parse_map` | `Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
 
 The fields of a record type (and of every record type nested in it) may have
 these types:
 
-- `Int`, `Float`, `ExtFloat`, `String`, `Bool`
+- `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
 - `List(T)` and `Range(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -7562,7 +7497,7 @@ toml.parse_map(s: String, type v) -> Result(Map(String, v), TomlError)
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
-a `type` parameter (`Int`, `Float`, `ExtFloat`, `String`, `Bool`, or a record type).
+a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 import toml

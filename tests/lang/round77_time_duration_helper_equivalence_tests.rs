@@ -65,7 +65,7 @@ fn call_unit_kind_err(unit: &str) -> String {
     let src = format!(
         r#"
 import time
-fn main() = time.{unit}("not an int")
+fn main() {{ time.{unit}("not an int") }}
 "#
     );
     run_err(&src)

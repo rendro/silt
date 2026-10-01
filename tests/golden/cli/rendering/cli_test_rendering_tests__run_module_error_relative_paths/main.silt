@@ -2,4 +2,4 @@
 -- stderr-contains: division by zero
 -- stderr-not-contains: --> /
 import helper
-fn main() = helper.kaboom()
+fn main() { helper.kaboom() }

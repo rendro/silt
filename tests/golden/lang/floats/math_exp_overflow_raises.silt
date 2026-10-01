@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: math.exp overflow: 1000
+import math
+fn main() {
+  println(math.exp(1000.0))
+}

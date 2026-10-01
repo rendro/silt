@@ -41,7 +41,6 @@ fn shape(e: &Expr) -> String {
         ExprKind::Binary(l, op, r) => format!("({} {} {})", shape(l), op, shape(r)),
         ExprKind::Pipe(l, r) => format!("({} |> {})", shape(l), shape(r)),
         ExprKind::Range(l, r) => format!("({} .. {})", shape(l), shape(r)),
-        ExprKind::FloatElse(l, r) => format!("({} else {})", shape(l), shape(r)),
         ExprKind::QuestionMark(l) => format!("({}?)", shape(l)),
         ExprKind::Unary(op, v) => format!("({op:?} {})", shape(v)),
         ExprKind::Call(f, args) => format!(
@@ -92,12 +91,12 @@ fn precedence_and_associativity_table() {
         // pipe (55) binds tighter than comparison/equality
         ("x |> f == y", "((x |> f) == y)"),
         ("x |> f |> g", "((x |> f) |> g)"),
-        // `?` (54) applies to the whole pipe (55/56), not the RHS call
+        // `?` is a tight postfix, except that a trailing `?` applies to
+        // the whole pipeline
         ("x |> f?", "((x |> f)?)"),
-        ("x + y?", "((x + y)?)"),
-        // float-else is the loosest (10)
-        ("1 + 2 else 3", "((1 + 2) else 3)"),
-        ("a else b + c", "(a else (b + c))"),
+        ("x |> f |> g?", "(((x |> f) |> g)?)"),
+        ("x + y?", "(x + (y?))"),
+        ("f(a)? + f(b)?", "((f(a)?) + (f(b)?))"),
     ];
     for (src, expected) in table {
         let actual = expr_shape(src);

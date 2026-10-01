@@ -2,5 +2,5 @@ import task
 import time
 fn main() {
   let f = task.deadline
-  println(f(time.seconds(1), fn() { 7 }))
+  println(f(time.seconds(1), { -> 7 }))
 }

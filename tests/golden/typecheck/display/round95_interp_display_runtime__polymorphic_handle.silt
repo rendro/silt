@@ -5,6 +5,6 @@
 import task
 fn show(x: a) -> String { "val={x}" }
 fn main() {
-  let h = task.spawn(fn() { 42 })
+  let h = task.spawn({ -> 42 })
   println(show(h))
 }

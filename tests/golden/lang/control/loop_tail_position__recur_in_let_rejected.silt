@@ -1,0 +1,15 @@
+-- A `loop(...)` bound by `let` or passed as an argument is not in tail
+-- position either.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `loop(...)` must be in tail position
+-- stderr-contains: loop_tail_position__recur_in_let_rejected.silt:10:13
+-- stderr-contains: loop_tail_position__recur_in_let_rejected.silt:11:13
+fn main() {
+  let r = loop i = 0 {
+    let x = loop(i + 1)
+    println(loop(i + 2))
+    x
+  }
+  println(r)
+}

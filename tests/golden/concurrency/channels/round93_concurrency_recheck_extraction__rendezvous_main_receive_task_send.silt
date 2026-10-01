@@ -9,7 +9,7 @@ fn main() {
       true -> println("done")
       _ -> {
         let ch = channel.new(0)
-        let producer = task.spawn(fn() {
+        let producer = task.spawn({ ->
           channel.send(ch, 7)
         })
         let v = match channel.receive(ch) {

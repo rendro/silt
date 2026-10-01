@@ -1,0 +1,16 @@
+-- `Compare` is sealed: it is derived from a type's fields, so a
+-- hand-written impl is an error.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: trait 'Compare' cannot be implemented by hand: it is derived structurally for every type whose fields support it
+-- stderr-contains: remove this impl; Equal, Compare and Hash are derived
+-- stderr-contains: sealed_traits__hand_written_compare_rejected.silt:10:1
+type Version { major: Int, minor: Int }
+trait Compare for Version {
+  fn compare(self, other: Version) -> Int { 0 }
+}
+
+fn main() {
+  println(Version { major: 1, minor: 2 } < Version { major: 1, minor: 3 })
+}

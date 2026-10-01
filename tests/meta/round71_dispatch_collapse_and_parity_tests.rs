@@ -2,8 +2,7 @@
 //! signature-help findings.
 //!
 //! Kept here: the prelude variant registry parity (DEAD-2) and the
-//! LSP signature-help parameters (DX-4). The NaN `compare` corpus
-//! (DEAD-1) is golden cases under `tests/golden/meta/runtime/`.
+//! LSP signature-help parameters (DX-4).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};

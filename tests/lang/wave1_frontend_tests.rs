@@ -252,31 +252,15 @@ fn main() {
     );
 }
 
-/// A lambda with a typed parameter as the last argument is printed as a
-/// trailing closure, and a closure cannot have a typed parameter.
-#[test]
-fn fmt_refuses_a_typed_lambda_in_last_argument_position() {
-    assert_fmt_refuses(
-        "typed_lambda",
-        r#"import list
-fn main() {
-  let ys = list.map([1, 2], fn(x: Int) { x + 1 })
-  println("{ys}")
-}
-"#,
-        "the result would not parse",
-    );
-}
-
 /// A lambda argument in a match scrutinee is printed as a trailing
 /// closure, which a scrutinee cannot hold.
 #[test]
 fn fmt_refuses_a_lambda_argument_in_a_match_scrutinee() {
     assert_fmt_refuses(
         "lambda_in_scrutinee",
-        r#"fn run(f) = f()
+        r#"fn run(f) { f() }
 fn main() {
-  let r = match run(fn() { 1 }) {
+  let r = match run({ -> 1 }) {
     1 -> "one"
     _ -> "other"
   }
@@ -287,28 +271,13 @@ fn main() {
     );
 }
 
-/// The trailing-closure form has no place for an effect annotation, so
-/// the result parses but is a different program.
-#[test]
-fn fmt_refuses_when_a_lambda_would_lose_its_effect_annotation() {
-    assert_fmt_refuses(
-        "lambda_effects",
-        r#"fn run(f) = f()
-fn main() {
-  run(fn() !{io} { println("declared io") })
-}
-"#,
-        "the result would change the program: function `main`",
-    );
-}
-
 /// `(a == b) |> show` is printed without the parentheses, which is
 /// `a == (b |> show)`.
 #[test]
 fn fmt_refuses_when_dropped_parentheses_would_regroup_a_pipe() {
     assert_fmt_refuses(
         "pipe_regroup",
-        r#"fn show(x) = "{x}"
+        r#"fn show(x) { "{x}" }
 fn main() {
   let a = 1
   let b = 2
@@ -413,7 +382,7 @@ fn fmt_refusal_gives_the_position_of_the_lost_comment() {
 fn fmt_refuses_when_a_block_comment_would_be_lost() {
     assert_fmt_refuses(
         "parens_block_comment",
-        r#"fn add(a, b) = a + b
+        r#"fn add(a, b) { a + b }
 fn main() {
   let x = add(1, {- second -} 2)
   let y = (x + 1)
@@ -545,9 +514,9 @@ fn fmt_still_turns_a_last_argument_lambda_into_a_trailing_closure() {
         "trailing_closure",
         r#"import list
 fn main() {
-  let ys = list.map([1, 2, 3], fn(x) { x * 2 })
-  let zs = list.filter(ys, fn(_) { true })
-  let n = list.fold(zs, 0, fn(acc, x) {
+  let ys = list.map([1, 2, 3], { x -> x * 2 })
+  let zs = list.filter(ys, { _ -> true })
+  let n = list.fold(zs, 0, { acc, x ->
     let next = acc + x
     next
   })
@@ -562,21 +531,20 @@ fn main() {
     );
 }
 
-/// Guard. A closure that is not the last argument becomes `fn(...) { }`;
-/// its body `e` becomes the block `{ e }`.
+/// Guard. A closure that is not the last argument stays a closure.
 #[test]
-fn fmt_still_turns_a_closure_elsewhere_into_a_fn_lambda() {
+fn fmt_keeps_a_closure_elsewhere_as_a_closure() {
     assert_fmt_keeps_program(
         "closure_not_last",
-        r#"fn apply(f, x) = f(x)
+        r#"fn apply(f, x) { f(x) }
 fn main() {
   let a = apply({ x -> x + 1 }, 1)
   let b = apply({ _ -> 7 }, 1)
-  let c = apply(fn(x) { x * 3 }, 2)
+  let c = apply({ x -> x * 3 }, 2)
   println("{a} {b} {c}")
 }
 "#,
-        &["apply(fn(x) {", "apply(fn(_) {"],
+        &["apply({ x ->", "apply({ _ ->"],
     );
 }
 
@@ -635,7 +603,7 @@ fn fmt_still_keeps_trailing_commas() {
   x: Int,
   y: Int,
 }
-fn add(a, b,) = a + b
+fn add(a, b,) { a + b }
 fn main() {
   let xs = [1, 2, 3,]
   let t = (1, 2,)
@@ -650,7 +618,7 @@ fn main() {
 }
 "#,
         &[
-            "fn add(a, b,) = a + b",
+            "fn add(a, b,) {",
             "let xs = [1, 2, 3,]",
             "let n = add(1, 2,)",
             "3 -> \"three\",",
@@ -773,7 +741,7 @@ trait Greet {
 }
 
 trait Greet for User {
-  fn greet(self) -> String = "hi {self.name}"
+  fn greet(self) -> String { "hi {self.name}" }
 }
 
 fn classify(n) {
@@ -802,7 +770,7 @@ fn main() {
   when older.age > 30 else {
     return
   }
-  let nested = list.map([1], fn(x) { match x {
+  let nested = list.map([1], { x -> match x {
     1 -> "one"
     _ -> "other"
   } })
@@ -835,18 +803,18 @@ fn plus_chain(links: usize) -> String {
 
 fn pipe_chain(links: usize) -> String {
     let stages = " |> id".repeat(links);
-    format!("fn id(x) = x\nfn main() {{\n  let x = 1{stages}\n  println(\"{{x}}\")\n}}\n")
+    format!("fn id(x) {{ x }}\nfn main() {{\n  let x = 1{stages}\n  println(\"{{x}}\")\n}}\n")
 }
 
 fn call_chain(links: usize) -> String {
     let calls = "()".repeat(links);
-    format!("fn f() = f\nfn main() {{\n  let x = f{calls}\n  println(\"done\")\n}}\n")
+    format!("fn f() {{ f }}\nfn main() {{\n  let x = f{calls}\n  println(\"done\")\n}}\n")
 }
 
 fn field_chain(links: usize) -> String {
     let fields = ".me".repeat(links);
     format!(
-        "type R {{ me: R, n: Int }}\nfn last(r: R) -> Int = r{fields}.n\nfn main() {{\n  \
+        "type R {{ me: R, n: Int }}\nfn last(r: R) -> Int {{ r{fields}.n }}\nfn main() {{\n  \
          println(\"ok\")\n}}\n"
     )
 }
@@ -942,7 +910,7 @@ fn chains_of_200_links_still_work() {
         MAIN,
         &format!(
             "type R {{ next: Fn() -> R, n: Int }}\n\
-             fn mk(n: Int) -> R = R {{ next: fn() {{ mk(n + 1) }}, n: n }}\n\
+             fn mk(n: Int) -> R {{ R {{ next: {{ -> mk(n + 1) }}, n: n }} }}\n\
              fn main() {{\n  let r = mk(0){links}\n  println(\"{{r.n}}\")\n}}\n"
         ),
     );

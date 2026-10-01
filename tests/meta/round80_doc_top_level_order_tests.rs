@@ -1,11 +1,9 @@
 //! Source-grep regression locks for round-80 doc-frontmatter fixes.
 //!
-//! Finding L5 (round 80): `docs/strict-effects-migration.md` was the
-//! only top-level `docs/*.md` page without an `order:` frontmatter
-//! field. Every other top-level guide pinned a unique numeric order
-//! (why-silt=0, getting-started=1, language-guide=2, concurrency=3,
-//! ffi=4, editor-setup=5), but the strict-effects migration page had
-//! no entry, leaving its sidebar position non-deterministic.
+//! Finding L5 (round 80): one top-level `docs/*.md` page had no
+//! `order:` frontmatter field while every other top-level guide pinned
+//! a unique numeric order, leaving its sidebar position
+//! non-deterministic.
 //!
 //! Round 79 already locked the docs/language/ subtree
 //! (round79_doc_frontmatter_parity_tests.rs::doc_language_order_uniqueness).

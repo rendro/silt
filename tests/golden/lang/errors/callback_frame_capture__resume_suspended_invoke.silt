@@ -4,7 +4,7 @@ import channel
 import task
 
 fn consumer(c, blocker) {
-  channel.each(c, fn(x) {
+  channel.each(c, { x ->
     let v = channel.receive(blocker)
     1 / 0
   })
@@ -19,7 +19,7 @@ fn main() {
   let blocker = channel.new(0)
   channel.send(c, 1)
   channel.close(c)
-  let t1 = task.spawn(fn() { consumer(c, blocker) })
-  let _ = task.spawn(fn() { producer(blocker) })
+  let t1 = task.spawn({ -> consumer(c, blocker) })
+  let _ = task.spawn({ -> producer(blocker) })
   task.join(t1)
 }

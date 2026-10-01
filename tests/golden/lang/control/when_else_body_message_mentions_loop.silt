@@ -1,0 +1,15 @@
+-- The else body of `when let` and `when` must diverge; the error names
+-- `loop(...)` as well as `return` and `panic`.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'when let' else body must diverge — end it with 'return', 'panic' or, inside a loop, 'loop(...)'
+-- stderr-contains: 'when' else body must diverge — end it with 'return', 'panic' or, inside a loop, 'loop(...)'
+fn f(x: Option(Int)) -> Int {
+  when let Some(n) = x else { 0 }
+  when n > 0 else { 1 }
+  n
+}
+
+fn main() {
+  println(f(Some(1)))
+}

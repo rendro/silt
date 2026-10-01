@@ -119,7 +119,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
-    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   loop c = 0, acc = 0 {
     match c >= 16 {
       true -> acc
@@ -193,7 +193,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
-    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   loop c = 0, acc = 0 {
     match c >= 16 {
       true -> acc
@@ -271,7 +271,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
-    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   loop c = 0, acc = 0 {
     let _busy = loop k = 0 {
       match k >= 2000 {
@@ -354,7 +354,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
-    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   loop c = 0, acc = 0 {
     let _busy = loop k = 0 {
       match k >= 5000 {
@@ -540,7 +540,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
-    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   loop c = 0, acc = 0 {
     match c >= 16 {
       true -> acc

@@ -1,7 +1,6 @@
 -- Every builtin primitive and generic-container descriptor name
 -- (module::BUILTIN_PRIMITIVE_NAMES / BUILTIN_GENERIC_CONTAINER_NAMES) is
--- bound as a value in both the typechecker and the VM. Tuple is VM-only;
--- ExtFloat is left out (removed in stage 4).
+-- bound as a value in both the typechecker and the VM. Tuple is VM-only.
 fn main() {
   let _int = Int
   let _float = Float

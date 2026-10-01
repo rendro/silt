@@ -1,2 +1,2 @@
-pub fn ok() = 1
+pub fn ok() { 1 }
 @@@

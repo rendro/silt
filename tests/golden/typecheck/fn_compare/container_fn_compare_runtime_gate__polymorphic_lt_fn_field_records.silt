@@ -5,5 +5,5 @@
 type Box(a) { v: a }
 fn lt(a: x, b: x) -> Bool { a < b }
 fn main() {
-  println(lt(Box{v: fn(y) { y }}, Box{v: fn(y) { y }}))
+  println(lt(Box{v: { y -> y }}, Box{v: { y -> y }}))
 }

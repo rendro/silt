@@ -1,0 +1,22 @@
+-- A closure in a loop body runs when it is called, not as the loop body,
+-- so a `loop(...)` inside it is not the loop's tail.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `loop(...)` inside a closure is not the loop's tail
+-- stderr-not-contains: must be in tail position
+-- stderr-not-contains: error[compile]
+fn count(n: Int) -> Int {
+  loop i = n {
+    match i {
+      0 -> 0
+      _ -> {
+        let again = { -> loop(i - 1) }
+        again()
+      }
+    }
+  }
+}
+
+fn main() {
+  println(count(3))
+}

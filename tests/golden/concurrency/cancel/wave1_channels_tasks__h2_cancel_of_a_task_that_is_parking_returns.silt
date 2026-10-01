@@ -17,7 +17,7 @@ fn go(i, n) {
   match i < n {
     true -> {
       let ch = channel.new(1)
-      let h = task.spawn(fn() { channel.receive(ch) })
+      let h = task.spawn({ -> channel.receive(ch) })
       let _ = spin(i % 40)
       task.cancel(h)
       go(i + 1, n)

@@ -1,7 +1,7 @@
 type MyErr { Boom }
 
 trait Display for MyErr {
-    fn display(self) -> String = "kaboom"
+    fn display(self) -> String { "kaboom" }
 }
 
 trait Error for MyErr {}

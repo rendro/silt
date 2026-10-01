@@ -2,4 +2,4 @@ trait Greet {
     fn greet(self) -> String
 }
 
-pub fn announce(x: a) -> String where a: Greet = x.greet()
+pub fn announce(x: a) -> String where a: Greet { x.greet() }

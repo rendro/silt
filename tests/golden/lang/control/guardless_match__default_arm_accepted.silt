@@ -1,0 +1,14 @@
+-- The first true condition wins; the final `_` arm covers the rest.
+fn size(n: Int) -> String {
+  match {
+    n > 100 -> "big"
+    n > 10 -> "medium"
+    _ -> "small"
+  }
+}
+
+fn main() {
+  println(size(500))
+  println(size(50))
+  println(size(5))
+}

@@ -2,6 +2,6 @@
 -- stderr-contains: does not implement Compare
 import set
 fn main() {
-  let s = set.remove(set.new(), fn(y){ y })
+  let s = set.remove(set.new(), { y -> y })
   println(set.length(s))
 }

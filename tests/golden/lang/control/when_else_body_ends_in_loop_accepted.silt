@@ -1,0 +1,16 @@
+-- A `when let` else body inside a loop may end in `loop(...)`.
+fn sum_somes(xs: List(Option(Int))) -> Int {
+  loop rest = xs, acc = 0 {
+    match rest {
+      [] -> acc
+      [head, ..tail] -> {
+        when let Some(n) = head else { loop(tail, acc) }
+        loop(tail, acc + n)
+      }
+    }
+  }
+}
+
+fn main() {
+  println(sum_somes([Some(1), None, Some(2)]))
+}

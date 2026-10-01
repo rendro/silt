@@ -1,4 +1,4 @@
 -- cmd: check
 -- exit: 0
 type MyRecord { x: Int }
-fn main() = ()
+fn main() { () }

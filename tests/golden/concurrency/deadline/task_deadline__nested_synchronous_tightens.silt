@@ -4,8 +4,8 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.seconds(60), fn() {
-    task.deadline(time.ms(0), fn() {
+  let outcome = task.deadline(time.seconds(60), { ->
+    task.deadline(time.ms(0), { ->
       io.read_file("/nonexistent_silt_inner")
     })
   })

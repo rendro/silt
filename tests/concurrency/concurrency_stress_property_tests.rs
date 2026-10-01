@@ -552,7 +552,7 @@ fn emit_program(p: &genp::Program) -> String {
 
     // Worker tasks.
     for (wi, ops) in p.workers.iter().enumerate() {
-        src.push_str(&format!("  let h{wi} = task.spawn(fn() {{\n"));
+        src.push_str(&format!("  let h{wi} = task.spawn({{ ->\n"));
         for op in ops {
             src.push_str(&emit_op(op, "    ", Some(wi)));
         }
@@ -562,7 +562,7 @@ fn emit_program(p: &genp::Program) -> String {
     }
 
     // Supervisor task.
-    src.push_str("  let hsup = task.spawn(fn() {\n");
+    src.push_str("  let hsup = task.spawn({ ->\n");
     for op in &p.supervisor {
         src.push_str(&emit_op(op, "    ", None));
     }
@@ -692,7 +692,7 @@ import time
 fn main() {
   let done = channel.new(100)
   let handles = 1..100
-    |> list.map { i -> task.spawn(fn() {
+    |> list.map { i -> task.spawn({ ->
       time.sleep(time.ms(10))
       let _ = channel.try_send(done, i)
     }) }
@@ -737,14 +737,14 @@ import time
 
 fn main() {
   let tick = channel.new(1)
-  let c = task.spawn(fn() {
+  let c = task.spawn({ ->
     time.sleep(time.ms(20))
     let _ = channel.try_send(tick, 3)
   })
-  let b = task.spawn(fn() {
+  let b = task.spawn({ ->
     let _ = task.join(c)
   })
-  let a = task.spawn(fn() {
+  let a = task.spawn({ ->
     let _ = task.join(b)
   })
   -- Cancel A before any of the joins complete.

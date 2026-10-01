@@ -1,0 +1,9 @@
+-- A top-level `let` may not rebind an imported module's name.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: 'other' is bound twice at the top level: by the import at line 6 and by the let binding here
+import other
+type P { year: Int }
+let other = P { year: 9 }
+fn main() { println(other.year) }

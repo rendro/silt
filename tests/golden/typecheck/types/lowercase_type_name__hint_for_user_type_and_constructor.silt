@@ -1,0 +1,16 @@
+-- The hint covers the program's own types, and a lowercase type
+-- constructor applied to arguments.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown type 'point' — did you mean `Point`?
+-- stderr-contains: unknown type 'list' — did you mean `List`?
+type Point { x: Int, y: Int }
+
+fn norm(p: point) -> Int { p.x }
+
+fn sum(xs: list(Int)) -> Int { 0 }
+
+fn main() {
+  println(norm(Point { x: 1, y: 2 }))
+  println(sum([1]))
+}

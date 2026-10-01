@@ -91,7 +91,10 @@ fn sum_list(nums) {
 fn mean(nums) {
   let n = list.length(nums)
   let total = sum_list(nums)
-  total / int.to_float(n) else 0.0
+  match n {
+    0 -> 0.0
+    _ -> total / int.to_float(n)
+  }
 }
 
 fn median(nums) {
@@ -104,7 +107,7 @@ fn median(nums) {
       |> option.unwrap_or(0.0)
       let b = list.get(sorted, mid)
       |> option.unwrap_or(0.0)
-      (a + b) / 2.0 else 0.0
+      (a + b) / 2.0
     }
     _ -> list.get(sorted, mid)
     |> option.unwrap_or(0.0)
@@ -119,7 +122,10 @@ fn std_deviation(nums) {
     let diff = x - avg
     acc + diff * diff
   }
-  math.sqrt(sum_sq / int.to_float(n) else 0.0) else 0.0
+  match n {
+    0 -> 0.0
+    _ -> math.sqrt(sum_sq / int.to_float(n))
+  }
 }
 
 -- Histogram: bucket values into ranges and display bars
@@ -131,8 +137,8 @@ fn histogram(label, values, bucket_size) {
   |> option.unwrap_or(0.0)
   let max_val = list.last(sorted)
   |> option.unwrap_or(0.0)
-  let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size) else 0.0)) * bucket_size
-  let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size) else 0.0)) * bucket_size
+  let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size))) * bucket_size
+  let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size))) * bucket_size
   -- Build frequency map: bucket_start -> count
   let counts = values
   |> list.fold(#{}) { acc, v ->

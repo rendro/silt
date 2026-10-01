@@ -14,7 +14,7 @@ fn main() {
   let done = channel.new(8)
   -- 8 senders; buffer is 2, so 6 will block waiting.
   let senders = 1..8
-    |> list.map { i -> task.spawn(fn() {
+    |> list.map { i -> task.spawn({ ->
       let _ = channel.try_send(ch, i)
       let _ = channel.try_send(done, i)
     }) }

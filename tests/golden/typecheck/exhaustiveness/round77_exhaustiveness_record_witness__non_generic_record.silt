@@ -4,5 +4,5 @@
 -- stderr-contains: non-exhaustive
 -- stderr-contains: Box.flag
 type Box { flag: Bool }
-fn check(b: Box) -> Int = match b { Box{flag: true} -> 1 }
+fn check(b: Box) -> Int { match b { Box{flag: true} -> 1 } }
 fn main() { check(Box{flag: true}) }

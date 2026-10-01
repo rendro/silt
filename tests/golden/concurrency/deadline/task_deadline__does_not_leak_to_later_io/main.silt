@@ -4,7 +4,7 @@ import task
 import time
 
 fn main() {
-  let _inside = task.deadline(time.ms(0), fn() {
+  let _inside = task.deadline(time.ms(0), { ->
     io.read_file("/nonexistent_path")
   })
   match io.read_file("fixture.txt") {

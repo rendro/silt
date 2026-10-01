@@ -22,7 +22,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
 /// call sites — only the NAME set is hoisted to prevent drift.
 ///
 /// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
-pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "ExtFloat", "String", "Bool"];
+pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "String", "Bool"];
 
 /// Names of the built-in generic container type descriptors (uppercase)
 /// usable as `type a` arguments and for static-style trait dispatch
@@ -672,9 +672,6 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "min",
             "max",
             "clamp",
-            "is_finite",
-            "is_infinite",
-            "is_nan",
         ],
         "result" => vec![
             "unwrap_or",
@@ -996,15 +993,7 @@ fn sibling_module_suggestion(
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     match module {
         "math" => vec!["pi", "e"],
-        "float" => vec![
-            "max_value",
-            "min_value",
-            "epsilon",
-            "min_positive",
-            "infinity",
-            "neg_infinity",
-            "nan",
-        ],
+        "float" => vec!["max_value", "min_value", "epsilon", "min_positive"],
         _ => vec![],
     }
 }

@@ -12,7 +12,7 @@ fn default_config() -> Config { Config { name: "default" } }
 
 fn load_defaults() -> Config {
   let home = option.unwrap_or(env.get("HOME"), "/")
-  let path = home + "/.config/app.toml"
+  let path = "{home}/.config/app.toml"
   let raw = result.unwrap_or(io.read_file(path), "")
   result.unwrap_or(toml.parse(raw, Config), default_config())
 }

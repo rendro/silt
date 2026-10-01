@@ -1,0 +1,5 @@
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> error__type_string_plus_names_interpolation.silt:6:11
+   |
+ 6 |   let s = "hello, " + name + "!"
+   |           ^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"

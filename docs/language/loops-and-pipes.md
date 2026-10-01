@@ -12,7 +12,7 @@ order: 6
 
 ```silt
 -- These are equivalent:
-list.filter(xs, fn(x) { x > 0 })
+list.filter(xs, { x -> x > 0 })
 xs |> list.filter { x -> x > 0 }
 ```
 
@@ -69,8 +69,8 @@ anonymous functions: `xs |> list.fold(0) { acc, x -> acc + x }`.
 ### Pipe and `?`
 
 A trailing `?` on a pipeline applies to the whole piped expression — no
-parentheses needed. `x |> f |> g?` parses as `(x |> f |> g)?`, because `?`
-binds one step looser than `|>`. This means stdlib chains like
+parentheses needed. `x |> f |> g?` parses as `(x |> f |> g)?`. (Everywhere
+else `?` binds tightly, like a call.) This means stdlib chains like
 `io.read_file(path) |> result.map_err(Wrap)?` compose without parens around
 the pipeline.
 
@@ -114,10 +114,10 @@ regex patterns with `{N}` quantifiers that would conflict with interpolation:
 let pattern = """[\w]+@[\w]+\.\w{2,}"""
 ```
 
-**Design rationale.** String `+` is supported, but interpolation
-`"{a}{b}"` is the preferred inline form for building strings — it reads
-more naturally and keeps multi-fragment messages punctuation-light. For
-pipeline contexts, use `string.join`.
+**Design rationale.** Interpolation `"{a}{b}"` is the way to build
+strings (`+` is arithmetic only) — it reads naturally and keeps
+multi-fragment messages punctuation-light. For pipeline contexts, use
+`string.join`.
 
 
 ## Infinite Loops
@@ -179,6 +179,26 @@ fn sum(xs) {
 When the body produces a value without calling `loop(...)`, that value is the
 result of the entire expression. `loop` is composable -- you can bind its
 result, return it, or use it in a pipeline.
+
+**`loop(...)` must be in tail position.** It jumps back to the top of the
+loop with new values and never produces a value where it is written (its
+type is `Never`), so nothing may use its result. It may appear only as the
+last expression of the loop body, or of a block, a match arm or a `when`
+else body that is itself in tail position:
+
+```silt
+fn fact(n) {
+  loop i = n, acc = 1 {
+    match i {
+      0 -> acc
+      _ -> loop(i - 1, acc * i)    -- OK: last expression of a tail arm
+    }
+  }
+}
+```
+
+`i * loop(i - 1)` is a type error: carry the running value in a binding
+instead, as `acc` does above.
 
 **Loop inside closures.** `loop()` works inside closures, which is useful for
 search patterns:

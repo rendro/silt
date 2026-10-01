@@ -75,13 +75,18 @@ fn swap(pair: (a, b)) -> (b, a) {
 }
 
 fn compose(f: Fn(b) -> c, g: Fn(a) -> b) -> Fn(a) -> c {
-  fn(x) { f(g(x)) }
+  { x -> f(g(x)) }
 }
 ```
 
 Every lowercase name in a type annotation that is not already bound
 becomes a fresh type variable at the binding point. Subsequent uses of
 the same name refer to the same variable.
+
+A type variable may not be spelled like a known type in lower case:
+`fn f(x: int)` is an error: "unknown type 'int' — did you mean `Int`?".
+(Type names always start with a capital letter, so such a name is a typo.
+One-letter names such as `a`, `e` or `t` are always type variables.)
 
 Type variables may appear:
 
@@ -304,7 +309,7 @@ the first argument, rewrite as a lambda:
 
 ```silt
 -- Instead of trying to pipe into the second slot, use a lambda:
-value |> fn(v) { combine(a, v, c) }
+value |> { v -> combine(a, v, c) }
 ```
 
 Silt deliberately does not provide a placeholder marker (e.g. `_`) for

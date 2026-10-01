@@ -1,0 +1,16 @@
+-- `?` binds tighter than `+`: here it unwraps only the right operand, so
+-- the left operand is still a `Result` and the addition is rejected. To
+-- unwrap a whole infix expression, parenthesise it: `(a + b)?`.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, ParseError)'
+import int
+
+fn f() -> Result(Int, ParseError) {
+  Ok(int.parse("1") + int.parse("2")?)
+}
+
+fn main() {
+  println(f())
+}

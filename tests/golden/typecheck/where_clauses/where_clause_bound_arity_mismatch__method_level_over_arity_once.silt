@@ -5,6 +5,6 @@
 trait Cast(to) { fn cast(self) -> to }
 trait Use { fn use_it(self) -> Int }
 trait Use for List(a) {
-    fn use_it(self) -> Int where a: Cast(Int, String) = 0
+    fn use_it(self) -> Int where a: Cast(Int, String) { 0 }
 }
 fn main() { }

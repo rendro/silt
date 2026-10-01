@@ -15,12 +15,10 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 
 | Precedence | Operator        | Kind           | Meaning                                            |
 |-----------:|-----------------|----------------|----------------------------------------------------|
-|         10 | `else`          | infix          | `ExtFloat else Float` → `Float` fallback           |
 |         20 | `\|\|`          | infix          | Boolean OR (short-circuiting)                      |
 |         30 | `&&`            | infix          | Boolean AND (short-circuiting)                     |
 |         40 | `==`, `!=`      | infix          | Equality / inequality                              |
 |         50 | `<`, `>`, `<=`, `>=` | infix     | Ordered comparison                                 |
-|         54 | `?`             | **postfix**    | Error propagation (`Result` / `Option`)            |
 |         55 | `\|>`           | infix          | Pipe: `x \|> f` = `f(x)`                           |
 |         60 | `..`            | infix          | Inclusive range                                    |
 |         70 | `+`, `-`        | infix          | Addition, subtraction (newline-sensitive)          |
@@ -29,9 +27,11 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 |         95 | `as`            | infix          | Type ascription: `expr as Type`                    |
 |        115 | `{ ... }`       | postfix        | Trailing closure (only on same line as call)       |
 |        120 | `f(...)`        | postfix        | Function call                                      |
+|        120 | `?`             | **postfix**    | Error propagation (`Result` / `Option`)            |
 |        130 | `.`             | infix/postfix  | Field access, `expr.{ ... }` record update         |
 
-`?` is postfix and sits between comparison (`<`, `>=`) and pipe (`|>`).
+`?` is a tight postfix operator, like a call — with one rule for pipelines,
+see [Error Propagation](#error-propagation-).
 
 silt has **no postfix bracket indexing** (`xs[i]`). The parser rejects it
 with `postfix indexing is not supported; use list.get(xs, i), map.get(m, k), or string.slice(s, i, i + 1)`.
@@ -42,22 +42,29 @@ Use the explicit module function for the collection you have:
 
 Higher precedence wins. Given `a + b * c`, `*` (80) binds tighter than `+` (70), so the expression parses as `a + (b * c)`. All infix operators are left-associative, so `a - b - c` parses as `(a - b) - c`.
 
-Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as ExtFloat` parses as `-(x as ExtFloat)`.
+Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Float` parses as `-(x as Float)`.
 
 ## Error Propagation (`?`)
 
 `?` is a postfix operator: `expr?`. It unwraps `Result` or `Option`, propagating `Err` / `None` out of the surrounding function.
 
-Key precedence consequences:
+`?` binds tightly, like a call: it applies to the operand right before it. The one exception is a pipeline: a `?` that ends a pipeline applies to the whole pipeline.
 
 ```silt
-x |> f |> g?        -- (x |> f |> g)?   -- ? applies to the whole pipeline
-x + y?              -- (x + y)?          -- arithmetic binds tighter than ?
-a == b?             -- a == (b?)         -- comparison binds looser than ?
-1..10?              -- (1..10)?          -- range binds tighter than ?
+int.parse(a)? + int.parse(b)?   -- (int.parse(a)?) + (int.parse(b)?)
+-x?                             -- -(x?)
+a == b?                         -- a == (b?)
+x |> f |> g?                    -- (x |> f |> g)?   -- the whole pipeline
+x |> f? |> g                    -- (x |> f)? |> g   -- the pipeline so far
+x |> f? + 1                     -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
+a |> (f?)                       -- parentheses keep ? on the stage
 ```
 
-This is deliberate: the shape `pipeline?` is common and should not require parentheses, and the shapes `(x + y)?` and `(1..10)?` are type errors on non-`Result` operands anyway, so moving `?` outward does not change valid programs.
+An infix operator after a `?` that ends a pipeline applies to the unwrapped
+pipeline: `x |> f? + 1` is `(x |> f)? + 1`, and `x |> f? * 3 |> g` is
+`((x |> f)? * 3) |> g`.
+
+To unwrap the result of an infix expression, parenthesise it: `(a + b)?`.
 
 See [Error Handling](error-handling.md) for the full semantics.
 
@@ -73,21 +80,16 @@ xs |> list.map { n -> n * 2 }
 
 Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parses as `(x |> f) == y`. It binds looser than range, so `1..10 |> list.sum()` works without parentheses.
 
-## Float Recovery (`else`)
-
-`else` is the lowest-precedence infix operator. It narrows `ExtFloat` (IEEE 754) to `Float` (guaranteed finite) by supplying a fallback for `NaN` / `Infinity`:
-
-```silt
-let x: Float = 1.0 / 3.0 else 0.0       -- finite → 0.333...
-let y: Float = 1.0 / 0.0 else 0.0       -- infinity → fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0 -- NaN → fallback 0.0
-```
-
-See [Types](types.md#numeric-safety) for when `ExtFloat` arises.
-
 ## Newline Sensitivity
 
-silt has no statement separator. Newlines can end an expression, but the rules depend on the operator:
+Statements are separated by newlines: each statement, and each top-level declaration, starts on its own line (or ends at the closing `}` of its block). Two statements on one line are a parse error:
+
+```silt
+let a = 1 let b = 2          -- error: expected a newline before 'let'
+let total = price quantity   -- error: expected a newline before 'quantity'
+```
+
+A newline ends a statement unless the next line continues it, and the rules for that depend on the operator:
 
 **Infix operators cross newlines:**
 
@@ -204,5 +206,5 @@ let older = bob.{ age: bob.age + 1 }
 - [Bindings and Functions](bindings-and-functions.md) — where operators appear in expression position
 - [Pattern Matching](pattern-matching.md) — guard expressions use the same operators
 - [Error Handling](error-handling.md) — full `?` semantics and `Result` / `Option`
-- [Types](types.md) — `Float` vs `ExtFloat` and the `else` operator
+- [Types](types.md) — finite `Float` and the arithmetic errors
 - [Design Decisions](design-decisions.md) — rationale for `?` precedence and overflow behaviour

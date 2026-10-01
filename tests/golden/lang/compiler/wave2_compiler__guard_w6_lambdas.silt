@@ -1,7 +1,7 @@
 import list
 
 trait Baz { fn baz(self) -> String }
-trait Baz for Fun { fn baz(self) -> String = "baz" }
+trait Baz for Fun { fn baz(self) -> String { "baz" } }
 
 let tl = { x -> x + 1 }
 

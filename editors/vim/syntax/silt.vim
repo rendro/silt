@@ -15,7 +15,7 @@ syntax keyword siltBoolean true false
 " names the compiler prints in diagnostics and the names accepted in
 " type-annotation position. Keep in sync with the lock test at
 " tests/editor_grammar_primitives_tests.rs.
-syntax keyword siltType Int Float ExtFloat Bool String Unit List Range Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
+syntax keyword siltType Int Float Bool String Unit List Range Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
 " Stdlib record / enum nominal types (round 82 DX-GAP-1). Sourced from
 " `src/module.rs::BUILTIN_STDLIB_TYPE_NAMES`. Parity lock at
 " tests/round82_stdlib_types_registry_tests.rs.

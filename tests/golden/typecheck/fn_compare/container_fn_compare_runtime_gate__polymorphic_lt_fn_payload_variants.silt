@@ -5,5 +5,5 @@
 type W(a) { Wrap(a), Nope }
 fn lt(a: x, b: x) -> Bool { a < b }
 fn main() {
-  println(lt(Wrap(fn(y) { y }), Wrap(fn(y) { y })))
+  println(lt(Wrap({ y -> y }), Wrap({ y -> y })))
 }

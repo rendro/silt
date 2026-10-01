@@ -2182,7 +2182,7 @@ import channel
 import task
 fn main() {
   let ch = channel.new(0)
-  let h = task.spawn(fn() { channel.receive(ch) })
+  let h = task.spawn({ -> channel.receive(ch) })
   task.join(h)
   0
 }
@@ -2367,7 +2367,7 @@ fn main() {
             r#"
 import task
 fn main() {
-  task.spawn(fn() { 1 })
+  task.spawn({ -> 1 })
 }
 "#,
         );

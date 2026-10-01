@@ -20,17 +20,17 @@ fn program() {
   }
 
   -- Spawn 3 workers
-  let w1 = task.spawn(fn() {
+  let w1 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, n * 10)
     }
   })
-  let w2 = task.spawn(fn() {
+  let w2 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, n * 10)
     }
   })
-  let w3 = task.spawn(fn() {
+  let w3 = task.spawn({ ->
     channel.each(jobs) { n ->
       channel.send(results, n * 10)
     }

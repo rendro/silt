@@ -1,0 +1,15 @@
+-- A lowercase name that spells a known type is a typo for that type, not
+-- a type variable: the error suggests the type.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: unknown type 'int' — did you mean `Int`?
+-- stderr-contains: unknown type 'string' — did you mean `String`?
+-- stderr-contains: lowercase_type_name__hint_for_builtin.silt:9:9
+fn f(x: int) -> string {
+  "{x}"
+}
+
+fn main() {
+  println(f(1))
+}

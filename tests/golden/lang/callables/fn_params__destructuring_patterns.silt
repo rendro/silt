@@ -1,0 +1,34 @@
+-- Named functions and trait methods take the parameter grammar of a
+-- closure: a name or an irrefutable destructuring pattern, each
+-- optionally typed.
+type P { x: Int, y: Int }
+type W { Wrap(Int) }
+
+fn g(P { x, y }) {
+  x + y
+}
+
+fn h((a, b): (Int, Int)) {
+  a + b
+}
+
+fn k(Wrap(n): W, P { x, .. }: P) -> Int {
+  n + x
+}
+
+trait Sum {
+  fn sum(self, (a, b): (Int, Int)) -> Int
+}
+
+trait Sum for P {
+  fn sum(self, (a, b)) -> Int {
+    self.x + a + b
+  }
+}
+
+fn main() {
+  println(g(P { x: 1, y: 2 }))
+  println(h((5, 6)))
+  println(k(Wrap(4), P { x: 1, y: 0 }))
+  println(P { x: 1, y: 2 }.sum((10, 20)))
+}

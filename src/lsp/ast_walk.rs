@@ -258,7 +258,7 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             // `Decl::Fn` and `Decl::TraitImpl` walk param patterns AND the
             // method body so hover/rename works on default-method param
             // and body identifiers too. Without this, cursor on `x` in
-            // `trait T { fn foo(x: Int) -> Int = x + 1 }` returned None.
+            // `trait T { fn foo(x: Int) -> Int { x + 1 } }` returned None.
             for method in &t.methods {
                 check_fn_decl_name(method, cursor, source, best);
                 for param in &method.params {
@@ -455,9 +455,8 @@ fn check_fn_decl_name(
     if fn_start >= source.len() {
         return;
     }
-    // Find the param-list `(` after `fn`. Bare `fn name = ...` (no params)
-    // would lack the `(`; in that case scan to the next `=` or end of
-    // line as a fallback.
+    // Find the param-list `(` after `fn`. A malformed header without
+    // one falls back to scanning to the next `=` or end of line.
     let after = &source[fn_start.min(source.len())..];
     let scan_end = after
         .find('(')
@@ -623,6 +622,11 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &m
     if let ExprKind::Lambda { params, .. } = &expr.kind {
         for p in params {
             find_ident_in_pattern(&p.pattern, cursor, source, best);
+            // A typed closure parameter's annotation (`{ p: Point -> ... }`)
+            // is a type-position reference, like a fn param's.
+            if let Some(ty) = &p.ty {
+                find_ident_in_type_expr(ty, cursor, best);
+            }
         }
     }
     // Round-101: ascription types (`expr: Point`) are type-position
@@ -783,10 +787,6 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
                     f(e);
                 }
             }
-        }
-        ExprKind::FloatElse(expr, fallback) => {
-            f(expr);
-            f(fallback);
         }
         // ── Leaf variants: no child `Expr` to recurse into. ────────
         // Listed exhaustively (rather than collapsed under a `_`

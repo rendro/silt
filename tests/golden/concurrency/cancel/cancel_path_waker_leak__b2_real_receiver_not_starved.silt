@@ -9,7 +9,7 @@ import time
 fn main() {
   let ch = channel.new(0)
   -- First receiver: gets cancelled. Its waker stays at HEAD of FIFO.
-  let dead = task.spawn(fn() {
+  let dead = task.spawn({ ->
     match channel.receive(ch) {
       Message(_v) -> 1
       _ -> -1
@@ -17,7 +17,7 @@ fn main() {
   })
   time.sleep(time.ms(50))
   -- Second receiver: real, behind `dead` in FIFO.
-  let real = task.spawn(fn() {
+  let real = task.spawn({ ->
     match channel.receive(ch) {
       Message(v) -> v
       _ -> -1
@@ -30,7 +30,7 @@ fn main() {
   -- and `real` never wakes. With the fix, the dead waker was
   -- deregistered on cancel, so `real` is at the head and wakes
   -- normally.
-  let snd = task.spawn(fn() {
+  let snd = task.spawn({ ->
     channel.send(ch, 7)
   })
   time.sleep(time.ms(50))

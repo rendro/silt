@@ -15,7 +15,7 @@ fn program() {
 
   -- The spawned task's send will block because the buffer is full.
   -- On yield, CallBuiltin must re-push [ch, 42] so the retry works.
-  let worker = task.spawn(fn() {
+  let worker = task.spawn({ ->
     channel.send(ch, 42)
     "done"
   })

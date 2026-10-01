@@ -30,7 +30,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -38,13 +37,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // stream.from_range: (Int, Int) -> Channel(Int)
     env.define(
         intern("stream.from_range"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::Int, Type::Int],
-                Box::new(Type::Channel(Box::new(Type::Int))),
-            ),
-            EffectSet::pure(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int],
+            Box::new(Type::Channel(Box::new(Type::Int))),
+        )),
     );
     // stream.repeat: a -> Channel(a)
     {
@@ -55,7 +51,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone()], Box::new(Type::Channel(Box::new(a)))),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -74,7 +69,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(b))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -82,60 +76,48 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // stream.file_chunks: (String, Int) -> Channel(Result(Bytes, IoError))
     env.define(
         intern("stream.file_chunks"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::String, Type::Int],
-                Box::new(Type::Channel(Box::new(result(
-                    bytes_ty.clone(),
-                    io_err_ty.clone(),
-                )))),
-            ),
-            EffectSet::io_fs(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int],
+            Box::new(Type::Channel(Box::new(result(
+                bytes_ty.clone(),
+                io_err_ty.clone(),
+            )))),
+        )),
     );
     // stream.file_lines: String -> Channel(Result(String, IoError))
     env.define(
         intern("stream.file_lines"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::String],
-                Box::new(Type::Channel(Box::new(result(
-                    Type::String,
-                    io_err_ty.clone(),
-                )))),
-            ),
-            EffectSet::io_fs(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Channel(Box::new(result(
+                Type::String,
+                io_err_ty.clone(),
+            )))),
+        )),
     );
     #[cfg(feature = "tcp")]
     {
         // stream.tcp_chunks: (TcpStream, Int) -> Channel(Result(Bytes, TcpError))
         env.define(
             intern("stream.tcp_chunks"),
-            Scheme::with_effects(
-                Type::Fun(
-                    vec![tcp_stream_ty.clone(), Type::Int],
-                    Box::new(Type::Channel(Box::new(result(
-                        bytes_ty.clone(),
-                        tcp_err_ty.clone(),
-                    )))),
-                ),
-                EffectSet::io_net(),
-            ),
+            Scheme::mono(Type::Fun(
+                vec![tcp_stream_ty.clone(), Type::Int],
+                Box::new(Type::Channel(Box::new(result(
+                    bytes_ty.clone(),
+                    tcp_err_ty.clone(),
+                )))),
+            )),
         );
         // stream.tcp_lines: TcpStream -> Channel(Result(String, TcpError))
         env.define(
             intern("stream.tcp_lines"),
-            Scheme::with_effects(
-                Type::Fun(
-                    vec![tcp_stream_ty.clone()],
-                    Box::new(Type::Channel(Box::new(result(
-                        Type::String,
-                        tcp_err_ty.clone(),
-                    )))),
-                ),
-                EffectSet::io_net(),
-            ),
+            Scheme::mono(Type::Fun(
+                vec![tcp_stream_ty.clone()],
+                Box::new(Type::Channel(Box::new(result(
+                    Type::String,
+                    tcp_err_ty.clone(),
+                )))),
+            )),
         );
     }
 
@@ -156,7 +138,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(b))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -178,7 +159,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(result(b, e)))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -198,7 +178,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -219,7 +198,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(result(a, e)))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -240,7 +218,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(b))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -257,7 +234,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -276,7 +252,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -293,7 +268,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(Type::List(Box::new(a))))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -315,7 +289,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(b))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -332,7 +305,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -349,7 +321,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -368,7 +339,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -389,7 +359,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Channel(Box::new(Type::Tuple(vec![a, b])))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -408,7 +377,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::List(Box::new(a))),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -430,7 +398,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(b),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -450,7 +417,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(Type::Unit),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -464,7 +430,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(vec![Type::Channel(Box::new(a))], Box::new(Type::Int)),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -481,7 +446,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     Box::new(option(a)),
                 ),
                 constraints: vec![],
-                effects: EffectSet::pure(),
                 optional_last_param: false,
             },
         );
@@ -489,26 +453,20 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // stream.write_to_file: (Channel(Bytes), String) -> Result((), IoError)
     env.define(
         intern("stream.write_to_file"),
-        Scheme::with_effects(
-            Type::Fun(
-                vec![Type::Channel(Box::new(bytes_ty.clone())), Type::String],
-                Box::new(result(Type::Unit, io_err_ty)),
-            ),
-            EffectSet::io_fs(),
-        ),
+        Scheme::mono(Type::Fun(
+            vec![Type::Channel(Box::new(bytes_ty.clone())), Type::String],
+            Box::new(result(Type::Unit, io_err_ty)),
+        )),
     );
     #[cfg(feature = "tcp")]
     {
         // stream.write_to_tcp: (Channel(Bytes), TcpStream) -> Result((), TcpError)
         env.define(
             intern("stream.write_to_tcp"),
-            Scheme::with_effects(
-                Type::Fun(
-                    vec![Type::Channel(Box::new(bytes_ty)), tcp_stream_ty],
-                    Box::new(result(Type::Unit, tcp_err_ty)),
-                ),
-                EffectSet::io_net(),
-            ),
+            Scheme::mono(Type::Fun(
+                vec![Type::Channel(Box::new(bytes_ty)), tcp_stream_ty],
+                Box::new(result(Type::Unit, tcp_err_ty)),
+            )),
         );
     }
 

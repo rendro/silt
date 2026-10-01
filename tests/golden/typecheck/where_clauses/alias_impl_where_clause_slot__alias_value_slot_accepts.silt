@@ -5,11 +5,11 @@ import map
 type Named(a) = Map(String, a)
 
 trait Marked { fn m(self) -> Int }
-trait Marked for Int { fn m(self) -> Int = self }
+trait Marked for Int { fn m(self) -> Int { self } }
 
 trait Keys { fn k(self) -> Int }
 trait Keys for Named(a) where a: Marked {
-  fn k(self) -> Int = map.length(self)
+  fn k(self) -> Int { map.length(self) }
 }
 
 fn go(x: b) -> Int where b: Keys { x.k() }

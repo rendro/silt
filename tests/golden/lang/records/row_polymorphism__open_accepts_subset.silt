@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 0
-fn first_name(p: {name: String, ...r}) -> String = p.name
+fn first_name(p: {name: String, ...r}) -> String { p.name }
 fn main() {
     let n = first_name({name: "A", age: 30})
     let _ = n

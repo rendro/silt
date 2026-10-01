@@ -7,8 +7,8 @@
 //! Scope for v1:
 //!   * `let x = expr` where the user did not write `: Type` → emit
 //!     `: <type>` after the pattern.
-//!   * Function parameters without annotations → emit `: <type>` after
-//!     the parameter pattern.
+//!   * Function and closure parameters without annotations → emit
+//!     `: <type>` after the parameter pattern.
 //!
 //! Skipped (intentional):
 //!   * Destructuring patterns — compound pattern widths aren't carried
@@ -162,6 +162,17 @@ fn walk_expr(expr: &Expr, out: &mut Vec<HintRecord>) {
             }
         }
         return;
+    }
+    // Closure params without `: T`: the inferred parameter types sit in
+    // the closure's own `Fn` type.
+    if let ExprKind::Lambda { params, .. } = &expr.kind
+        && let Some(Type::Fun(param_tys, _)) = &expr.ty
+    {
+        for (param, ty) in params.iter().zip(param_tys) {
+            if param.ty.is_none() {
+                emit_ident_hint(&param.pattern, ty, out);
+            }
+        }
     }
     visit_expr_children(expr, |child| walk_expr(child, out));
 }

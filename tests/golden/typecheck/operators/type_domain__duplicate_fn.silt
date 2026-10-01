@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: duplicate top-level
+-- stderr-contains: is bound twice at the top level
 fn greet() { "hi" }
 fn greet() { "bye" }
 fn main() { greet() }

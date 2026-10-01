@@ -3,5 +3,5 @@
 -- stderr-contains: trait impl target 'Poitn' is not a declared type
 type Point { x: Int, y: Int }
 trait Show { fn show(self) -> String }
-trait Show for Poitn { fn show(self) -> String = "p" }
+trait Show for Poitn { fn show(self) -> String { "p" } }
 fn main() { }
