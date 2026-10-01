@@ -264,6 +264,12 @@ pub struct CompileWarning {
 
 // ── Compiler errors ─────────────────────────────────────────────────
 
+/// The compiler's error for a `loop(...)` with no enclosing loop in the
+/// same function. The typechecker reports every such call first (outside
+/// any loop, or inside a closure in a loop body), so the CLI pipeline
+/// drops this error when a type error stands at the same place.
+pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
+
 #[derive(Debug, Clone)]
 pub struct CompileError {
     pub message: String,
@@ -3365,7 +3371,7 @@ impl Compiler {
 
             ExprKind::Recur(args) => {
                 let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
-                    message: "`loop(...)` can only appear inside a `loop` body".into(),
+                    message: LOOP_CALL_OUTSIDE_LOOP.into(),
                     span,
                 })?;
                 let first_slot = loop_info.first_slot;

@@ -315,7 +315,16 @@ pub(crate) fn analyse_parsed_entry_file(
             // Primary first, then the rest in source order. This matches
             // how the entrypoint's own parse errors flow (all pushed,
             // parse-source order) so the composite output is uniform.
-            let mut compile_errors = vec![SourceError::from_compile_error(&e, &source, path)];
+            // A `loop(...)` outside its loop is already a type error at
+            // the same place; report it once.
+            let already_reported = e.message == silt::compiler::LOOP_CALL_OUTSIDE_LOOP
+                && type_errors
+                    .iter()
+                    .any(|t| !t.is_warning && t.span.offset == e.span.offset);
+            let mut compile_errors = Vec::new();
+            if !already_reported {
+                compile_errors.push(SourceError::from_compile_error(&e, &source, path));
+            }
             compile_errors.extend(
                 compiler
                     .module_parse_errors()

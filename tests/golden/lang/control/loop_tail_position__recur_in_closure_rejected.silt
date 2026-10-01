@@ -4,6 +4,7 @@
 -- exit: 1
 -- stderr-contains: `loop(...)` inside a closure is not the loop's tail
 -- stderr-not-contains: must be in tail position
+-- stderr-not-contains: error[compile]
 fn count(n: Int) -> Int {
   loop i = n {
     match i {
