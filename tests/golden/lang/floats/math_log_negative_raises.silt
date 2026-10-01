@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: math.log of a number that is not positive: -1
+import math
+fn main() {
+  println(math.log(-1.0))
+}

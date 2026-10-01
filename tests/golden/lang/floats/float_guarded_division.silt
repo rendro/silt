@@ -1,0 +1,12 @@
+-- Guard a divisor that can be zero with an explicit match.
+fn ratio(part: Float, total: Float) -> Float {
+  match total {
+    0.0 -> 0.0
+    _ -> part / total
+  }
+}
+
+fn main() {
+  println(ratio(1.0, 4.0))
+  println(ratio(1.0, 0.0))
+}

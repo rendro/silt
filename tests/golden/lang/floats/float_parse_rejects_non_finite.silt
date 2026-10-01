@@ -1,0 +1,13 @@
+import float
+import list
+-- A Float is always finite: float.parse rejects spelled-out infinities and
+-- NaN, and a literal too large for a Float overflows.
+fn main() {
+  ["inf", "-infinity", "NaN", "1e400", "-1e400", "1e-400"]
+  |> list.each { s ->
+    match float.parse(s) {
+      Ok(f) -> println("{s}: Ok({f})")
+      Err(e) -> println("{s}: {e.message()}")
+    }
+  }
+}

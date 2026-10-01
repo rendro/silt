@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: math.sqrt of a negative number: -4
+import math
+fn main() {
+  println(math.sqrt(-4.0))
+}

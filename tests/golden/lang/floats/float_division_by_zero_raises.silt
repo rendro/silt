@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: float division by zero
+fn main() {
+  let zero = 0.0
+  println(1.0 / zero)
+}

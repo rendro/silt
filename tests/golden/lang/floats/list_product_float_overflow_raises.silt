@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: list.product_float overflow
+import float
+import list
+fn main() {
+  println(list.product_float([float.max_value, 2.0]))
+}
