@@ -14,7 +14,7 @@
 //! - **L4** (`src/lsp/definitions.rs::build_fn_type`): the prior
 //!   implementation walked the body for every param and returned `None`
 //!   if any param was unused inside the body, dropping the entire fn
-//!   signature. For `fn ignore(a: Int, b: Int) -> Int = 42` (unused
+//!   signature. For `fn ignore(a: Int, b: Int) -> Int { 42 }` (unused
 //!   params) hover returned `null` and signatureHelp lost the param
 //!   types. After the fix, hover renders the full `Fn(Int, Int) -> Int`
 //!   signature and signatureHelp emits `a: Int, b: Int` instead of just
@@ -65,7 +65,7 @@ fn round80_g1_document_symbols_selection_range_is_identifier() {
     // Source layout (line/col are 0-indexed, character columns are
     // UTF-16 code units which match ASCII bytes here):
     //
-    // line 0: fn add(a: Int, b: Int) -> Int = a + b
+    // line 0: fn add(a: Int, b: Int) -> Int { a + b }
     //         01234567890123
     //                         identifier `add` lives at cols 3..6
     //         keyword `fn` at cols 0..2
@@ -182,14 +182,14 @@ fn round80_g1_document_symbols_selection_range_is_identifier() {
 // ── L4 ──────────────────────────────────────────────────────────────
 //
 // `build_fn_type` must NOT drop the whole fn signature when params are
-// unreferenced in the body. For `fn ignore(a: Int, b: Int) -> Int = 42`,
+// unreferenced in the body. For `fn ignore(a: Int, b: Int) -> Int { 42 }`,
 // hover and signatureHelp must surface the full signature.
 
 #[test]
 fn round80_l4_fn_type_preserved_for_unreferenced_params() {
     let mut client = LspClient::spawn();
 
-    // line 0: fn ignore(a: Int, b: Int) -> Int = 42
+    // line 0: fn ignore(a: Int, b: Int) -> Int { 42 }
     //         identifier `ignore` lives at cols 3..9
     let source = "fn ignore(a: Int, b: Int) -> Int { 42 }\n\
                   fn main() { ignore(1, 2) }\n";

@@ -697,7 +697,7 @@ fn skip_unless_network() -> bool {
 
 /// Create a bare git repo with a tiny silt library committed on `main`,
 /// returning `(file_url, head_sha)`. The library exports a single
-/// `pub fn answer() = 42` so dependents can both compile and run.
+/// `pub fn answer() { 42 }` so dependents can both compile and run.
 fn make_local_git_silt_package(workspace: &Path) -> (String, String) {
     let staging = workspace.join("staging");
     let bare = workspace.join("bare.git");
@@ -838,7 +838,7 @@ fn test_silt_run_with_git_dep_works() {
     }
     // Full E2E: declare a git dep on a local bare repo holding a real
     // silt library, then `silt run` the consumer. The dep's
-    // `pub fn answer() = 42` should be importable and runnable.
+    // `pub fn answer() { 42 }` should be importable and runnable.
     let ws = fresh_workspace("git_run_e2e");
     let (repo_url, _head) = make_local_git_silt_package(&ws);
     let app = ws.join("app");

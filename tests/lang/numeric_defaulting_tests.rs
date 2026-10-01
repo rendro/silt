@@ -25,7 +25,7 @@
 //!    the spec's example `let n = 0; println(n)` already produces
 //!    `n: Int` directly, no defaulting needed.
 //!
-//! 3. **Arithmetic on tyvars unifies them.** `fn add(a, b) = a + b`
+//! 3. **Arithmetic on tyvars unifies them.** `fn add(a, b) { a + b }`
 //!    reaches `BinOp::Add` with `lt = Var(M1), rt = Var(M2)`, then
 //!    calls `self.unify(&lt, &rt, span)` (see
 //!    `src/typechecker/inference.rs`). The two vars merge but never
@@ -78,7 +78,7 @@ fn errors_only(errs: &[typechecker::TypeError]) -> Vec<&typechecker::TypeError> 
 
 #[test]
 fn arithmetic_template_fn_can_be_bound_and_called_at_int() {
-    // `fn add(a, b) = a + b` infers `forall a. (a, a) -> a` and
+    // `fn add(a, b) { a + b }` infers `forall a. (a, a) -> a` and
     // every call-site instantiates `a` concretely. A defaulting
     // rule pinning `a` to `Int` at the `let plus = add` binding
     // site would reject the Float call `plus(1.5, 2.5)`. The status

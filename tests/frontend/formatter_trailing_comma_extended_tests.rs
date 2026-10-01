@@ -323,12 +323,12 @@ fn match_arms_nested_match_in_lambda_does_not_spuriously_comma() {
 
 // ── Constructor argument lists (in patterns / expressions) ─────────
 
-/// Regression: `fn wrap(x) = Some(x,)`. The fn-params check uses
+/// Regression: `fn wrap(x) { Some(x,) }`. The fn-params check uses
 /// `f.span` (at the `fn` keyword) and must anchor its scan to the
 /// fn's `(...)` specifically — NOT latch onto the body's
 /// `Some(x,)` close, which would falsely report a trailing comma
 /// on the fn's empty-last-param position and produce
-/// `fn wrap(x,) = Some(x,)`.
+/// `fn wrap(x,) { Some(x,) }`.
 #[test]
 fn fn_params_ignore_trailing_comma_in_body() {
     let src = "fn wrap(x) { Some(x,) }\n";

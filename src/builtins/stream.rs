@@ -322,7 +322,7 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     crate::vm::spawn_callback_thread(move || {
         let mut state = init;
         loop {
-            // fn(state) -> Option((value, next_state))
+            // Fn(state) -> Option((value, next_state))
             let res = child_vm.invoke_callable(&fn_val, &[state.clone()]);
             let Ok(opt) = res else { break };
             match opt {

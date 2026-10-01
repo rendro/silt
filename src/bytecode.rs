@@ -10,8 +10,7 @@ use crate::lexer::Span;
 use crate::value::Value;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
-/// relying on `Value`'s `Hash`/`Eq` (which has quirks around `Float` NaN)
-/// and keeps the dedup scope explicit.
+/// relying on `Value`'s `Hash`/`Eq` and keeps the dedup scope explicit.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum ConstantKey {
     Int(i64),

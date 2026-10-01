@@ -155,7 +155,7 @@ fn sig_help_bracket_inner_comma_not_credited_to_call() {
 
 #[test]
 fn rename_trait_decl_does_not_clobber_trait_keyword() {
-    // Pre-fix: `trait Foo { fn bar(self) -> Int = 0 }` after rename
+    // Pre-fix: `trait Foo { fn bar(self) -> Int { 0 } }` after rename
     // `Foo` -> `Bar` produced `Bar Foo { ... }` because the trait
     // decl's `DefInfo.span` was the `trait` keyword.
     let source = "trait Foo {\n  fn bar(self) -> Int { 0 }\n}\n";

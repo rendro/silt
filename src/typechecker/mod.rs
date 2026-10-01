@@ -3371,7 +3371,7 @@ impl TypeChecker {
                     // If the body's instantiation would narrow the
                     // scheme — i.e. an annotated polymorphic var was
                     // pinned to a concrete type by body usage (e.g.
-                    // `fn f(x: a) -> Int = x + 1` pins `a` to Int via
+                    // `fn f(x: a) -> Int { x + 1 }` pins `a` to Int via
                     // the `+` operator's unification) — that's a
                     // signature mismatch the user should fix. Record
                     // the violation now and emit the diagnostic after
@@ -7469,7 +7469,7 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
 /// stays equal because a row-tail variable happens to replace the
 /// unification variable that got constrained.
 ///
-/// The classic miss: `fn pluck(r) = r.zzznosuchfield`. Pass-2 generalizes
+/// The classic miss: `fn pluck(r) { r.zzznosuchfield }`. Pass-2 generalizes
 /// to `Fn(α) -> β` (vars=[α, β]); body inference unifies `α` with
 /// `AnonRecord{zzznosuchfield: β, ...γ}`, giving `Fn(AnonRecord{..}) -> β`
 /// (vars=[β, γ]). The old `vars.len()` gate compared 2 vs 2 and skipped
@@ -7674,7 +7674,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
 ///   used `Type::Fun([fresh, fresh], Int)`.
 /// - `Equal`:   `fn equal(self, other) -> Bool` (signature only).
 /// - `Hash`:    `fn hash(self) -> Int` (signature only).
-/// - `Error: Display { fn message(self) -> String = self.display() }`.
+/// - `Error: Display { fn message(self) -> String { self.display() } }`.
 ///   Carries a real default body so `synthesize_default_methods` can
 ///   clone `self.display()` into impls that omit `message`.
 fn builtin_trait_decls() -> Vec<TraitDecl> {
@@ -7824,7 +7824,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Error: Display { fn message(self) -> String = self.display() }
+        // trait Error: Display { fn message(self) -> String { self.display() } }
         TraitDecl {
             name: intern("Error"),
             name_span: dummy_span,
