@@ -27,13 +27,13 @@ helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
 Matches Elixir convention. Simpler than auto-currying. Trade-off: no partial
 application through pipes.
 
-## `?` Precedence vs. `|>` and Arithmetic
+## `?` Precedence
 
-`?` binds one step looser than `|>`, so `x |> f |> g?` parses as
-`(x |> f |> g)?` — a trailing `?` applies to the whole pipeline without
-parens. Infix arithmetic (`+`, `-`, `*`, `/`, `%`), `..`, and `as` all bind
-tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison, boolean,
-and `else` all bind looser, so `a == b?` is still `a == (b?)`.
+`?` is a tight postfix operator: it binds like a call, so
+`int.parse(a)? + int.parse(b)?` adds two unwrapped values and `-x?` negates
+the unwrapped `x`. One rule covers pipelines: a `?` that ends a pipeline
+applies to the whole pipeline, so `x |> f |> g?` parses as
+`(x |> f |> g)?` — the common shape `pipeline?` needs no parentheses.
 
 ## `fold_until` Same-Type Constraint
 

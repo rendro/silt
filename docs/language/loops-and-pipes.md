@@ -69,8 +69,8 @@ anonymous functions: `xs |> list.fold(0) { acc, x -> acc + x }`.
 ### Pipe and `?`
 
 A trailing `?` on a pipeline applies to the whole piped expression — no
-parentheses needed. `x |> f |> g?` parses as `(x |> f |> g)?`, because `?`
-binds one step looser than `|>`. This means stdlib chains like
+parentheses needed. `x |> f |> g?` parses as `(x |> f |> g)?`. (Everywhere
+else `?` binds tightly, like a call.) This means stdlib chains like
 `io.read_file(path) |> result.map_err(Wrap)?` compose without parens around
 the pipeline.
 

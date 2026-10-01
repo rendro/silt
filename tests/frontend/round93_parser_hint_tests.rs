@@ -91,9 +91,12 @@ fn precedence_and_associativity_table() {
         // pipe (55) binds tighter than comparison/equality
         ("x |> f == y", "((x |> f) == y)"),
         ("x |> f |> g", "((x |> f) |> g)"),
-        // `?` (54) applies to the whole pipe (55/56), not the RHS call
+        // `?` is a tight postfix, except that a trailing `?` applies to
+        // the whole pipeline
         ("x |> f?", "((x |> f)?)"),
-        ("x + y?", "((x + y)?)"),
+        ("x |> f |> g?", "(((x |> f) |> g)?)"),
+        ("x + y?", "(x + (y?))"),
+        ("f(a)? + f(b)?", "((f(a)?) + (f(b)?))"),
     ];
     for (src, expected) in table {
         let actual = expr_shape(src);

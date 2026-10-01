@@ -1518,8 +1518,8 @@ fn load_config(path: String) -> Result(Config, AppError) {
 }
 ```
 
-`?` binds looser than `|>`, so the whole pipeline is a single expression
-terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
+A `?` that ends a pipeline applies to the whole pipeline, so the pipeline
+is a single expression terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
 for a longer walkthrough. A separate proposal
 ([`error-from-trait.md`](../proposals/error-from-trait.md)) tracks the
 design for a `.into()`-based ergonomics layer over this pattern.
@@ -5305,8 +5305,9 @@ fn main() {
 Works well with a variant constructor as the mapping function. Silt
 treats a one-field variant constructor as a first-class `Fn(e) -> Wrap`,
 so `result.map_err(r, Wrap)` lifts a module-specific error into a
-caller-owned enum without a closure. `?` binds looser than `|>`, so
-a pipe followed by `?` composes without parentheses:
+caller-owned enum without a closure. A `?` that ends a pipeline applies
+to the whole pipeline, so a pipe followed by `?` composes without
+parentheses:
 
 ```silt
 import io

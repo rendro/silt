@@ -222,8 +222,7 @@ fn test_round35_f2_binary_containing_or() {
 
 #[test]
 fn test_round35_f2_questionmark_containing_or() {
-    // `(x || y)?` must keep parens — QuestionMark bp (54) is tighter
-    // than `||` (20).
+    // `(x || y)?` must keep parens — `?` binds tightly, like a call.
     let src = "fn f(x, y) { (x || y)? }\n";
     assert_ast_preserved(src);
 }

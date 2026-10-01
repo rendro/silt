@@ -19,7 +19,6 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 |         30 | `&&`            | infix          | Boolean AND (short-circuiting)                     |
 |         40 | `==`, `!=`      | infix          | Equality / inequality                              |
 |         50 | `<`, `>`, `<=`, `>=` | infix     | Ordered comparison                                 |
-|         54 | `?`             | **postfix**    | Error propagation (`Result` / `Option`)            |
 |         55 | `\|>`           | infix          | Pipe: `x \|> f` = `f(x)`                           |
 |         60 | `..`            | infix          | Inclusive range                                    |
 |         70 | `+`, `-`        | infix          | Addition, subtraction (newline-sensitive)          |
@@ -28,9 +27,11 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 |         95 | `as`            | infix          | Type ascription: `expr as Type`                    |
 |        115 | `{ ... }`       | postfix        | Trailing closure (only on same line as call)       |
 |        120 | `f(...)`        | postfix        | Function call                                      |
+|        120 | `?`             | **postfix**    | Error propagation (`Result` / `Option`)            |
 |        130 | `.`             | infix/postfix  | Field access, `expr.{ ... }` record update         |
 
-`?` is postfix and sits between comparison (`<`, `>=`) and pipe (`|>`).
+`?` is a tight postfix operator, like a call — with one rule for pipelines,
+see [Error Propagation](#error-propagation-).
 
 silt has **no postfix bracket indexing** (`xs[i]`). The parser rejects it
 with `postfix indexing is not supported; use list.get(xs, i), map.get(m, k), or string.slice(s, i, i + 1)`.
@@ -47,16 +48,18 @@ Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So 
 
 `?` is a postfix operator: `expr?`. It unwraps `Result` or `Option`, propagating `Err` / `None` out of the surrounding function.
 
-Key precedence consequences:
+`?` binds tightly, like a call: it applies to the operand right before it. The one exception is a pipeline: a `?` that ends a pipeline applies to the whole pipeline.
 
 ```silt
-x |> f |> g?        -- (x |> f |> g)?   -- ? applies to the whole pipeline
-x + y?              -- (x + y)?          -- arithmetic binds tighter than ?
-a == b?             -- a == (b?)         -- comparison binds looser than ?
-1..10?              -- (1..10)?          -- range binds tighter than ?
+int.parse(a)? + int.parse(b)?   -- (int.parse(a)?) + (int.parse(b)?)
+-x?                             -- -(x?)
+a == b?                         -- a == (b?)
+x |> f |> g?                    -- (x |> f |> g)?   -- the whole pipeline
+x |> f? |> g                    -- (x |> f)? |> g   -- the pipeline so far
+a |> (f?)                       -- parentheses keep ? on the stage
 ```
 
-This is deliberate: the shape `pipeline?` is common and should not require parentheses, and the shapes `(x + y)?` and `(1..10)?` are type errors on non-`Result` operands anyway, so moving `?` outward does not change valid programs.
+To unwrap the result of an infix expression, parenthesise it: `(a + b)?`.
 
 See [Error Handling](error-handling.md) for the full semantics.
 

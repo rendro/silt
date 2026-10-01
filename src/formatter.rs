@@ -6226,11 +6226,15 @@ fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
         result.push_str("|> ");
         // Any stage whose top-level construct binds looser than the
         // pipe's right-hand-side bp must be wrapped in parens or the
-        // re-parse will pull that outer construct above the pipe.
-        // Today this matters for `?` (bp=54): a `Pipe(a, QuestionMark(x))`
-        // written as `a |> (x?)` must emit with the parens intact,
-        // otherwise `a |> x?` re-parses as `(a |> x)?`.
-        result.push_str(&paren_wrap_if_needed(stage, bp::PIPE_R, depth));
+        // re-parse will pull that outer construct above the pipe. A
+        // stage that is itself a `?` is wrapped too: a `?` ending a stage
+        // applies to the whole pipeline, so `Pipe(a, QuestionMark(x))`
+        // must emit as `a |> (x?)`, not `a |> x?`.
+        if matches!(stage.kind, ExprKind::QuestionMark(_)) {
+            result.push_str(&format!("({})", format_expr(stage, depth)));
+        } else {
+            result.push_str(&paren_wrap_if_needed(stage, bp::PIPE_R, depth));
+        }
         if let Some(tc) = take_trailing_for_line(stage_line) {
             result.push(' ');
             result.push_str(&tc);
@@ -6665,19 +6669,11 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             //   Range (..)          60
             //   Add/Sub (+ -)       70
             //   Mul/Div/Mod         80
-            // Ascription (95), QuestionMark (110), and postfix Call/Index/
-            // FieldAccess (120) bind tighter than unary and do NOT need
-            // wrapping.
-            let needs_parens = matches!(
-                &expr.kind,
-                ExprKind::Binary(..) | ExprKind::Pipe(..) | ExprKind::Range(..)
-            );
-            let inner = format_expr(expr, depth);
-            let wrapped = if needs_parens {
-                format!("({inner})")
-            } else {
-                inner
-            };
+            // Ascription (95) and the postfix forms (`?`, call, index,
+            // field access) bind tighter than unary and do NOT need
+            // wrapping — except a `?` that ends a pipeline, whose top is
+            // the pipe (see `expr_top_l_bp`).
+            let wrapped = paren_wrap_if_needed(expr, 90, depth);
             match op {
                 // Insert a space before a leading `-` so that `--x`
                 // (Unary(Neg, Unary(Neg, x)) or Unary(Neg, Sub(...)) where
@@ -6711,10 +6707,16 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
         }
 
         ExprKind::QuestionMark(expr) => {
-            // Postfix `?` bp = 54. Any child whose top-level l_bp < 54
-            // must be parenthesized, otherwise re-parsing attaches `?`
-            // to the inner tail instead of the whole expression.
-            format!("{}?", paren_wrap_if_needed(expr, bp::QUESTIONMARK, depth))
+            // `?` is a tight postfix operator, so a child built from a
+            // looser operator must be parenthesized, otherwise re-parsing
+            // attaches `?` to the inner tail instead of the whole
+            // expression. A pipeline is the exception: a trailing `?`
+            // applies to the whole pipeline (see `question_needs_parens`).
+            if question_needs_parens(expr) {
+                format!("({})?", format_expr(expr, depth))
+            } else {
+                format!("{}?", format_expr(expr, depth))
+            }
         }
 
         ExprKind::Ascription(expr, ty) => {
@@ -7163,15 +7165,6 @@ mod bp {
     pub const PIPE_L: u8 = 55;
     pub const PIPE_R: u8 = 56;
     pub const ASCRIPTION: u8 = 95;
-    // `?` bp matches the parser: it's postfix and binds LOOSER than
-    // `|>` (l_bp=55) so `x |> f(y)?` groups as `(x |> f(y))?` without
-    // needing parens. Children of `?` with top_l_bp >= 54 stay paren-
-    // free on re-emit; children below 54 (||, &&, ==, <)
-    // need wrapping. `?(x)` embedded as a Pipe RHS (min_bp=56) also
-    // gets wrapped because 54 < 56 — matches the parser's grouping
-    // rules so `a |> (x?)` in the source stays `a |> (x?)` on emit
-    // rather than rewriting to the non-equivalent `a |> x?`.
-    pub const QUESTIONMARK: u8 = 54;
 
     /// Left binding power for each `BinOp`, mirroring the `(l_bp, r_bp)`
     /// pairs in `parse_expr_bp` (src/parser.rs). All Binary operators are
@@ -7208,13 +7201,38 @@ fn expr_top_l_bp(expr: &Expr) -> u8 {
         // whose min_bp exceeds the postfix's bp would not consume the
         // postfix on re-parse, splitting the tree differently.
         ExprKind::Ascription(..) => bp::ASCRIPTION,
-        ExprKind::QuestionMark(..) => bp::QUESTIONMARK,
+        // `?` binds like a call, except that `a |> f?` emits with the
+        // pipe at its top.
+        ExprKind::QuestionMark(inner)
+            if matches!(inner.kind, ExprKind::Pipe(..)) && !question_needs_parens(inner) =>
+        {
+            bp::PIPE_L
+        }
         // Unary prefix: re-parsed as prefix from any position. No infix
         // at the top, so safe as an atom from the parent's perspective.
         ExprKind::Unary(..) => u8::MAX,
         // Atoms/closed forms: literals, idents, Call, Index, FieldAccess,
         // parenthesized/tuple/unit, block, match, loop, record literal.
         _ => u8::MAX,
+    }
+}
+
+/// True when `expr` must be parenthesized as the operand of a postfix
+/// `?`. The parser binds `?` like a call, so any operand whose text ends
+/// in a looser operator's right operand (binary, range, prefix) needs
+/// parens. A pipeline does not: a `?` that ends the last stage applies to
+/// the whole pipeline, as long as that stage itself would not capture the
+/// `?` (the stage emitter parenthesizes stages that are themselves `?`).
+fn question_needs_parens(expr: &Expr) -> bool {
+    let captures = |e: &Expr| {
+        matches!(
+            e.kind,
+            ExprKind::Binary(..) | ExprKind::Range(..) | ExprKind::Unary(..)
+        )
+    };
+    match &expr.kind {
+        ExprKind::Pipe(_, last) => captures(last),
+        _ => captures(expr),
     }
 }
 
@@ -9265,11 +9283,8 @@ import a
         );
     }
 
-    /// Regression: `pipe |> f()?` must not pick up unnecessary parens
-    /// around the pipe on re-format. The fix aligned
-    /// `bp::QUESTIONMARK` with the parser's current bp=54 (below `|>`
-    /// at 55) so children of `?` whose top is a pipe (bp=55) no
-    /// longer trigger `paren_wrap_if_needed`.
+    /// `pipe |> f()?` must not pick up parens around the pipe on
+    /// re-format: a trailing `?` applies to the whole pipeline.
     #[test]
     fn test_pipe_then_question_emits_without_parens() {
         let source = "\
@@ -9293,9 +9308,8 @@ fn load(path: String) -> Result(String, E) {
         assert_eq!(formatted, twice, "formatting must be idempotent");
     }
 
-    /// Sibling check: `?` embedded as a Pipe RHS still needs parens
-    /// because `?`'s bp (54) is below `|>`'s r_bp (56). So
-    /// `a |> (x?)` must stay parenthesized — otherwise the `?` would
+    /// Sibling check: `?` embedded as a Pipe RHS needs parens, so
+    /// `a |> (x?)` stays parenthesized — otherwise the `?` would
     /// migrate outwards to apply to the whole pipe.
     #[test]
     fn test_question_as_pipe_rhs_keeps_parens() {
