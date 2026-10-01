@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: duplicate top-level definition of 'x'; names must be unique at module scope
+-- stderr-contains: 'x' is bound twice at the top level
 let x = 1
 let x = 2
 

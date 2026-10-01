@@ -72,11 +72,15 @@ The trade-off: functions that exist only for side effects return `()` (Unit).
 ### Immutability as Default (and Only Option)
 
 All bindings are immutable. There is no `mut`, no mutable references, no
-assignment to existing bindings. Shadowing is allowed:
+assignment to existing bindings. Inside a function body, shadowing is
+allowed:
 
 ```silt
-let x = 42
-let x = x + 1    -- shadowing, not mutation
+fn main() {
+  let x = 42
+  let x = x + 1    -- shadowing, not mutation
+  println(x)
+}
 ```
 
 Why no mutation at all? (1) Concurrency safety — immutable values need no
@@ -112,12 +116,23 @@ let x = 42
 let name = "Robert"
 ```
 
-**Shadowing** creates a new binding with the same name:
+**Shadowing** creates a new binding with the same name inside a function
+body:
 
 ```silt
-let x = 1
-let x = x + 1   -- x is now 2; the original 1 is untouched
+fn main() {
+  let x = 1
+  let x = x + 1   -- x is now 2; the original 1 is untouched
+  println(x)
+}
 ```
+
+At the top level a name is bound only once. Two top-level declarations
+that bind the same name — two imports of it (`import a.{ x }` and
+`import b.{ x }`), two `import m as n` with the same alias, or an import
+and a top-level `fn`, `type`, `let` or trait — are an error that names
+both sites. Which declaration a top-level name refers to therefore never
+depends on the order of the declarations.
 
 **Destructuring** works in `let` for irrefutable patterns -- tuples and
 records, which always match exactly one shape:

@@ -450,6 +450,122 @@ enum Segment {
     },
 }
 
+// ── Top-level names ──────────────────────────────────────────────────
+
+/// The names a top-level declaration binds, each with the span to report
+/// it at and a word for the kind of declaration.
+fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
+    match decl {
+        // A recovery stub stands in for a broken declaration the user is
+        // still fixing; it binds nothing of its own.
+        Decl::Fn(f) if f.is_recovery_stub => Vec::new(),
+        Decl::Fn(f) => vec![(f.name, f.name_span, "function")],
+        Decl::Type(t) => vec![(t.name, t.name_span, "type")],
+        Decl::Trait(t) => vec![(t.name, t.name_span, "trait")],
+        Decl::TraitImpl(_) => Vec::new(),
+        Decl::Import(target, span) => match target {
+            ImportTarget::Module(m) => vec![(*m, *span, "import")],
+            ImportTarget::Items(_, items) => {
+                items.iter().map(|item| (*item, *span, "import")).collect()
+            }
+            ImportTarget::Alias(_, alias) => vec![(*alias, *span, "import")],
+        },
+        Decl::Let { pattern, .. } => {
+            let mut names = Vec::new();
+            pattern_binders(pattern, &mut names);
+            names
+                .into_iter()
+                .map(|(name, span)| (name, span, "let binding"))
+                .collect()
+        }
+    }
+}
+
+/// The names `pattern` binds, with their spans.
+fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
+    match &pattern.kind {
+        PatternKind::Ident(name) => out.push((*name, pattern.span)),
+        PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
+            for part in parts {
+                pattern_binders(part, out);
+            }
+        }
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            for (field, sub) in fields {
+                match sub {
+                    Some(sub) => pattern_binders(sub, out),
+                    None => out.push((*field, pattern.span)),
+                }
+            }
+            if let PatternKind::AnonRecord {
+                rest: Some(rest), ..
+            } = &pattern.kind
+            {
+                out.push((*rest, pattern.span));
+            }
+        }
+        PatternKind::List(elems, rest) => {
+            for elem in elems {
+                pattern_binders(elem, out);
+            }
+            if let Some(rest) = rest {
+                pattern_binders(rest, out);
+            }
+        }
+        // Every alternative binds the same names.
+        PatternKind::Or(alts) => {
+            if let Some(first) = alts.first() {
+                pattern_binders(first, out);
+            }
+        }
+        PatternKind::Map(entries) => {
+            for (_, sub) in entries {
+                pattern_binders(sub, out);
+            }
+        }
+        PatternKind::Wildcard
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => {}
+    }
+}
+
+/// One error for every top-level name bound a second time. A top-level
+/// name is bound once: two imports of the same name, an import and a
+/// declaration, or two declarations may not share it, so which one a use
+/// refers to never depends on their order. (Shadowing inside a function
+/// body is unaffected.)
+fn top_level_name_errors(decls: &[Decl]) -> Vec<ParseError> {
+    let mut first: std::collections::HashMap<Symbol, (Span, &'static str)> =
+        std::collections::HashMap::new();
+    let mut errors = Vec::new();
+    for decl in decls {
+        for (name, span, kind) in top_level_binders(decl) {
+            if intern::resolve(name) == "_" {
+                continue;
+            }
+            match first.get(&name) {
+                Some(&(first_span, first_kind)) => errors.push(ParseError {
+                    message: format!(
+                        "'{name}' is bound twice at the top level: by the {first_kind} at line {} \
+                         and by the {kind} here — a top-level name can be bound only once",
+                        first_span.line
+                    ),
+                    span,
+                }),
+                None => {
+                    first.insert(name, (span, kind));
+                }
+            }
+        }
+    }
+    errors
+}
+
 // ── Parser ───────────────────────────────────────────────────────────
 
 const MAX_DEPTH: usize = 128;
@@ -939,6 +1055,9 @@ impl Parser {
             }
             self.skip_nl();
         }
+        if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
+            return Err(err);
+        }
         Ok(Program { decls })
     }
 
@@ -1029,6 +1148,7 @@ impl Parser {
             }
             self.skip_nl();
         }
+        self.errors.extend(top_level_name_errors(&decls));
         (Program { decls }, std::mem::take(&mut self.errors))
     }
 
@@ -4821,6 +4941,48 @@ fn main() {
     }
 
     // ── 1. Error recovery ───────────────────────────────────────────
+
+    #[test]
+    fn test_recovery_reports_same_line_decl_and_keeps_both() {
+        let (prog, errs) = parse_recovering("fn a() { 1 } fn b() { 2 }\n");
+        assert_eq!(prog.decls.len(), 2, "both declarations are kept");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].message.contains("expected a newline before 'fn'"),
+            "{}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn test_recovery_reports_every_top_level_name_bound_twice() {
+        let (prog, errs) =
+            parse_recovering("import a.{ x }\nimport b.{ x }\nfn x() { 1 }\nfn y() { 2 }\n");
+        assert_eq!(prog.decls.len(), 4, "every declaration is kept");
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(
+            errs[0]
+                .message
+                .contains("by the import at line 1 and by the import here")
+        );
+        assert!(
+            errs[1]
+                .message
+                .contains("by the import at line 1 and by the function here")
+        );
+        assert_eq!(errs[1].span.line, 3);
+    }
+
+    #[test]
+    fn test_recovery_stub_does_not_bind_its_name() {
+        // The stub stands in for the broken `f` the user is fixing; the
+        // later real `f` is not a second binding.
+        let (_, errs) = parse_recovering("fn f(\nfn f() { 1 }\n");
+        assert!(
+            errs.iter().all(|e| !e.message.contains("bound twice")),
+            "{errs:?}"
+        );
+    }
 
     #[test]
     fn test_recovery_skips_bad_decl_and_continues() {

@@ -61,7 +61,7 @@ import string\n\
 \"####.#.#.#\", \"#....#...#\", \"#.####.#.#\", \"#.#....#.#\", \"#...####E#\", \
 \"###import list\n\
 import map\n\
-import option\n\
+import result\n\
 \n\
 -- Search algorithms using loop\n\
 --\n\
@@ -85,7 +85,7 @@ import option\n\
 \n\
 -- foo ###import list\n\
 import map\n\
-import option\n";
+import result\n";
     assert_idempotent(source);
 }
 

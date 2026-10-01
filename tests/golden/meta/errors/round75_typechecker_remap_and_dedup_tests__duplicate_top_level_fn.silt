@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: duplicate top-level definition of 'dup'; names must be unique at module scope
+-- stderr-contains: 'dup' is bound twice at the top level
 fn dup() -> Int { 1 }
 fn dup() -> Int { 2 }
 

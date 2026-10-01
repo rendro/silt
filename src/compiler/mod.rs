@@ -1092,21 +1092,6 @@ impl Compiler {
     /// are types; `Point.origin()` stays a qualified call.
     fn collect_selective_imports(&mut self, program: &Program) {
         let current = self.current_program();
-        // A name the program binds itself at top level (`let` or `fn`)
-        // shadows the import, in a file module as in the entry program: a
-        // call of it is not a decoder call.
-        let own_names: HashSet<String> = program
-            .decls
-            .iter()
-            .filter_map(|decl| match decl {
-                Decl::Fn(f) => Some(resolve(f.name)),
-                Decl::Let { pattern, .. } => match &pattern.kind {
-                    PatternKind::Ident(name) => Some(resolve(*name)),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect();
         for decl in &program.decls {
             let Decl::Import(ImportTarget::Items(module_name, items), _) = decl else {
                 continue;
@@ -1114,9 +1099,7 @@ impl Compiler {
             let mod_str = resolve(*module_name);
             for item in items {
                 let item_str = resolve(*item);
-                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_')
-                    && !own_names.contains(&item_str)
-                {
+                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_') {
                     self.selective_imports.insert(
                         (current.clone(), item_str.clone()),
                         format!("{mod_str}.{item_str}"),

@@ -5,24 +5,14 @@
 //!   where-clause tyvars in lock-step with the post-narrowing scheme.
 //! - **TYPE-3 LATENT** — `src/types/canonical.rs::canonicalize_type_name`
 //!   collapses the `()` alias onto `Unit`.
-//! - **DEAD-3** — the REPL's duplicate top-level definition check emits
-//!   the canonical wording.
 //!
 //! The behavioural locks of this round (Unit trait dispatch, duplicate
 //! top-level `let`/`fn`, open/closed row unification, where-clause
 //! instantiation) are golden cases named
 //! `round75_typechecker_remap_and_dedup_tests__*` under tests/golden/meta/.
 
-use silt::ast::Program;
 use silt::intern::{intern, resolve};
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::types::canonical::{Resolver, canonicalize_type_name};
-
-fn parse(src: &str) -> Program {
-    let tokens = Lexer::new(src).tokenize().expect("lex");
-    Parser::new(tokens).parse_program().expect("parse")
-}
 
 #[test]
 fn type3_canonical_module_canonicalize_collapses_paren_paren_to_unit() {
@@ -59,28 +49,6 @@ fn type3_canonical_module_canonicalize_unrelated_names_round_trip() {
         resolve(canonicalize_type_name(&res, alias)),
         "Unit",
         "the `()` alias should collapse onto `Unit`, not round-trip"
-    );
-}
-
-#[test]
-fn dead3_duplicate_let_in_repl_emits_canonical_error() {
-    let mut ctx = silt::typechecker::ReplTypeContext::new();
-    let src = "let r = 1\nlet r = 2\n";
-    let mut prog = parse(src);
-    let errs = ctx.check(&mut prog);
-    let dup = errs
-        .iter()
-        .filter(|e| {
-            e.message.contains(
-                "duplicate top-level definition of 'r'; names must be unique at module scope",
-            )
-        })
-        .count();
-    assert!(
-        dup >= 1,
-        "expected the canonical 'duplicate top-level definition' wording \
-         on a REPL `let` collision; got errors:\n{:#?}",
-        errs
     );
 }
 

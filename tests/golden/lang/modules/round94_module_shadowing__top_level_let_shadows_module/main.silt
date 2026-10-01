@@ -1,4 +1,0 @@
-import other
-type P { year: Int }
-let other = P { year: 9 }
-fn main() { println(other.year) }

@@ -70,8 +70,13 @@ two imported modules export the same type name.
 ## Module names and shadowing
 
 Module names follow the ordinary lexical-scoping rules: a value binding
-(function parameter, lambda parameter, `let`, pattern binder) with the same
-name **shadows** an imported module within its scope.
+inside a function (function parameter, lambda parameter, `let`, pattern
+binder) with the same name **shadows** an imported module within its scope.
+At the top level there is no shadowing: an import and a top-level `fn`,
+`type`, `let` or trait may not bind the same name, and neither may two
+imports (`import a.{ x }` and `import b.{ x }`, or two `import m as n` with
+the same alias). Such a program is rejected with an error naming both
+declarations.
 
 ```silt
 import other            -- other.silt: pub fn double(x) { x * 2 }

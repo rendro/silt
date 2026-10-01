@@ -649,11 +649,6 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
-    /// Names that have been registered as user-defined top-level declarations
-    /// (functions, let bindings, type/record/enum names). Used by G1 to
-    /// detect duplicate top-level definitions without also flagging
-    /// user code that shadows a builtin (which remains a warning).
-    pub(super) top_level_names: std::collections::HashSet<Symbol>,
     /// Set by the exhaustiveness checker when its recursion depth bound is
     /// exceeded during a single `check_exhaustiveness` call. Interior
     /// mutability lets the `&self`-taking `is_useful` recursion record the
@@ -842,7 +837,6 @@ impl TypeChecker {
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
-            top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
             recovery_stub_names: std::collections::HashSet::new(),
             type_aliases: std::collections::HashSet::new(),
@@ -2483,28 +2477,6 @@ impl TypeChecker {
         });
     }
 
-    /// Round 75 DEAD-3: emit the canonical "duplicate top-level
-    /// definition" error if `name` is already registered, then
-    /// register it. Three byte-identical call sites (top-level `let`
-    /// in `check_program`, top-level `fn` in `register_fn_decl`, and
-    /// the REPL `let` path in `eval_declaration`) share this exact
-    /// shape; centralising the message + insert keeps the wording
-    /// pinned in one place. Tests that asserted on the old wording
-    /// `"duplicate top-level definition of '<n>'; names must be
-    /// unique at module scope"` continue to match — the helper emits
-    /// the same string.
-    pub(super) fn define_top_level_unique(&mut self, name: Symbol, span: Span) {
-        if self.top_level_names.contains(&name) {
-            self.error(
-                format!(
-                    "duplicate top-level definition of '{name}'; names must be unique at module scope"
-                ),
-                span,
-            );
-        }
-        self.top_level_names.insert(name);
-    }
-
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
 
     /// Merge the producer-side snapshot for `module_sym` into this
@@ -3285,10 +3257,6 @@ impl TypeChecker {
                     Scheme::mono(self.apply(&val_ty))
                 };
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: top-level duplicate let binding (round 75
-                    // DEAD-3: shared with `register_fn_decl` and the
-                    // REPL `let` path via `define_top_level_unique`).
-                    self.define_top_level_unique(*name, span);
                     env.define(*name, scheme);
                 } else {
                     // A top-level `let` has no failure branch either:
@@ -3873,20 +3841,6 @@ impl TypeChecker {
             );
             return;
         }
-        // G1: Detect duplicate top-level type declarations. Only user-defined
-        // top-level names count; collision with a builtin type (Option,
-        // Result, ChannelResult, Step) is handled by the shadow-warning
-        // path elsewhere.
-        if self.top_level_names.contains(&td.name) {
-            self.error(
-                format!(
-                    "duplicate top-level type declaration '{}'; type names must be unique at module scope",
-                    td.name
-                ),
-                td.span,
-            );
-        }
-        self.top_level_names.insert(td.name);
         // B2: populate the span hint used by `resolve_type_expr` for any
         // arity error on field / variant type annotations.
         let prev_type_span = self.current_type_anno_span.replace(td.span);
@@ -4029,9 +3983,9 @@ impl TypeChecker {
                     //      `self.enums[td.name]` entry at this point; the
                     //      insert for the *current* td happens below, so
                     //      any existing key must be a prior registration.
-                    //      Collisions with another user decl are already
-                    //      flagged as a hard error by top_level_names, so
-                    //      anything we see here is a builtin shadow.
+                    //      Two user decls never share a name (the parser
+                    //      rejects it), so anything we see here is a
+                    //      builtin shadow.
                     if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
                         if prev_owner != td.name {
                             self.warning(
@@ -4945,18 +4899,8 @@ impl TypeChecker {
         // Recovery-stub special case (Option B): record the name and bind
         // its signature just like a real fn, so downstream references in
         // unrelated code do not cascade into "undefined variable" errors.
-        // The stub is NOT registered as a "real" top-level name because
-        // duplicate-definition checks shouldn't flag a later *real* fn
-        // with the same name as a stubbed-out earlier one — the user is
-        // fixing the same broken decl, not redeclaring.
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
-        } else {
-            // G1: Detect duplicate top-level function definitions. We only report
-            // a hard error when the name collides with another user-registered
-            // top-level name. Collisions with builtins are handled elsewhere as
-            // a shadow warning. Round 75 DEAD-3: shared helper.
-            self.define_top_level_unique(f.name, f.span);
         }
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
@@ -8241,9 +8185,6 @@ impl ReplTypeContext {
     pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
         // Clear errors from the previous input
         self.checker.errors.clear();
-        // G1: REPL inputs naturally redefine names across entries; only
-        // duplicates WITHIN a single input should error.
-        self.checker.top_level_names.clear();
 
         // Process imports. Round 56 item 4: we do NOT clear
         // `self.checker.imported_modules` here — REPL sessions
@@ -8416,10 +8357,6 @@ impl ReplTypeContext {
                     Scheme::mono(self.checker.apply(&val_ty))
                 };
                 if let PatternKind::Ident(name) = &pattern.kind {
-                    // G1: duplicate top-level let binding within a single
-                    // REPL input. Round 75 DEAD-3: shared helper with
-                    // the non-REPL `let`/`fn` paths.
-                    self.checker.define_top_level_unique(*name, span);
                     self.env.define(*name, scheme);
                 } else {
                     // Same rule as `check_program`: a `let` pattern

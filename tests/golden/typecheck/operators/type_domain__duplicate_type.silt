@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: duplicate top-level
+-- stderr-contains: is bound twice at the top level
 type Foo { A }
 type Foo { B }
 fn main() { 0 }

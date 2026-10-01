@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: duplicate top-level
+-- stderr-contains: is bound twice at the top level
 let x = 1
 let x = 2
 fn main() { x }

@@ -3024,9 +3024,8 @@ pub fn format(source: &str) -> Result<String, FmtError> {
 ///     clause (`a: X, b: Y, a: Z` becomes `a: X + Z, b: Y`), so bounds
 ///     are written grouped by type variable;
 ///   * imports are moved to the top and sorted, so imports are compared
-///     as a set, apart from the other declarations; a name that two
-///     declarations bind must keep the order of its declarations, since
-///     that order decides which one the name refers to;
+///     as a set, apart from the other declarations (a top-level name is
+///     bound only once, so their order never decides what a name means);
 ///   * a pattern alternative in parentheses inside another one,
 ///     `(a | b) | c`, is printed as `a | b | c`, so alternatives are
 ///     written flat.
@@ -3056,76 +3055,7 @@ mod self_check {
             .map_err(|e| unparseable(&e.message, e.span, output))?;
 
         compare_programs(&decl_shapes(source_program), &decl_shapes(&output_program))?;
-        compare_binders(source_program, &output_program)?;
         compare_comments(source_comments, &output_comments)
-    }
-
-    // ── Names bound more than once ──────────────────────────────────
-
-    /// The top-level names that `decl` binds.
-    fn bound_names(decl: &Decl) -> Vec<Symbol> {
-        match decl {
-            Decl::Fn(f) => vec![f.name],
-            Decl::Type(t) => vec![t.name],
-            Decl::Trait(t) => vec![t.name],
-            Decl::TraitImpl(_) => Vec::new(),
-            Decl::Import(target, _) => match target {
-                ImportTarget::Module(m) => vec![*m],
-                ImportTarget::Items(_, items) => items.clone(),
-                ImportTarget::Alias(_, alias) => vec![*alias],
-            },
-            Decl::Let { pattern, .. } => match &pattern.kind {
-                PatternKind::Ident(name) => vec![*name],
-                _ => Vec::new(),
-            },
-        }
-    }
-
-    /// For every name that two or more top-level declarations bind, the
-    /// declarations that bind it, in order. Which of them a use of the
-    /// name refers to depends on that order.
-    fn binders(program: &Program) -> Vec<(String, Vec<String>)> {
-        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-        for decl in &program.decls {
-            let mut writer = ShapeWriter::default();
-            writer.decl(decl);
-            for name in bound_names(decl) {
-                by_name
-                    .entry(resolve(name).to_string())
-                    .or_default()
-                    .push(writer.out.clone());
-            }
-        }
-        let mut shared: Vec<(String, Vec<String>)> = by_name
-            .into_iter()
-            .filter(|(_, decls)| decls.len() > 1)
-            .collect();
-        shared.sort();
-        shared
-    }
-
-    /// Imports are compared as a set, but when a name is bound by more
-    /// than one declaration, moving or sorting them can change which one
-    /// the name refers to.
-    fn compare_binders(before: &Program, after: &Program) -> Result<(), InternalError> {
-        let before = binders(before);
-        let after = binders(after);
-        for (name, decls) in &before {
-            let same = after
-                .iter()
-                .any(|(other, other_decls)| other == name && other_decls == decls);
-            if !same {
-                return Err(InternalError {
-                    message: format!(
-                        "the result would change which declaration the name `{name}` \
-                         refers to: it is bound more than once, and the declarations \
-                         would change order"
-                    ),
-                    span: None,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn unparseable(message: &str, span: Span, output: &str) -> InternalError {
@@ -9529,19 +9459,22 @@ mod self_check_tests {
     }
 
     #[test]
-    fn reordering_two_imports_of_one_name_is_refused() {
-        let e = refusal(
+    fn a_top_level_name_bound_twice_does_not_parse() {
+        // Sorting imports can never change which declaration a name
+        // refers to: a top-level name is bound only once.
+        for src in [
             "import zeta.{ name }\nimport alpha.{ name }\n\nfn main() {\n  println(name())\n}\n",
-        );
-        assert!(e.message.contains("the name `name`"), "{}", e.message);
-    }
-
-    #[test]
-    fn hoisting_an_import_above_a_declaration_of_its_name_is_refused() {
-        let e = refusal(
             "fn name() {\n  \"local\"\n}\n\nimport zeta.{ name }\n\nfn main() {\n  println(name())\n}\n",
-        );
-        assert!(e.message.contains("the name `name`"), "{}", e.message);
+        ] {
+            match format(src) {
+                Err(FmtError::Parse(e)) => assert!(
+                    e.message.contains("'name' is bound twice at the top level"),
+                    "{}",
+                    e.message
+                ),
+                other => panic!("expected a parse error for {src:?}, got {other:?}"),
+            }
+        }
     }
 
     #[test]
