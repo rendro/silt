@@ -43,7 +43,7 @@ pub(super) fn span_at_offset(source: &str, off: usize) -> Span {
 /// per-kind self-extent fallback for leaves (ident length, literal length,
 /// etc.). This was previously returning `source.len()` for non-Block kinds,
 /// which defeated cursor-bound checks in callers like `selection_range` —
-/// e.g. `fn add(a, b) = a + b` would claim to extend to EOF, dragging the
+/// e.g. the body of `fn add(a, b) { a + b }` would claim to extend to EOF, dragging the
 /// `fn add` decl into the selection chain of any later cursor in the file.
 /// Round-84 LATENT fix.
 ///

@@ -258,7 +258,7 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             // `Decl::Fn` and `Decl::TraitImpl` walk param patterns AND the
             // method body so hover/rename works on default-method param
             // and body identifiers too. Without this, cursor on `x` in
-            // `trait T { fn foo(x: Int) -> Int = x + 1 }` returned None.
+            // `trait T { fn foo(x: Int) -> Int { x + 1 } }` returned None.
             for method in &t.methods {
                 check_fn_decl_name(method, cursor, source, best);
                 for param in &method.params {

@@ -41,17 +41,19 @@
 //!
 //! ```silt
 //! trait Compare for Color {
-//!   fn compare(self: Color, other: Color) -> Int = match (self, other) {
-//!     (Red, Red) -> 0
-//!     (Green(xa), Green(xb)) -> xa.compare(xb)
-//!     (Blue(a1, a2), Blue(b1, b2)) -> {
+//!   fn compare(self: Color, other: Color) -> Int {
+//!     match (self, other) {
+//!       (Red, Red) -> 0
+//!       (Green(xa), Green(xb)) -> xa.compare(xb)
+//!       (Blue(a1, a2), Blue(b1, b2)) -> {
 //!         let c1 = a1.compare(b1)
 //!         match c1 { 0 -> a2.compare(b2), _ -> c1 }
-//!     }
-//!     _ -> {
+//!       }
+//!       _ -> {
 //!         let ord_self = match self { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
 //!         let ord_other = match other { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
 //!         ord_self.compare(ord_other)
+//!       }
 //!     }
 //!   }
 //! }
@@ -592,7 +594,7 @@ fn synth_unop_match_enum(
 
 // ── Compare on enum ──────────────────────────────────────────────────
 
-/// Synthesize a `trait Compare for Enum { fn compare(self: Enum, other: Enum) -> Int = ... }` impl.
+/// Synthesize a `trait Compare for Enum { fn compare(self: Enum, other: Enum) -> Int { ... } }` impl.
 ///
 /// Body shape: nested match on `(self, other)`.
 /// - For each variant: same-tag arm computes lex compare of args (or 0

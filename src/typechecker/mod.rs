@@ -777,7 +777,7 @@ pub struct TypeChecker {
     /// annotated fn's scheme: only fns that actually recurse need
     /// the lock — every other annotated fn keeps the legacy
     /// narrowing behaviour so existing test invariants (e.g.
-    /// `fn grab(b: Box) -> Int = b.value` narrowing the bare `Box`
+    /// `fn grab(b: Box) -> Int { b.value }` narrowing the bare `Box`
     /// param to `Int` and then surfacing a "type mismatch" at the
     /// caller) keep firing.
     pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
@@ -2472,14 +2472,15 @@ impl TypeChecker {
         });
     }
 
-    /// The known type that `name`, a lowercase name in a type
-    /// annotation, spells in the wrong case: `int` → `Int`, `option` →
-    /// `Option`. Type declarations must be capitalised, so such a name
-    /// can only be a typo for that type. One-letter names are left
-    /// alone: `a`, `e`, `t` are the usual type variables, whatever types
-    /// a program declares.
-    fn lowercase_type_name_hint(&self, name: &str) -> Option<String> {
-        if name.chars().count() < 2 {
+    /// The known type that `name`, a name in a type annotation, spells
+    /// in the wrong case: `int` → `Int`, `INT` → `Int`, `option` →
+    /// `Option`. Type names are case-sensitive and declarations must be
+    /// capitalised, so such a name can only be a typo for that type.
+    /// Unless `name` is applied to arguments (`q(Int)`), one-letter
+    /// names are left alone: `a`, `e`, `t` are the usual type variables,
+    /// whatever types a program declares.
+    fn case_mismatched_type_name(&self, name: &str, applied: bool) -> Option<String> {
+        if !applied && name.chars().count() < 2 {
             return None;
         }
         let matches = |candidate: &str| candidate != name && candidate.eq_ignore_ascii_case(name);
@@ -2491,6 +2492,19 @@ impl TypeChecker {
             .chain(self.type_aliases.iter().map(|s| resolve(*s)))
             .filter(|candidate| matches(candidate))
             .min()
+    }
+
+    /// The "unknown type" error for `name`, with a hint when it is a
+    /// known type in the wrong case (see `case_mismatched_type_name`).
+    fn unknown_type_message(&self, name: &str, applied: bool) -> String {
+        match self.case_mismatched_type_name(name, applied) {
+            Some(type_name) => format!(
+                "unknown type '{name}' — did you mean `{type_name}`? (type names are \
+                 case-sensitive and start with a capital letter; a lowercase name in a \
+                 type is a type variable)"
+            ),
+            None => format!("unknown type '{name}'"),
+        }
     }
 
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
@@ -4581,15 +4595,8 @@ impl TypeChecker {
                             // ... unless the name is a known type spelled
                             // in lowercase (`x: int`): that is a typo for
                             // the type, not a type variable.
-                            if let Some(type_name) = self.lowercase_type_name_hint(&name_str) {
-                                self.error(
-                                    format!(
-                                        "unknown type '{name_str}' — did you mean `{type_name}`? \
-                                         (type names start with a capital letter; a lowercase \
-                                         name in a type is a type variable)"
-                                    ),
-                                    te.span,
-                                );
+                            if self.case_mismatched_type_name(&name_str, false).is_some() {
+                                self.error(self.unknown_type_message(&name_str, false), te.span);
                                 return Type::Error;
                             }
                             let tv = self.fresh_var();
@@ -4625,7 +4632,7 @@ impl TypeChecker {
                             // record / enum bare-name path).
                             let is_user_alias = self.type_aliases.contains(name);
                             if !is_user_record && !is_user_enum && !is_user_alias {
-                                self.error(format!("unknown type '{name_str}'"), te.span);
+                                self.error(self.unknown_type_message(&name_str, false), te.span);
                                 return Type::Error;
                             }
                             let arity = self
@@ -4745,11 +4752,7 @@ impl TypeChecker {
                         // ghost `Type::Generic("Frobnitz", [Int])` cascaded
                         // into Display / type-mismatch noise.
                         if expected_arity.is_none() {
-                            let hint = match self.lowercase_type_name_hint(&name_str) {
-                                Some(type_name) => format!(" — did you mean `{type_name}`?"),
-                                None => String::new(),
-                            };
-                            self.error(format!("unknown type '{name_str}'{hint}"), te.span);
+                            self.error(self.unknown_type_message(&name_str, true), te.span);
                             return Type::Error;
                         }
                         if let Some(expected) = expected_arity
@@ -5354,7 +5357,8 @@ impl TypeChecker {
             self.error(
                 format!(
                     "trait '{trait_name}' cannot be implemented by hand: it is derived \
-                     structurally for every type whose fields support it"
+                     structurally for every type whose fields support it — remove this \
+                     impl; Equal, Compare and Hash are derived"
                 ),
                 span,
             );
@@ -10737,10 +10741,10 @@ fn main() {
         // many unrelated diagnostics could satisfy it (e.g. any diagnostic
         // that says "unused binding" or "argument count"). The real message
         // produced by typechecker/inference.rs is
-        // `loop has N binding(s), but recur supplies M argument(s)`.
+        // `loop has N binding(s), but `loop(...)` supplies M argument(s)`.
         //
         // Strengthening:
-        //   - AND-chain specific phrases "loop has" && "recur supplies"
+        //   - AND-chain specific phrases "loop has" && "`loop(...)` supplies"
         //   - require Severity::Error (GAP #163 established recur arity
         //     mismatch is an Error, not a Warning)
         //
@@ -10764,11 +10768,11 @@ fn main() {
         );
         let recur_err = errors
             .iter()
-            .find(|e| e.message.contains("loop has") && e.message.contains("recur supplies"))
+            .find(|e| e.message.contains("loop has") && e.message.contains("`loop(...)` supplies"))
             .unwrap_or_else(|| {
                 panic!(
                     "expected a recur arity diagnostic containing both \"loop has\" and \
-                     \"recur supplies\", got: {:?}",
+                     \"`loop(...)` supplies\", got: {:?}",
                     errors.iter().map(|e| &e.message).collect::<Vec<_>>()
                 )
             });

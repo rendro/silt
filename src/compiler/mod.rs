@@ -1442,7 +1442,7 @@ impl Compiler {
                 // `() -> Unit`, and user-alias routing (see
                 // `src/types/canonical.rs::canonicalize_type_name`) —
                 // all apply here. For example, a
-                // `trait Foo for Range(a) { fn bar(self) = ... }` impl
+                // `trait Foo for Range(a) { fn bar(self) { ... } }` impl
                 // emits `"List.bar"` here, matches the `"List.bar"` key
                 // the typechecker registered, and is found by the VM
                 // when dispatching on a `Value::Range` (or `Value::List`)
@@ -2437,7 +2437,7 @@ impl Compiler {
                 // Else block: condition was false
                 self.patch_jump(else_jump, condition.span)?;
                 self.compile_expr(else_body)?;
-                // The else body must diverge (return or panic).
+                // The else body must diverge (return, panic or loop(...)).
                 // If it doesn't, we just pop its value and continue.
                 self.current_chunk().emit_op(Op::Pop, condition.span);
 
@@ -3035,7 +3035,7 @@ impl Compiler {
                 if params.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: format!(
-                            "lambda has {} parameters; silt functions are limited to 255",
+                            "closure has {} parameters; silt functions are limited to 255",
                             params.len()
                         ),
                         span,
@@ -3365,7 +3365,7 @@ impl Compiler {
 
             ExprKind::Recur(args) => {
                 let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
-                    message: "recur outside of loop".into(),
+                    message: "`loop(...)` can only appear inside a `loop` body".into(),
                     span,
                 })?;
                 let first_slot = loop_info.first_slot;
@@ -3392,7 +3392,7 @@ impl Compiler {
                 if args.len() > u8::MAX as usize {
                     return Err(CompileError {
                         message: format!(
-                            "recur has {} arguments; silt recur is limited to 255",
+                            "`loop(...)` has {} arguments; silt loops are limited to 255 bindings",
                             args.len()
                         ),
                         span,
@@ -5268,12 +5268,15 @@ fn f(x) {
         assert!(has_op(&f.chunk, Op::JumpIfFalse));
     }
 
-    // ── Recur outside loop is an error ─────────────────────────────
+    // ── `loop(...)` outside a loop is an error ─────────────────────
 
     #[test]
     fn test_compile_recur_outside_loop() {
         let err = compile_err("fn f() { loop(1) }");
-        assert!(err.message.contains("recur outside of loop"));
+        assert!(
+            err.message
+                .contains("`loop(...)` can only appear inside a `loop` body")
+        );
     }
 
     // ── Record field metadata ──────────────────────────────────────

@@ -56,8 +56,13 @@ int.parse(a)? + int.parse(b)?   -- (int.parse(a)?) + (int.parse(b)?)
 a == b?                         -- a == (b?)
 x |> f |> g?                    -- (x |> f |> g)?   -- the whole pipeline
 x |> f? |> g                    -- (x |> f)? |> g   -- the pipeline so far
+x |> f? + 1                     -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
 a |> (f?)                       -- parentheses keep ? on the stage
 ```
+
+An infix operator after a `?` that ends a pipeline applies to the unwrapped
+pipeline: `x |> f? + 1` is `(x |> f)? + 1`, and `x |> f? * 3 |> g` is
+`((x |> f)? * 3) |> g`.
 
 To unwrap the result of an infix expression, parenthesise it: `(a + b)?`.
 

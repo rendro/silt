@@ -1,0 +1,23 @@
+-- An infix operator after a `?` that ends a pipeline applies to the
+-- unwrapped pipeline: `x |> f? + 1` is `(x |> f)? + 1`.
+fn ok(n) -> Result(Int, String) { Ok(n) }
+
+fn wrap(r) { r }
+
+fn inc(n) { n + 1 }
+
+fn g() -> Result(Int, String) {
+  let a = ok(1) |> wrap? + 10
+  let b = ok(2) |> wrap? * 3 |> inc
+  let c = 5 |> inc |> ok? + 100
+  let d = ok(1) |> wrap? == 1
+  println(a)
+  println(b)
+  println(c)
+  println(d)
+  Ok(a)
+}
+
+fn main() {
+  println(g())
+}

@@ -151,7 +151,7 @@ fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> b
 ///
 /// The byte-offset anchor matters because multiple `(`/`[`/`{` can
 /// legitimately appear on the same source line — e.g. a call
-/// `fn main() = add(1, 2)` has both the fn's `()` and the call's
+/// `fn main() { add(1, 2) }` has both the fn's `()` and the call's
 /// `()`. Using `compute_bracket_end_line(expr.span.line, ...)` would
 /// latch onto the first `(` on the line (the fn's), not the call's.
 /// Scanning from `expr.span.offset` skips over any same-line prefix
@@ -4719,7 +4719,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     };
     let params = if multiline_params {
         // Round-52 trailing-comma preservation for fn params. Use the
-        // byte-offset-anchored scan so a `fn foo(x) = Some(x,)` single-
+        // byte-offset-anchored scan so a `fn foo(x) { Some(x,) }` single-
         // line body doesn't confuse a line-based `rfind(')')`.
         let source_has_trailing_comma = source_has_trailing_comma_at_offset(f.span, '(', ')');
         let last_idx = f.params.len().saturating_sub(1);
@@ -4781,7 +4781,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         // Round-52 trailing-comma preservation for single-line fn
-        // params. Byte-offset anchored so a `fn foo(x) = Some(x,)`
+        // params. Byte-offset anchored so a `fn foo(x) { Some(x,) }`
         // body's trailing comma does not leak into the param check.
         let trailing =
             if !f.params.is_empty() && source_has_trailing_comma_at_offset(f.span, '(', ')') {
@@ -6981,7 +6981,7 @@ fn format_pattern(pattern: &Pattern) -> String {
     }
 }
 
-fn format_type_expr(ty: &TypeExpr) -> String {
+pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
     match &ty.kind {
         TypeExprKind::Named(name) => resolve(*name),
         TypeExprKind::Generic(name, args) => {

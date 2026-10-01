@@ -1,0 +1,15 @@
+-- The tail-position error names every place a `loop(...)` may end:
+-- the loop body, a block, a match arm or a `when ... else` body.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: of a block, match arm or `when ... else` body in tail position
+fn fact(n: Int) -> Int {
+  loop i = n, acc = 1 {
+    when i > 0 else { return acc }
+    1 + loop(i - 1, acc * i)
+  }
+}
+
+fn main() {
+  println(fact(5))
+}

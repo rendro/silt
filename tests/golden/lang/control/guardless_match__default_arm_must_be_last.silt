@@ -1,7 +1,9 @@
 -- The `_` arm has to be the last one; a condition after it is not enough.
 -- cmd: check
 -- exit: 1
--- stderr-contains: a `match` without a scrutinee must end with a `_ -> ...` arm
+-- stderr-contains: the `_` arm must be last: it always matches, so the arms after it never run
+-- stderr-contains: guardless_match__default_arm_must_be_last.silt:10:5
+-- stderr-not-contains: must end with
 fn size(n: Int) -> String {
   match {
     n > 100 -> "big"

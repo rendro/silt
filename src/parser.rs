@@ -2202,6 +2202,24 @@ impl Parser {
         result
     }
 
+    /// The rest of a function type after its `Fn`: `(A, B) -> C`.
+    fn parse_fn_type_rest(&mut self, start: Span) -> Result<TypeExpr> {
+        self.expect(&Token::LParen)?;
+        let mut params = Vec::new();
+        self.skip_nl();
+        while !self.at(&Token::RParen) {
+            params.push(self.parse_type_expr()?);
+            self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
+        }
+        self.expect(&Token::RParen)?;
+        self.expect(&Token::Arrow)?;
+        let ret = self.parse_type_expr()?;
+        Ok(TypeExpr::new(
+            TypeExprKind::Function(params, Box::new(ret)),
+            start,
+        ))
+    }
+
     fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
         // Round-52 deferred item 2: capture the start-of-type-expr span
@@ -2250,20 +2268,23 @@ impl Parser {
                 .unwrap_or(false)
         {
             self.advance();
-            self.expect(&Token::LParen)?;
-            let mut params = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                params.push(self.parse_type_expr()?);
-                self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
-            self.expect(&Token::Arrow)?;
-            let ret = self.parse_type_expr()?;
-            return Ok(TypeExpr::new(
-                TypeExprKind::Function(params, Box::new(ret)),
-                start,
-            ));
+            return self.parse_fn_type_rest(start);
+        }
+        // `fn(Int) -> Int` in a type: the keyword spelling of `Fn`.
+        if self.at(&Token::Fn) && matches!(self.tokens.get(self.pos + 1), Some((Token::LParen, _)))
+        {
+            self.advance();
+            let hint = match self.parse_fn_type_rest(start) {
+                Ok(ty) => format!("`{}`", crate::formatter::format_type_expr(&ty)),
+                Err(_) => "`Fn(...) -> ...`".to_string(),
+            };
+            return Err(ParseError {
+                message: format!(
+                    "expected a type, found fn: a function type is written with `Fn`; \
+                     did you mean {hint}?"
+                ),
+                span: start,
+            });
         }
         // Tuple type: (A, B, ...)
         if self.at(&Token::LParen) {

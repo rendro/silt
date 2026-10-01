@@ -116,8 +116,7 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
 /// contains a function-shaped value. Mirrors the `Op::Eq` gate in
 /// src/vm/execute.rs; deliberately NOT enforced as a static `where`
 /// bound on the builtin signatures because that would reject currently
-/// working programs (e.g. sorting tuples or NaN-bearing floats via
-/// `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
+/// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///
 /// The contains-a-fn walk delegates to `Vm::value_contains_fn`
 /// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every

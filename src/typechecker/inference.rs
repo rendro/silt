@@ -45,6 +45,28 @@ impl BindingSite {
     }
 }
 
+/// Where an expression stands relative to its enclosing `loop`, for the
+/// check that `loop(...)` is in tail position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurPos {
+    /// The loop's result: a `loop(...)` here restarts the loop.
+    Tail,
+    /// Somewhere whose value is used.
+    NotTail,
+    /// Inside a closure in the loop body.
+    InClosure,
+}
+
+impl RecurPos {
+    /// The position of a sub-expression whose value is used.
+    fn inner(self) -> RecurPos {
+        match self {
+            RecurPos::InClosure => RecurPos::InClosure,
+            RecurPos::Tail | RecurPos::NotTail => RecurPos::NotTail,
+        }
+    }
+}
+
 /// GAP (round 17 F5): pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
 /// typechecker diagnostics without the awkward "1 argument(s)" that
@@ -3184,7 +3206,7 @@ impl TypeChecker {
                             // is not a known method (registered impl OR
                             // declared on any trait), generate an open
                             // anon-record constraint so
-                            // `fn first_name(p) = p.name` infers
+                            // `fn first_name(p) { p.name }` infers
                             // `p: {name: a, ...r} -> a`. When the field
                             // is a method name, fall back to the legacy
                             // deferred-check path so trait dispatch keeps
@@ -4624,14 +4646,39 @@ impl TypeChecker {
                     None => {
                         // Guardless match: each arm's guard is a boolean
                         // condition. When no condition holds there is no
-                        // value, so the last arm must be the `_` default.
-                        if arms.last().is_none_or(|arm| arm.guard.is_some()) {
-                            self.error(
+                        // value, so the last arm must be the `_` default,
+                        // and there is exactly one: arms after a `_` never
+                        // run.
+                        let defaults: Vec<usize> = arms
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, arm)| arm.guard.is_none())
+                            .map(|(i, _)| i)
+                            .collect();
+                        match defaults.first() {
+                            None => self.error(
                                 "a `match` without a scrutinee must end with a `_ -> ...` arm \
                                  for when no condition is true"
                                     .to_string(),
                                 span,
-                            );
+                            ),
+                            Some(&first) => {
+                                if arms[first + 1..].iter().any(|arm| arm.guard.is_some()) {
+                                    self.error(
+                                        "the `_` arm must be last: it always matches, so the \
+                                         arms after it never run"
+                                            .to_string(),
+                                        arms[first].pattern.span,
+                                    );
+                                }
+                                for &i in &defaults[1..] {
+                                    self.error(
+                                        "unreachable `_` arm: an earlier `_` arm always matches"
+                                            .to_string(),
+                                        arms[i].pattern.span,
+                                    );
+                                }
+                            }
                         }
                         let result_ty = self.fresh_var();
                         // Same rule as the scrutinee form: arms that all
@@ -4693,7 +4740,7 @@ impl TypeChecker {
                     binding_types.push(ty.clone());
                     loop_env.define(*name, Scheme::mono(ty));
                 }
-                self.check_recur_tail_positions(body, true);
+                self.check_recur_tail_positions(body, RecurPos::Tail);
                 let prev_loop = self.loop_binding_types.take();
                 self.loop_binding_types = Some(binding_types);
                 let result = self.infer_expr(body, &mut loop_env);
@@ -4712,7 +4759,7 @@ impl TypeChecker {
                         let bindings_n = binding_types.len();
                         self.error(
                             format!(
-                                "loop has {} {}, but recur supplies {} {}",
+                                "loop has {} {}, but `loop(...)` supplies {} {}",
                                 bindings_n,
                                 plural(bindings_n, "binding", "bindings"),
                                 recur_count,
@@ -4748,52 +4795,65 @@ impl TypeChecker {
     /// Reject a `loop(...)` call that is not in tail position of its
     /// loop. `loop(...)` restarts the loop, so nothing may use its result:
     /// it must be the last expression of the loop body, or of a block,
-    /// match arm or `when` else body that is itself in tail position.
-    /// `tail` says whether `expr` is in tail position. A nested `loop`
-    /// starts its own tail context, checked when that loop is inferred,
-    /// so only its binding initialisers are walked here.
-    fn check_recur_tail_positions(&mut self, expr: &Expr, tail: bool) {
+    /// match arm or `when ... else` body that is itself in tail position.
+    /// `pos` says where `expr` stands. A nested `loop` starts its own
+    /// tail context, checked when that loop is inferred, so only its
+    /// binding initialisers are walked here.
+    fn check_recur_tail_positions(&mut self, expr: &Expr, pos: RecurPos) {
+        let inner = pos.inner();
         match &expr.kind {
             ExprKind::Recur(args) => {
-                if !tail {
-                    self.error(
+                match pos {
+                    RecurPos::Tail => {}
+                    RecurPos::NotTail => self.error(
                         "`loop(...)` must be in tail position: it restarts the loop, so \
                          nothing can use its result — make it the last expression of \
-                         the loop body, or of a block or match arm in tail position"
+                         the loop body, or of a block, match arm or `when ... else` body \
+                         in tail position"
                             .to_string(),
                         expr.span,
-                    );
+                    ),
+                    RecurPos::InClosure => self.error(
+                        "`loop(...)` inside a closure is not the loop's tail: the closure \
+                         runs when it is called, not as the loop body, so it cannot \
+                         restart the loop — return a value from the closure and call \
+                         `loop(...)` in the loop body"
+                            .to_string(),
+                        expr.span,
+                    ),
                 }
                 for arg in args {
-                    self.check_recur_tail_positions(arg, false);
+                    self.check_recur_tail_positions(arg, inner);
                 }
             }
             ExprKind::Loop { bindings, .. } => {
                 for (_, value) in bindings {
-                    self.check_recur_tail_positions(value, false);
+                    self.check_recur_tail_positions(value, inner);
                 }
             }
             ExprKind::Block(stmts) => {
                 let last = stmts.len().saturating_sub(1);
                 for (i, stmt) in stmts.iter().enumerate() {
                     match stmt {
-                        Stmt::Let { value, .. } => self.check_recur_tail_positions(value, false),
+                        Stmt::Let { value, .. } => self.check_recur_tail_positions(value, inner),
                         Stmt::When {
                             expr: value,
                             else_body,
                             ..
                         } => {
-                            self.check_recur_tail_positions(value, false);
-                            self.check_recur_tail_positions(else_body, tail);
+                            self.check_recur_tail_positions(value, inner);
+                            self.check_recur_tail_positions(else_body, pos);
                         }
                         Stmt::WhenBool {
                             condition,
                             else_body,
                         } => {
-                            self.check_recur_tail_positions(condition, false);
-                            self.check_recur_tail_positions(else_body, tail);
+                            self.check_recur_tail_positions(condition, inner);
+                            self.check_recur_tail_positions(else_body, pos);
                         }
-                        Stmt::Expr(e) => self.check_recur_tail_positions(e, tail && i == last),
+                        Stmt::Expr(e) => {
+                            self.check_recur_tail_positions(e, if i == last { pos } else { inner })
+                        }
                     }
                 }
             }
@@ -4802,13 +4862,13 @@ impl TypeChecker {
                 arms,
             } => {
                 if let Some(scrutinee) = scrutinee {
-                    self.check_recur_tail_positions(scrutinee, false);
+                    self.check_recur_tail_positions(scrutinee, inner);
                 }
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
-                        self.check_recur_tail_positions(guard, false);
+                        self.check_recur_tail_positions(guard, inner);
                     }
-                    self.check_recur_tail_positions(&arm.body, tail);
+                    self.check_recur_tail_positions(&arm.body, pos);
                 }
             }
             ExprKind::Int(_)
@@ -4821,7 +4881,7 @@ impl TypeChecker {
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        self.check_recur_tail_positions(e, false);
+                        self.check_recur_tail_positions(e, inner);
                     }
                 }
             }
@@ -4829,55 +4889,57 @@ impl TypeChecker {
                 for elem in elems {
                     match elem {
                         ListElem::Single(e) | ListElem::Spread(e) => {
-                            self.check_recur_tail_positions(e, false)
+                            self.check_recur_tail_positions(e, inner)
                         }
                     }
                 }
             }
             ExprKind::Map(entries) => {
                 for (k, v) in entries {
-                    self.check_recur_tail_positions(k, false);
-                    self.check_recur_tail_positions(v, false);
+                    self.check_recur_tail_positions(k, inner);
+                    self.check_recur_tail_positions(v, inner);
                 }
             }
             ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
                 for e in elems {
-                    self.check_recur_tail_positions(e, false);
+                    self.check_recur_tail_positions(e, inner);
                 }
             }
             ExprKind::FieldAccess(e, _)
             | ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Ascription(e, _)
-            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, false),
+            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, inner),
             ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                self.check_recur_tail_positions(l, false);
-                self.check_recur_tail_positions(r, false);
+                self.check_recur_tail_positions(l, inner);
+                self.check_recur_tail_positions(r, inner);
             }
             ExprKind::Call(callee, args) => {
-                self.check_recur_tail_positions(callee, false);
+                self.check_recur_tail_positions(callee, inner);
                 for arg in args {
-                    self.check_recur_tail_positions(arg, false);
+                    self.check_recur_tail_positions(arg, inner);
                 }
             }
-            ExprKind::Lambda { body, .. } => self.check_recur_tail_positions(body, false),
+            ExprKind::Lambda { body, .. } => {
+                self.check_recur_tail_positions(body, RecurPos::InClosure)
+            }
             ExprKind::RecordCreate { fields, .. } => {
                 for (_, e) in fields {
-                    self.check_recur_tail_positions(e, false);
+                    self.check_recur_tail_positions(e, inner);
                 }
             }
             ExprKind::RecordUpdate { expr: base, fields } => {
-                self.check_recur_tail_positions(base, false);
+                self.check_recur_tail_positions(base, inner);
                 for (_, e) in fields {
-                    self.check_recur_tail_positions(e, false);
+                    self.check_recur_tail_positions(e, inner);
                 }
             }
             ExprKind::AnonRecord { spread, fields } => {
                 if let Some(base) = spread {
-                    self.check_recur_tail_positions(base, false);
+                    self.check_recur_tail_positions(base, inner);
                 }
                 for (_, e) in fields {
-                    self.check_recur_tail_positions(e, false);
+                    self.check_recur_tail_positions(e, inner);
                 }
             }
         }
@@ -4952,7 +5014,9 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
-                        "'when let' else body must diverge — use 'return' or 'panic'".to_string(),
+                        "'when let' else body must diverge — end it with 'return', 'panic' or, \
+                         inside a loop, 'loop(...)'"
+                            .to_string(),
                         else_body.span,
                     );
                 }
@@ -4981,7 +5045,9 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
-                        "'when' else body must diverge — use 'return' or 'panic'".to_string(),
+                        "'when' else body must diverge — end it with 'return', 'panic' or, \
+                         inside a loop, 'loop(...)'"
+                            .to_string(),
                         else_body.span,
                     );
                 }

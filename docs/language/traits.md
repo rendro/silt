@@ -415,7 +415,8 @@ hand-written `trait Equal for T`, `trait Compare for T` or
 type Version { major: Int, minor: Int }
 trait Compare for Version { ... }
 -- error: trait 'Compare' cannot be implemented by hand: it is derived
--- structurally for every type whose fields support it
+-- structurally for every type whose fields support it — remove this
+-- impl; Equal, Compare and Hash are derived
 ```
 
 The `Error` trait has supertrait `Display` and one method,

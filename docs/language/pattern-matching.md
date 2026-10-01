@@ -241,7 +241,8 @@ fn process(input) {
 }
 ```
 
-The `else` block **must** diverge (`return` or `panic`). A boolean form
+The `else` block **must** diverge: end it with `return` or `panic`, or,
+inside a `loop` body, with `loop(...)` to restart the loop. A boolean form
 (`when cond else { ... }`) also exists for flat guard sequences, and both
 forms can be mixed.
 
