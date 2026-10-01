@@ -33,7 +33,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinKind {
     /// Scalar / nullary type with no parameters: `Int`, `Float`,
-    /// `ExtFloat`, `Bool`, `String`, `Unit`, and the surface alias `()`.
+    /// `Bool`, `String`, `Unit`, and the surface alias `()`.
     Primitive,
     /// Parameterized container, callable, or resource type: `List`,
     /// `Range`, `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Fun`, `Handle`.
@@ -72,11 +72,6 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     },
     BuiltinType {
         name: "Float",
-        arity: Some(0),
-        kind: BuiltinKind::Primitive,
-    },
-    BuiltinType {
-        name: "ExtFloat",
         arity: Some(0),
         kind: BuiltinKind::Primitive,
     },

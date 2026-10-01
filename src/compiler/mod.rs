@@ -35,7 +35,7 @@ mod patterns;
 //
 // A descriptor is one of
 //
-//   Int  Float  ExtFloat  String  Bool  Date  Time  DateTime
+//   Int  Float  String  Bool  Date  Time  DateTime
 //   List:<d>   Option:<d>   Map:<d>   Tuple(<d>,<d>,...)   Record:<name>
 //   Unsupported:<type as written>
 //
@@ -58,7 +58,7 @@ const DECODING_BUILTINS: &[&str] = &[
 ];
 
 /// The field types the decoders support, as shown in compile errors.
-const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, ExtFloat, String, \
+const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
      Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
 
@@ -3431,13 +3431,6 @@ impl Compiler {
                 jumpback_fits_u16(jump_back_dist, span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::JumpBack, jump_back_dist as u16, span);
-            }
-
-            ExprKind::FloatElse(expr, fallback) => {
-                self.compile_expr(expr)?;
-                let jump = self.current_chunk().emit_jump(Op::NarrowFloat, span);
-                self.compile_expr(fallback)?;
-                self.patch_jump(jump, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -3824,10 +3817,9 @@ impl Compiler {
         // is described like the list type it is the same type as.
         let canonical = resolve(canonicalize_type_name(&self.resolver, name));
         match (canonical.as_str(), args) {
-            (
-                "Int" | "Float" | "ExtFloat" | "String" | "Bool" | "Date" | "Time" | "DateTime",
-                [],
-            ) => Ok(canonical.clone()),
+            ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
+                Ok(canonical.clone())
+            }
             ("List", [elem]) => Ok(format!(
                 "List:{}",
                 self.describe_field_type(elem, open_aliases, records)?
@@ -3988,7 +3980,7 @@ impl Compiler {
         );
         if is_container || (is_primitive && !decodes_primitives) {
             let accepted = if decodes_primitives {
-                "Int, Float, ExtFloat, String, Bool, or a record type"
+                "Int, Float, String, Bool, or a record type"
             } else {
                 "a record type"
             };

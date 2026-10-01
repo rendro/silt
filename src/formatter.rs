@@ -2547,7 +2547,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             visit(r);
         }
         ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Ascription(e, _) => visit(e),
-        ExprKind::Pipe(l, r) | ExprKind::Range(l, r) | ExprKind::FloatElse(l, r) => {
+        ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
             visit(l);
             visit(r);
         }
@@ -3927,11 +3927,6 @@ mod self_check {
                 ExprKind::QuestionMark(operand) => {
                     self.open("question");
                     self.expr(operand);
-                }
-                ExprKind::FloatElse(value, fallback) => {
-                    self.open("float-else");
-                    self.expr(value);
-                    self.expr(fallback);
                 }
                 ExprKind::Ascription(value, ty) => {
                     self.open("as");
@@ -6656,13 +6651,12 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
         }
 
         ExprKind::Unary(op, expr) => {
-            // Unary operators bind tighter than Binary/Pipe/Range/FloatElse,
+            // Unary operators bind tighter than Binary/Pipe/Range,
             // so those inner expressions must be wrapped in parens to keep
             // the original semantics. Without wrapping, `-(1 + 2)` reformats
             // to `-1 + 2`, which changes the program's meaning from -3 to 1.
             // Unary bp is 90 (see `parse_unary` in src/parser.rs). Binding
             // powers lower than 90 need parens:
-            //   FloatElse (else)   10
             //   Or (||)             20
             //   And (&&)            30
             //   Eq/Neq (==, !=)     40
@@ -6676,10 +6670,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             // wrapping.
             let needs_parens = matches!(
                 &expr.kind,
-                ExprKind::Binary(..)
-                    | ExprKind::Pipe(..)
-                    | ExprKind::Range(..)
-                    | ExprKind::FloatElse(..)
+                ExprKind::Binary(..) | ExprKind::Pipe(..) | ExprKind::Range(..)
             );
             let inner = format_expr(expr, depth);
             let wrapped = if needs_parens {
@@ -6712,8 +6703,8 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             // Range bp = (60, 61). Left child parsed with min_bp=60, right
             // with min_bp=61. A child whose top-level construct has an
             // l_bp < that would get re-parsed as the parent.
-            // Example: `(a else b)..n` must keep parens; otherwise
-            // `a else b..n` re-parses as `FloatElse(a, Range(b, n))`.
+            // Example: `(a || b)..n` must keep parens; otherwise
+            // `a || b..n` re-parses as `Or(a, Range(b, n))`.
             let l = paren_wrap_if_needed(start, bp::RANGE_L, depth);
             let r = paren_wrap_if_needed(end, bp::RANGE_R, depth);
             format!("{}..{}", l, r)
@@ -6728,7 +6719,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
 
         ExprKind::Ascription(expr, ty) => {
             // Postfix `as T` bp = 95. Same reasoning as QuestionMark:
-            // `(x else 0.0) as Int` must stay parenthesized.
+            // `(a + b) as Int` must stay parenthesized.
             format!(
                 "{} as {}",
                 paren_wrap_if_needed(expr, bp::ASCRIPTION, depth),
@@ -6879,17 +6870,6 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
                 let arg_strs: Vec<String> = args.iter().map(|a| format_expr(a, depth)).collect();
                 format!("loop({})", arg_strs.join(", "))
             }
-        }
-        ExprKind::FloatElse(expr, fallback) => {
-            // FloatElse bp = (10, 11). Left child parsed with min_bp=10,
-            // right with min_bp=11. Since FloatElse is the lowest-bp
-            // infix, most children won't need wrapping — but nested
-            // FloatElse on the LEFT would re-parse right-associatively
-            // otherwise: `a else b else c` with LHS=FloatElse(a,b) must
-            // emit as `(a else b) else c`.
-            let l = paren_wrap_if_needed(expr, bp::FLOATELSE_L, depth);
-            let r = paren_wrap_if_needed(fallback, bp::FLOATELSE_R, depth);
-            format!("{} else {}", l, r)
         }
     }
 }
@@ -7178,8 +7158,6 @@ fn escape_string(s: &str) -> String {
 mod bp {
     use crate::ast::BinOp;
 
-    pub const FLOATELSE_L: u8 = 10;
-    pub const FLOATELSE_R: u8 = 11;
     pub const RANGE_L: u8 = 60;
     pub const RANGE_R: u8 = 61;
     pub const PIPE_L: u8 = 55;
@@ -7188,7 +7166,7 @@ mod bp {
     // `?` bp matches the parser: it's postfix and binds LOOSER than
     // `|>` (l_bp=55) so `x |> f(y)?` groups as `(x |> f(y))?` without
     // needing parens. Children of `?` with top_l_bp >= 54 stay paren-
-    // free on re-emit; children below 54 (FloatElse, ||, &&, ==, <)
+    // free on re-emit; children below 54 (||, &&, ==, <)
     // need wrapping. `?(x)` embedded as a Pipe RHS (min_bp=56) also
     // gets wrapped because 54 < 56 — matches the parser's grouping
     // rules so `a |> (x?)` in the source stays `a |> (x?)` on emit
@@ -7223,7 +7201,6 @@ mod bp {
 /// parens when emitting it as part of a larger expression.
 fn expr_top_l_bp(expr: &Expr) -> u8 {
     match &expr.kind {
-        ExprKind::FloatElse(..) => bp::FLOATELSE_L,
         ExprKind::Range(..) => bp::RANGE_L,
         ExprKind::Pipe(..) => bp::PIPE_L,
         ExprKind::Binary(_, op, _) => bp::binop_l_bp(*op),
@@ -7259,7 +7236,7 @@ fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: 
     // and the right child uses `l_bp+1`. This single check subsumes both
     // the same-family Binary-within-Binary case (where
     // `expr_top_l_bp(child) == bp::binop_l_bp(child_op)`) and the cross-
-    // family case (FloatElse, Range, Pipe, Ascription, QuestionMark) —
+    // family case (Range, Pipe, Ascription, QuestionMark) —
     // round 88 collapsed an earlier dual-encoded same-family branch into
     // this one. See `bp::binop_l_bp` for the single source of truth.
     let parent_l_bp = bp::binop_l_bp(parent_op);

@@ -285,14 +285,6 @@ impl Vm {
             .insert("float.epsilon".into(), Value::Float(f64::EPSILON));
         self.globals
             .insert("float.min_positive".into(), Value::Float(f64::MIN_POSITIVE));
-        self.globals
-            .insert("float.infinity".into(), Value::ExtFloat(f64::INFINITY));
-        self.globals.insert(
-            "float.neg_infinity".into(),
-            Value::ExtFloat(f64::NEG_INFINITY),
-        );
-        self.globals
-            .insert("float.nan".into(), Value::ExtFloat(f64::NAN));
     }
 
     // ── Built-in trait methods on primitive types ──────────────────
@@ -402,27 +394,12 @@ impl Vm {
                 }
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
-                    // Round-71: collapsed four byte-identical NaN /
-                    // non-finite arms into one or-pattern, mirroring
-                    // `src/vm/arithmetic.rs:130-134`. The two pre-round
-                    // wordings ("compare() cannot compare non-finite
-                    // float values" on Float/Float and "compare() cannot
-                    // compare NaN values" on the three Float/ExtFloat
-                    // shapes) are unified to the canonical wording used
-                    // by `arithmetic.rs::compare` — NaN IS non-finite,
-                    // so the broader phrasing covers every partial_cmp
-                    // failure across both dispatch surfaces.
-                    (
-                        Value::Float(a) | Value::ExtFloat(a),
-                        Value::Float(b) | Value::ExtFloat(b),
-                    ) => match a.partial_cmp(b) {
-                        Some(ord) => ord,
-                        None => {
-                            return Some(Err(VmError::new(
-                                "cannot compare non-finite float values".into(),
-                            )));
-                        }
-                    },
+                    // A Float is always finite, so `partial_cmp` always
+                    // answers; `Equal` is the same safety net `Value::cmp`
+                    // uses.
+                    (Value::Float(a), Value::Float(b)) => {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    }
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: the typechecker auto-derives Compare for
@@ -474,7 +451,7 @@ impl Vm {
             }
             "hash" => {
                 // The typechecker auto-derives `Hash` for Int / Float /
-                // ExtFloat / Bool / String / List (and more). At runtime,
+                // Bool / String / List (and more). At runtime,
                 // user-defined `trait Hash for T` impls are resolved via
                 // the qualified-global path in `Op::CallMethod`; only
                 // auto-derived primitives fall through to here.
@@ -528,7 +505,6 @@ impl Vm {
                 match receiver {
                     Value::Int(_)
                     | Value::Float(_)
-                    | Value::ExtFloat(_)
                     | Value::Bool(_)
                     | Value::String(_)
                     | Value::List(_)

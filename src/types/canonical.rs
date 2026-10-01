@@ -347,7 +347,6 @@ impl Resolver {
             }
             Type::Int
             | Type::Float
-            | Type::ExtFloat
             | Type::Bool
             | Type::String
             | Type::Unit
@@ -506,7 +505,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         // ── Leaf shapes: identity ──────────────────────────────────
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit
@@ -573,7 +571,6 @@ pub fn canonical_name(ty: &Type) -> String {
         // ── Primitives ─────────────────────────────────────────────
         Type::Int => "Int".to_string(),
         Type::Float => "Float".to_string(),
-        Type::ExtFloat => "ExtFloat".to_string(),
         Type::Bool => "Bool".to_string(),
         Type::String => "String".to_string(),
         Type::Unit => "Unit".to_string(),
@@ -717,7 +714,6 @@ pub(crate) fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
     match ty {
         Type::Int => Some(intern("Int")),
         Type::Float => Some(intern("Float")),
-        Type::ExtFloat => Some(intern("ExtFloat")),
         Type::Bool => Some(intern("Bool")),
         Type::String => Some(intern("String")),
         Type::Unit => Some(intern("Unit")),
@@ -775,7 +771,6 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         // source of truth. Range collapses to "List" via canonical_name.
         Value::Int(_) => Some(canonical_name(&Type::Int)),
         Value::Float(_) => Some(canonical_name(&Type::Float)),
-        Value::ExtFloat(_) => Some(canonical_name(&Type::ExtFloat)),
         Value::Bool(_) => Some(canonical_name(&Type::Bool)),
         Value::String(_) => Some(canonical_name(&Type::String)),
         Value::List(_) => Some(canonical_name(&Type::List(Box::new(Type::Unit)))),
@@ -842,7 +837,6 @@ mod tests {
         match name {
             "Int" => Some(Type::Int),
             "Float" => Some(Type::Float),
-            "ExtFloat" => Some(Type::ExtFloat),
             "Bool" => Some(Type::Bool),
             "String" => Some(Type::String),
             "Unit" | "()" => Some(Type::Unit),
@@ -1025,14 +1019,7 @@ mod tests {
     #[test]
     fn canonicalize_leaves_primitives_unchanged() {
         let res = Resolver::new();
-        for t in [
-            Type::Int,
-            Type::Float,
-            Type::ExtFloat,
-            Type::Bool,
-            Type::String,
-            Type::Unit,
-        ] {
+        for t in [Type::Int, Type::Float, Type::Bool, Type::String, Type::Unit] {
             assert_eq!(canonicalize(&res, &t), t);
         }
     }
@@ -1078,7 +1065,6 @@ mod tests {
         assert!(!types_equal(&res, &Type::Int, &Type::Float));
         assert!(!types_equal(&res, &Type::Int, &Type::Bool));
         assert!(!types_equal(&res, &Type::String, &Type::Bool));
-        assert!(!types_equal(&res, &Type::Float, &Type::ExtFloat));
         assert!(!types_equal(&res, &Type::Unit, &Type::Int));
     }
 
@@ -1136,7 +1122,6 @@ mod tests {
     fn canonical_name_primitives() {
         assert_eq!(canonical_name(&Type::Int), "Int");
         assert_eq!(canonical_name(&Type::Float), "Float");
-        assert_eq!(canonical_name(&Type::ExtFloat), "ExtFloat");
         assert_eq!(canonical_name(&Type::Bool), "Bool");
         assert_eq!(canonical_name(&Type::String), "String");
         assert_eq!(canonical_name(&Type::Unit), "Unit");

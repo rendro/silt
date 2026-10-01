@@ -35,7 +35,7 @@ namespace clean and avoids the PHP problem of too many bare globals.
 
 The following names are always available without an import: `print`,
 `println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the primitive type
-descriptors `Int`, `Float`, `ExtFloat`, `String`, and `Bool` (used with
+descriptors `Int`, `Float`, `String`, and `Bool` (used with
 type-directed APIs like `json.parse_map`). Additional constructors become available with
 imports: `Stop`/`Continue` (require `import list`),
 `Message`/`Closed`/`Empty`/`Sent` (require `import channel`), the

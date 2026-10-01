@@ -46,10 +46,7 @@ impl TypeChecker {
     fn collect_sub_spans(expr: &Expr, out: &mut std::collections::HashSet<usize>) {
         out.insert(expr.span.offset);
         match &expr.kind {
-            ExprKind::Binary(l, _, r)
-            | ExprKind::Pipe(l, r)
-            | ExprKind::Range(l, r)
-            | ExprKind::FloatElse(l, r) => {
+            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
                 Self::collect_sub_spans(l, out);
                 Self::collect_sub_spans(r, out);
             }
@@ -380,10 +377,6 @@ impl TypeChecker {
                     self.check_unresolved_in_expr(a);
                 }
             }
-            ExprKind::FloatElse(expr, fallback) => {
-                self.check_unresolved_in_expr(expr);
-                self.check_unresolved_in_expr(fallback);
-            }
             _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }
     }
@@ -498,9 +491,6 @@ impl TypeChecker {
             | ExprKind::Return(Some(e))
             | ExprKind::FieldAccess(e, _)
             | ExprKind::Ascription(e, _) => Self::expr_references_name(e, name),
-            ExprKind::FloatElse(e1, e2) => {
-                Self::expr_references_name(e1, name) || Self::expr_references_name(e2, name)
-            }
             ExprKind::Call(callee, args) => {
                 Self::expr_references_name(callee, name)
                     || args.iter().any(|a| Self::expr_references_name(a, name))
@@ -735,10 +725,6 @@ impl TypeChecker {
                 for a in args {
                     self.resolve_expr_types(a);
                 }
-            }
-            ExprKind::FloatElse(expr, fallback) => {
-                self.resolve_expr_types(expr);
-                self.resolve_expr_types(fallback);
             }
             _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }

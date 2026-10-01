@@ -52,18 +52,29 @@ the literal `9223372036854775808` is rejected at lex time), and
 
 ## Float Safety
 
-Silt uses two float types: `Float` (guaranteed finite) and `ExtFloat` (full IEEE 754).
-Division and functions that can produce NaN or Infinity return `ExtFloat`. The `else`
-keyword narrows back to `Float` with an inline fallback:
+Silt has one float type, `Float`, and a `Float` is always finite: never NaN,
+never infinite. An operation whose result would be NaN or infinite is a
+**runtime error**, the same rule as integer overflow:
 
 ```silt
-let x: Float = 1.0 / 3.0 else 0.0       -- finite result -> 0.333...
-let y: Float = 1.0 / 0.0 else 0.0       -- infinity -> fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0  -- NaN -> fallback 0.0
+1.0 / 0.0                -- error: float division by zero
+float.max_value * 2.0    -- error: float overflow
+math.sqrt(-4.0)          -- error: math.sqrt of a negative number: -4
+math.log(0.0)            -- error: math.log of a number that is not positive: 0
 ```
 
-Non-division arithmetic (`+`, `-`, `*`) on `Float` values still returns `Float` and
-panics on overflow to Infinity, matching the integer overflow philosophy.
+Where an input can be out of range, guard it explicitly:
+
+```silt
+let ratio = match total {
+  0.0 -> 0.0
+  _ -> part / total
+}
+```
+
+Because every `Float` is finite, `==`, ordering, hashing, sets and maps all
+treat floats as ordinary totally ordered values, and `-0.0` is the same value
+as `0.0` (`0.0 * -1.0` prints `0`).
 
 ## No Negative Indexing
 

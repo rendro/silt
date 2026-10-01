@@ -206,9 +206,8 @@ pub fn call_test(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
                 Ok(Value::Unit)
             } else {
                 // Use `format_silt` (not Debug) so failure messages render in
-                // silt-source syntax — `1.5` rather than `ExtFloat(1.5)`,
-                // `[1, 2]` rather than `[1, 2]` debug shape, etc. Debug leaks
-                // Rust variant names (see `Value::format_silt` doc comment).
+                // silt-source syntax. Debug leaks Rust variant names (see
+                // `Value::format_silt` doc comment).
                 let msg = if args.len() == 2 {
                     format!("assertion failed: {}", args[1])
                 } else {

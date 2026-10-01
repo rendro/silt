@@ -57,7 +57,7 @@
 //!
 //! `math.pi`, `math.e`, and the `float.*` constants are registered by
 //! the typechecker as qualified names too, but the VM seeds them as
-//! value globals (`Value::Float(..)` / `Value::ExtFloat(..)`) from a
+//! value globals (`Value::Float(..)`) from a
 //! separate path, mirrored by `module::builtin_module_constants`. They
 //! are value-accessible — just not via `builtin_module_functions` — so
 //! the union of the two registries is the correct "is seeded as a

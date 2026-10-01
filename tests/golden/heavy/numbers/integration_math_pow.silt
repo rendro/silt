@@ -1,8 +1,8 @@
--- The result is an ExtFloat: the annotation rejects Float and Int.
+-- The result is a Float: the annotation rejects Int.
 import math
 fn program() { math.pow(2.0, 10.0) }
 
 fn main() {
-  let r: ExtFloat = program()
+  let r: Float = program()
   println(r == 1024.0)
 }

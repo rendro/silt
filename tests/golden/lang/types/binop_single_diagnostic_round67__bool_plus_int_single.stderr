@@ -1,5 +1,5 @@
-error[type]: operator '+' requires Int, Float, or ExtFloat, got 'Bool'
+error[type]: operator '+' requires Int or Float, got 'Bool'
  --> binop_single_diagnostic_round67__bool_plus_int_single.silt:4:13
    |
  4 |     let x = true + 1
-   |             ^ operator '+' requires Int, Float, or ExtFloat, got 'Bool'
+   |             ^ operator '+' requires Int or Float, got 'Bool'

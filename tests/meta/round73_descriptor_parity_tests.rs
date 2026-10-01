@@ -7,11 +7,11 @@
 //!
 //! Pre-fix shape (round 72 audit):
 //!
-//!   * dispatch.rs hand-rolled five `globals.insert(("Int" / "Float" /
-//!     "ExtFloat" / "String" / "Bool").into(), ...)` calls plus a slice
+//!   * dispatch.rs hand-rolled one `globals.insert(("Int" / "Float" /
+//!     "String" / "Bool").into(), ...)` call per primitive plus a slice
 //!     `["List", "Map", "Set", "Channel", "Tuple"]` for the generic
 //!     containers.
-//!   * builtins.rs hand-rolled an `&["Int", "Float", "ExtFloat",
+//!   * builtins.rs hand-rolled an `&["Int", "Float",
 //!     "String", "Bool"]` slice and per-container blocks for `List` /
 //!     `Set` / `Channel` / `Map` (Tuple is VM-only on the typechecker
 //!     side — there is no polymorphic descriptor scheme for it today).
@@ -37,9 +37,9 @@ use silt::module::{BUILTIN_GENERIC_CONTAINER_NAMES, BUILTIN_PRIMITIVE_NAMES};
 fn primitive_descriptor_names_match_audit_baseline() {
     assert_eq!(
         BUILTIN_PRIMITIVE_NAMES,
-        &["Int", "Float", "ExtFloat", "String", "Bool"],
+        &["Int", "Float", "String", "Bool"],
         "round-73 BLOAT-2 baseline: the canonical primitive descriptor \
-         name set is exactly Int/Float/ExtFloat/String/Bool. Extending \
+         name set is exactly Int/Float/String/Bool. Extending \
          this list is fine — but the new entry must also acquire the \
          matching per-name `Type` mapping in \
          `src/typechecker/builtins.rs::register_builtins` and the \

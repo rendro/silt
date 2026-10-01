@@ -169,11 +169,10 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-/// Extract an f64 from a Float, ExtFloat, or Int value.
+/// Extract an f64 from a Float or Int value.
 fn extract_float(val: &Value, fn_name: &str) -> Result<f64, VmError> {
     match val {
         Value::Float(f) => Ok(*f),
-        Value::ExtFloat(f) => Ok(*f),
         Value::Int(n) => Ok(*n as f64),
         other => Err(VmError::new(format!(
             "{fn_name} requires a number, got {}",
@@ -191,6 +190,18 @@ pub(crate) fn float_value(f: f64) -> Value {
     Value::Float(if f == 0.0 { 0.0 } else { f })
 }
 
+/// Build a `Float` from the result of a float operation, raising the
+/// error `msg` names when the result is NaN or infinite: a `Float` is
+/// always finite, so an operation with no finite result fails the way
+/// integer overflow does.
+pub(crate) fn checked_float(f: f64, msg: impl FnOnce() -> String) -> Result<Value, VmError> {
+    if f.is_finite() {
+        Ok(float_value(f))
+    } else {
+        Err(VmError::new(msg()))
+    }
+}
+
 /// Dispatch `float.<name>(args)`.
 pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -200,20 +211,23 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let s = require_string(&args[0], "float.parse")?;
             match s.trim().parse::<f64>() {
-                // NaN / Infinity string inputs (`"NaN"`, `"inf"`) parse
-                // successfully but aren't representable as a finite `Float`.
-                // Classify them as `ParseInvalidDigit(0)` since they're
-                // syntactically well-formed but semantically rejected by
-                // silt's finite-float invariant; callers needing
-                // `±infinity` / NaN already go through `float.infinity`
-                // and friends.
-                Ok(n) if n.is_nan() || n.is_infinite() => Ok(Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant(
-                        "ParseInvalidDigit".into(),
-                        vec![Value::Int(0)],
-                    )],
-                )),
+                // Rust also parses `"inf"`, `"NaN"` and out-of-range
+                // literals such as `"1e400"` (to ±infinity). None of them
+                // is a `Float`: a spelled-out infinity or NaN is not a
+                // number silt reads, and an out-of-range literal
+                // overflows the way `int.parse` does (`ParseUnderflow`
+                // below the range, `ParseOverflow` above it).
+                Ok(n) if !n.is_finite() => {
+                    let spelled = s.trim().trim_start_matches(['+', '-']);
+                    let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+                        Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(0)])
+                    } else if n < 0.0 {
+                        Value::Variant("ParseUnderflow".into(), vec![])
+                    } else {
+                        Value::Variant("ParseOverflow".into(), vec![])
+                    };
+                    Ok(Value::Variant("Err".into(), vec![err]))
+                }
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![float_value(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
@@ -230,7 +244,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     let result = f.round();
                     Ok(float_value(result))
                 }
-                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.round())),
                 other => Err(VmError::new(format!(
                     "float.round requires Float, got {}",
                     value_kind(other)
@@ -246,7 +259,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     let result = f.ceil();
                     Ok(float_value(result))
                 }
-                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.ceil())),
                 other => Err(VmError::new(format!(
                     "float.ceil requires Float, got {}",
                     value_kind(other)
@@ -262,7 +274,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     let result = f.floor();
                     Ok(float_value(result))
                 }
-                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.floor())),
                 other => Err(VmError::new(format!(
                     "float.floor requires Float, got {}",
                     value_kind(other)
@@ -278,7 +289,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     let result = f.abs();
                     Ok(float_value(result))
                 }
-                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.abs())),
                 other => Err(VmError::new(format!(
                     "float.abs requires Float, got {}",
                     value_kind(other)
@@ -300,7 +310,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let f = match &args[0] {
                 Value::Float(f) => *f,
-                Value::ExtFloat(f) => *f,
                 other => {
                     return Err(VmError::new(format!(
                         "float.to_string requires Float, got {}",
@@ -312,7 +321,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 // Shortest round-trippable representation. Force a decimal
                 // point for whole-number floats so the result always parses
                 // as a float (e.g. `3.0` instead of `3`).
-                let s = if f.is_finite() && f.fract() == 0.0 && !f.is_nan() {
+                let s = if f.fract() == 0.0 {
                     format!("{f:.1}")
                 } else {
                     format!("{f}")
@@ -345,7 +354,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let f = match &args[0] {
                 Value::Float(f) => *f,
-                Value::ExtFloat(f) => *f,
                 other => {
                     return Err(VmError::new(format!(
                         "float.to_int requires Float, got {}",
@@ -353,11 +361,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     )));
                 }
             };
-            if f.is_nan() || f.is_infinite() {
-                return Err(VmError::new(
-                    "float.to_int: cannot convert non-finite float to int".into(),
-                ));
-            }
             // B7 fix: `as i64` saturates for out-of-range finite floats,
             // silently clamping e.g. 1e20 to i64::MAX. Reject such values
             // explicitly so callers see a clear runtime error.
@@ -383,12 +386,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let a = extract_float(&args[0], "float.min")?;
             let b = extract_float(&args[1], "float.min")?;
-            let result = a.min(b);
-            if result.is_finite() {
-                Ok(float_value(result))
-            } else {
-                Ok(Value::ExtFloat(result))
-            }
+            Ok(float_value(a.min(b)))
         }
         "max" => {
             if args.len() != 2 {
@@ -396,20 +394,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let a = extract_float(&args[0], "float.max")?;
             let b = extract_float(&args[1], "float.max")?;
-            let result = a.max(b);
-            if result.is_finite() {
-                Ok(float_value(result))
-            } else {
-                Ok(Value::ExtFloat(result))
-            }
+            Ok(float_value(a.max(b)))
         }
         "clamp" => {
-            // float.clamp(x, lo, hi) -> Float
-            // Panics if lo > hi (matches Rust's `f64::clamp` behavior).
-            // NaN inputs are not expected (Float is guaranteed finite in
-            // the silt type system); if one sneaks through, behavior is
-            // unspecified (we delegate to `f64::clamp`, which itself
-            // panics on NaN bounds and propagates NaN for a NaN `x`).
+            // float.clamp(x, lo, hi) -> Float. Raises if lo > hi.
             if args.len() != 3 {
                 return Err(VmError::new("float.clamp takes 3 arguments".into()));
             }
@@ -421,36 +409,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
                 )));
             }
-            let result = x.clamp(lo, hi);
-            if result.is_finite() {
-                Ok(float_value(result))
-            } else {
-                // Shouldn't happen for well-typed Float inputs, but if a
-                // NaN leaks in we surface it as ExtFloat rather than
-                // silently materializing a non-finite `Float`.
-                Ok(Value::ExtFloat(result))
-            }
-        }
-        "is_finite" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_finite takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "float.is_finite")?;
-            Ok(Value::Bool(f.is_finite()))
-        }
-        "is_infinite" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_infinite takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "float.is_infinite")?;
-            Ok(Value::Bool(f.is_infinite()))
-        }
-        "is_nan" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_nan takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "float.is_nan")?;
-            Ok(Value::Bool(f.is_nan()))
+            Ok(float_value(x.clamp(lo, hi)))
         }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }
@@ -464,7 +423,10 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("math.sqrt takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.sqrt")?;
-            Ok(Value::ExtFloat(f.sqrt()))
+            if f < 0.0 {
+                return Err(VmError::new(format!("math.sqrt of a negative number: {f}")));
+            }
+            Ok(float_value(f.sqrt()))
         }
         "pow" => {
             if args.len() != 2 {
@@ -472,79 +434,94 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let base = extract_float(&args[0], "math.pow")?;
             let exp = extract_float(&args[1], "math.pow")?;
-            Ok(Value::ExtFloat(base.powf(exp)))
+            let result = base.powf(exp);
+            if result.is_nan() {
+                return Err(VmError::new(format!(
+                    "math.pow of a negative number to a fractional power: {base} ^ {exp}"
+                )));
+            }
+            if base == 0.0 && exp < 0.0 {
+                return Err(VmError::new(format!(
+                    "math.pow of zero to a negative power: {base} ^ {exp}"
+                )));
+            }
+            checked_float(result, || format!("math.pow overflow: {base} ^ {exp}"))
         }
         "log" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.log takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.log")?;
-            Ok(Value::ExtFloat(f.ln()))
+            if f <= 0.0 {
+                return Err(VmError::new(format!(
+                    "math.log of a number that is not positive: {f}"
+                )));
+            }
+            Ok(float_value(f.ln()))
         }
         "log10" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.log10 takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.log10")?;
-            Ok(Value::ExtFloat(f.log10()))
+            if f <= 0.0 {
+                return Err(VmError::new(format!(
+                    "math.log10 of a number that is not positive: {f}"
+                )));
+            }
+            Ok(float_value(f.log10()))
         }
         "sin" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.sin takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.sin")?;
-            if matches!(&args[0], Value::ExtFloat(_)) {
-                Ok(Value::ExtFloat(f.sin()))
-            } else {
-                Ok(float_value(f.sin()))
-            }
+            Ok(float_value(f.sin()))
         }
         "cos" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.cos takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.cos")?;
-            if matches!(&args[0], Value::ExtFloat(_)) {
-                Ok(Value::ExtFloat(f.cos()))
-            } else {
-                Ok(float_value(f.cos()))
-            }
+            Ok(float_value(f.cos()))
         }
         "tan" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.tan takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.tan")?;
-            if matches!(&args[0], Value::ExtFloat(_)) {
-                Ok(Value::ExtFloat(f.tan()))
-            } else {
-                Ok(float_value(f.tan()))
-            }
+            checked_float(f.tan(), || format!("math.tan overflow: {f}"))
         }
         "asin" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.asin takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.asin")?;
-            Ok(Value::ExtFloat(f.asin()))
+            if !(-1.0..=1.0).contains(&f) {
+                return Err(VmError::new(format!(
+                    "math.asin of a number outside -1..1: {f}"
+                )));
+            }
+            Ok(float_value(f.asin()))
         }
         "acos" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.acos takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.acos")?;
-            Ok(Value::ExtFloat(f.acos()))
+            if !(-1.0..=1.0).contains(&f) {
+                return Err(VmError::new(format!(
+                    "math.acos of a number outside -1..1: {f}"
+                )));
+            }
+            Ok(float_value(f.acos()))
         }
         "atan" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.atan takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.atan")?;
-            if matches!(&args[0], Value::ExtFloat(_)) {
-                Ok(Value::ExtFloat(f.atan()))
-            } else {
-                Ok(float_value(f.atan()))
-            }
+            Ok(float_value(f.atan()))
         }
         "atan2" => {
             if args.len() != 2 {
@@ -552,18 +529,14 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let y = extract_float(&args[0], "math.atan2")?;
             let x = extract_float(&args[1], "math.atan2")?;
-            if matches!(&args[0], Value::ExtFloat(_)) || matches!(&args[1], Value::ExtFloat(_)) {
-                Ok(Value::ExtFloat(y.atan2(x)))
-            } else {
-                Ok(float_value(y.atan2(x)))
-            }
+            Ok(float_value(y.atan2(x)))
         }
         "exp" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.exp takes 1 argument".into()));
             }
             let f = extract_float(&args[0], "math.exp")?;
-            Ok(Value::ExtFloat(f.exp()))
+            checked_float(f.exp(), || format!("math.exp overflow: {f}"))
         }
         "random" => {
             if !args.is_empty() {
@@ -668,16 +641,6 @@ mod tests {
         assert!(matches!(v, Value::Int(0)), "expected Int(0), got {v:?}");
         let v = to_int(-0.0).expect("-0.0 should convert");
         assert!(matches!(v, Value::Int(0)), "expected Int(0), got {v:?}");
-    }
-
-    #[test]
-    fn float_to_int_rejects_nan_and_infinity() {
-        let err = to_int(f64::NAN).expect_err("NaN should error");
-        assert!(err.message.contains("non-finite"), "got: {}", err.message);
-        let err = to_int(f64::INFINITY).expect_err("+inf should error");
-        assert!(err.message.contains("non-finite"), "got: {}", err.message);
-        let err = to_int(f64::NEG_INFINITY).expect_err("-inf should error");
-        assert!(err.message.contains("non-finite"), "got: {}", err.message);
     }
 
     #[test]

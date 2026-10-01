@@ -278,8 +278,8 @@ fn repl_builtin_names_includes_primitive_types() {
     // Spot-check every primitive (audit's "primitive type names") and a
     // representative slice of containers.
     for required in &[
-        "Int", "Float", "ExtFloat", "Bool", "String", "Unit", "List", "Range", "Map", "Set",
-        "Channel", "Tuple", "Fn", "Fun", "Handle",
+        "Int", "Float", "Bool", "String", "Unit", "List", "Range", "Map", "Set", "Channel",
+        "Tuple", "Fn", "Fun", "Handle",
     ] {
         assert!(
             names.iter().any(|n| n == required),

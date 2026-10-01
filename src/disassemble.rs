@@ -82,7 +82,6 @@ fn op_name(op: Op) -> &'static str {
         Op::QuestionMark => "QuestionMark",
         Op::Panic => "Panic",
         Op::CallMethod => "CallMethod",
-        Op::NarrowFloat => "NarrowFloat",
         Op::Slide => "Slide",
     }
 }
@@ -278,7 +277,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         }
 
         // ── Jump instructions: show target offset ─────────────
-        Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue | Op::NarrowFloat => {
+        Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue => {
             let jump_offset = read_u16(code, offset + 1) as usize;
             let target = offset + 3 + jump_offset;
             (
@@ -674,8 +673,8 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 73 variants.
-        const EXPECTED_OP_COUNT: usize = 73;
+        // tables. Last verified: 72 variants.
+        const EXPECTED_OP_COUNT: usize = 72;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

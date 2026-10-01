@@ -982,9 +982,7 @@ impl TypeChecker {
                 }
                 let domain = match op_desc {
                     "'=='/'!='" => "a comparable type",
-                    "ordering comparison" => {
-                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
-                    }
+                    "ordering comparison" => "Int, Float, String, List, Range, Record, or Variant",
                     _ => "a valid operand",
                 };
                 self.error(
@@ -2993,8 +2991,7 @@ impl TypeChecker {
                         Type::Error
                     }
                     // Primitive types — check method table for trait methods.
-                    // ExtFloat is auto-derived (see `register_auto_derived_impls_for`
-                    // in `src/typechecker/mod.rs:8276`); Channel and Fn are not
+                    // Channel and Fn are not
                     // auto-derived but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
@@ -3005,7 +3002,6 @@ impl TypeChecker {
                     // — round 71 follow-up unified all four sites on `"Fn"`.
                     Type::Int
                     | Type::Float
-                    | Type::ExtFloat
                     | Type::Bool
                     | Type::String
                     | Type::Unit
@@ -3014,7 +3010,6 @@ impl TypeChecker {
                         let type_name = match &obj_ty {
                             Type::Int => intern("Int"),
                             Type::Float => intern("Float"),
-                            Type::ExtFloat => intern("ExtFloat"),
                             Type::Bool => intern("Bool"),
                             Type::String => intern("String"),
                             // Round 75 TYPE-3 LATENT: canonical key is
@@ -3243,23 +3238,6 @@ impl TypeChecker {
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
-                    // ── Implicit Float → ExtFloat widening ─────────────────
-                    //
-                    // Mixed Float/ExtFloat operands are widened to ExtFloat
-                    // *without* going through unification. This is intentional:
-                    // Float and ExtFloat are distinct concrete types that do not
-                    // unify, but arithmetic between them should silently promote
-                    // to the wider type (analogous to f32 → f64 in other
-                    // languages).
-                    //
-                    // For Div the result is always ExtFloat when *either* operand
-                    // is a float type, because division may produce fractional
-                    // results even from two Floats.
-                    //
-                    // IMPORTANT: any new numeric binary operators must replicate
-                    // this widening logic; otherwise mixed Float/ExtFloat
-                    // expressions will produce a unification error.
-                    // ─────────────────────────────────────────────────────────
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                         let op_str = match op {
                             BinOp::Add => "'+'",
@@ -3271,9 +3249,6 @@ impl TypeChecker {
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
                         match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             // An operand already in error (e.g. the left
                             // side of `a + "b" + "c"`) was reported once;
                             // stay quiet. `Type::Error` keeps an ascribed
@@ -3334,56 +3309,43 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Div => {
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
-                        match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::Float)
-                            | (Type::Float, Type::ExtFloat)
-                            | (Type::ExtFloat, Type::Float)
-                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
-                            _ => {
-                                // Round 100 (+ F1 round 72): mirror the
-                                // `+`/`-`/`*`/`%` arm — `unify_binop_operands`
-                                // emits at most one correctly-directed
-                                // diagnostic, so the operand-domain check
-                                // below is skipped when it errored (the
-                                // second message would be redundant noise).
-                                // Also return `Type::Error` on unify
-                                // failure so an outer ascribed-let
-                                // (`let n: Int = b / 1`) hits the
-                                // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`).
-                                let unify_errored = self.unify_binop_operands(
-                                    &lt,
-                                    &rt,
-                                    lhs_span,
-                                    rhs_span,
-                                    is_valid_arith_operand,
-                                    |t| arith_operand_message("'/'", t),
-                                );
-                                if !unify_errored {
-                                    // B2: enforce numeric-only operand domain.
-                                    let resolved = self.apply(&lt);
-                                    match &resolved {
-                                        Type::Var(_) => {
-                                            self.pending_numeric_checks.push((
-                                                resolved.clone(),
-                                                "'/'",
-                                                span,
-                                            ));
-                                        }
-                                        _ if !is_valid_arith_operand(&resolved) => {
-                                            self.error(
-                                                arith_operand_message("'/'", &resolved),
-                                                span,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
+                        // Round 100 (+ F1 round 72): mirror the
+                        // `+`/`-`/`*`/`%` arm — `unify_binop_operands`
+                        // emits at most one correctly-directed
+                        // diagnostic, so the operand-domain check
+                        // below is skipped when it errored (the
+                        // second message would be redundant noise).
+                        // Also return `Type::Error` on unify
+                        // failure so an outer ascribed-let
+                        // (`let n: Int = b / 1`) hits the
+                        // cascade-suppression branch in `unify`
+                        // (`mod.rs:1387`).
+                        let unify_errored = self.unify_binop_operands(
+                            &lt,
+                            &rt,
+                            lhs_span,
+                            rhs_span,
+                            is_valid_arith_operand,
+                            |t| arith_operand_message("'/'", t),
+                        );
+                        if !unify_errored {
+                            // B2: enforce numeric-only operand domain.
+                            let resolved = self.apply(&lt);
+                            match &resolved {
+                                Type::Var(_) => {
+                                    self.pending_numeric_checks.push((
+                                        resolved.clone(),
+                                        "'/'",
+                                        span,
+                                    ));
                                 }
-                                if unify_errored { Type::Error } else { lt }
+                                _ if !is_valid_arith_operand(&resolved) => {
+                                    self.error(arith_operand_message("'/'", &resolved), span);
+                                }
+                                _ => {}
                             }
                         }
+                        if unify_errored { Type::Error } else { lt }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
                         let is_equality = matches!(op, BinOp::Eq | BinOp::Neq);
@@ -3396,8 +3358,6 @@ impl TypeChecker {
                             BinOp::Geq => "'>='",
                             _ => unreachable!(),
                         };
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
                         // Round 100 (+ F1 round 72): `unify_binop_operands`
                         // emits at most one correctly-directed diagnostic,
                         // so the operand-domain check below is skipped when
@@ -3407,31 +3367,25 @@ impl TypeChecker {
                         // for most cases (e.g. Bool is a valid equality
                         // operand) so the dual diagnostic doesn't surface,
                         // but apply uniformly to close the latent door.
-                        let unify_errored = match (&resolved_l, &resolved_r) {
-                            (Type::Float, Type::ExtFloat) | (Type::ExtFloat, Type::Float) => {
-                                // Accept mixed Float/ExtFloat without unification
-                                false
-                            }
-                            _ => self.unify_binop_operands(
-                                &lt,
-                                &rt,
-                                lhs_span,
-                                rhs_span,
-                                |t| is_valid_compare_operand(t, is_equality),
-                                |t| {
-                                    let domain = if is_equality {
-                                        "a comparable type"
-                                    } else {
-                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
-                                    };
-                                    format!("operator {op_str} requires {domain}, got '{t}'")
-                                },
-                            ),
-                        };
+                        let unify_errored = self.unify_binop_operands(
+                            &lt,
+                            &rt,
+                            lhs_span,
+                            rhs_span,
+                            |t| is_valid_compare_operand(t, is_equality),
+                            |t| {
+                                let domain = if is_equality {
+                                    "a comparable type"
+                                } else {
+                                    "Int, Float, String, List, Range, Record, or Variant"
+                                };
+                                format!("operator {op_str} requires {domain}, got '{t}'")
+                            },
+                        );
                         if !unify_errored {
                             // B3: enforce comparison operand domain. The VM's
                             // compare() (src/vm/arithmetic.rs) only supports
-                            // Int/Float/ExtFloat/String/List/Range/Record/Variant
+                            // Int/Float/String/List/Range/Record/Variant
                             // for ordering. Equality additionally supports
                             // Tuple/Map/Set/Bool/Unit/Channel and closed-row
                             // AnonRecord via Value's PartialEq.
@@ -3453,7 +3407,7 @@ impl TypeChecker {
                                     let domain = if is_equality {
                                         "a comparable type"
                                     } else {
-                                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                                        "Int, Float, String, List, Range, Record, or Variant"
                                     };
                                     self.error(
                                         format!(
@@ -3498,7 +3452,7 @@ impl TypeChecker {
                     UnaryOp::Neg => {
                         let resolved = self.apply(&t);
                         match &resolved {
-                            Type::Int | Type::Float | Type::ExtFloat => {}
+                            Type::Int | Type::Float => {}
                             Type::Error | Type::Never => {}
                             Type::Var(_) => {
                                 // B5: unresolved — defer until after all bodies are
@@ -3512,10 +3466,7 @@ impl TypeChecker {
                             }
                             _ => {
                                 self.error(
-                                    format!(
-                                        "unary '-' requires Int, Float, or ExtFloat, got '{}'",
-                                        resolved
-                                    ),
+                                    format!("unary '-' requires Int or Float, got '{}'", resolved),
                                     operand_span,
                                 );
                             }
@@ -4776,14 +4727,6 @@ impl TypeChecker {
                 }
                 self.fresh_var()
             }
-
-            ExprKind::FloatElse(expr, fallback) => {
-                let expr_ty = self.infer_expr(expr, env);
-                let fallback_ty = self.infer_expr(fallback, env);
-                self.unify(&expr_ty, &Type::ExtFloat, expr.span);
-                self.unify(&fallback_ty, &Type::Float, fallback.span);
-                Type::Float
-            }
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
@@ -5491,7 +5434,7 @@ impl TypeChecker {
 /// `trait_arg_compatible_canon` compares them structurally and
 /// `canonicalize()` does not collapse `Generic("List", …)` onto
 /// `Type::List` (etc.). Non-canonical output makes every builtin
-/// container / ExtFloat / Unit supertrait arg spuriously incompatible
+/// container / Unit supertrait arg spuriously incompatible
 /// with its own impl.
 pub(super) fn resolve_supertrait_arg(
     te: &TypeExpr,
@@ -5508,16 +5451,15 @@ pub(super) fn resolve_supertrait_arg(
             // Bare type name that isn't a trait param — interpret as a
             // concrete type reference (Int, String, or user type).
             // Round 101: mirror `resolve_type_expr` (mod.rs Named arm)
-            // exactly for primitives — ExtFloat and Unit/() previously
+            // exactly for primitives — Unit/() previously
             // fell through to `Type::Generic`, which never compares
-            // equal to the canonical `Type::ExtFloat`/`Type::Unit` the
+            // equal to the canonical `Type::Unit` the
             // impl side produces, spuriously failing
             // `trait_arg_compatible_canon` with identical Display
             // strings on both sides of the error.
             match resolve(*sym).as_str() {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
-                "ExtFloat" => Type::ExtFloat,
                 "Bool" => Type::Bool,
                 "String" => Type::String,
                 "()" | "Unit" => Type::Unit,
@@ -5589,7 +5531,7 @@ pub(super) fn resolve_supertrait_arg(
 /// the Var case via deferred checks).
 pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
     match ty {
-        Type::Int | Type::Float | Type::ExtFloat | Type::Error | Type::Never => true,
+        Type::Int | Type::Float | Type::Error | Type::Never => true,
         Type::Var(_) => true,
         // Round 92: an abstract associated-type projection (`<a as T>::Item`
         // with the receiver still a where-bound type variable) is "maybe
@@ -5605,7 +5547,7 @@ pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
 /// the quoted operator, e.g. `'+'`). A String operand of `+` also names
 /// the way to build strings: interpolation.
 pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
-    let msg = format!("operator {op_str} requires Int, Float, or ExtFloat, got '{ty}'");
+    let msg = format!("operator {op_str} requires Int or Float, got '{ty}'");
     if op_str == "'+'" && matches!(ty, Type::String) {
         format!("{msg}; build strings with interpolation, e.g. \"{{a}}{{b}}\"")
     } else {
@@ -5638,7 +5580,6 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     match ty {
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::String
         | Type::List(_)
         | Type::Range(_)
@@ -6093,7 +6034,7 @@ fn main() {
   "hello" - "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -6105,7 +6046,7 @@ fn main() {
   "hello" * "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -6117,7 +6058,7 @@ fn main() {
   "hello" % "world"
 }
         "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 

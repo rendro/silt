@@ -1336,7 +1336,6 @@ impl TypeChecker {
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
-            | (Type::ExtFloat, Type::ExtFloat)
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => {}
@@ -2019,7 +2018,6 @@ impl TypeChecker {
             Type::Set(_) => Some(intern("Set")),
             Type::Channel(_) => Some(intern("Channel")),
             Type::Tuple(_) => Some(intern("Tuple")),
-            Type::ExtFloat => Some(intern("ExtFloat")),
             // Function values resolve to the canonical name `"Fn"` so
             // `where a: Trait` constraints route into the same impl table
             // the compiler emits globals for and `dispatch_name_for_value`
@@ -2368,7 +2366,6 @@ impl TypeChecker {
             (Type::Var(_), _) | (_, Type::Var(_)) => true,
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
-            | (Type::ExtFloat, Type::ExtFloat)
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => true,
@@ -3821,7 +3818,7 @@ impl TypeChecker {
         // Round 80 BROKEN B3: a type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
         // Range, Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
-        // ExtFloat, TcpListener, TcpStream — the authoritative list is
+        // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
         // the builtin binding and then auto-derived Equal/Compare/Hash/
         // Display impls referencing fields that the *builtin* type does
@@ -4513,7 +4510,6 @@ impl TypeChecker {
             }
             Type::Int
             | Type::Float
-            | Type::ExtFloat
             | Type::Bool
             | Type::String
             | Type::Unit
@@ -4566,7 +4562,6 @@ impl TypeChecker {
                 match name_str.as_str() {
                     "Int" => Type::Int,
                     "Float" => Type::Float,
-                    "ExtFloat" => Type::ExtFloat,
                     "Bool" => Type::Bool,
                     "String" => Type::String,
                     "()" | "Unit" => Type::Unit,
@@ -5328,18 +5323,15 @@ impl TypeChecker {
 
     /// Convert a type name Symbol to a Type.
     ///
-    /// Round 74 Fix #1: include `ExtFloat` and `Unit`/`()` arms so a
-    /// user-declared `trait T for ExtFloat { ... }` impl receives a
-    /// `Type::ExtFloat` self_type rather than the `Type::Generic("ExtFloat", [])`
-    /// fallback (which never unifies with the canonical `Type::ExtFloat`
-    /// receiver produced by, e.g., `1.0 / 1.0`). Round 71 fixed only the
-    /// auto-derived path; user impls fell through here.
+    /// Round 74 Fix #1: include the `Unit`/`()` arm so a user-declared
+    /// `trait T for Unit { ... }` impl receives a `Type::Unit` self_type
+    /// rather than the `Type::Generic("Unit", [])` fallback, which never
+    /// unifies with the canonical `Type::Unit` receiver.
     fn type_from_name(name: Symbol) -> Type {
         let name_str = resolve(name);
         match name_str.as_str() {
             "Int" => Type::Int,
             "Float" => Type::Float,
-            "ExtFloat" => Type::ExtFloat,
             "Bool" => Type::Bool,
             "String" => Type::String,
             "Unit" | "()" => Type::Unit,
@@ -7715,7 +7707,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         }
         Type::Int
         | Type::Float
-        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit
@@ -7955,18 +7946,13 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
 
     // Primitives + List: all four auto-derived traits.
-    // `ExtFloat` is the widened-float result of `Float / Float` (see
-    // `src/typechecker/inference.rs:3435-3451`); it must auto-derive all
-    // four built-in traits so that a divided Float can flow through a
-    // `Display`/`Equal`/`Compare`/`Hash` trait bound without a spurious
-    // "type 'ExtFloat' does not implement trait ..." rejection.
     register_auto_derived_impls_for(
         checker,
         // Round 75 TYPE-3 LATENT: canonical key for the unit type is
         // "Unit" (matches canonical_name(Type::Unit) and
         // dispatch_name_for_value(Value::Unit)). The "()" alias
         // collapses onto "Unit" via canonicalize_type_name.
-        &["Int", "Float", "ExtFloat", "Bool", "String", "Unit"],
+        &["Int", "Float", "Bool", "String", "Unit"],
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
@@ -10711,7 +10697,7 @@ fn main() {
   "hello" + 42
 }
             "#,
-            "requires Int, Float, or ExtFloat",
+            "requires Int or Float",
         );
     }
 
@@ -11233,20 +11219,5 @@ fn main() -> Result {
         assert!(tc.errors.is_empty(), "list unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
-    }
-
-    #[test]
-    fn test_comparison_float_extfloat() {
-        // Comparing Float with ExtFloat (e.g. result of division) should succeed
-        // and produce Bool, not a unification error.
-        assert_no_errors(
-            r#"
-fn main() {
-  let x = 10.0 / 3.0
-  let result = x == 1.0
-  result
-}
-            "#,
-        );
     }
 }

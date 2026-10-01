@@ -64,36 +64,13 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
 
     // float.clamp: (Float, Float, Float) -> Float
-    // Panics if lo > hi. Output is unspecified for NaN inputs (Float is
-    // guaranteed finite by construction, so NaN shouldn't reach this
-    // function through normal typed code paths).
+    // Raises if lo > hi.
     env.define(
         intern("float.clamp"),
         Scheme::mono(Type::Fun(
             vec![Type::Float, Type::Float, Type::Float],
             Box::new(Type::Float),
         )),
-    );
-
-    // float.is_finite: (ExtFloat) -> Bool
-    // Predicates take ExtFloat because Float is guaranteed finite — you
-    // can only get a NaN/Inf value as ExtFloat. Defining a Float overload
-    // would be misleading ("why am I checking?").
-    env.define(
-        intern("float.is_finite"),
-        Scheme::mono(Type::Fun(vec![Type::ExtFloat], Box::new(Type::Bool))),
-    );
-
-    // float.is_infinite: (ExtFloat) -> Bool
-    env.define(
-        intern("float.is_infinite"),
-        Scheme::mono(Type::Fun(vec![Type::ExtFloat], Box::new(Type::Bool))),
-    );
-
-    // float.is_nan: (ExtFloat) -> Bool
-    env.define(
-        intern("float.is_nan"),
-        Scheme::mono(Type::Fun(vec![Type::ExtFloat], Box::new(Type::Bool))),
     );
 
     // float.to_string: (Float, Int) -> String
@@ -125,9 +102,6 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     env.define(intern("float.min_value"), Scheme::mono(Type::Float));
     env.define(intern("float.epsilon"), Scheme::mono(Type::Float));
     env.define(intern("float.min_positive"), Scheme::mono(Type::Float));
-    env.define(intern("float.infinity"), Scheme::mono(Type::ExtFloat));
-    env.define(intern("float.neg_infinity"), Scheme::mono(Type::ExtFloat));
-    env.define(intern("float.nan"), Scheme::mono(Type::ExtFloat));
 
     // The `## Float Constants` section in int-float.md does not
     // map to per-name `## float.epsilon` headings, so first

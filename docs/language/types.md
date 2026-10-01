@@ -12,7 +12,6 @@ order: 2
 |----------|-----------------------------------|---------------------------|
 | `Int`    | 64-bit signed integer (overflow is a runtime error) | `42`, `-7`, `0xFF`, `0b1010` |
 | `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1e5`, `2.5e-3` |
-| `ExtFloat` | 64-bit floating-point (IEEE 754, allows NaN/Infinity) | Division and some math results |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `Unit`   | No meaningful value               | (returned by `println`)   |
@@ -60,33 +59,33 @@ The lexer rejects `9223372036854775808` directly as a number literal
 `-9223372036854775807 - 1` because unary `-` is a separate operator,
 not part of the literal.
 
-### Finite floats and `ExtFloat`
+### Finite floats
 
-Operations that *can* produce `NaN` or `Infinity` return `ExtFloat` instead of `Float`. This splits the type system: `Float` values are always finite and totally ordered, `ExtFloat` values may be anything IEEE 754 produces.
-
-```silt
-1.0 + 2.0        -- Float        (addition of finite Floats)
-1.0 / 2.0        -- ExtFloat     (division may produce Infinity)
-math.sqrt(x)     -- ExtFloat     (may produce NaN)
-```
-
-Non-division arithmetic (`+`, `-`, `*`) on `Float` values stays in `Float` and panics on overflow to `Infinity`, matching the integer rule.
-
-### Recovering `Float` with `else`
-
-To use an `ExtFloat` where a `Float` is needed, supply a finite fallback with the `else` operator:
+A `Float` is always finite: never `NaN`, never infinite. An operation whose result would be `NaN` or infinite is a **runtime error** that names the operation, matching the integer rule:
 
 ```silt
-let x: Float = 1.0 / 3.0 else 0.0        -- finite result → 0.333...
-let y: Float = 1.0 / 0.0 else 0.0        -- infinity → fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0  -- NaN → fallback 0.0
+1.0 / 2.0                -- 0.5
+1.0 / 0.0                -- runtime error: float division by zero
+float.max_value * 2.0    -- runtime error: float overflow
+math.sqrt(-4.0)          -- runtime error: math.sqrt of a negative number: -4
 ```
 
-`else` is the lowest-precedence infix operator. See [Operators and Precedence](operators.md) for details.
+The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
+
+Where an input can be out of range, guard it explicitly:
+
+```silt
+let ratio = match total {
+  0.0 -> 0.0
+  _ -> part / total
+}
+```
+
+Because every `Float` is finite, floats compare, sort and hash as ordinary numbers and work as map keys and set elements. `-0.0` is the same value as `0.0`: `0.0 * -1.0` prints `0`.
 
 ### No implicit coercion
 
-There are no implicit conversions between `Int` and `Float`. Convert explicitly with `int.to_float(n)` and `float.to_int(x)`. The `Float` → `ExtFloat` direction is safe (every finite value is valid IEEE 754) and happens automatically where needed; the `ExtFloat` → `Float` direction always requires `else`.
+There are no implicit conversions between `Int` and `Float`. Convert explicitly with `int.to_float(n)` and `float.to_int(x)`.
 
 ## Enums (Tagged Unions)
 

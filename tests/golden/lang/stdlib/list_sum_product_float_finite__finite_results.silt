@@ -1,6 +1,6 @@
 import float
 import list
--- Finite results stay Float (not ExtFloat); float.to_string accepts only
+-- Finite results are Floats; float.to_string accepts only
 -- a Float and prints the decimal.
 fn main() {
   let s: Float = list.sum_float([1.0, 2.0, 3.0])

@@ -772,7 +772,6 @@ impl TypeChecker {
             let inner = match *name {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
-                "ExtFloat" => Type::ExtFloat,
                 "String" => Type::String,
                 "Bool" => Type::Bool,
                 _ => unreachable!(),

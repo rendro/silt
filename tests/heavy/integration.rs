@@ -1119,96 +1119,10 @@ fn main() {
     assert_eq!(result, Value::Int(60));
 }
 
-// ── ExtFloat system ─────────────────────────────────────────────────
+// ── Float constants and math ────────────────────────────────────────
 
 #[test]
-fn test_ext_float_division() {
-    // Division returns ExtFloat, else narrows to Float
-    assert_eq!(
-        run(r#"fn main() { 1.0 / 2.0 else 0.0 }"#),
-        Value::Float(0.5)
-    );
-    // Division by zero returns infinity, else catches it
-    assert_eq!(
-        run(r#"fn main() { 1.0 / 0.0 else 0.0 }"#),
-        Value::Float(0.0)
-    );
-    // Negative division by zero
-    assert_eq!(
-        run(r#"fn main() { -1.0 / 0.0 else 0.0 }"#),
-        Value::Float(0.0)
-    );
-}
-
-#[test]
-fn test_ext_float_else_with_expressions() {
-    // else binds to full ExtFloat expression
-    assert_eq!(
-        run(r#"fn main() { 1.0 / 2.0 * 3.0 + 1.0 else 0.0 }"#),
-        Value::Float(2.5)
-    );
-    // Chain with division producing finite result
-    assert_eq!(
-        run(r#"fn main() { 10.0 / 3.0 else 0.0 }"#),
-        Value::Float(10.0 / 3.0)
-    );
-}
-
-#[test]
-fn test_ext_float_math_functions() {
-    // sqrt of positive returns finite ExtFloat, else narrows
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.sqrt(4.0) else 0.0 }
-    "#),
-        Value::Float(2.0)
-    );
-    // sqrt of negative returns NaN, else catches
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.sqrt(-1.0) else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    // log of positive
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.log(1.0) else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    // log of zero -> -Infinity, else catches
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.log(0.0) else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    // pow overflow — use float.max_value to get a huge number
-    assert_eq!(
-        run(r#"
-import math
-import float
-fn main() { math.pow(float.max_value, 2.0) else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    // exp
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.exp(0.0) else 0.0 }
-    "#),
-        Value::Float(1.0)
-    );
-}
-
-#[test]
-fn test_ext_float_named_constants() {
+fn test_float_named_constants() {
     // Float constants
     assert_eq!(
         run(r#"
@@ -1238,53 +1152,10 @@ fn main() { float.min_positive }
     "#),
         Value::Float(f64::MIN_POSITIVE)
     );
-    // ExtFloat constants need else to use as Float
-    assert_eq!(
-        run(r#"
-import float
-fn main() { float.infinity else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    assert_eq!(
-        run(r#"
-import float
-fn main() { float.neg_infinity else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    assert_eq!(
-        run(r#"
-import float
-fn main() { float.nan else 0.0 }
-    "#),
-        Value::Float(0.0)
-    );
 }
 
 #[test]
-fn test_ext_float_else_fallback_value() {
-    // Fallback can be any Float expression
-    assert_eq!(
-        run(r#"fn main() { 1.0 / 0.0 else 42.0 }"#),
-        Value::Float(42.0)
-    );
-    assert_eq!(
-        run(r#"
-import float
-fn main() { 1.0 / 0.0 else float.max_value }
-    "#),
-        Value::Float(f64::MAX)
-    );
-    assert_eq!(
-        run(r#"fn main() { 1.0 / 0.0 else -1.0 }"#),
-        Value::Float(-1.0)
-    );
-}
-
-#[test]
-fn test_ext_float_always_finite_math() {
-    // sin, cos return Float directly (always finite for finite input)
+fn test_math_sin_cos() {
     assert_eq!(
         run(r#"
 import math
@@ -1302,76 +1173,7 @@ fn main() { math.cos(0.0) }
 }
 
 #[test]
-fn test_ext_float_division_finite_result() {
-    // Finite division result narrows successfully through else
-    assert_eq!(
-        run(r#"fn main() { 100.0 / 4.0 else 0.0 }"#),
-        Value::Float(25.0)
-    );
-}
-
-#[test]
-fn test_ext_float_mixed_arithmetic_widens() {
-    // Division produces ExtFloat, further arithmetic with Float widens to ExtFloat
-    // The whole expression is ExtFloat, else narrows to Float
-    assert_eq!(
-        run(r#"fn main() { 10.0 / 2.0 + 1.0 else 0.0 }"#),
-        Value::Float(6.0)
-    );
-    assert_eq!(
-        run(r#"fn main() { 10.0 / 2.0 - 1.0 else 0.0 }"#),
-        Value::Float(4.0)
-    );
-    assert_eq!(
-        run(r#"fn main() { 10.0 / 2.0 * 3.0 else 0.0 }"#),
-        Value::Float(15.0)
-    );
-}
-
-#[test]
-fn test_ext_float_let_binding_with_else() {
-    // Can bind the narrowed result to a let
-    assert_eq!(
-        run(r#"
-fn main() {
-  let x = 10.0 / 3.0 else 0.0
-  x
-}
-    "#),
-        Value::Float(10.0 / 3.0)
-    );
-}
-
-#[test]
-fn test_ext_float_asin_acos_return_extfloat() {
-    // asin and acos return ExtFloat because input outside [-1,1] yields NaN
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.asin(0.0) else -1.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.acos(1.0) else -1.0 }
-    "#),
-        Value::Float(0.0)
-    );
-    // Out of range input -> NaN -> fallback
-    assert_eq!(
-        run(r#"
-import math
-fn main() { math.asin(2.0) else -1.0 }
-    "#),
-        Value::Float(-1.0)
-    );
-}
-
-#[test]
-fn test_ext_float_atan_returns_float() {
-    // atan returns Float directly (always finite for finite input)
+fn test_math_atan() {
     assert_eq!(
         run(r#"
 import math
@@ -1382,8 +1184,7 @@ fn main() { math.atan(0.0) }
 }
 
 #[test]
-fn test_ext_float_atan2_returns_float() {
-    // atan2 returns Float directly
+fn test_math_atan2() {
     assert_eq!(
         run(r#"
 import math
@@ -1394,8 +1195,7 @@ fn main() { math.atan2(0.0, 1.0) }
 }
 
 #[test]
-fn test_ext_float_tan_returns_float() {
-    // tan returns Float directly
+fn test_math_tan() {
     assert_eq!(
         run(r#"
 import math

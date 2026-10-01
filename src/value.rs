@@ -213,7 +213,6 @@ where
 pub enum Value {
     Int(i64),
     Float(f64),
-    ExtFloat(f64),
     Bool(bool),
     String(String),
     List(Arc<Vec<Value>>),
@@ -1377,7 +1376,6 @@ impl fmt::Debug for Value {
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
-            Value::ExtFloat(n) => write!(f, "ExtFloat({n})"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
             Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
@@ -1450,7 +1448,6 @@ impl Value {
         match self {
             Value::Int(n) => format!("{n}"),
             Value::Float(n) => format!("{n}"),
-            Value::ExtFloat(n) => format!("{n}"),
             Value::Bool(b) => format!("{b}"),
             Value::String(s) => format!("\"{s}\""),
             Value::List(xs) => {
@@ -1609,7 +1606,6 @@ impl fmt::Display for Value {
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
-            Value::ExtFloat(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "{s}"),
             Value::List(xs) => {
@@ -1810,26 +1806,6 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
-            // SURPRISE: `ExtFloat` uses bitwise equality here so that
-            // `NaN == NaN`. This is deliberate and REQUIRED for
-            // `Ord`/`Eq` consistency, because `Value` is used as a key
-            // in `BTreeMap`, `BTreeSet`, and deduplication paths
-            // (`Map`, `Set`, `list.dedup`, `==` on `Map`/`Set`). Those
-            // containers rely on reflexivity: a NaN key must always
-            // compare equal to itself. The language-level `==`
-            // operator does NOT use this path — see `language_eq` in
-            // `src/vm/execute.rs`, which overrides `ExtFloat` to follow
-            // IEEE-754 semantics (`NaN != NaN`). Do not "fix" the
-            // bitwise check here without also fixing every
-            // container/dedup path that depends on it.
-            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits() == b.to_bits(),
-            // Mixed Float/ExtFloat: the typechecker permits this pair for
-            // `==`/`!=`, so the VM must honor it rather than returning
-            // `false` via the fallback arm. We widen the `Float` side to
-            // `f64` and use the standard `PartialEq` for `f64`, which
-            // matches `Float`-vs-`Float` semantics (so `1.0 == 1.0`, and
-            // `NaN` from `ExtFloat` is never equal to a finite `Float`).
-            (Value::Float(a), Value::ExtFloat(b)) | (Value::ExtFloat(b), Value::Float(a)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
@@ -1931,13 +1907,7 @@ impl Ord for Value {
                 Value::Unit => 0,
                 Value::Bool(_) => 1,
                 Value::Int(_) => 2,
-                // Float and ExtFloat share a discriminant so the Eq/Ord
-                // contract holds: `Float(x) == ExtFloat(x)` (widened to
-                // f64) ⇒ `cmp == Equal`. Without unification, `disc` would
-                // short-circuit at the `d1 != d2` test below and return
-                // `Less`/`Greater` for two values that PartialEq considers
-                // equal — violating the Ord contract.
-                Value::Float(_) | Value::ExtFloat(_) => 3,
+                Value::Float(_) => 3,
                 Value::String(_) => 5,
                 Value::List(_) => 6,
                 Value::Range(..) => 6, // same discriminant as List for ordering
@@ -1974,23 +1944,6 @@ impl Ord for Value {
                 // ever appears.
                 a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
-            // ExtFloat/ExtFloat: `f64::total_cmp` (IEEE totalOrder) —
-            // sign-aware numeric order (`list.sort` agrees with scalar
-            // `<`); `Equal` iff identical bits, matching bitwise PartialEq
-            // (NaN self-equal; no ExtFloat(-0.0) exists — arithmetic.rs).
-            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.total_cmp(b),
-            // Cross-arms: Float ↔ ExtFloat. `partial_cmp` first so finite
-            // Float vs ExtFloat 1.0 is `Equal` exactly when PartialEq says
-            // `true`; NaN (only from ExtFloat) falls back to `total_cmp`,
-            // never `Equal` for finite-vs-NaN, so Ord matches PartialEq.
-            (Value::Float(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
-                Some(o) => o,
-                None => a.total_cmp(b),
-            },
-            (Value::ExtFloat(a), Value::Float(b)) => match a.partial_cmp(b) {
-                Some(o) => o,
-                None => a.total_cmp(b),
-            },
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
             (Value::Range(a1, a2), Value::Range(b1, b2)) => {
@@ -2107,9 +2060,12 @@ pub trait FromValue: Sized {
     fn from_value(value: &Value) -> Result<Self, String>;
 }
 
-/// Convert a Rust type into a `Value`.
+/// Convert a Rust type into a `Value`. The conversion fails when the
+/// Rust value has no silt counterpart (a NaN or infinite `f64`: a silt
+/// `Float` is always finite); a foreign function whose result fails to
+/// convert raises a runtime error.
 pub trait IntoValue {
-    fn into_value(self) -> Value;
+    fn into_value(self) -> Result<Value, String>;
 }
 
 impl FromValue for Value {
@@ -2119,8 +2075,8 @@ impl FromValue for Value {
 }
 
 impl IntoValue for Value {
-    fn into_value(self) -> Value {
-        self
+    fn into_value(self) -> Result<Value, String> {
+        Ok(self)
     }
 }
 
@@ -2134,8 +2090,8 @@ impl FromValue for i64 {
 }
 
 impl IntoValue for i64 {
-    fn into_value(self) -> Value {
-        Value::Int(self)
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::Int(self))
     }
 }
 
@@ -2143,7 +2099,6 @@ impl FromValue for f64 {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Float(n) => Ok(*n),
-            Value::ExtFloat(n) => Ok(*n),
             Value::Int(n) => Ok(*n as f64),
             other => Err(format!("expected Float, got {}", value_type_name(other))),
         }
@@ -2151,23 +2106,15 @@ impl FromValue for f64 {
 }
 
 impl IntoValue for f64 {
-    fn into_value(self) -> Value {
-        // Canonicalize to the same Float/ExtFloat split the VM uses
-        // everywhere else: `Value::Float` is finite, non-finite (NaN
-        // and ±∞) goes in `Value::ExtFloat`. The invariant is
-        // documented at `Vm::finite_float`, the `PartialEq`/`Ord`
-        // arms above, and `tests/lang/list_sum_product_float_finite_tests.rs`,
-        // and is re-enforced in `src/builtins/numeric.rs::clamp`. Without
-        // this canonicalization, an embedder registering a Rust closure
-        // returning a non-finite f64 (e.g. `register_fn0("get_nan",
-        // || f64::NAN)`) would happily produce `Value::Float(NaN)` and
-        // break every downstream container/dedup path that assumes
-        // `Float` is finite.
-        if self.is_finite() {
-            Value::Float(self)
-        } else {
-            Value::ExtFloat(self)
+    fn into_value(self) -> Result<Value, String> {
+        // A silt `Float` is always finite and never `-0.0`: a NaN or
+        // infinite result has no silt value, so it is an error rather
+        // than a `Float` that every comparison, hash and container path
+        // would mishandle.
+        if !self.is_finite() {
+            return Err(format!("non-finite float result: {self}"));
         }
+        Ok(Value::Float(if self == 0.0 { 0.0 } else { self }))
     }
 }
 
@@ -2181,8 +2128,8 @@ impl FromValue for bool {
 }
 
 impl IntoValue for bool {
-    fn into_value(self) -> Value {
-        Value::Bool(self)
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::Bool(self))
     }
 }
 
@@ -2196,14 +2143,14 @@ impl FromValue for String {
 }
 
 impl IntoValue for String {
-    fn into_value(self) -> Value {
-        Value::String(self)
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::String(self))
     }
 }
 
 impl IntoValue for &str {
-    fn into_value(self) -> Value {
-        Value::String(self.to_string())
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::String(self.to_string()))
     }
 }
 
@@ -2217,8 +2164,8 @@ impl FromValue for () {
 }
 
 impl IntoValue for () {
-    fn into_value(self) -> Value {
-        Value::Unit
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::Unit)
     }
 }
 
@@ -2236,26 +2183,26 @@ impl FromValue for Vec<Value> {
 }
 
 impl IntoValue for Vec<Value> {
-    fn into_value(self) -> Value {
-        Value::List(Arc::new(self))
+    fn into_value(self) -> Result<Value, String> {
+        Ok(Value::List(Arc::new(self)))
     }
 }
 
 impl<T: IntoValue> IntoValue for Option<T> {
-    fn into_value(self) -> Value {
-        match self {
-            Some(v) => Value::Variant("Some".into(), vec![v.into_value()]),
+    fn into_value(self) -> Result<Value, String> {
+        Ok(match self {
+            Some(v) => Value::Variant("Some".into(), vec![v.into_value()?]),
             None => Value::Variant("None".into(), vec![]),
-        }
+        })
     }
 }
 
 impl<T: IntoValue> IntoValue for Result<T, String> {
-    fn into_value(self) -> Value {
-        match self {
-            Ok(v) => Value::Variant("Ok".into(), vec![v.into_value()]),
+    fn into_value(self) -> Result<Value, String> {
+        Ok(match self {
+            Ok(v) => Value::Variant("Ok".into(), vec![v.into_value()?]),
             Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
-        }
+        })
     }
 }
 
@@ -2281,12 +2228,10 @@ impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Explicit per-category tags (NOT `std::mem::discriminant(self)`):
         // the Hash/Eq contract requires that `a == b ⇒ hash(a) == hash(b)`,
-        // and `PartialEq` admits two cross-discriminant equal pairs:
-        //   - `Float(x) == ExtFloat(x)` when widened to `f64` (line ~1705)
-        //   - `List(xs) == Range(lo, hi)` when xs materializes the range
-        //     (lines ~1729-1730)
-        // Therefore Float and ExtFloat MUST share a tag, and List and Range
-        // MUST share a tag AND hash the same materialized sequence.
+        // and `PartialEq` admits a cross-discriminant equal pair:
+        // `List(xs) == Range(lo, hi)` when xs materializes the range.
+        // Therefore List and Range MUST share a tag AND hash the same
+        // materialized sequence.
         match self {
             Value::Unit => {
                 state.write_u8(0);
@@ -2299,21 +2244,9 @@ impl Hash for Value {
                 state.write_u8(2);
                 n.hash(state);
             }
-            // Float and ExtFloat share tag 3 (any-float-shape). Both
-            // canonicalize -0.0 → 0.0 so that 0.0/-0.0 (which compare equal
-            // for Float/Float and Float/ExtFloat) hash equally. ExtFloat NaN
-            // round-trips its raw bits (matches PartialEq's `to_bits()`
-            // self-equality for ExtFloat-vs-ExtFloat).
+            // Canonicalize -0.0 → 0.0 so that 0.0/-0.0 (which compare
+            // equal) hash equally.
             Value::Float(f) => {
-                state.write_u8(3);
-                let bits = if *f == 0.0 {
-                    0.0_f64.to_bits()
-                } else {
-                    f.to_bits()
-                };
-                bits.hash(state);
-            }
-            Value::ExtFloat(f) => {
                 state.write_u8(3);
                 let bits = if *f == 0.0 {
                     0.0_f64.to_bits()
@@ -2512,33 +2445,6 @@ mod tests {
     }
 
     #[test]
-    fn hash_eq_extfloat_nan() {
-        let nan1 = Value::ExtFloat(f64::NAN);
-        let nan2 = Value::ExtFloat(f64::NAN);
-        assert_eq!(nan1, nan2, "ExtFloat NaN should equal itself via to_bits");
-        assert_eq!(
-            hash_of(&nan1),
-            hash_of(&nan2),
-            "ExtFloat NaN must hash consistently"
-        );
-    }
-
-    #[test]
-    fn hash_extfloat_zero_and_neg_zero() {
-        let pos = Value::ExtFloat(0.0);
-        let neg = Value::ExtFloat(-0.0);
-        // ExtFloat uses to_bits() for PartialEq, so 0.0 != -0.0 (different bits).
-        assert_ne!(pos, neg, "ExtFloat 0.0 and -0.0 differ by to_bits");
-        // Hash canonicalizes -0.0 to 0.0, so they hash the same.
-        // (This is a known Hash/Eq tension for ExtFloat -0.0.)
-        assert_eq!(
-            hash_of(&pos),
-            hash_of(&neg),
-            "ExtFloat 0.0 and -0.0 hash the same due to canonicalization"
-        );
-    }
-
-    #[test]
     fn hash_eq_int_values() {
         let a = Value::Int(42);
         let b = Value::Int(42);
@@ -2579,20 +2485,6 @@ mod tests {
     }
 
     // ── PartialEq edge cases ───────────────────────────────────────
-
-    #[test]
-    fn float_nan_not_equal() {
-        let nan1 = Value::Float(f64::NAN);
-        let nan2 = Value::Float(f64::NAN);
-        assert_ne!(nan1, nan2, "Float NaN should NOT equal NaN (IEEE 754)");
-    }
-
-    #[test]
-    fn extfloat_nan_equal() {
-        let nan1 = Value::ExtFloat(f64::NAN);
-        let nan2 = Value::ExtFloat(f64::NAN);
-        assert_eq!(nan1, nan2, "ExtFloat NaN should equal NaN via to_bits");
-    }
 
     #[test]
     fn empty_list_eq() {

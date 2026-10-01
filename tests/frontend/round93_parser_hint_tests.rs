@@ -41,7 +41,6 @@ fn shape(e: &Expr) -> String {
         ExprKind::Binary(l, op, r) => format!("({} {} {})", shape(l), op, shape(r)),
         ExprKind::Pipe(l, r) => format!("({} |> {})", shape(l), shape(r)),
         ExprKind::Range(l, r) => format!("({} .. {})", shape(l), shape(r)),
-        ExprKind::FloatElse(l, r) => format!("({} else {})", shape(l), shape(r)),
         ExprKind::QuestionMark(l) => format!("({}?)", shape(l)),
         ExprKind::Unary(op, v) => format!("({op:?} {})", shape(v)),
         ExprKind::Call(f, args) => format!(
@@ -95,9 +94,6 @@ fn precedence_and_associativity_table() {
         // `?` (54) applies to the whole pipe (55/56), not the RHS call
         ("x |> f?", "((x |> f)?)"),
         ("x + y?", "((x + y)?)"),
-        // float-else is the loosest (10)
-        ("1 + 2 else 3", "((1 + 2) else 3)"),
-        ("a else b + c", "(a else (b + c))"),
     ];
     for (src, expected) in table {
         let actual = expr_shape(src);

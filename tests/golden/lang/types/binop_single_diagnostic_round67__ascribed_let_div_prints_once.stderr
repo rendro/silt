@@ -1,5 +1,5 @@
-error[type]: operator '/' requires Int, Float, or ExtFloat, got 'String'
+error[type]: operator '/' requires Int or Float, got 'String'
  --> binop_single_diagnostic_round67__ascribed_let_div_prints_once.silt:5:18
    |
  5 |     let n: Int = s / 1
-   |                  ^ operator '/' requires Int, Float, or ExtFloat, got 'String'
+   |                  ^ operator '/' requires Int or Float, got 'String'

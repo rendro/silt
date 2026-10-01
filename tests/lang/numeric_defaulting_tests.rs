@@ -44,7 +44,7 @@
 //!
 //! What silt does instead (already in place):
 //!
-//! - Literals carry concrete types (`Int`, `Float`, `ExtFloat`),
+//! - Literals carry concrete types (`Int`, `Float`),
 //!   so any expression whose value-side is a literal does not
 //!   produce a stuck tyvar.
 //! - Generalization preserves polymorphism for arithmetic templates

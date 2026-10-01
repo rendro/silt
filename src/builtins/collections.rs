@@ -881,16 +881,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            // Preserve the silt-wide invariant that every `Value::Float` is
-            // finite. If the accumulator overflowed to ±inf (or somehow
-            // became NaN), widen to `ExtFloat` — mirroring the `float.min`
-            // / `float.max` / `float.clamp` treatment in
-            // `src/builtins/numeric.rs`.
-            if total.is_finite() {
-                Ok(crate::builtins::numeric::float_value(total))
-            } else {
-                Ok(Value::ExtFloat(total))
-            }
+            // A finite sum only ever overflows to ±inf, and the sum
+            // cannot come back from there, so one check at the end sees it.
+            crate::builtins::numeric::checked_float(total, || "list.sum_float overflow".into())
         }
         "product" => {
             if args.len() != 1 {
@@ -928,13 +921,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            // Same finiteness guard as `sum_float`: ±inf / NaN widens to
-            // `ExtFloat` to preserve the `Value::Float` finite invariant.
-            if total.is_finite() {
-                Ok(crate::builtins::numeric::float_value(total))
-            } else {
-                Ok(Value::ExtFloat(total))
-            }
+            // As in `sum_float`: once the product leaves the finite range
+            // it stays out, so one check at the end sees it.
+            crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
         }
         "scan" => {
             if args.len() != 3 {

@@ -74,7 +74,7 @@ silt types:
 | Rust type | Silt type | Notes |
 |-----------|-----------|-------|
 | `i64` | `Int` | |
-| `f64` | `Float` / `ExtFloat` | Also accepts `Int` (coerces) |
+| `f64` | `Float` | Also accepts `Int` (coerces); returning NaN or an infinity raises a runtime error |
 | `bool` | `Bool` | |
 | `String` | `String` | |
 | `()` | `Unit` | |

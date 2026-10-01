@@ -15,7 +15,6 @@ Operators are listed from **lowest precedence** (binds loosest) to **highest pre
 
 | Precedence | Operator        | Kind           | Meaning                                            |
 |-----------:|-----------------|----------------|----------------------------------------------------|
-|         10 | `else`          | infix          | `ExtFloat else Float` → `Float` fallback           |
 |         20 | `\|\|`          | infix          | Boolean OR (short-circuiting)                      |
 |         30 | `&&`            | infix          | Boolean AND (short-circuiting)                     |
 |         40 | `==`, `!=`      | infix          | Equality / inequality                              |
@@ -42,7 +41,7 @@ Use the explicit module function for the collection you have:
 
 Higher precedence wins. Given `a + b * c`, `*` (80) binds tighter than `+` (70), so the expression parses as `a + (b * c)`. All infix operators are left-associative, so `a - b - c` parses as `(a - b) - c`.
 
-Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as ExtFloat` parses as `-(x as ExtFloat)`.
+Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Float` parses as `-(x as Float)`.
 
 ## Error Propagation (`?`)
 
@@ -72,18 +71,6 @@ xs |> list.map { n -> n * 2 }
 ```
 
 Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parses as `(x |> f) == y`. It binds looser than range, so `1..10 |> list.sum()` works without parentheses.
-
-## Float Recovery (`else`)
-
-`else` is the lowest-precedence infix operator. It narrows `ExtFloat` (IEEE 754) to `Float` (guaranteed finite) by supplying a fallback for `NaN` / `Infinity`:
-
-```silt
-let x: Float = 1.0 / 3.0 else 0.0       -- finite → 0.333...
-let y: Float = 1.0 / 0.0 else 0.0       -- infinity → fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0 -- NaN → fallback 0.0
-```
-
-See [Types](types.md#numeric-safety) for when `ExtFloat` arises.
 
 ## Newline Sensitivity
 
@@ -204,5 +191,5 @@ let older = bob.{ age: bob.age + 1 }
 - [Bindings and Functions](bindings-and-functions.md) — where operators appear in expression position
 - [Pattern Matching](pattern-matching.md) — guard expressions use the same operators
 - [Error Handling](error-handling.md) — full `?` semantics and `Result` / `Option`
-- [Types](types.md) — `Float` vs `ExtFloat` and the `else` operator
+- [Types](types.md) — finite `Float` and the arithmetic errors
 - [Design Decisions](design-decisions.md) — rationale for `?` precedence and overflow behaviour

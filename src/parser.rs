@@ -2270,6 +2270,18 @@ impl Parser {
             }
         }
 
+        // A statement that starts with `else` is almost always the tail of
+        // an `if ... { } else { }` ported from another language: `if`
+        // parses as an identifier and the statement ends before `else`.
+        if self.at(&Token::Else) {
+            return Err(ParseError {
+                message: "'else' only follows a 'when' condition; silt has no 'if' keyword — \
+                          for a conditional value use 'match cond { true -> ..., false -> ... }'"
+                    .into(),
+                span: self.span(),
+            });
+        }
+
         match self.peek().clone() {
             Token::Let => self.parse_let_stmt(),
             Token::When => self.parse_when_stmt(),
@@ -2340,9 +2352,7 @@ impl Parser {
             let pattern = self.parse_pattern()?;
             self.expect(&Token::Eq)?;
             self.skip_nl();
-            // Use min_bp=11 to prevent `else` from being consumed as the
-            // infix FloatElse operator (which has l_bp=10).
-            let expr = self.parse_expr_bp(11)?;
+            let expr = self.parse_expr()?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
             return Ok(Stmt::When {
@@ -2353,9 +2363,7 @@ impl Parser {
         }
 
         // Boolean form: when <expr> else { <block> }
-        // Use min_bp=11 to prevent `else` from being consumed as the
-        // infix FloatElse operator (which has l_bp=10).
-        let condition = self.parse_expr_bp(11)?;
+        let condition = self.parse_expr()?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
         Ok(Stmt::WhenBool {
@@ -2373,7 +2381,7 @@ impl Parser {
 
     /// Shared tail for the infix-operator arms of the Pratt loop
     /// (round-93 dedup: this exact sequence was copied verbatim across
-    /// the pipe / range / binary / float-else arms).
+    /// the pipe / range / binary arms).
     ///
     ///   * `l_bp < min_bp` → restore `saved` (undoing the speculative
     ///     newline skip) and return `Ok(None)`; the caller breaks out
@@ -2763,19 +2771,6 @@ impl Parser {
                     let type_expr = self.parse_type_expr()?;
                     let span = left.span;
                     left = Expr::new(ExprKind::Ascription(Box::new(left), type_expr), span);
-                    continue;
-                }
-
-                // Float narrowing: expr else fallback
-                Token::Else => {
-                    let Some(fallback) = self.parse_infix_rhs(saved, min_bp, 10, 11, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = Expr::new(
-                        ExprKind::FloatElse(Box::new(left), Box::new(fallback)),
-                        span,
-                    );
                     continue;
                 }
 
@@ -3226,8 +3221,7 @@ impl Parser {
                 | Token::Star
                 | Token::Slash
                 | Token::Percent
-                | Token::As
-                | Token::Else,
+                | Token::As,
             ) => true,
             // `+`, `-` and the postfix forms continue it on the same
             // line only.

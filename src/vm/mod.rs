@@ -663,7 +663,9 @@ impl Vm {
                     args.len()
                 )));
             }
-            Ok(func().into_value())
+            func()
+                .into_value()
+                .map_err(|e| VmError::new(format!("{n2}: {e}")))
         })
     }
 
@@ -683,7 +685,9 @@ impl Vm {
                 )));
             }
             let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
-            Ok(func(a).into_value())
+            func(a)
+                .into_value()
+                .map_err(|e| VmError::new(format!("{n2}: {e}")))
         })
     }
 
@@ -706,7 +710,9 @@ impl Vm {
                 A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
             let b =
                 B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
-            Ok(func(a, b).into_value())
+            func(a, b)
+                .into_value()
+                .map_err(|e| VmError::new(format!("{n2}: {e}")))
         })
     }
 
@@ -996,7 +1002,6 @@ impl Vm {
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
             Value::Float(f) => f.to_string(),
-            Value::ExtFloat(f) => f.to_string(),
             Value::Range(lo, hi) => format!("{lo}..{hi}"),
             _ => format!("{val}"),
         }
@@ -1024,7 +1029,6 @@ impl Vm {
         match val {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
-            Value::ExtFloat(_) => "ExtFloat",
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
@@ -1215,7 +1219,7 @@ impl Vm {
     /// `"<TypeName>.<method>"` in `Op::CallMethod`. Returning the
     /// canonical `type_name` for every variant is load-bearing: if the
     /// name disagrees with what the compiler registers (e.g. returning
-    /// `"Unknown"` for `ExtFloat`), the qualified-global miss falls
+    /// `"Unknown"` for a primitive), the qualified-global miss falls
     /// through to `dispatch_trait_method` with a stringly-typed type
     /// name that no fallback arm matches — producing spurious
     /// `"no method '<m>' for type 'Unknown'"` errors. Keep this in sync

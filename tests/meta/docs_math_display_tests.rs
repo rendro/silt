@@ -23,7 +23,7 @@ fn math_acos_doc_snippet_runs_and_prints_bare_zero() {
     let src = r#"
 import math
 fn main() {
-    let angle = math.acos(1.0) else 0.0
+    let angle = math.acos(1.0)
     println(angle)
 }
 "#;
@@ -47,7 +47,7 @@ fn main() {
     let printed = stdout.trim_end_matches('\n');
     assert_eq!(
         printed, "0",
-        "math.acos(1.0) else 0.0 must print a bare `0` (no trailing \
+        "math.acos(1.0) must print a bare `0` (no trailing \
          `.0`); got {printed:?} (full stdout={stdout:?})"
     );
 }

@@ -233,10 +233,6 @@ pub enum Op {
     /// operands: u16 method_name_index, u8 argc (including receiver)
     CallMethod,
 
-    /// Narrow ExtFloat to Float: if TOS is finite, replace with Float and jump
-    /// forward by u16 offset; if non-finite, pop and fall through.
-    NarrowFloat, // operand: u16 offset
-
     /// Move TOS down to `stack[frame_base + u16]` and drop every value that
     /// was above that slot: pop TOS, cut the frame back to `u16` values,
     /// push the popped value. The compiler emits it where a scope ends with
@@ -323,7 +319,6 @@ impl Op {
             b if b == Op::QuestionMark as u8 => Some(Op::QuestionMark),
             b if b == Op::Panic as u8 => Some(Op::Panic),
             b if b == Op::CallMethod as u8 => Some(Op::CallMethod),
-            b if b == Op::NarrowFloat as u8 => Some(Op::NarrowFloat),
             b if b == Op::Slide as u8 => Some(Op::Slide),
             _ => None,
         }

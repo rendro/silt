@@ -155,7 +155,6 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
     Ok(match v {
         Value::Int(n) => ::toml::Value::Integer(*n),
         Value::Float(f) => ::toml::Value::Float(*f),
-        Value::ExtFloat(f) => ::toml::Value::Float(*f),
         Value::Bool(b) => ::toml::Value::Boolean(*b),
         Value::String(s) => ::toml::Value::String(s.clone()),
         Value::List(xs) => {
@@ -435,7 +434,6 @@ fn toml_to_map(vm: &mut Vm, value_type: &str, tv: &::toml::Value) -> Result<Valu
         "String" => FieldType::String,
         "Int" => FieldType::Int,
         "Float" => FieldType::Float,
-        "ExtFloat" => FieldType::ExtFloat,
         "Bool" => FieldType::Bool,
         record_name => {
             let meta_key = format!("__record_fields__{record_name}");
@@ -489,8 +487,7 @@ fn toml_to_typed_value(
             _ => Err(mismatch("Int", toml_type_name(tv))),
         },
         FieldType::Float => match tv {
-            // A `Float` is finite; `nan` and `inf` fit only an `ExtFloat`
-            // field.
+            // A `Float` is finite, so TOML's `nan` and `inf` do not decode.
             ::toml::Value::Float(f) if f.is_finite() => {
                 Ok(crate::builtins::numeric::float_value(*f))
             }
@@ -498,12 +495,6 @@ fn toml_to_typed_value(
             // TOML integers coerce to Float the way JSON numbers do.
             ::toml::Value::Integer(n) => Ok(Value::Float(*n as f64)),
             _ => Err(mismatch("Float", toml_type_name(tv))),
-        },
-        FieldType::ExtFloat => match tv {
-            ::toml::Value::Float(f) => Ok(Value::ExtFloat(*f)),
-            // TOML integers coerce to ExtFloat the way JSON numbers do.
-            ::toml::Value::Integer(n) => Ok(Value::ExtFloat(*n as f64)),
-            _ => Err(mismatch("ExtFloat", toml_type_name(tv))),
         },
         FieldType::Bool => match tv {
             ::toml::Value::Boolean(b) => Ok(Value::Bool(*b)),

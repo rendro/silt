@@ -788,10 +788,6 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
                 }
             }
         }
-        ExprKind::FloatElse(expr, fallback) => {
-            f(expr);
-            f(fallback);
-        }
         // ── Leaf variants: no child `Expr` to recurse into. ────────
         // Listed exhaustively (rather than collapsed under a `_`
         // wildcard) so that the Rust compiler enforces parity

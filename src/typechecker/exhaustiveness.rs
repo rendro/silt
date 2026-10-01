@@ -1069,7 +1069,7 @@ impl TypeChecker {
         }
 
         // B3: when `query_first` is a wildcard against an "infinite" scalar
-        // column type (Int / Float / ExtFloat / String), the legacy
+        // column type (Int / Float / String), the legacy
         // `constructors_for_query` returned just `[Wildcard]`. That
         // specialization kept every matrix row, which made matches like
         // `(0, Red) -> _ | (_, Green) -> _ | (_, Blue) -> _` on
@@ -1465,7 +1465,6 @@ impl TypeChecker {
             // the only sound approach.
             Type::Int => true,
             Type::Float => true,
-            Type::ExtFloat => true,
             Type::String => true,
             // Unit has a single inhabitant `()`. Treat as non-enumerable
             // here because `constructors_for_query` does not materialise

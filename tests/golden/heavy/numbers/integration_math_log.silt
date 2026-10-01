@@ -1,4 +1,4 @@
--- ln(e) = 1.0 — math.log now returns ExtFloat
+-- ln(e) = 1.0
 import io
 import math
 fn program() { math.log(math.e) }
