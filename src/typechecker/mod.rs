@@ -42,6 +42,10 @@ enum TypeBodyKind {
 /// the preregistered impls get revalidated against the user's body.
 pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
 
+/// The built-in traits a program cannot implement by hand: they are
+/// derived structurally (see `reject_sealed_trait_impls`).
+pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash"];
+
 /// Round 93: human adjective for the gated built-in traits, used by
 /// the field-aware auto-derive gate's diagnostics ("... which is not
 /// comparable").
@@ -535,22 +539,14 @@ pub struct TypeChecker {
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
     /// user-declared record / enum CANNOT soundly support the built-in
     /// trait because some field / variant payload does not satisfy it
-    /// (computed structurally and recursively, IGNORING hand-written
-    /// impls — `==` / `<` lower to Value-level opcodes that never
-    /// dispatch to a user impl, so a manual `trait Compare for H`
-    /// cannot make `h1 < h2` deterministic). Value = full diagnostic
-    /// message naming the offending field and its type. Consulted by
-    /// the operator-operand checks in `inference.rs`.
-    pub(super) auto_derive_operator_negatives: HashMap<(Symbol, Symbol), String>,
-    /// Round 93: like `auto_derive_operator_negatives`, but computed
-    /// WITH hand-written impls counted as satisfying the trait (method
-    /// calls like `.compare()` dispatch through the impl table, so a
-    /// manual impl genuinely rescues the type). Every pair in this map
+    /// (computed structurally and recursively). Value = full diagnostic
+    /// message naming the offending field and its type. Every pair here
     /// had its pre-stamped `trait_impl_set` entry and auto-derived
-    /// `method_table` entry removed by `synthesize_auto_derive_impls`;
-    /// the stored message enriches the resulting "unknown method"
-    /// diagnostics at method-call sites.
-    pub(super) auto_derive_dispatch_negatives: HashMap<(Symbol, Symbol), String>,
+    /// `method_table` entry removed by `synthesize_auto_derive_impls`.
+    /// Consulted by the operator-operand checks in `inference.rs` and to
+    /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
+    /// / `.hash()` call sites.
+    pub(super) auto_derive_negatives: HashMap<(Symbol, Symbol), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -820,8 +816,7 @@ impl TypeChecker {
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
-            auto_derive_operator_negatives: HashMap::new(),
-            auto_derive_dispatch_negatives: HashMap::new(),
+            auto_derive_negatives: HashMap::new(),
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
             impl_trait_args: HashMap::new(),
@@ -3207,6 +3202,8 @@ impl TypeChecker {
         // impls — producing real `<TypeName>.<method>` globals so
         // `Op::CallMethod`'s qualified-global lookup finds them at
         // runtime, never falling through to `dispatch_trait_method`.
+        // Hand-written impls of the sealed traits are rejected first.
+        self.reject_sealed_trait_impls(&mut program.decls);
         self.synthesize_auto_derive_impls(&mut program.decls);
 
         // 2c: Register fn signatures and trait impls (now seeing
@@ -4173,7 +4170,7 @@ impl TypeChecker {
         // (`compute_auto_derive_field_negatives`) and REMOVES the
         // stamp (plus the auto-derived `method_table` entry) for any
         // `(trait, type)` pair whose fields / variant payloads cannot
-        // satisfy the trait and that no hand-written impl rescues.
+        // satisfy the trait.
         // Before round 93 the stamp stood unconditionally and `==` /
         // `<` / `.compare()` / `.hash()` on e.g. a record wrapping a
         // `Fn(..)` field laundered into nondeterministic Value-level
@@ -5297,19 +5294,46 @@ impl TypeChecker {
     /// loop — already iterates `ti.methods`. Cloning the default into
     /// the impl is the smallest delta that makes the existing code
     /// "just work".
+    /// Reject every hand-written impl of `Equal`, `Compare` or `Hash` and
+    /// drop it from `decls`. These traits are sealed: every type gets
+    /// them derived structurally from its fields (see
+    /// `synthesize_auto_derive_impls`), and `==` / `<` never dispatch to
+    /// an impl, so a hand-written one could only disagree with them.
+    fn reject_sealed_trait_impls(&mut self, decls: &mut Vec<Decl>) {
+        let mut errors = Vec::new();
+        decls.retain(|decl| match decl {
+            Decl::TraitImpl(ti)
+                if !ti.is_auto_derived
+                    && SEALED_TRAIT_NAMES.contains(&resolve(ti.trait_name).as_str()) =>
+            {
+                errors.push((ti.trait_name, ti.span));
+                false
+            }
+            _ => true,
+        });
+        for (trait_name, span) in errors {
+            self.error(
+                format!(
+                    "trait '{trait_name}' cannot be implemented by hand: it is derived \
+                     structurally for every type whose fields support it"
+                ),
+                span,
+            );
+        }
+    }
+
     /// Auto-derive `Display`, `Compare`, `Equal`, `Hash` impls for every
-    /// user-declared enum or record that does not already have a manual
-    /// `trait <X> for T` impl. Pushes synthesized [`TraitImpl`] AST nodes
+    /// user-declared enum or record (`Display` only when the type has no
+    /// manual `trait Display for T` impl; the other three are sealed, so
+    /// they are always derived). Pushes synthesized [`TraitImpl`] AST nodes
     /// onto `decls` so they flow through the same registration pipeline
     /// (`register_trait_impl`) and the compiler's `Decl::TraitImpl`
     /// emission path as user-written impls.
     ///
     /// Skipped for:
-    /// - Types with a manual impl of the same trait (existing
-    ///   override-auto-derive logic preserved by setting
-    ///   `is_auto_derived: true` on synthesized impls — the
-    ///   coherence check in `register_trait_impl` lets a user impl
-    ///   override an auto-derived one).
+    /// - `Display` on types with a manual `Display` impl (synthesized
+    ///   impls carry `is_auto_derived: true`, and the coherence check in
+    ///   `register_trait_impl` lets a user `Display` impl override one).
     /// - **Generic** user types (`type Box(a) { Foo(a) }`,
     ///   `type Pair(a, b) { x: a, y: b }`). These keep the prior
     ///   typecheck-stamp + `dispatch_trait_method` behaviour. Synthesis
@@ -5322,23 +5346,22 @@ impl TypeChecker {
     /// - The `Alias` body kind (handled separately by
     ///   `register_type_alias`).
     fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
-        // Scan for user-written impls so we can skip synthesis for
-        // (trait, type) pairs the user already covered. Use the
-        // canonical target-type symbol so `trait Compare for Bytes`
-        // (where `Bytes = List(Int)`) skips synthesis on `Bytes` AND
-        // on any user enum/record under the same canonical name.
-        let mut user_impls: std::collections::HashSet<(Symbol, Symbol)> =
+        let display_sym = intern("Display");
+        // Scan for user-written `Display` impls so we can skip synthesis
+        // for the types the user already covered. Use the canonical
+        // target-type symbol so an impl on an alias skips synthesis on
+        // every type under the same canonical name.
+        let mut user_display_impls: std::collections::HashSet<Symbol> =
             std::collections::HashSet::new();
         for decl in decls.iter() {
             if let Decl::TraitImpl(ti) = decl
                 && !ti.is_auto_derived
+                && ti.trait_name == display_sym
             {
-                let target = canonicalize_type_name(&self.resolver, ti.target_type);
-                user_impls.insert((ti.trait_name, target));
+                user_display_impls.insert(canonicalize_type_name(&self.resolver, ti.target_type));
             }
         }
 
-        let display_sym = intern("Display");
         let compare_sym = intern("Compare");
         let equal_sym = intern("Equal");
         let hash_sym = intern("Hash");
@@ -5400,16 +5423,12 @@ impl TypeChecker {
         // ordering = Arc pointer address under ASLR). Here we compute
         // honest, recursive, field-aware eligibility and UN-stamp the
         // ineligible pairs (recording a precise reason for
-        // diagnostics). Two flavours are computed:
-        //   - dispatch negatives (hand-written impls rescue a type):
-        //     drive stamp/method removal, so `.compare()` etc. on a
-        //     manually-implemented type still dispatches;
-        //   - operator negatives (impls do NOT rescue): drive the
-        //     `==` / `<` operand checks in inference.rs, because those
-        //     opcodes never dispatch to a user impl.
+        // diagnostics). Equal/Compare/Hash are sealed (no hand-written
+        // impl can exist), so one computation serves both the method
+        // calls and the `==` / `<` operand checks in inference.rs.
         // Display is exempt: the runtime display fallback is total and
         // deterministic for every Value shape.
-        self.enforce_auto_derive_field_gate(&user_decl_type_names, &user_impls);
+        self.enforce_auto_derive_field_gate(&user_decl_type_names);
 
         // Built-in enums and records are registered directly into
         // `self.enums` / `self.records` from `register_builtins` and
@@ -5643,7 +5662,7 @@ impl TypeChecker {
                         .collect();
                     if display_ok
                         && policy_allows(display_sym)
-                        && !user_impls.contains(&(display_sym, key))
+                        && !user_display_impls.contains(&key)
                     {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_enum(
@@ -5653,10 +5672,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok
-                        && policy_allows(compare_sym)
-                        && !user_impls.contains(&(compare_sym, key))
-                    {
+                    if compare_ok && policy_allows(compare_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_enum(
                                 type_name,
@@ -5665,18 +5681,14 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok
-                        && policy_allows(equal_sym)
-                        && !user_impls.contains(&(equal_sym, key))
-                    {
+                    if equal_ok && policy_allows(equal_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_equal_impl_for_enum(
                             type_name,
                             &type_params,
                             &ast_variants,
                         )));
                     }
-                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
-                    {
+                    if hash_ok && policy_allows(hash_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_enum(
                             type_name,
                             &type_params,
@@ -5701,7 +5713,7 @@ impl TypeChecker {
                         .collect();
                     if display_ok
                         && policy_allows(display_sym)
-                        && !user_impls.contains(&(display_sym, key))
+                        && !user_display_impls.contains(&key)
                     {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_display_impl_for_record(
@@ -5711,10 +5723,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if compare_ok
-                        && policy_allows(compare_sym)
-                        && !user_impls.contains(&(compare_sym, key))
-                    {
+                    if compare_ok && policy_allows(compare_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_compare_impl_for_record(
                                 type_name,
@@ -5723,10 +5732,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if equal_ok
-                        && policy_allows(equal_sym)
-                        && !user_impls.contains(&(equal_sym, key))
-                    {
+                    if equal_ok && policy_allows(equal_sym) {
                         synthesized.push(Decl::TraitImpl(
                             auto_derive::synth_equal_impl_for_record(
                                 type_name,
@@ -5735,8 +5741,7 @@ impl TypeChecker {
                             ),
                         ));
                     }
-                    if hash_ok && policy_allows(hash_sym) && !user_impls.contains(&(hash_sym, key))
-                    {
+                    if hash_ok && policy_allows(hash_sym) {
                         synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_record(
                             type_name,
                             &type_params,
@@ -5766,31 +5771,21 @@ impl TypeChecker {
     /// gated built-in traits (Equal / Compare / Hash) over every
     /// user-declared type, then un-stamp `trait_impl_set` /
     /// `method_table` for the ineligible pairs and store the reasons
-    /// in `auto_derive_operator_negatives` /
-    /// `auto_derive_dispatch_negatives`. See the call site in
+    /// in `auto_derive_negatives`. See the call site in
     /// `synthesize_auto_derive_impls` for the full rationale.
     fn enforce_auto_derive_field_gate(
         &mut self,
         user_type_names: &std::collections::HashSet<Symbol>,
-        user_impls: &std::collections::HashSet<(Symbol, Symbol)>,
     ) {
-        let no_rescue = std::collections::HashSet::new();
-        let operator_negatives =
-            self.compute_auto_derive_field_negatives(user_type_names, &no_rescue);
-        let dispatch_negatives =
-            self.compute_auto_derive_field_negatives(user_type_names, user_impls);
+        let negatives = self.compute_auto_derive_field_negatives(user_type_names);
 
-        // Un-stamp the dispatch negatives: drop the provisional
-        // `trait_impl_set` entry (so `where a: Trait` obligations and
-        // supertrait checks reject honestly) and the provisional
-        // auto-derived `method_table` entry (so `.compare()` /
-        // `.equal()` / `.hash()` calls are rejected instead of
-        // falling through to `dispatch_trait_method`'s Value-level
-        // behaviour at runtime). Hand-written impls were counted as
-        // rescuing in this flavour, and register_trait_impl runs
-        // AFTER this pass, so a manual impl re-registers its own
-        // entries untouched.
-        for (trait_sym, canon) in dispatch_negatives.keys() {
+        // Un-stamp the negatives: drop the provisional `trait_impl_set`
+        // entry (so `where a: Trait` obligations and supertrait checks
+        // reject honestly) and the provisional auto-derived
+        // `method_table` entry (so `.compare()` / `.equal()` / `.hash()`
+        // calls are rejected instead of falling through to
+        // `dispatch_trait_method`'s Value-level behaviour at runtime).
+        for (trait_sym, canon) in negatives.keys() {
             self.trait_impl_set.remove(&(*trait_sym, *canon));
             let method_sym = match resolve(*trait_sym).as_str() {
                 "Equal" => intern("equal"),
@@ -5817,25 +5812,15 @@ impl TypeChecker {
             .iter()
             .map(|n| canonicalize_type_name(&self.resolver, *n))
             .collect();
-        self.auto_derive_operator_negatives
+        self.auto_derive_negatives
             .retain(|(_, canon), _| !processed.contains(canon));
-        self.auto_derive_dispatch_negatives
-            .retain(|(_, canon), _| !processed.contains(canon));
-
-        self.auto_derive_operator_negatives
-            .extend(operator_negatives);
-        self.auto_derive_dispatch_negatives
-            .extend(dispatch_negatives);
+        self.auto_derive_negatives.extend(negatives);
     }
 
     /// Round 93: fixpoint over the user-declared types computing which
     /// `(trait, type)` pairs canNOT satisfy a gated built-in trait
     /// because of an offending field / variant payload. Returns
     /// `(trait, canonical type name) → full diagnostic message`.
-    ///
-    /// `rescued` pairs are treated as unconditionally satisfying the
-    /// trait (used to thread hand-written impls into the dispatch
-    /// flavour; pass an empty set for the operator flavour).
     ///
     /// Termination / recursion notes: each pass may only ADD
     /// negatives and the pair space is finite, so the loop is bounded
@@ -5848,7 +5833,6 @@ impl TypeChecker {
     fn compute_auto_derive_field_negatives(
         &self,
         user_type_names: &std::collections::HashSet<Symbol>,
-        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
     ) -> HashMap<(Symbol, Symbol), String> {
         let gated_traits = [intern("Equal"), intern("Compare"), intern("Hash")];
 
@@ -5875,15 +5859,11 @@ impl TypeChecker {
             for (name, canon, body) in &entries {
                 for trait_sym in gated_traits {
                     let key = (trait_sym, *canon);
-                    if negatives.contains_key(&key)
-                        || rescued.contains(&key)
-                        || !self.trait_impl_set.contains(&key)
-                    {
+                    if negatives.contains_key(&key) || !self.trait_impl_set.contains(&key) {
                         continue;
                     }
-                    let supports = |fty: &Type| {
-                        self.gate_field_supports_trait(trait_sym, fty, rescued, &negatives, 0)
-                    };
+                    let supports =
+                        |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &negatives, 0);
                     let offending: Option<String> = match body {
                         TypeBodyKind::Record(fields) => fields.iter().find_map(|(fname, fty)| {
                             (!supports(fty)).then(|| {
@@ -5947,7 +5927,6 @@ impl TypeChecker {
         &self,
         trait_sym: Symbol,
         ty: &Type,
-        rescued: &std::collections::HashSet<(Symbol, Symbol)>,
         negatives: &HashMap<(Symbol, Symbol), String>,
         depth: usize,
     ) -> bool {
@@ -5955,16 +5934,12 @@ impl TypeChecker {
             return true;
         }
         let ty = self.apply(ty);
-        let recurse =
-            |t: &Type| self.gate_field_supports_trait(trait_sym, t, rescued, negatives, depth + 1);
+        let recurse = |t: &Type| self.gate_field_supports_trait(trait_sym, t, negatives, depth + 1);
         // Stamp lookup for a nominal/container head, honest w.r.t. the
         // in-progress negatives.
         let head_ok = |head: Symbol| {
             let canon = canonicalize_type_name(&self.resolver, head);
             let key = (trait_sym, canon);
-            if rescued.contains(&key) {
-                return true;
-            }
             if negatives.contains_key(&key) {
                 return false;
             }
@@ -6014,13 +5989,6 @@ impl TypeChecker {
     /// (`is_equality`) and `<`/`>`/`<=`/`>=` on nominal record / enum
     /// operands. Returns the diagnostic to emit when the operand's
     /// type cannot soundly support the Value-level operation.
-    ///
-    /// Hand-written impls deliberately do NOT lift the rejection:
-    /// comparison operators compile to plain `Op::Eq` / `Op::Lt`
-    /// opcodes that use `Value`'s structural PartialEq/Ord — they
-    /// never dispatch through the impl table — so a manual
-    /// `trait Compare for H` cannot change what `h1 < h2` does at
-    /// runtime. Use `.compare()` / `.equal()` for impl dispatch.
     pub(super) fn operand_builtin_trait_violation(
         &self,
         ty: &Type,
@@ -6039,14 +6007,12 @@ impl TypeChecker {
             // types inline — walk them directly.
             Type::Record(name, fields) => {
                 let canon = canonicalize_type_name(&self.resolver, *name);
-                if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+                if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
                     return Some(msg.clone());
                 }
-                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-                    std::collections::HashSet::new();
                 let no_negatives = HashMap::new();
                 return fields.iter().find_map(|(fname, fty)| {
-                    (!self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0))
+                    (!self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0))
                         .then(|| {
                         format!(
                             "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
@@ -6071,28 +6037,20 @@ impl TypeChecker {
             // honestly (and bottoms out at `Type::Fun(..) => false`), so we
             // reuse it and surface the whole container type as the reason.
             Type::List(_) | Type::Range(_) | Type::Tuple(_) | Type::Map(..) | Type::Set(_) => {
-                let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-                    std::collections::HashSet::new();
                 let no_negatives = HashMap::new();
-                return (!self.gate_field_supports_trait(
-                    trait_sym,
-                    &resolved,
-                    &no_rescue,
-                    &no_negatives,
-                    0,
-                ))
-                .then(|| {
-                    format!(
-                        "type '{resolved}' cannot derive '{}': element type is not {}",
-                        resolve(trait_sym),
-                        builtin_trait_adjective(trait_sym),
-                    )
-                });
+                return (!self.gate_field_supports_trait(trait_sym, &resolved, &no_negatives, 0))
+                    .then(|| {
+                        format!(
+                            "type '{resolved}' cannot derive '{}': element type is not {}",
+                            resolve(trait_sym),
+                            builtin_trait_adjective(trait_sym),
+                        )
+                    });
             }
             _ => return None,
         };
         let canon = canonicalize_type_name(&self.resolver, name);
-        if let Some(msg) = self.auto_derive_operator_negatives.get(&(trait_sym, canon)) {
+        if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
             return Some(msg.clone());
         }
         // Instantiation walk: substitute the concrete type args into
@@ -6102,12 +6060,8 @@ impl TypeChecker {
         // is conditionally eligible, while leaving phantom params
         // (`type Tag(a) { name: String }`) unpunished because only
         // the types that actually appear in fields are walked.
-        let no_rescue: std::collections::HashSet<(Symbol, Symbol)> =
-            std::collections::HashSet::new();
         let no_negatives = HashMap::new();
-        let check = |fty: &Type| {
-            self.gate_field_supports_trait(trait_sym, fty, &no_rescue, &no_negatives, 0)
-        };
+        let check = |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0);
         if let Some(info) = self.records.get(&name) {
             let mapping: HashMap<TyVar, Type> = self
                 .record_param_var_ids
@@ -6173,9 +6127,7 @@ impl TypeChecker {
             _ => return None,
         };
         let canon = canonicalize_type_name(&self.resolver, type_name);
-        self.auto_derive_dispatch_negatives
-            .get(&(trait_sym, canon))
-            .cloned()
+        self.auto_derive_negatives.get(&(trait_sym, canon)).cloned()
     }
 
     fn synthesize_default_methods(&self, decls: &mut [Decl]) {
@@ -6319,7 +6271,8 @@ impl TypeChecker {
 
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
-            // Allow overriding auto-derived impls.
+            // Allow overriding auto-derived impls (only `Display` can be
+            // written by hand: see `reject_sealed_trait_impls`).
             let first_method = ti
                 .methods
                 .first()
@@ -6635,8 +6588,8 @@ impl TypeChecker {
         // soundness hole where `trait Total for Bytes2` (with
         // `type Bytes2 = List(Int)`) satisfied a where-bound for ANY
         // `List(T)`. Overwrites are fine: coherence rejects duplicate user
-        // impls above, and the one permitted overwrite (user impl
-        // overriding an auto-derived one) should win here too.
+        // impls above, and the one permitted overwrite (a user Display
+        // impl overriding the auto-derived one) should win here too.
         self.impl_self_types
             .insert((ti.trait_name, target_type), self_type.clone());
 
@@ -8315,8 +8268,9 @@ impl ReplTypeContext {
         // Synthesize default method bodies into impls that omitted them.
         self.checker.synthesize_default_methods(&mut program.decls);
 
-        // Auto-derive Display/Compare/Equal/Hash for user types without
-        // a manual impl. See `check_program` for the rationale.
+        // Auto-derive Display/Compare/Equal/Hash for user types. See
+        // `check_program` for the rationale.
+        self.checker.reject_sealed_trait_impls(&mut program.decls);
         self.checker
             .synthesize_auto_derive_impls(&mut program.decls);
 

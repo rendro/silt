@@ -1,0 +1,16 @@
+-- `Equal` and `Hash` are sealed too, on user types and on built-in types.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Equal' cannot be implemented by hand
+-- stderr-contains: trait 'Hash' cannot be implemented by hand
+type Tag { Tag(String) }
+trait Equal for Tag {
+  fn equal(self, other: Tag) -> Bool { true }
+}
+trait Hash for Int {
+  fn hash(self) -> Int { 0 }
+}
+
+fn main() {
+  println(Tag("a") == Tag("b"))
+}

@@ -594,9 +594,11 @@ pub struct TraitImpl {
     /// (Display / Compare / Equal / Hash for user-declared enums and
     /// records). Synthesized impls register their methods into the
     /// method_table with `is_auto_derived: true` so that a subsequent
-    /// user-written `trait Compare for Color { ... }` is allowed to
+    /// user-written `trait Display for Color { ... }` is allowed to
     /// override the generated body without colliding with the
-    /// duplicate-impl coherence check in `register_trait_impl`.
+    /// duplicate-impl coherence check in `register_trait_impl`. (A
+    /// user-written impl of the sealed Equal / Compare / Hash is an
+    /// error.)
     /// Default false for parser-produced impls.
     pub is_auto_derived: bool,
 }

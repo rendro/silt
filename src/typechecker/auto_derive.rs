@@ -1,8 +1,9 @@
 //! Auto-derive synthesis for built-in traits on user-declared types.
 //!
-//! For every user enum or record without a manual `trait <X> for T` impl,
-//! we synthesize a `TraitImpl` AST node for each of Display, Compare,
-//! Equal, and Hash. The synthesized impl's method bodies are real silt
+//! For every user enum or record we synthesize a `TraitImpl` AST node
+//! for each of Compare, Equal and Hash (sealed: they cannot be written
+//! by hand), and for Display unless the type has a manual
+//! `trait Display for T` impl. The synthesized impl's method bodies are real silt
 //! AST (match expressions, let bindings, calls) so they flow through the
 //! typechecker's body-check pass and the compiler's TraitImpl emit path
 //! exactly the same as a user-written impl. The result is that
@@ -388,7 +389,7 @@ fn fn_decl(name: Symbol, params: Vec<Param>, return_type: Option<TypeExpr>, body
 ///   impl, etc.). Phantom params (params not used in any field) still
 ///   receive the bound for consistency: this matches Rust's auto-derive
 ///   behaviour and avoids a special case.
-/// - `is_auto_derived = true` (so user impls can override).
+/// - `is_auto_derived = true` (so a user `Display` impl can override it).
 fn trait_impl(
     trait_name: Symbol,
     type_name: Symbol,

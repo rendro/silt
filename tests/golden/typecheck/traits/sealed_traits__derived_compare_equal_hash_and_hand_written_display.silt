@@ -1,0 +1,18 @@
+-- Equal, Compare and Hash come from the fields; Display may still be
+-- written by hand.
+import map
+
+type Version { major: Int, minor: Int }
+trait Display for Version {
+  fn display(self) -> String { "v{self.major}.{self.minor}" }
+}
+
+fn main() {
+  let a = Version { major: 1, minor: 2 }
+  let b = Version { major: 1, minor: 10 }
+  println(a < b)
+  println(a == Version { major: 1, minor: 2 })
+  println(a.compare(b))
+  println(map.get(#{ a: "old", b: "new" }, b))
+  println(a.display())
+}

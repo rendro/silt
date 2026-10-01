@@ -451,9 +451,9 @@ impl Vm {
             }
             "hash" => {
                 // The typechecker auto-derives `Hash` for Int / Float /
-                // Bool / String / List (and more). At runtime,
-                // user-defined `trait Hash for T` impls are resolved via
-                // the qualified-global path in `Op::CallMethod`; only
+                // Bool / String / List (and more). At runtime, the
+                // synthesized impls of user types are resolved via the
+                // qualified-global path in `Op::CallMethod`; only
                 // auto-derived primitives fall through to here.
                 //
                 // `Value` already implements `std::hash::Hash` with a

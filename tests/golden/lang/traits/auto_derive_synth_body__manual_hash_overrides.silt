@@ -1,9 +1,0 @@
-type Color { Red, Green, Blue, }
-trait Hash for Color {
-    fn hash(self: Color) -> Int { 12345 }
-}
-fn h(a: a) -> Int where a: Hash { a.hash() }
-fn main() {
-    println(h(Red))
-    println(h(Green))
-}

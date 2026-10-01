@@ -106,7 +106,7 @@ Implementing a subtrait without the supertrait fails:
 type MyInt { v: Int }
 trait Ordered for MyInt { ... }
 -- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
--- (only fires when MyInt does not have an Equal impl — auto-derived counts)
+-- (only fires when MyInt cannot derive Equal, e.g. it has a function field)
 ```
 
 ## Default Methods
@@ -404,6 +404,19 @@ auto-derived.
 
 The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
 Write your own `trait Display for T` to override.
+
+`Equal`, `Hash` and `Compare` are **sealed**: they are always derived
+structurally from a type's fields (a type gets them when every field
+supports them), and `==`, `<` and map keys use exactly that structure. A
+hand-written `trait Equal for T`, `trait Compare for T` or
+`trait Hash for T` is an error:
+
+```silt
+type Version { major: Int, minor: Int }
+trait Compare for Version { ... }
+-- error: trait 'Compare' cannot be implemented by hand: it is derived
+-- structurally for every type whose fields support it
+```
 
 The `Error` trait has supertrait `Display` and one method,
 `message(self) -> String`. Each stdlib error enum (`IoError`,
