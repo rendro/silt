@@ -2472,6 +2472,27 @@ impl TypeChecker {
         });
     }
 
+    /// The known type that `name`, a lowercase name in a type
+    /// annotation, spells in the wrong case: `int` → `Int`, `option` →
+    /// `Option`. Type declarations must be capitalised, so such a name
+    /// can only be a typo for that type. One-letter names are left
+    /// alone: `a`, `e`, `t` are the usual type variables, whatever types
+    /// a program declares.
+    fn lowercase_type_name_hint(&self, name: &str) -> Option<String> {
+        if name.chars().count() < 2 {
+            return None;
+        }
+        let matches = |candidate: &str| candidate != name && candidate.eq_ignore_ascii_case(name);
+        crate::types::builtins::BUILTIN_TYPES
+            .iter()
+            .map(|t| t.name.to_string())
+            .chain(self.records.keys().map(|s| resolve(*s)))
+            .chain(self.enums.keys().map(|s| resolve(*s)))
+            .chain(self.type_aliases.iter().map(|s| resolve(*s)))
+            .filter(|candidate| matches(candidate))
+            .min()
+    }
+
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
 
     /// Merge the producer-side snapshot for `module_sym` into this
@@ -4557,6 +4578,20 @@ impl TypeChecker {
                         // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
                         let first_char = name_str.chars().next().unwrap_or('A');
                         if first_char.is_lowercase() {
+                            // ... unless the name is a known type spelled
+                            // in lowercase (`x: int`): that is a typo for
+                            // the type, not a type variable.
+                            if let Some(type_name) = self.lowercase_type_name_hint(&name_str) {
+                                self.error(
+                                    format!(
+                                        "unknown type '{name_str}' — did you mean `{type_name}`? \
+                                         (type names start with a capital letter; a lowercase \
+                                         name in a type is a type variable)"
+                                    ),
+                                    te.span,
+                                );
+                                return Type::Error;
+                            }
                             let tv = self.fresh_var();
                             param_vars.insert(*name, tv.clone());
                             tv
@@ -4710,7 +4745,11 @@ impl TypeChecker {
                         // ghost `Type::Generic("Frobnitz", [Int])` cascaded
                         // into Display / type-mismatch noise.
                         if expected_arity.is_none() {
-                            self.error(format!("unknown type '{name_str}'"), te.span);
+                            let hint = match self.lowercase_type_name_hint(&name_str) {
+                                Some(type_name) => format!(" — did you mean `{type_name}`?"),
+                                None => String::new(),
+                            };
+                            self.error(format!("unknown type '{name_str}'{hint}"), te.span);
                             return Type::Error;
                         }
                         if let Some(expected) = expected_arity
