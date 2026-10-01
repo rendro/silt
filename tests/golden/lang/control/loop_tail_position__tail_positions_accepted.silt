@@ -1,0 +1,26 @@
+-- Tail positions: the last expression of the loop body, of a match arm or
+-- block in tail position, and of a `when` else body.
+fn fact(n: Int) -> Int {
+  loop i = n, acc = 1 {
+    match i {
+      0 -> acc
+      _ -> {
+        let next = acc * i
+        loop(i - 1, next)
+      }
+    }
+  }
+}
+
+fn sum_even(n: Int) -> Int {
+  loop i = 0, acc = 0 {
+    when i < n else { return acc }
+    when i % 2 == 0 else { loop(i + 1, acc) }
+    loop(i + 1, acc + i)
+  }
+}
+
+fn main() {
+  println(fact(5))
+  println(sum_even(10))
+}

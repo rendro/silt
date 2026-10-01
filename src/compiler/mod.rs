@@ -3564,7 +3564,9 @@ impl Compiler {
             }
         }
 
-        // No arm matched — panic
+        // No arm matched — panic. The typechecker requires a final `_`
+        // arm, so like the scrutinee form's non-exhaustive panic this is
+        // only a backstop.
         let msg_idx = self.add_constant(
             Value::String("non-exhaustive match: no condition was true".into()),
             span,

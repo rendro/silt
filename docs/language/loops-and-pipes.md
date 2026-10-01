@@ -180,6 +180,26 @@ When the body produces a value without calling `loop(...)`, that value is the
 result of the entire expression. `loop` is composable -- you can bind its
 result, return it, or use it in a pipeline.
 
+**`loop(...)` must be in tail position.** It jumps back to the top of the
+loop with new values and never produces a value where it is written (its
+type is `Never`), so nothing may use its result. It may appear only as the
+last expression of the loop body, or of a block, a match arm or a `when`
+else body that is itself in tail position:
+
+```silt
+fn fact(n) {
+  loop i = n, acc = 1 {
+    match i {
+      0 -> acc
+      _ -> loop(i - 1, acc * i)    -- OK: last expression of a tail arm
+    }
+  }
+}
+```
+
+`i * loop(i - 1)` is a type error: carry the running value in a binding
+instead, as `acc` does above.
+
 **Loop inside closures.** `loop()` works inside closures, which is useful for
 search patterns:
 

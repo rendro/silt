@@ -34,6 +34,10 @@ fn classify(n) {
 }
 ```
 
+The arms are tried in order and the first true condition wins. Such a match
+must end with a `_ -> ...` arm, the value when no condition is true; leaving
+it out is a type error.
+
 ## Literal Patterns
 
 Including negative numbers:

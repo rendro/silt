@@ -4622,7 +4622,17 @@ impl TypeChecker {
                         }
                     }
                     None => {
-                        // Guardless match: each arm's guard is a boolean condition
+                        // Guardless match: each arm's guard is a boolean
+                        // condition. When no condition holds there is no
+                        // value, so the last arm must be the `_` default.
+                        if arms.last().is_none_or(|arm| arm.guard.is_some()) {
+                            self.error(
+                                "a `match` without a scrutinee must end with a `_ -> ...` arm \
+                                 for when no condition is true"
+                                    .to_string(),
+                                span,
+                            );
+                        }
                         let result_ty = self.fresh_var();
                         // Same rule as the scrutinee form: arms that all
                         // diverge make the match diverge.
@@ -4643,7 +4653,6 @@ impl TypeChecker {
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
 
-                        // No exhaustiveness checking for guardless match
                         if every_arm_diverges {
                             Type::Never
                         } else {
@@ -4684,6 +4693,7 @@ impl TypeChecker {
                     binding_types.push(ty.clone());
                     loop_env.define(*name, Scheme::mono(ty));
                 }
+                self.check_recur_tail_positions(body, true);
                 let prev_loop = self.loop_binding_types.take();
                 self.loop_binding_types = Some(binding_types);
                 let result = self.infer_expr(body, &mut loop_env);
@@ -4719,18 +4729,158 @@ impl TypeChecker {
                     }
                 } else {
                     self.error(
-                        "`recur` can only appear inside a `loop(...)` body — it jumps \
-                         to the enclosing loop with new binding values"
+                        "`loop(...)` can only appear inside a `loop` body — it restarts \
+                         the enclosing loop with new binding values"
                             .to_string(),
                         span,
                     );
                 }
-                self.fresh_var()
+                // `loop(...)` jumps back to the top of the loop and never
+                // produces a value here.
+                Type::Never
             }
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
         resolved
+    }
+
+    /// Reject a `loop(...)` call that is not in tail position of its
+    /// loop. `loop(...)` restarts the loop, so nothing may use its result:
+    /// it must be the last expression of the loop body, or of a block,
+    /// match arm or `when` else body that is itself in tail position.
+    /// `tail` says whether `expr` is in tail position. A nested `loop`
+    /// starts its own tail context, checked when that loop is inferred,
+    /// so only its binding initialisers are walked here.
+    fn check_recur_tail_positions(&mut self, expr: &Expr, tail: bool) {
+        match &expr.kind {
+            ExprKind::Recur(args) => {
+                if !tail {
+                    self.error(
+                        "`loop(...)` must be in tail position: it restarts the loop, so \
+                         nothing can use its result — make it the last expression of \
+                         the loop body, or of a block or match arm in tail position"
+                            .to_string(),
+                        expr.span,
+                    );
+                }
+                for arg in args {
+                    self.check_recur_tail_positions(arg, false);
+                }
+            }
+            ExprKind::Loop { bindings, .. } => {
+                for (_, value) in bindings {
+                    self.check_recur_tail_positions(value, false);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                let last = stmts.len().saturating_sub(1);
+                for (i, stmt) in stmts.iter().enumerate() {
+                    match stmt {
+                        Stmt::Let { value, .. } => self.check_recur_tail_positions(value, false),
+                        Stmt::When {
+                            expr: value,
+                            else_body,
+                            ..
+                        } => {
+                            self.check_recur_tail_positions(value, false);
+                            self.check_recur_tail_positions(else_body, tail);
+                        }
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
+                            self.check_recur_tail_positions(condition, false);
+                            self.check_recur_tail_positions(else_body, tail);
+                        }
+                        Stmt::Expr(e) => self.check_recur_tail_positions(e, tail && i == last),
+                    }
+                }
+            }
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
+                if let Some(scrutinee) = scrutinee {
+                    self.check_recur_tail_positions(scrutinee, false);
+                }
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.check_recur_tail_positions(guard, false);
+                    }
+                    self.check_recur_tail_positions(&arm.body, tail);
+                }
+            }
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::StringLit(..)
+            | ExprKind::Ident(_)
+            | ExprKind::Unit
+            | ExprKind::Return(None) => {}
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.check_recur_tail_positions(e, false);
+                    }
+                }
+            }
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) | ListElem::Spread(e) => {
+                            self.check_recur_tail_positions(e, false)
+                        }
+                    }
+                }
+            }
+            ExprKind::Map(entries) => {
+                for (k, v) in entries {
+                    self.check_recur_tail_positions(k, false);
+                    self.check_recur_tail_positions(v, false);
+                }
+            }
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+                for e in elems {
+                    self.check_recur_tail_positions(e, false);
+                }
+            }
+            ExprKind::FieldAccess(e, _)
+            | ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => self.check_recur_tail_positions(e, false),
+            ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
+                self.check_recur_tail_positions(l, false);
+                self.check_recur_tail_positions(r, false);
+            }
+            ExprKind::Call(callee, args) => {
+                self.check_recur_tail_positions(callee, false);
+                for arg in args {
+                    self.check_recur_tail_positions(arg, false);
+                }
+            }
+            ExprKind::Lambda { body, .. } => self.check_recur_tail_positions(body, false),
+            ExprKind::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, false);
+                }
+            }
+            ExprKind::RecordUpdate { expr: base, fields } => {
+                self.check_recur_tail_positions(base, false);
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, false);
+                }
+            }
+            ExprKind::AnonRecord { spread, fields } => {
+                if let Some(base) = spread {
+                    self.check_recur_tail_positions(base, false);
+                }
+                for (_, e) in fields {
+                    self.check_recur_tail_positions(e, false);
+                }
+            }
+        }
     }
 
     // ── Statement type inference ────────────────────────────────────
