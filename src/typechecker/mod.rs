@@ -4436,8 +4436,8 @@ impl TypeChecker {
                 // Dead-arm cleanup (round 88 item D3): a prior version
                 // also tested `visiting.contains(name)` here, but
                 // `visiting` is seeded only with alias-decl names and
-                // `register_type_decl` rejects duplicate top-level
-                // names — so an alias name can never collide with a
+                // the parser rejects a top-level name bound twice — so
+                // an alias name can never collide with a
                 // record name. The guard was unreachable. Field
                 // recursion below remains: it descends into nested
                 // alias references inside record fields, which IS how
