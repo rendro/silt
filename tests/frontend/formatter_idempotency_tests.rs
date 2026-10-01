@@ -1045,7 +1045,7 @@ fn test_fuzz_repro_round_call_arg_wrap_followup_idempotent() {
     // The original input contains NUL bytes inside `--:` line comments
     // — the lexer tolerates them as comment content. Use a byte literal
     // to preserve them exactly.
-    let source_bytes: &[u8] = b"fn anic() {\n--:\x00\x00 wodc listanic() {\n--:\x00\x00 wodc list\n-henath%\n\n-- Trait simorpt litsim() {\n-\n-pcmi- omrpimpowheh-tn-\na\n Traiz s\n-- BFn?-- Hy dent,\n-- coim() {\n--:\x00n\n}\n";
+    let source_bytes: &[u8] = b"fn anic() {\n--:\x00\x00 wodc listanic() {\n--:\x00\x00 wodc list\n-henath%\n\n-- Trait simorpt litsim() {\n-\n-pcmi- omrpimpowheh-tn-\na\n Traiz\ns\n-- BFn?-- Hy dent,\n-- coim() {\n--:\x00n\n}\n";
     let source = std::str::from_utf8(source_bytes).expect("corpus is utf-8 with embedded NULs");
     assert_idempotent(source);
 }
@@ -1112,20 +1112,6 @@ fn test_multiple_trailing_comments_after_triple_string_idempotent() {
 }
 
 #[test]
-fn test_fuzz_repro_round_comment_attach_followup_new_bug_idempotent() {
-    // Verbatim 1553-byte input from
-    // fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt.
-    // Pre-fix, the first formatting pass produced a 1436-byte output
-    // and the second pass produced a 1362-byte output (dropping the
-    // last two trailing comments inside the outer fn body) — a clear
-    // idempotency break. The root cause is documented on
-    // `test_trailing_comment_after_triple_string_with_imbalanced_quotes_idempotent`.
-    let source =
-        include_str!("../../fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt");
-    assert_idempotent(source);
-}
-
-#[test]
 fn test_triple_string_content_ending_in_quote_idempotent() {
     // Hand-minimized repro for the post-2c979d4 fuzz finding
     // `round-triple-fold-tail.silt`. Source has a triple-quoted string
@@ -1166,18 +1152,4 @@ fn test_triple_string_content_single_quote_idempotent() {
         !formatted.contains("\"\"\"\"\"\"\""),
         "must not emit 7 consecutive `\"` (single-line form would lex as triple+leftover):\n{formatted}"
     );
-}
-
-#[test]
-fn test_fuzz_repro_round_triple_fold_tail_idempotent() {
-    // Verbatim 221-byte input from
-    // fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt.
-    // Pre-fix, pass 1 emitted a triple-string content-ending-in-quote
-    // as a single-line `"""""""""` run that pass 2 re-lexed into two
-    // separate string tokens (`""""""` triple-empty + `""` regular),
-    // changing both content and statement count. See
-    // `test_triple_string_content_ending_in_quote_idempotent` for the
-    // root cause.
-    let source = include_str!("../../fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt");
-    assert_idempotent(source);
 }

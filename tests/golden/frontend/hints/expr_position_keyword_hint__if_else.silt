@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: 'else' only follows a 'when' condition
+-- stderr-contains: error[parse]
 -- stderr-contains: silt has no 'if' keyword
 fn main() {
     let x: Bool = true

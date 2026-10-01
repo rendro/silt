@@ -1,0 +1,10 @@
+-- Statements are separated by a newline: two on one line are a parse error.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected a newline before 'let': each statement must start on its own line
+-- stderr-contains: statement_newline__two_lets_on_one_line_rejected.silt:8:13
+fn main() {
+  let a = 1 let b = 2
+  println(a + b)
+}

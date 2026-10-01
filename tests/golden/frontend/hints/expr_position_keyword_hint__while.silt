@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: undefined variable 'while'
+-- stderr-contains: error[parse]
 -- stderr-contains: silt has no 'while'/'for' keywords
 -- stderr-contains: use tail-recursive 'loop'
 fn main() {

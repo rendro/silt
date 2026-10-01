@@ -714,6 +714,15 @@ impl Parser {
         }
     }
 
+    /// Undo `skip_nl` (and the newline skipping of `peek_skip_nl`): step
+    /// back to just after the last real token, so the newline that ends a
+    /// body-less declaration is seen by the same-line check.
+    fn unskip_nl(&mut self) {
+        while self.pos > 0 && matches!(self.tokens[self.pos - 1].0, Token::Newline) {
+            self.pos -= 1;
+        }
+    }
+
     /// Returns true if there is a newline token right at self.pos
     /// (i.e., between the previous real token and the next real token).
     fn has_newline_before(&self) -> bool {
@@ -925,6 +934,9 @@ impl Parser {
         self.skip_nl();
         while !self.at(&Token::Eof) {
             decls.push(self.parse_decl()?);
+            if Self::starts_statement(self.peek()) {
+                return Err(self.same_line_err("declaration"));
+            }
             self.skip_nl();
         }
         Ok(Program { decls })
@@ -948,7 +960,10 @@ impl Parser {
             // partial state on failure.
             if self.at(&Token::Fn) {
                 match self.parse_fn_decl_recovering() {
-                    Ok((decl, None)) => decls.push(Decl::Fn(decl)),
+                    Ok((decl, None)) => {
+                        decls.push(Decl::Fn(decl));
+                        self.recover_same_line_decl();
+                    }
                     Ok((stub, Some(err))) => {
                         self.errors.push(err);
                         decls.push(Decl::Fn(stub));
@@ -978,6 +993,7 @@ impl Parser {
                                 decl.doc = pub_doc;
                             }
                             decls.push(Decl::Fn(decl));
+                            self.recover_same_line_decl();
                         }
                         Ok((mut stub, Some(err))) => {
                             stub.is_pub = true;
@@ -1002,7 +1018,10 @@ impl Parser {
             }
 
             match self.parse_decl() {
-                Ok(decl) => decls.push(decl),
+                Ok(decl) => {
+                    decls.push(decl);
+                    self.recover_same_line_decl();
+                }
                 Err(e) => {
                     self.errors.push(e);
                     self.synchronize();
@@ -1011,6 +1030,16 @@ impl Parser {
             self.skip_nl();
         }
         (Program { decls }, std::mem::take(&mut self.errors))
+    }
+
+    /// The recovering counterpart of the same-line check in
+    /// `parse_program`: record the error and parse the next declaration
+    /// where it starts.
+    fn recover_same_line_decl(&mut self) {
+        if Self::starts_statement(self.peek()) {
+            let err = self.same_line_err("declaration");
+            self.errors.push(err);
+        }
     }
 
     /// Skip tokens until we find one that could start a new declaration.
@@ -1134,6 +1163,7 @@ impl Parser {
         let (body, is_signature_only) = if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
         } else {
+            self.unskip_nl();
             // Abstract method — no body (e.g. trait method declarations).
             // The Unit placeholder keeps the AST shape uniform; the
             // is_signature_only flag is the authoritative signal.
@@ -1318,6 +1348,7 @@ impl Parser {
                 }
             }
         } else {
+            self.unskip_nl();
             // Abstract method — no body.
             (Expr::new(ExprKind::Unit, span), true)
         };
@@ -1906,7 +1937,13 @@ impl Parser {
         let (_, import_span) = self.expect(&Token::Import)?;
         let (name, _) = self.expect_ident()?;
 
+        // `.{ ... }` and `as` may continue the import on the next line;
+        // anything else there starts the next declaration.
+        let saved = self.save();
         self.skip_nl();
+        if !self.at(&Token::Dot) && !self.at(&Token::As) {
+            self.restore(saved);
+        }
         if self.at(&Token::Dot) {
             self.advance();
             self.expect(&Token::LBrace)?;
@@ -2172,9 +2209,71 @@ impl Parser {
         self.skip_nl();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
+            if Self::starts_statement(self.peek()) {
+                return Err(self.same_line_err("statement"));
+            }
             self.skip_nl();
         }
         Ok(stmts)
+    }
+
+    /// True when `tok` could begin a statement or a declaration. Such a
+    /// token right after a complete statement, on the same line, is a
+    /// second statement on that line (see `same_line_err`). Any other
+    /// token there (a stray closer, `,`, `else`, ...) is left to the
+    /// error the next parse step reports for it.
+    fn starts_statement(tok: &Token) -> bool {
+        matches!(
+            tok,
+            Token::Let
+                | Token::When
+                | Token::Match
+                | Token::Return
+                | Token::Loop
+                | Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Int(_)
+                | Token::Float(_)
+                | Token::Bool(_)
+                | Token::StringLit(..)
+                | Token::StringStart(_)
+                | Token::Ident(_)
+                | Token::Minus
+                | Token::Not
+                | Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket
+        )
+    }
+
+    /// The error for a token that follows a complete statement (or
+    /// top-level declaration) on the same line. Statements are separated
+    /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
+    /// are rejected here instead of being read as two statements.
+    fn same_line_err(&self, what: &str) -> ParseError {
+        // `let r = if x { ... }`: the statement ended at a foreign keyword
+        // read as an identifier, so point at the silt equivalent instead.
+        if let Some((Token::Ident(prev), prev_span)) =
+            self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
+            && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
+        {
+            return ParseError {
+                message: hint.into(),
+                span: *prev_span,
+            };
+        }
+        ParseError {
+            message: format!(
+                "expected a newline before '{}': each {what} must start on its own line",
+                self.peek()
+            ),
+            span: self.span(),
+        }
     }
 
     /// G1 hint table: messages for C-family control-flow keywords that

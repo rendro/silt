@@ -1,0 +1,9 @@
+-- Top-level declarations each start on their own line too.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: expected a newline before 'fn': each declaration must start on its own line
+fn one() -> Int { 1 } fn two() -> Int { 2 }
+fn main() {
+  println(one() + two())
+}

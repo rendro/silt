@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: undefined variable 'if'
+-- stderr-contains: error[parse]
 -- stderr-contains: silt has no 'if' keyword
 -- stderr-contains: match cond
 fn main() {

@@ -77,7 +77,14 @@ Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parse
 
 ## Newline Sensitivity
 
-silt has no statement separator. Newlines can end an expression, but the rules depend on the operator:
+Statements are separated by newlines: each statement, and each top-level declaration, starts on its own line (or ends at the closing `}` of its block). Two statements on one line are a parse error:
+
+```silt
+let a = 1 let b = 2          -- error: expected a newline before 'let'
+let total = price quantity   -- error: expected a newline before 'quantity'
+```
+
+A newline ends a statement unless the next line continues it, and the rules for that depend on the operator:
 
 **Infix operators cross newlines:**
 

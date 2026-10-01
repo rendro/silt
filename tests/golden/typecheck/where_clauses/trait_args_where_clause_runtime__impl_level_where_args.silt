@@ -10,7 +10,10 @@ trait UseIt for List(a) where a: Conv(Int) {
     fn use_it(self) -> Int {
       match self {
           [] -> 0
-          [x, ..rest] -> { let n: Int = x.conv() n + rest.use_it() }
+          [x, ..rest] -> {
+            let n: Int = x.conv()
+            n + rest.use_it()
+          }
       }
     }
 }
