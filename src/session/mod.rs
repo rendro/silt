@@ -512,13 +512,19 @@ impl Session {
     }
 
     /// Compile the entry file `entry` for `target`. An analysis with an
-    /// error is not compiled: the error is the analysis's, and the result
-    /// is `Err` with nothing more. Otherwise the entry point is checked
-    /// by its inferred type, then the modules are compiled; the `Err`
-    /// holds what that found.
+    /// error is not compiled: the `Err` holds the analysis's errors. (A
+    /// door that shows the analysis compiles only when it has none.)
+    /// Otherwise the entry point is checked by its inferred type, then the
+    /// modules are compiled; the `Err` holds what that found.
     pub fn compile(&mut self, entry: FileId, target: Entry) -> Result<Program, Vec<Diagnostic>> {
-        if self.analyze(entry).has_errors() {
-            return Err(Vec::new());
+        let analysis = self.analyze(entry);
+        if analysis.has_errors() {
+            return Err(analysis
+                .diagnostics
+                .iter()
+                .filter(|d| d.is_error())
+                .cloned()
+                .collect());
         }
         let id = self.module_of(entry);
         let modules = self.results[&id].modules.clone();

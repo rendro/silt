@@ -132,6 +132,7 @@ pub(crate) fn analyse_parsed_entry_file(
     let entry = session.module_of(file);
     let problems = session.graph().module(entry).problems.clone();
     let analysis = session.analyze(file).clone();
+    let has_errors = analysis.has_errors();
     let (parse_errors, type_errors): (Vec<Diagnostic>, Vec<Diagnostic>) = analysis
         .diagnostics
         .into_iter()
@@ -154,9 +155,15 @@ pub(crate) fn analyse_parsed_entry_file(
             if binds_main { Entry::Main } else { Entry::Cell }
         }
     };
-    let (functions, compile_errors, compile_warnings) = match session.compile(file, target) {
-        Ok(compiled) => (Some(compiled.functions), Vec::new(), compiled.warnings),
-        Err(errors) => (None, errors, Vec::new()),
+    // The analysis's errors are reported as such; only a program
+    // without them is compiled.
+    let (functions, compile_errors, compile_warnings) = if has_errors {
+        (None, Vec::new(), Vec::new())
+    } else {
+        match session.compile(file, target) {
+            Ok(compiled) => (Some(compiled.functions), Vec::new(), compiled.warnings),
+            Err(errors) => (None, errors, Vec::new()),
+        }
     };
     CompilePipelineResult {
         sources: session.into_sources(),

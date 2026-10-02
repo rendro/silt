@@ -50,6 +50,9 @@ pub fn check_files(files: &[(&str, &str)]) -> Vec<Diagnostic> {
 pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Diagnostic> {
     let (mut session, entry) = session(files, host);
     let mut diagnostics = session.analyze(entry).diagnostics.clone();
+    if session.analyze(entry).has_errors() {
+        return diagnostics;
+    }
     match session.compile(entry, Entry::Tests { filter: None }) {
         Ok(program) => diagnostics.extend(program.warnings),
         Err(errors) => diagnostics.extend(errors),

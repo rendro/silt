@@ -82,7 +82,9 @@ fn session_diagnostics(source: &SourceFile, uri: &Uri) -> Vec<Diagnostic> {
     });
     let file = session.set_overlay(&path, source.text.to_string());
     let mut diagnostics = session.analyze(file).diagnostics.clone();
-    if let Err(errors) = session.compile(file, Entry::Tests { filter: None }) {
+    if !session.analyze(file).has_errors()
+        && let Err(errors) = session.compile(file, Entry::Tests { filter: None })
+    {
         diagnostics.extend(errors);
     }
     // The document's file, however the session registered it: a file can
