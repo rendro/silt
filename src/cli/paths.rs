@@ -106,9 +106,14 @@ pub(crate) fn door_diagnostics(
     file: FileId,
     compiled: &Result<silt::session::Program, Vec<silt::diagnostic::Diagnostic>>,
 ) -> Vec<silt::diagnostic::Diagnostic> {
-    let mut diagnostics = session.analyze(file).diagnostics.clone();
+    let analysis = session.analyze(file);
+    let analysed_with_errors = analysis.has_errors();
+    let mut diagnostics = analysis.diagnostics.clone();
     match compiled {
         Ok(program) => diagnostics.extend(program.warnings.iter().cloned()),
+        // A program whose analysis has errors is not compiled: `compile`
+        // hands back the analysis's errors, which are listed already.
+        Err(_) if analysed_with_errors => {}
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
     diagnostics
