@@ -617,7 +617,8 @@ pub enum ImportTarget {
     Module(Symbol),
     /// `import m.{ a, b }`: the module and each item with its own span.
     Items(Symbol, Vec<(Symbol, Span)>),
-    Alias(Symbol, Symbol),
+    /// `import m as a`: the module, the alias and the alias's span.
+    Alias(Symbol, Symbol, Span),
 }
 
 #[derive(Debug, Clone)]

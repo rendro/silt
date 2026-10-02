@@ -408,7 +408,7 @@ pub(crate) fn register_dep_import_exports(
         let module_sym = match decl {
             Decl::Import(ImportTarget::Module(m), _)
             | Decl::Import(ImportTarget::Items(m, _), _)
-            | Decl::Import(ImportTarget::Alias(m, _), _) => *m,
+            | Decl::Import(ImportTarget::Alias(m, ..), _) => *m,
             _ => continue,
         };
         // Already visible under the import name (sibling module, or a

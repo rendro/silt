@@ -48,8 +48,9 @@ Comparison:
 - The exit status is always checked.
 - Every error diagnostic in stderr (`error[<kind>]: ...`, indented or not)
   must be followed by its ` --> ` line: every diagnostic has a place.
-  `error[fmt]` refusals and the messages listed in `UNLOCATED_ERRORS`
-  (`tests/golden/main.rs`) are the exceptions.
+  `error[fmt]` refusals are the exception. The verdict mode checks the
+  same in `check`'s stderr of every verdict case, the repro corpus
+  included.
 - A case with no expectation beyond the exit status is allowed only when
   the exit status itself is the point (say `-- exit: 0` for "this compiles
   and runs").

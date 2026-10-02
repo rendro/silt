@@ -216,26 +216,46 @@ pub fn mark_for(verdicts: &[Verdict; 4]) -> Mark {
 
 /// Every door's verdict for the case copied into a fresh directory by
 /// `fresh_copy` (one copy per door, so nothing one door or the program
-/// writes reaches the next), whose entry file is `entry`.
+/// writes reaches the next), whose entry file is `entry`; and the error
+/// diagnostics `check` printed without a location (see
+/// `unlocated_errors`).
 pub fn verdicts(
     fresh_copy: &dyn Fn() -> std::path::PathBuf,
     entry: &str,
     timeout: Duration,
-) -> [Verdict; 4] {
-    DOORS.map(|door| {
+) -> ([Verdict; 4], Vec<String>) {
+    let mut unlocated = Vec::new();
+    let verdicts = DOORS.map(|door| {
         let dir = fresh_copy();
-        let v = door_verdict(door, &dir, entry, timeout);
+        let (v, problems) = door_verdict(door, &dir, entry, timeout);
+        unlocated.extend(problems);
         let _ = std::fs::remove_dir_all(&dir);
         v
-    })
+    });
+    (verdicts, unlocated)
 }
 
-fn door_verdict(door: Door, dir: &Path, entry: &str, timeout: Duration) -> Verdict {
+fn door_verdict(door: Door, dir: &Path, entry: &str, timeout: Duration) -> (Verdict, Vec<String>) {
+    let (v, stderr) = door_verdict_and_stderr(door, dir, entry, timeout);
+    let unlocated = match (door, stderr) {
+        (Door::Check, Some(stderr)) => crate::unlocated_errors(&stderr),
+        _ => Vec::new(),
+    };
+    (v, unlocated)
+}
+
+/// The verdict of `door`, and the stderr of a CLI door.
+fn door_verdict_and_stderr(
+    door: Door,
+    dir: &Path,
+    entry: &str,
+    timeout: Duration,
+) -> (Verdict, Option<String>) {
     let roots = roots(dir);
     if door == Door::Lsp {
         let session = lsp::session(dir, entry, timeout);
         if let Some(why) = session.error {
-            return Verdict::Failed(why);
+            return (Verdict::Failed(why), None);
         }
         let keys = session
             .files
@@ -253,28 +273,35 @@ fn door_verdict(door: Door, dir: &Path, entry: &str, timeout: Duration) -> Verdi
                     .collect::<Vec<_>>()
             })
             .collect();
-        return Verdict::Diagnostics(keys);
+        return (Verdict::Diagnostics(keys), None);
     }
     let executes = matches!(door, Door::Run | Door::Test);
     let limit = if executes { EXECUTION_TIMEOUT } else { timeout };
     let out = run_cli(dir, door.name(), entry, limit);
     if !executes {
         if out.timed_out {
-            return Verdict::Failed(format!("did not exit within {limit:?}"));
+            return (
+                Verdict::Failed(format!("did not exit within {limit:?}")),
+                None,
+            );
         }
         if !matches!(out.code, Some(0) | Some(1)) {
-            return Verdict::Failed(format!(
-                "exit status {:?}; stderr:\n{}",
-                out.code, out.stderr
-            ));
+            return (
+                Verdict::Failed(format!(
+                    "exit status {:?}; stderr:\n{}",
+                    out.code, out.stderr
+                )),
+                None,
+            );
         }
     }
-    Verdict::Diagnostics(static_diagnostics(
+    let v = Verdict::Diagnostics(static_diagnostics(
         &out.stderr,
         out.stdout_empty && out.code == Some(1),
         entry,
         &roots,
-    ))
+    ));
+    (v, Some(out.stderr))
 }
 
 /// The case directory as it may appear in paths: as given and

@@ -493,27 +493,20 @@ fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
     problems
 }
 
-/// Text in the messages of error diagnostics that render without a
-/// ` --> ` line. Every other error diagnostic in a case's stderr must be
-/// followed by one. `ChannelResult(_)`: a variant of a program's enum
-/// that shadows a builtin enum's variant makes the checker report a
-/// mismatch inside the builtin enum's derived impl, which is in no file;
-/// it goes away when builtin enums move into their modules (stage 5,
-/// step 5).
-const UNLOCATED_ERRORS: &[&str] = &["ChannelResult(_)"];
-
-/// The error diagnostics in `stderr` that render without a ` --> ` line
-/// and are not listed in [`UNLOCATED_ERRORS`]: every diagnostic has a
-/// span, so every one shows where it is. Headers indented under a test
-/// result line count too.
+/// The error diagnostics in `stderr` that render without a ` --> ` line:
+/// every diagnostic has a span, so every one shows where it is. Headers
+/// indented under a test result line count too. An `error[fmt]` refusal
+/// is not a diagnostic about the program and is left out. The verdict
+/// mode applies this to `check`'s stderr of every verdict case, the
+/// repro corpus included.
 fn unlocated_errors(stderr: &str) -> Vec<String> {
     let lines: Vec<&str> = stderr.lines().collect();
     let mut problems = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let Some((true, kind, message)) = verdict::header(line.trim_start()) else {
+        let Some((true, kind, _)) = verdict::header(line.trim_start()) else {
             continue;
         };
-        if kind == "fmt" || UNLOCATED_ERRORS.iter().any(|m| message.contains(m)) {
+        if kind == "fmt" {
             continue;
         }
         let located = lines
@@ -662,7 +655,7 @@ fn run_verdict_shard(shard: usize) {
         let Some(mark) = &case.directives.verdict else {
             return Vec::new();
         };
-        let verdicts = verdict::verdicts(
+        let (verdicts, unlocated) = verdict::verdicts(
             &|| scratch_copy(case),
             &case.entry(),
             case.directives.timeout,
@@ -672,9 +665,11 @@ fn run_verdict_shard(shard: usize) {
             if &actual != mark {
                 bless_verdict(&case.source_path, &actual);
             }
-            return Vec::new();
+            return unlocated;
         }
-        verdict::judge(mark, &verdicts)
+        let mut problems = verdict::judge(mark, &verdicts);
+        problems.extend(unlocated);
+        problems
     });
 }
 

@@ -269,6 +269,16 @@ struct Local {
 /// drops this error when a type error stands at the same place.
 pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
 
+/// The error for a use of the builtin module `module` without an import.
+fn module_not_imported(span: Span, module: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompileModuleNotImported,
+        span,
+        format!("module '{module}' is not imported"),
+    )
+    .with_help(format!("add `import {module}` at the top of the file"))
+}
+
 /// A lex or parse error `e` in the imported module `module_name`, with
 /// the import at `import_span` that brought the module in as a label.
 fn imported_at(e: Diagnostic, module_name: &str, import_span: Span) -> Diagnostic {
@@ -1496,7 +1506,7 @@ impl Compiler {
                 }
                 Ok(())
             }
-            ImportTarget::Alias(module_name, alias) => {
+            ImportTarget::Alias(module_name, alias, _) => {
                 let mod_str = resolve(*module_name);
                 let alias_str = resolve(*alias);
                 if module::is_builtin_module(&mod_str) {
@@ -1789,7 +1799,7 @@ impl Compiler {
             .filter_map(|d| match d {
                 Decl::Import(ImportTarget::Module(m), span) => Some((*m, *span)),
                 Decl::Import(ImportTarget::Items(m, _), span) => Some((*m, *span)),
-                Decl::Import(ImportTarget::Alias(m, _), span) => Some((*m, *span)),
+                Decl::Import(ImportTarget::Alias(m, ..), span) => Some((*m, *span)),
                 _ => None,
             })
             .collect();
@@ -2681,13 +2691,7 @@ impl Compiler {
                             if module::is_builtin_module(&mod_str)
                                 && !self.imported_builtin_modules.contains(&mod_str)
                             {
-                                return Err(Diagnostic::error(
-                                    Code::CompileModuleNotImported,
-                                    span,
-                                    format!(
-                                        "module '{module}' is not imported; add `import {module}` at the top of the file"
-                                    ),
-                                ));
+                                return Err(module_not_imported(span, &module.to_string()));
                             }
                             // Compile-time visibility check: if this module is
                             // a known user file module and `method` exists as
@@ -2776,13 +2780,7 @@ impl Compiler {
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
                         {
-                            return Err(Diagnostic::error(
-                                Code::CompileModuleNotImported,
-                                span,
-                                format!(
-                                    "module '{name}' is not imported; add `import {name}` at the top of the file"
-                                ),
-                            ));
+                            return Err(module_not_imported(span, &name.to_string()));
                         }
                         // Compile-time visibility check for user file
                         // modules: bare `mymod.helper` where `helper` is a
@@ -3590,13 +3588,7 @@ impl Compiler {
             {
                 if module::is_builtin_module(&mod_str) {
                     if !self.imported_builtin_modules.contains(&mod_str) {
-                        return Err(Diagnostic::error(
-                            Code::CompileModuleNotImported,
-                            callee.span,
-                            format!(
-                                "module '{module}' is not imported; add `import {module}` at the top of the file"
-                            ),
-                        ));
+                        return Err(module_not_imported(callee.span, &module.to_string()));
                     }
                     return Ok(Some(format!("{module}.{field}")));
                 }
@@ -4023,14 +4015,14 @@ impl Compiler {
     fn warn_if_shadows_module(&mut self, name: Symbol, span: Span) {
         let s = resolve(name);
         if module::is_builtin_module(&s) {
-            self.warnings.push(Diagnostic::warning(
-                Code::ShadowsModule,
-                span,
-                format!(
-                    "variable '{s}' shadows the builtin '{s}' module; \
-                     use a different name to access '{s}.*' functions"
-                ),
-            ));
+            self.warnings.push(
+                Diagnostic::warning(
+                    Code::ShadowsModule,
+                    span,
+                    format!("variable '{s}' shadows the builtin '{s}' module"),
+                )
+                .with_help(format!("use a different name to access '{s}.*' functions")),
+            );
         }
     }
 

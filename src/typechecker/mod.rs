@@ -504,6 +504,16 @@ pub struct TypeChecker {
     pub(super) enums: HashMap<Symbol, EnumInfo>,
     /// Maps variant constructor name -> parent enum type name.
     pub(super) variant_to_enum: HashMap<Symbol, Symbol>,
+    /// For an enum some of whose variants a declaration of this file
+    /// shadows, the span of the first such declaration's variant. The
+    /// derived impls of a builtin enum are checked with bare variant
+    /// names, so a diagnostic they cause belongs to the declaration that
+    /// shadows them.
+    pub(super) shadowed_enums: HashMap<Symbol, Span>,
+    /// For a type an import brought in, the span of that import: a
+    /// diagnostic about the type's derived impls, which no file of this
+    /// program declares, belongs to it.
+    pub(super) imported_type_spans: HashMap<Symbol, Span>,
     /// Declared record types (type name -> record info).
     pub(super) records: HashMap<Symbol, RecordInfo>,
     /// Round 94: module-qualified type mirrors. Keys are interned
@@ -729,7 +739,7 @@ pub struct TypeChecker {
     /// statements in the current program. Populated at the start of
     /// `check()`. Used by the `FieldAccess` path to decide whether
     /// `list.sum(...)` should typecheck or emit an
-    /// "module 'X' is not imported; add `import X`" error. Stdlib
+    /// "module 'X' is not imported" error. Stdlib
     /// module names (`list`, `string`, ...) have all their qualified
     /// members pre-registered in the environment, so without this
     /// gate they'd typecheck silently even when never imported; the
@@ -813,6 +823,8 @@ impl TypeChecker {
             next_var: 0,
             enums: HashMap::new(),
             variant_to_enum: HashMap::new(),
+            shadowed_enums: HashMap::new(),
+            imported_type_spans: HashMap::new(),
             records: HashMap::new(),
             qualified_records: HashMap::new(),
             qualified_record_param_var_ids: HashMap::new(),
@@ -2466,12 +2478,18 @@ impl TypeChecker {
 
     // ── Error reporting ─────────────────────────────────────────────
 
-    /// If `got` is a `Result(_, _)` or `Option(_)` but `expected` is
-    /// not, append a `help:` continuation explaining how to thread
-    /// the monadic value through. The raw "expected String, got
-    /// Result(String, _)" message is correct but doesn't tell users
-    /// how to fix it; the hint points at `?` and `result.flat_map` /
-    /// `option.flat_map`.
+    /// Where the derived impls of `type_name`, a type no declaration of
+    /// this file makes, are checked: at the first declaration that shadows
+    /// one of its variants, else at the import that brought it in, else
+    /// nowhere (a builtin type).
+    fn derive_span(&self, type_name: Symbol) -> Span {
+        self.shadowed_enums
+            .get(&type_name)
+            .or_else(|| self.imported_type_spans.get(&type_name))
+            .copied()
+            .unwrap_or(Span::BUILTIN)
+    }
+
     /// The quick fix for a value where a `Result` is expected: wrap the
     /// expression in `Ok(...)`.
     fn add_ok_wrap_fix(d: &mut Diagnostic, got: &Type, expected: &Type) {
@@ -2488,6 +2506,11 @@ impl TypeChecker {
         }
     }
 
+    /// If `got` is a `Result(_, _)` or `Option(_)` but `expected` is
+    /// not, the help line that explains how to thread the value
+    /// through: the raw "expected String, got Result(String, _)" is
+    /// correct but doesn't say how to fix it; the help points at `?` and
+    /// `result.flat_map` / `option.flat_map`.
     fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool {
             matches!(t, Type::Generic(n, _) if resolve(*n) == name)
@@ -2603,11 +2626,16 @@ impl TypeChecker {
         &mut self,
         module_sym: Symbol,
         qualified_prefix: Symbol,
+        import_span: Span,
         env: &mut TypeEnv,
     ) -> bool {
         let Some(exports) = self.module_exports.get(&module_sym).cloned() else {
             return false;
         };
+        let type_names = exports.enums.iter().map(|(n, _)| *n);
+        for name in type_names.chain(exports.records.iter().map(|(n, _)| *n)) {
+            self.imported_type_spans.entry(name).or_insert(import_span);
+        }
 
         // Build a fresh-var remapping for every producer TyVar referenced
         // by the snapshot, so the consumer's TyVar space stays separate
@@ -3125,7 +3153,7 @@ impl TypeChecker {
                         // Gated constructors (like Monday, GET) are already
                         // registered under their bare name — no alias needed.
                     }
-                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
+                } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
                     // Round 64 item 6A: cross-module typecheck found
                     // the producer's exports — schemes are now bound
                     // under `module.name`. Also alias each requested
@@ -3146,7 +3174,7 @@ impl TypeChecker {
                         *span,
                     );
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
+            } else if let Decl::Import(ImportTarget::Alias(module, alias, _), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     // Track the alias (not the original module name) — the
@@ -3179,7 +3207,7 @@ impl TypeChecker {
                     for (aliased, scheme) in to_alias {
                         env.define(aliased, scheme);
                     }
-                } else if self.merge_imported_module_exports(*module, *alias, &mut env) {
+                } else if self.merge_imported_module_exports(*module, *alias, *span, &mut env) {
                     // Round 64 item 6A: schemes registered under
                     // `alias.name` (matching the aliased prefix the
                     // user wrote).
@@ -3197,7 +3225,7 @@ impl TypeChecker {
                     // Built-in module names are already bound via register_builtins
                     // under their `module.func` qualified form — no additional
                     // action required here.
-                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
+                } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
                     // Round 64 item 6A: producer-side exports merged.
                     self.imported_modules.insert(*module);
                 } else {
@@ -3924,13 +3952,13 @@ impl TypeChecker {
         // a single clear diagnostic. Mirrors the variant-shadow error
         // shape below.
         if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
-            self.error(
-                Code::InvalidTypeDeclaration,
-                format!(
-                    "type '{td_name_str}' shadows builtin type '{td_name_str}'; \
-                     choose a different name"
-                ),
-                td.name_span,
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidTypeDeclaration,
+                    td.name_span,
+                    format!("type '{td_name_str}' shadows builtin type '{td_name_str}'"),
+                )
+                .with_help("choose a different name"),
             );
             return;
         }
@@ -3960,15 +3988,17 @@ impl TypeChecker {
         if let Some(prev_enum_owner) = self.variant_to_enum.get(&td.name).copied()
             && prev_enum_owner != td.name
         {
-            self.error(
-                Code::InvalidTypeDeclaration,
-                format!(
-                    "type '{}' shadows variant of builtin enum '{}'; \
-                     choose a different name or fully-qualify the variant",
-                    resolve(td.name),
-                    resolve(prev_enum_owner)
-                ),
-                td.name_span,
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidTypeDeclaration,
+                    td.name_span,
+                    format!(
+                        "type '{}' shadows variant of builtin enum '{}'",
+                        resolve(td.name),
+                        resolve(prev_enum_owner)
+                    ),
+                )
+                .with_help("choose a different name or fully-qualify the variant"),
             );
             return;
         }
@@ -4127,6 +4157,9 @@ impl TypeChecker {
                     //      builtin shadow.
                     if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
                         if prev_owner != td.name {
+                            self.shadowed_enums
+                                .entry(prev_owner)
+                                .or_insert(variant.name_span);
                             self.warning(Code::Shadowing,
                                 format!(
                                     "variant '{}' of enum '{}' shadows same-named variant of enum '{}'; \
@@ -5661,7 +5694,7 @@ impl TypeChecker {
                     type_name,
                     info.params.clone(),
                     TypeBodyKind::Enum(info.variants.clone()),
-                    Span::BUILTIN,
+                    self.derive_span(type_name),
                 ));
             }
         }
@@ -5700,7 +5733,7 @@ impl TypeChecker {
                     type_name,
                     params,
                     TypeBodyKind::Record(info.fields.clone()),
-                    Span::BUILTIN,
+                    self.derive_span(type_name),
                 ));
             }
         }
@@ -8350,6 +8383,7 @@ impl ReplTypeContext {
                 } else if self.checker.merge_imported_module_exports(
                     *module,
                     *module,
+                    *span,
                     &mut self.env,
                 ) {
                     // Round 75 DEAD-DRIFT: route through the same
@@ -8375,7 +8409,7 @@ impl ReplTypeContext {
                         *span,
                     );
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
+            } else if let Decl::Import(ImportTarget::Alias(module, alias, _), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.checker.imported_modules.insert(*alias);
@@ -8400,10 +8434,12 @@ impl ReplTypeContext {
                     for (aliased, scheme) in to_alias {
                         self.env.define(aliased, scheme);
                     }
-                } else if self
-                    .checker
-                    .merge_imported_module_exports(*module, *alias, &mut self.env)
-                {
+                } else if self.checker.merge_imported_module_exports(
+                    *module,
+                    *alias,
+                    *span,
+                    &mut self.env,
+                ) {
                     // Round 75 DEAD-DRIFT: parallel REPL path —
                     // schemes registered under `alias.name` matching
                     // the user-written prefix.
@@ -8423,6 +8459,7 @@ impl ReplTypeContext {
                 } else if self.checker.merge_imported_module_exports(
                     *module,
                     *module,
+                    *span,
                     &mut self.env,
                 ) {
                     // Round 75 DEAD-DRIFT: parallel REPL path —

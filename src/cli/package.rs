@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use silt::intern::{self, Symbol};
 use silt::lockfile::{Lockfile, LockfileError};
@@ -36,10 +37,50 @@ pub fn find_project_root(start: &Path) -> Result<Option<(PathBuf, Manifest)>, Ma
 /// line of its own.
 pub(crate) fn die_on_manifest_error(err: ManifestError) -> ! {
     match manifest_diagnostic(&err) {
+        Some((sources, d)) if MANIFEST_ERRORS_AS_JSON.load(Ordering::Relaxed) => {
+            let json = serde_json::Value::Array(vec![silt::diagnostic::render_json(&sources, &d)]);
+            println!("{json}");
+        }
         Some((sources, d)) => eprintln!("{}", silt::diagnostic::render_human(&sources, &d)),
         None => eprintln!("error: {err}"),
     }
     process::exit(1);
+}
+
+/// Whether a manifest error is printed as `silt check --format json`
+/// prints its diagnostics, on stdout. Set by `silt check --format json`.
+static MANIFEST_ERRORS_AS_JSON: AtomicBool = AtomicBool::new(false);
+
+/// Print manifest errors as JSON on stdout from now on.
+pub(crate) fn print_manifest_errors_as_json() {
+    MANIFEST_ERRORS_AS_JSON.store(true, Ordering::Relaxed);
+}
+
+/// How a manifest's path is shown: relative to the working directory,
+/// with `..` when the manifest is above it (`silt check main.silt` run in
+/// `src/` shows `../silt.toml`), else as it is.
+fn manifest_path_for_display(path: &Path) -> PathBuf {
+    let (Ok(cwd), Ok(path)) = (
+        std::env::current_dir().and_then(std::fs::canonicalize),
+        std::fs::canonicalize(path),
+    ) else {
+        return path.to_path_buf();
+    };
+    let common = cwd
+        .components()
+        .zip(path.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    // Only the root in common: the absolute path says more.
+    if common <= 1 {
+        return path;
+    }
+    let mut shown = PathBuf::new();
+    for _ in cwd.components().skip(common) {
+        shown.push("..");
+    }
+    shown.extend(path.components().skip(common));
+    shown
 }
 
 /// The diagnostic for `err` and the source map holding the manifest it
@@ -74,7 +115,7 @@ fn manifest_diagnostic(
     let text = std::fs::read_to_string(path).ok()?;
     let mut sources = SourceMap::new();
     let file = sources.add(
-        SourceName::Manifest(silt::compiler::module_path_for_display(path).into()),
+        SourceName::Manifest(manifest_path_for_display(path)),
         text.into(),
     );
     let mut lines = lines.into_iter();

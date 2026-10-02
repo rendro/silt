@@ -84,7 +84,7 @@ pub(crate) fn looks_like_test_file(program: &Program) -> bool {
             Decl::Import(
                 ImportTarget::Module(module)
                 | ImportTarget::Items(module, _)
-                | ImportTarget::Alias(module, _),
+                | ImportTarget::Alias(module, ..),
                 _,
             ) => resolve(*module) == TEST_MODULE,
             _ => false,

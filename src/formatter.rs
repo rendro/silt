@@ -3147,7 +3147,7 @@ mod self_check {
                 let module = match target {
                     ImportTarget::Module(m)
                     | ImportTarget::Items(m, _)
-                    | ImportTarget::Alias(m, _) => m,
+                    | ImportTarget::Alias(m, ..) => m,
                 };
                 (format!("the import of `{module}`"), *span)
             }
@@ -3447,7 +3447,7 @@ mod self_check {
                                 self.sym(*item);
                             }
                         }
-                        ImportTarget::Alias(module, alias) => {
+                        ImportTarget::Alias(module, alias, _) => {
                             self.open("import-as");
                             self.sym(*module);
                             self.sym(*alias);
@@ -5451,7 +5451,7 @@ fn format_import(i: &ImportTarget, span: Span, depth: usize) -> String {
                 item_strs.join(", ")
             )
         }
-        ImportTarget::Alias(module, alias) => {
+        ImportTarget::Alias(module, alias, _) => {
             format!("{prefix}import {module} as {alias}")
         }
     }

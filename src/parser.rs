@@ -456,7 +456,7 @@ fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
                 .iter()
                 .map(|(item, item_span)| (*item, *item_span, "import"))
                 .collect(),
-            ImportTarget::Alias(_, alias) => vec![(*alias, *span, "import")],
+            ImportTarget::Alias(_, alias, alias_span) => vec![(*alias, *alias_span, "import")],
         },
         Decl::Let { pattern, .. } => {
             let mut names = Vec::new();
@@ -1665,7 +1665,7 @@ impl Parser {
         self.skip_nl();
         let start = self.pos;
         self.parse_pattern().map_err(|err| {
-            if self.pos == start && err.message.starts_with("expected pattern") {
+            if self.pos == start && err.code == Code::ExpectedPattern {
                 Diagnostic::error(
                     Code::ExpectedIdentifier,
                     err.span,
@@ -2191,9 +2191,9 @@ impl Parser {
             ))
         } else if self.at(&Token::As) {
             self.advance();
-            let (alias, _) = self.expect_ident()?;
+            let (alias, alias_span) = self.expect_ident()?;
             Ok(Decl::Import(
-                ImportTarget::Alias(name, alias),
+                ImportTarget::Alias(name, alias, alias_span),
                 self.close(import_span),
             ))
         } else {
@@ -5831,7 +5831,7 @@ fn main() {
             matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items), _) if *m == intern::intern("math") && items.len() == 2)
         );
         assert!(
-            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a), _) if *m == intern::intern("http") && *a == intern::intern("h"))
+            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a, _), _) if *m == intern::intern("http") && *a == intern::intern("h"))
         );
     }
 

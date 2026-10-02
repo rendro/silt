@@ -95,6 +95,9 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    if format == OutputFormat::Json {
+        crate::cli::package::print_manifest_errors_as_json();
+    }
     let path = match file {
         Some(p) => p,
         // Round 93: `silt check` accepts a lib-only package

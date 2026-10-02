@@ -5,8 +5,8 @@
 //! `let regex = """..."""` (and the interpolation example bound
 //! `let math = ...`). Pasting those documented snippets into a program
 //! makes the compiler emit
-//! `warning[compile]: variable 'json' shadows the builtin 'json' module;
-//!  use a different name to access 'json.*' functions`
+//! `warning[compile]: variable 'json' shadows the builtin 'json' module`
+//! (with the help `use a different name to access 'json.*' functions`)
 //! (see `warn_if_shadows_module` in `src/compiler/mod.rs`).
 //!
 //! The existing doc walkers in `tests/lang/examples_check.rs`
