@@ -3200,7 +3200,10 @@ impl TypeChecker {
                         // registered under their bare name — no alias needed.
                     }
                 } else if self.poisoned_modules.contains(module) {
+                    // The module's name binds nothing here, but a use of
+                    // it (`m.q`) is a use of the failed module too.
                     self.imported_modules.insert(*module);
+                    self.poisoned_names.insert(*module);
                     for (item, _) in items {
                         self.bind_poisoned_name(*item, &mut env);
                     }
@@ -3423,7 +3426,7 @@ impl TypeChecker {
             } = program.decls[i]
             {
                 let is_value = inference::is_syntactic_value(&value.kind);
-                let val_ty = self.infer_expr(value, &mut env);
+                let mut val_ty = self.infer_expr(value, &mut env);
                 if let Some(te) = ty {
                     // B2: populate the arity-error span hint with the
                     // annotation's own span so diagnostics from
@@ -3437,6 +3440,11 @@ impl TypeChecker {
                         self.resolve_type_expr(te, &mut std::collections::HashMap::new());
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
+                    // A value of unknown type (from a module that failed to
+                    // load) takes the declared type.
+                    if matches!(self.apply(&val_ty), Type::Error) {
+                        val_ty = declared;
+                    }
                 }
                 let scheme = if is_value {
                     self.generalize(&env, &val_ty)

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- After `import missing.{ x }` of a missing module, `missing.q` is a use
+-- of the failed module: only the import is reported.
+-- stderr-contains: cannot load module 'missing'
+-- stderr-not-contains: on module 'missing'
+import missing.{ x }
+
+fn main() {
+  println(x)
+  println(missing.q)
+}

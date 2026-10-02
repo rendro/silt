@@ -306,10 +306,15 @@ pub struct ModuleUnit {
     /// modules imported by one name from two packages (an app's
     /// `src/util.silt` and a dependency's own) do not share globals.
     pub global: String,
-    /// The module each `import` of this module names, by the name
-    /// written after `import` and by the alias of `import m as n`.
-    /// Builtin modules are not in it.
+    /// The module each `import` of this module names, by the module
+    /// name written after `import`. Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
+    /// The module each name the module's imports bind stands for: `m`
+    /// for `import m`, `n` for `import m as n` (an item import binds no
+    /// module name). An alias may be named like another imported module:
+    /// `import helper as util` binds `util` to helper, whatever `import
+    /// util as u2` imports.
+    pub bindings: HashMap<Symbol, usize>,
 }
 
 /// The modules of a program, indexed by the session's module ids, and
@@ -1224,7 +1229,7 @@ impl Compiler {
                 // File-based selective import: compile the module, then alias
                 // "module.item" -> bare "item" for each selected name.
                 self.compile_file_module(&mod_str, span)?;
-                let global = self.module_global(&mod_str);
+                let global = self.imported_global(&mod_str);
                 for (item, _) in items {
                     let item_str = resolve(*item);
                     let qualified = format!("{global}.{item_str}");
@@ -1290,9 +1295,21 @@ impl Compiler {
         self.units
             .modules
             .get(importer)
-            .and_then(|unit| unit.imports.get(&intern(written)))
+            .and_then(|unit| unit.bindings.get(&intern(written)))
             .map(|&target| self.units.modules[target].global.clone())
             .unwrap_or_else(|| written.to_string())
+    }
+
+    /// The prefix of the globals of the module the current module's
+    /// `import module_name ...` names.
+    fn imported_global(&self, module_name: &str) -> String {
+        let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        self.units
+            .modules
+            .get(importer)
+            .and_then(|unit| unit.imports.get(&intern(module_name)))
+            .map(|&target| self.units.modules[target].global.clone())
+            .unwrap_or_else(|| module_name.to_string())
     }
 
     /// Compile a file-based module's declarations into the current compilation

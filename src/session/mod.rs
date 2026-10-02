@@ -128,11 +128,15 @@ pub enum EntryPoint {
     Cell,
 }
 
-/// What each import of `module` names, as the compiler looks it up: by
-/// the module name written after `import`, and by the alias of
-/// `import m as n`, mapped to the unit of the imported module.
-fn unit_imports(module: &Module, index: &HashMap<ModuleId, usize>) -> HashMap<Symbol, usize> {
-    let mut imports: HashMap<Symbol, usize> = module
+/// What the imports of `module` name, as the compiler looks them up:
+/// by the module name written after `import`, and by each name an
+/// import binds (`m` for `import m`, `n` for `import m as n`), each
+/// mapped to the unit of the imported module.
+fn unit_imports(
+    module: &Module,
+    index: &HashMap<ModuleId, usize>,
+) -> (HashMap<Symbol, usize>, HashMap<Symbol, usize>) {
+    let imports: HashMap<Symbol, usize> = module
         .imports
         .iter()
         .filter_map(|import| match import.resolution {
@@ -140,16 +144,20 @@ fn unit_imports(module: &Module, index: &HashMap<ModuleId, usize>) -> HashMap<Sy
             _ => None,
         })
         .collect();
+    let mut bindings = HashMap::new();
     if let Some(ast) = &module.ast {
         for decl in &ast.decls {
-            if let ast::Decl::Import(ast::ImportTarget::Alias(name, alias, _), _) = decl
-                && let Some(&unit) = imports.get(name)
-            {
-                imports.insert(*alias, unit);
+            let (name, bound) = match decl {
+                ast::Decl::Import(ast::ImportTarget::Module(name), _) => (name, name),
+                ast::Decl::Import(ast::ImportTarget::Alias(name, alias, _), _) => (name, alias),
+                _ => continue,
+            };
+            if let Some(&unit) = imports.get(name) {
+                bindings.insert(*bound, unit);
             }
         }
     }
-    imports
+    (imports, bindings)
 }
 
 /// A compilation session. See the module documentation.
@@ -587,6 +595,7 @@ impl Session {
                 .iter()
                 .map(|m| {
                     let module = self.graph.module(*m);
+                    let (imports, bindings) = unit_imports(module, &index);
                     ModuleUnit {
                         program: self.analyses[m].ast.clone(),
                         resolver: self.analyses[m].resolver.clone(),
@@ -595,7 +604,8 @@ impl Session {
                             .get(m)
                             .cloned()
                             .unwrap_or_else(|| resolve(module.name)),
-                        imports: unit_imports(module, &index),
+                        imports,
+                        bindings,
                     }
                 })
                 .collect(),
