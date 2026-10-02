@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
 use crate::lexer::{SpannedToken, Token};
-use crate::source::{SourceFile, SourceName, Span};
+use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
 
@@ -618,11 +618,12 @@ struct BlockHeader {
     in_pipe_rhs: bool,
 }
 
-pub struct Parser {
+pub struct Parser<'src> {
     tokens: Vec<SpannedToken>,
     /// The text the tokens came from, for the line numbers some messages
-    /// name and for doc comments.
-    source: SourceFile,
+    /// name and for doc comments. Borrowed: the source map that holds the
+    /// file owns the text and its line table.
+    source: &'src str,
     /// For each token, the number of delimiters that are open before it:
     /// `(`, `[`, `{`, `#{`, `#[` and the start of a string interpolation
     /// open one, their closers close one. A closer has the depth of the
@@ -697,14 +698,14 @@ fn delimiter_depths(tokens: &[SpannedToken]) -> Vec<i32> {
     depths
 }
 
-impl Parser {
+impl<'src> Parser<'src> {
     /// A parser for `tokens`, the tokens of `source`.
-    pub fn new(tokens: Vec<SpannedToken>, source: &str) -> Self {
+    pub fn new(tokens: Vec<SpannedToken>, source: &'src str) -> Self {
         let delim_depth = delimiter_depths(&tokens);
         Self {
             tokens,
             delim_depth,
-            source: SourceFile::new(SourceName::Builtin, source.into()),
+            source,
             pos: 0,
             header: None,
             expr_height: 0,
@@ -721,7 +722,7 @@ impl Parser {
     /// methods) get their `doc` field from the adjacent `--` / `{- -}`
     /// comments of the source.
     pub fn with_docs(mut self) -> Self {
-        self.doc_index = Some(DocIndex::from_source(&self.source.text));
+        self.doc_index = Some(DocIndex::from_source(self.source));
         self
     }
 
@@ -802,7 +803,12 @@ impl Parser {
 
     /// The 1-based line `span` starts on, for messages that name a line.
     fn line_of(&self, span: Span) -> u32 {
-        self.source.line_col(span.start).0
+        let at = span.start_offset().min(self.source.len());
+        self.source.as_bytes()[..at]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count() as u32
+            + 1
     }
 
     /// End of the last token consumed: the token before `pos`, newlines
@@ -1093,7 +1099,7 @@ impl Parser {
             return err;
         }
         let close = self.span();
-        let text = |span: Span| &self.source.text[span.start_offset()..span.end_offset()];
+        let text = |span: Span| &self.source[span.start_offset()..span.end_offset()];
         let replacement = format!("Fn({}) -> {}", text(param.span), text(ret.span));
         err.with_fix(
             "Change `(a -> b)` to `Fn(a) -> b`",
