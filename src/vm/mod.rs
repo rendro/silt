@@ -1140,19 +1140,29 @@ impl Vm {
     /// function, and Channel / Handle / TcpListener / TcpStream stay
     /// equatable-by-identity (round-96 parity), so all fall to `false`.
     pub fn value_contains_fn(val: &Value) -> bool {
-        match val {
-            Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => true,
-            Value::List(items) => items.iter().any(Self::value_contains_fn),
-            Value::Tuple(items) | Value::Variant(_, items) => {
-                items.iter().any(Self::value_contains_fn)
+        // A worklist, not recursion: values nest as deep as a program
+        // builds them, and the native stack a recursive walk needs per
+        // level depends on how the compiler happened to inline it.
+        let mut pending = vec![val];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => {
+                    return true;
+                }
+                Value::List(items) => pending.extend(items.iter()),
+                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(_, fields) => pending.extend(fields.values()),
+                _ => {}
             }
-            Value::Set(items) => items.iter().any(Self::value_contains_fn),
-            Value::Map(entries) => entries
-                .iter()
-                .any(|(k, v)| Self::value_contains_fn(k) || Self::value_contains_fn(v)),
-            Value::Record(_, fields) => fields.values().any(Self::value_contains_fn),
-            _ => false,
         }
+        false
     }
 
     /// Human-readable type name for error messages. Renders descriptor

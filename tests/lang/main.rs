@@ -12,6 +12,7 @@ mod canonical_resolver_isolation_tests;
 mod compiler_literal_bounds_tests;
 mod cross_enum_variant_shadow_tests;
 mod crypto_module_tests;
+mod deep_value_stack_tests;
 mod encoding_module_tests;
 mod error_msg_polish_round35_tests;
 mod error_tests;
