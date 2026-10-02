@@ -1066,7 +1066,7 @@ fn test_trailing_comment_after_triple_string_with_imbalanced_quotes_idempotent()
     // `in_string` to `true` and never flip it back. The next `}` —
     // which closes the enclosing block — is then treated as raw string
     // content and the brace counter never reaches zero. The fallback
-    // `span.line` is returned as the block close, so the final
+    // (the block's start line) is returned as the block close, so the final
     // `take_comments_between(prev_end_line, block_close_line)` drain
     // is empty and any standalone comment that lived between the last
     // statement and the block's `}` is silently dropped.

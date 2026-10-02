@@ -49,8 +49,8 @@ fn test_repl_fallback_path_does_not_leak_vm_error_prefix() {
         "expected canonical `error[runtime]:` header in fallback output, got:\n{rendered}"
     );
     // And — important — the fallback branch does NOT emit a `-->`
-    // locator, matching how `SourceError::Display` omits it when
-    // `span.line == 0`. Round-59 GAP #4 locks this explicitly so a
+    // locator, matching how `SourceError::Display` omits it for an
+    // error without a span. Round-59 GAP #4 locks this explicitly so a
     // future "helpful" addition of a bogus locator gets caught here.
     assert!(
         !rendered.contains("-->"),

@@ -173,8 +173,8 @@ fn main() {
 // unexpected EOF) parses with a span pointing at line 2, column 1 —
 // one line past the end of the file. Before the fix,
 // `format_module_source_error` silently dropped the snippet because
-// `source.lines().nth(span.line - 1)` returned `None`. The fix
-// clamps the span back onto the last real line. This test locks
+// line 2 has no text. A position past the last line break is now shown
+// at the end of the last real line. This test locks
 // the rendered error message to include both the `pub fn broken(`
 // line and a caret marker.
 
