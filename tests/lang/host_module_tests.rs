@@ -188,9 +188,23 @@ fn bad_signatures_are_reported() {
         ("fn f(x: Int)", "must declare the type"),
         ("fn f(x: Int) -> Int { x }", "no body"),
         ("let x = 1", "no body"),
-        ("fn f(x: Int) -> Int\nfn g() -> Int", "signatures declare 2"),
+        (
+            "fn f(x: Int) -> Int\nfn g() -> Int",
+            "has 1 function but its signatures declare 2",
+        ),
         ("fn f(x: Int) -> Nope", "Nope"),
-        ("fn (", ""),
+        (
+            "fn f(g: Fn(Int) -> Int) -> Int",
+            "cannot take or return a function",
+        ),
+        (
+            "fn f(gs: List(Fn(Int) -> Int)) -> Int",
+            "cannot take or return a function",
+        ),
+        (
+            "fn f() -> Fn(Int) -> Int",
+            "cannot take or return a function",
+        ),
     ];
     for (signature, expected) in cases {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
@@ -201,6 +215,157 @@ fn bad_signatures_are_reported() {
             "{signature}: {errors:?}"
         );
     }
+}
+
+#[test]
+fn a_signature_that_does_not_parse_is_reported_once() {
+    let host = HostModule::new("h").function("fn (", |_: &[Value]| Ok(Value::Unit));
+    let errors = errors("fn main() { 1 }", host);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(!errors[0].message.contains("no body"), "{errors:?}");
+}
+
+#[test]
+fn typed_function_arity_must_match_the_signature() {
+    let host = HostModule::new("h").fn1("fn arity() -> Int", |x: i64| x);
+    let errors = errors("import h\nfn main() { h.arity() }", host);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::HostSignature, "{errors:?}");
+    assert!(
+        errors[0].message.contains(
+            "is given a Rust function of 1 argument, but its signature declares 0 parameters"
+        ),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_result_of_the_wrong_type_names_the_host_function() {
+    let host = HostModule::new("mylib")
+        .function("fn count() -> Int", |_: &[Value]| {
+            Ok(Value::String("three".into()))
+        })
+        .function("fn evens() -> List(Int)", |_: &[Value]| {
+            Ok(Value::List(Arc::new(vec![
+                Value::Int(2),
+                Value::String("four".into()),
+            ])))
+        })
+        .function("fn maybe() -> Option(String)", |_: &[Value]| {
+            Ok(Value::Variant("Some".into(), vec![Value::Int(1)]))
+        })
+        .function("fn pair() -> (Int, Bool)", |_: &[Value]| {
+            Ok(Value::Tuple(vec![Value::Int(1), Value::Bool(true)]))
+        });
+    let err = run(
+        "import mylib\nfn main() { mylib.count() + 1 }",
+        host.clone(),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("mylib.count: its signature returns Int, but it returned String"),
+        "got: {err}"
+    );
+    let err = run("import mylib\nfn main() { mylib.evens() }", host.clone()).unwrap_err();
+    assert!(
+        err.contains("mylib.evens: its signature returns List(Int), but it returned List"),
+        "got: {err}"
+    );
+    let err = run("import mylib\nfn main() { mylib.maybe() }", host.clone()).unwrap_err();
+    assert!(
+        err.contains("mylib.maybe: its signature returns Option(String)"),
+        "got: {err}"
+    );
+    // A result of the declared type passes.
+    assert_eq!(
+        run("import mylib\nfn main() { mylib.pair() }", host),
+        Ok(Value::Tuple(vec![Value::Int(1), Value::Bool(true)]))
+    );
+}
+
+#[test]
+fn compile_without_analyze_returns_the_analysis_errors() {
+    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    let mut session = Session::new(Config {
+        project: ProjectSetup::None,
+        lock: LockPolicy::ReadOnly,
+        host: vec![mylib()],
+    });
+    let file = session.open_text(
+        std::path::Path::new("main.silt"),
+        "import mylib\nfn main() { mylib.double(\"x\") }",
+    );
+    let errors = match session.compile(file, Entry::Main) {
+        Ok(_) => panic!("the program has a type error"),
+        Err(errors) => errors,
+    };
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::TypeMismatch, "{errors:?}");
+}
+
+#[test]
+fn host_module_name_must_be_an_identifier() {
+    for name in ["my-lib", "", "fn", "a b"] {
+        let host = HostModule::new(name).fn0("fn answer() -> Int", || 42_i64);
+        let errors = errors("fn main() { 1 }", host);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == Code::HostModuleCollision
+                    && e.message.contains("not an identifier")),
+            "{name:?}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
+    use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+    let dir = std::env::temp_dir().join(format!("silt_host_dep_collision_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let dep = dir.join("dep");
+    std::fs::create_dir_all(dep.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmylib = { path = \"dep\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dep.join("silt.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dep.join("src").join("lib.silt"),
+        "pub fn double(x: Int) -> Int { x }\n",
+    )
+    .unwrap();
+    let main = dir.join("src").join("main.silt");
+    std::fs::write(&main, "import mylib\nfn main() { mylib.double(1) }\n").unwrap();
+    let mut session = Session::new(Config {
+        project: ProjectSetup::Discover(dir.join("src")),
+        lock: LockPolicy::Update,
+        host: vec![mylib()],
+    });
+    let file = session.open(&main).unwrap();
+    let errors: Vec<Diagnostic> = session
+        .analyze(file)
+        .diagnostics
+        .iter()
+        .filter(|d| d.is_error())
+        .cloned()
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::HostModuleCollision, "{errors:?}");
+    assert!(
+        errors[0]
+            .help
+            .iter()
+            .any(|h| h.contains("rename the dependency key `mylib` in silt.toml")),
+        "{errors:?}"
+    );
 }
 
 #[test]

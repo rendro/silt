@@ -2073,6 +2073,99 @@ pub struct HostFn {
     /// The function's name, qualified by its module (`mylib.double`).
     pub name: String,
     pub call: HostImpl,
+    /// What its signature says it returns: each result is checked
+    /// against it.
+    pub returns: HostShape,
+}
+
+/// The shape of the values of a type a host function's signature
+/// names, as far as a value shows it: a type variable, or a type whose
+/// values are not told apart here, admits anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostShape {
+    Any,
+    Int,
+    Float,
+    Bool,
+    String,
+    Bytes,
+    Unit,
+    List(Box<HostShape>),
+    Set(Box<HostShape>),
+    Map(Box<HostShape>, Box<HostShape>),
+    Option(Box<HostShape>),
+    Result(Box<HostShape>, Box<HostShape>),
+    Tuple(Vec<HostShape>),
+}
+
+impl HostShape {
+    /// Whether `value` is a value of the shape.
+    pub fn admits(&self, value: &Value) -> bool {
+        match (self, value) {
+            (HostShape::Any, _)
+            | (HostShape::Int, Value::Int(_))
+            | (HostShape::Float, Value::Float(_))
+            | (HostShape::Bool, Value::Bool(_))
+            | (HostShape::String, Value::String(_))
+            | (HostShape::Bytes, Value::Bytes(_))
+            | (HostShape::Unit, Value::Unit) => true,
+            (HostShape::List(item), Value::List(items)) => items.iter().all(|v| item.admits(v)),
+            (HostShape::List(item), Value::Range(..)) => item.admits(&Value::Int(0)),
+            (HostShape::Set(item), Value::Set(items)) => items.iter().all(|v| item.admits(v)),
+            (HostShape::Map(k, v), Value::Map(entries)) => entries
+                .iter()
+                .all(|(key, value)| k.admits(key) && v.admits(value)),
+            (HostShape::Option(item), Value::Variant(tag, payload)) => {
+                match (tag.as_str(), payload.as_slice()) {
+                    ("Some", [v]) => item.admits(v),
+                    ("None", []) => true,
+                    _ => false,
+                }
+            }
+            (HostShape::Result(ok, err), Value::Variant(tag, payload)) => {
+                match (tag.as_str(), payload.as_slice()) {
+                    ("Ok", [v]) => ok.admits(v),
+                    ("Err", [v]) => err.admits(v),
+                    _ => false,
+                }
+            }
+            (HostShape::Tuple(items), Value::Tuple(values)) => {
+                items.len() == values.len()
+                    && items.iter().zip(values).all(|(item, v)| item.admits(v))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for HostShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = |f: &mut fmt::Formatter<'_>, name: &str, items: &[&HostShape]| {
+            write!(f, "{name}(")?;
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{item}")?;
+            }
+            write!(f, ")")
+        };
+        match self {
+            HostShape::Any => write!(f, "_"),
+            HostShape::Int => write!(f, "Int"),
+            HostShape::Float => write!(f, "Float"),
+            HostShape::Bool => write!(f, "Bool"),
+            HostShape::String => write!(f, "String"),
+            HostShape::Bytes => write!(f, "Bytes"),
+            HostShape::Unit => write!(f, "()"),
+            HostShape::List(item) => list(f, "List", &[item]),
+            HostShape::Set(item) => list(f, "Set", &[item]),
+            HostShape::Map(k, v) => list(f, "Map", &[k, v]),
+            HostShape::Option(item) => list(f, "Option", &[item]),
+            HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
+            HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
+        }
+    }
 }
 
 impl fmt::Debug for HostFn {
@@ -2081,7 +2174,7 @@ impl fmt::Debug for HostFn {
     }
 }
 
-// ── FFI conversion traits ──────────────────────────────────────────
+// ── Host function conversion traits ────────────────────────────────
 
 /// Convert a `Value` into a Rust type.
 pub trait FromValue: Sized {
@@ -2090,7 +2183,7 @@ pub trait FromValue: Sized {
 
 /// Convert a Rust type into a `Value`. The conversion fails when the
 /// Rust value has no silt counterpart (a NaN or infinite `f64`: a silt
-/// `Float` is always finite); a foreign function whose result fails to
+/// `Float` is always finite); a host function whose result fails to
 /// convert raises a runtime error.
 pub trait IntoValue {
     fn into_value(self) -> Result<Value, String>;
@@ -2234,7 +2327,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
     }
 }
 
-/// Surface kind name used by the FFI `FromValue` impls' diagnostic shape
+/// Surface kind name used by the `FromValue` impls' diagnostic shape
 /// (`"expected <Kind>, got <kind>"`). Round 76 ERR-1 GAP collapse: this
 /// previously hand-rolled its own match arms that drifted from the two
 /// canonical kind oracles (`builtins::common::value_kind` and
@@ -2244,7 +2337,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
 /// `PrimitiveDescriptor` ("Type" vs "PrimitiveDescriptor"). Round 75
 /// ERR-1 GAP unified `value_kind` with `Vm::type_name` for all 22
 /// variants; this helper now delegates to that canonical source so a
-/// single edit to one match arm propagates to every FFI error message.
+/// single edit to one match arm propagates to every conversion error message.
 /// Per the project's "one way to do things" convention.
 ///
 /// Locked by `tests/meta/round76_value_type_name_parity_tests.rs`.

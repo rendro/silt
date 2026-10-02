@@ -19,7 +19,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::value::{FromValue, HostImpl, IntoValue, Value};
+use crate::ast::{TypeExpr, TypeExprKind};
+use crate::intern::resolve;
+use crate::value::{FromValue, HostImpl, HostShape, IntoValue, Value};
 use crate::vm::VmError;
 
 /// A module of Rust functions, declared to a session in
@@ -40,6 +42,10 @@ pub struct HostFunction {
     pub signature: String,
     /// What a call runs. It is given arguments of the declared types.
     pub call: HostImpl,
+    /// The number of arguments `call` takes, when it was built for a
+    /// number (`fn0`, `fn1`, `fn2`): the signature must declare as many
+    /// parameters.
+    pub arity: Option<usize>,
 }
 
 impl HostModule {
@@ -57,13 +63,18 @@ impl HostModule {
     /// A panic inside `call` becomes a runtime error that names the
     /// function; returning `Err` is still the way to fail.
     pub fn function(
-        mut self,
+        self,
         signature: impl Into<String>,
         call: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
     ) -> HostModule {
+        self.push(signature.into(), Arc::new(call), None)
+    }
+
+    fn push(mut self, signature: String, call: HostImpl, arity: Option<usize>) -> HostModule {
         self.fns.push(HostFunction {
-            signature: signature.into(),
-            call: Arc::new(call),
+            signature,
+            call,
+            arity,
         });
         self
     }
@@ -74,9 +85,8 @@ impl HostModule {
         signature: impl Into<String>,
         f: impl Fn() -> R + Send + Sync + 'static,
     ) -> HostModule {
-        self.function(signature, move |_: &[Value]| {
-            f().into_value().map_err(VmError::new)
-        })
+        let call = move |_: &[Value]| f().into_value().map_err(VmError::new);
+        self.push(signature.into(), Arc::new(call), Some(0))
     }
 
     /// Add a function of one argument, converted from and to values.
@@ -85,10 +95,11 @@ impl HostModule {
         signature: impl Into<String>,
         f: impl Fn(A) -> R + Send + Sync + 'static,
     ) -> HostModule {
-        self.function(signature, move |args: &[Value]| {
+        let call = move |args: &[Value]| {
             let a = A::from_value(&args[0]).map_err(VmError::new)?;
             f(a).into_value().map_err(VmError::new)
-        })
+        };
+        self.push(signature.into(), Arc::new(call), Some(1))
     }
 
     /// Add a function of two arguments, converted from and to values.
@@ -97,11 +108,12 @@ impl HostModule {
         signature: impl Into<String>,
         f: impl Fn(A, B) -> R + Send + Sync + 'static,
     ) -> HostModule {
-        self.function(signature, move |args: &[Value]| {
+        let call = move |args: &[Value]| {
             let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("arg 1: {e}")))?;
             let b = B::from_value(&args[1]).map_err(|e| VmError::new(format!("arg 2: {e}")))?;
             f(a, b).into_value().map_err(VmError::new)
-        })
+        };
+        self.push(signature.into(), Arc::new(call), Some(2))
     }
 
     /// The text the module is checked from: one signature per line.
@@ -112,6 +124,50 @@ impl HostModule {
             text.push('\n');
         }
         text
+    }
+}
+
+/// The shape of the values of the type `ty`, which a host function's
+/// result is checked against.
+pub(super) fn shape(ty: &TypeExpr) -> HostShape {
+    let boxed = |ty: &TypeExpr| Box::new(shape(ty));
+    match &ty.kind {
+        TypeExprKind::Named(name) => match resolve(*name).as_str() {
+            "Int" => HostShape::Int,
+            "Float" => HostShape::Float,
+            "Bool" => HostShape::Bool,
+            "String" => HostShape::String,
+            "Bytes" => HostShape::Bytes,
+            _ => HostShape::Any,
+        },
+        TypeExprKind::Generic(name, args) => match (resolve(*name).as_str(), args.as_slice()) {
+            ("List", [item]) => HostShape::List(boxed(item)),
+            ("Set", [item]) => HostShape::Set(boxed(item)),
+            ("Map", [k, v]) => HostShape::Map(boxed(k), boxed(v)),
+            ("Option", [item]) => HostShape::Option(boxed(item)),
+            ("Result", [ok, err]) => HostShape::Result(boxed(ok), boxed(err)),
+            _ => HostShape::Any,
+        },
+        TypeExprKind::Tuple(items) if items.is_empty() => HostShape::Unit,
+        TypeExprKind::Tuple(items) => HostShape::Tuple(items.iter().map(shape).collect()),
+        _ => HostShape::Any,
+    }
+}
+
+/// Whether the type `ty` is or holds a function type. A host function
+/// cannot call a function it is given (it has no interpreter to call it
+/// on), nor make one to give back.
+pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
+    match &ty.kind {
+        TypeExprKind::Function(..) => true,
+        TypeExprKind::Generic(_, args) | TypeExprKind::Tuple(args) => {
+            args.iter().any(mentions_function)
+        }
+        TypeExprKind::AnonRecord { fields, .. } => {
+            fields.iter().any(|(_, ty)| mentions_function(ty))
+        }
+        TypeExprKind::AssocProj { receiver, .. } => mentions_function(receiver),
+        TypeExprKind::Named(_) | TypeExprKind::SelfType => false,
     }
 }
 

@@ -2761,7 +2761,7 @@ fn test_println_rejects_wrong_arity() {
 
 #[test]
 fn test_make_closure_rejects_non_closure_constant() {
-    // Locks R3: if the compiler (or a buggy FFI caller) emits
+    // Locks R3: if the compiler (or a buggy embedder) emits
     // `Op::MakeClosure` pointing at a constant that is NOT a
     // `Value::VmClosure`, the VM must return a clean `VmError` rather
     // than silently producing garbage. Mirrors

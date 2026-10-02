@@ -32,7 +32,7 @@ use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::{self, ModuleExports};
 use crate::types::Type;
 use crate::types::canonical::Resolver;
-use crate::value::HostFn;
+use crate::value::{HostFn, HostShape};
 
 pub use entry::{
     ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, test_functions,
@@ -652,6 +652,10 @@ impl Session {
                     Arc::new(HostFn {
                         name: format!("{}.{}", module.name, decl.name),
                         call: f.call.clone(),
+                        returns: decl
+                            .return_type
+                            .as_ref()
+                            .map_or(HostShape::Any, host::shape),
                     }),
                 )),
                 _ => None,

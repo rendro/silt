@@ -34,11 +34,24 @@ use crate::value::{HostFn, Value};
 /// A panicking host function would otherwise tear down the scheduler
 /// worker thread (or the main thread), leaving other tasks unable to
 /// progress. A caught panic becomes a [`VmError`] whose message preserves
-/// the panic payload when it is a `&str` or `String`. Every error names
-/// the function.
+/// the panic payload when it is a `&str` or `String`. A result that is
+/// not of the type the signature returns is an error too. Every error
+/// names the function.
 pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
     match std::panic::catch_unwind(AssertUnwindSafe(|| (host.call)(args))) {
-        Ok(Ok(value)) => Ok(value),
+        Ok(Ok(value)) if host.returns.admits(&value) => Ok(value),
+        Ok(Ok(value)) => {
+            let mut shown = value.to_string();
+            if shown.chars().count() > 80 {
+                shown = shown.chars().take(77).collect::<String>() + "...";
+            }
+            Err(VmError::new(format!(
+                "{}: its signature returns {}, but it returned {} {shown}",
+                host.name,
+                host.returns,
+                builtins::value_kind(&value)
+            )))
+        }
         Ok(Err(e)) => Err(VmError {
             message: format!("{}: {}", host.name, e.message),
             ..e
@@ -197,7 +210,7 @@ impl Vm {
         // We also register declaration-order ordinals for every builtin
         // variant in the same loop. The typechecker registers ordinals
         // during `check_program`, but a Vm constructed without a
-        // preceding type-check pass (some unit tests, FFI use cases)
+        // preceding type-check pass (some unit tests)
         // still needs ordinals for `cmp_gen(Monday, Friday)` to honour
         // declaration order. The two registrations are idempotent —
         // re-registering the same (name, ordinal) is a no-op write.

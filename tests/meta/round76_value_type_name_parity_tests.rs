@@ -45,7 +45,7 @@ use std::sync::Arc;
 
 use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{Channel, FromValue, HostFn, TaskHandle, Value};
+use silt::value::{Channel, FromValue, HostFn, HostShape, TaskHandle, Value};
 use silt::vm::Vm;
 
 // ── Builders mirroring tests/typecheck/round75_kind_naming_canonical_tests.rs ──
@@ -129,6 +129,7 @@ fn build_all_variants() -> AllVariants {
         host_fn: Value::HostFn(Arc::new(HostFn {
             name: "mylib.double".to_string(),
             call: Arc::new(|_: &[Value]| Ok(Value::Unit)),
+            returns: HostShape::Any,
         })),
         variant_constructor: Value::VariantConstructor("Some".to_string(), 1),
         type_descriptor: Value::TypeDescriptor("Point".to_string()),

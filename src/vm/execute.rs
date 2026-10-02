@@ -2474,7 +2474,7 @@ impl Vm {
                     // restores the suspended invoke state rather than
                     // re-running the method body from ip=0 — which would
                     // duplicate side effects like println, mutation, and
-                    // foreign-fn calls. The "original args" we re-push
+                    // host function calls. The "original args" we re-push
                     // on yield must reproduce the stack layout that
                     // `Op::CallMethod` will consume when this same
                     // instruction re-executes after resume: descriptor

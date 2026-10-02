@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::ast::{self, Decl};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::Lexer;
+use crate::lexer::{Lexer, Token};
 use crate::module;
 use crate::parser::Parser;
 use crate::source::{FileId, SourceMap, SourceName, Span};
@@ -211,10 +211,24 @@ impl ModuleGraph {
         self.parse(id, SourceName::Host(host.name.clone()), &text, sources);
         let file = self.module(id).file.expect("the text was registered");
         let module = &mut self.modules[id.index()];
-        if module::is_builtin_module(&host.name) {
-            module.problems.push(Diagnostic::error(
+        // A signature that does not parse is reported as such, and
+        // nothing more is said about the signatures.
+        let parsed = module.problems.is_empty();
+        let mut problems = Vec::new();
+        let at_start = Span::point(file, 0);
+        if !is_module_name(&host.name) {
+            problems.push(Diagnostic::error(
                 Code::HostModuleCollision,
-                Span::point(file, 0),
+                at_start,
+                format!(
+                    "the host module `{}` cannot be imported: its name is not an identifier",
+                    host.name
+                ),
+            ));
+        } else if module::is_builtin_module(&host.name) {
+            problems.push(Diagnostic::error(
+                Code::HostModuleCollision,
+                at_start,
                 format!(
                     "the host module `{0}` cannot be imported: `import {0}` names the builtin \
                      module `{0}`",
@@ -223,60 +237,107 @@ impl ModuleGraph {
             ));
         }
         if self.hosts.insert(name, id).is_some() {
-            module.problems.push(Diagnostic::error(
+            problems.push(Diagnostic::error(
                 Code::HostModuleCollision,
-                Span::point(file, 0),
+                at_start,
                 format!("two host modules are named `{}`", host.name),
             ));
         }
-        if let Some(ast) = &mut module.ast {
+        let help = "write it as `fn double(x: Int) -> Int`";
+        if let Some(ast) = module.ast.as_mut().filter(|_| parsed) {
+            let mut signature_problems = Vec::new();
             for decl in &mut ast.decls {
-                match decl {
-                    Decl::Fn(f) if f.is_signature_only => {
-                        f.is_pub = true;
-                        let untyped = f
-                            .params
-                            .iter()
-                            .any(|p| p.kind == ast::ParamKind::Data && p.ty.is_none())
-                            || f.return_type.is_none();
-                        if untyped {
-                            module.problems.push(
-                                Diagnostic::error(
-                                    Code::HostSignature,
-                                    f.span,
-                                    format!(
-                                        "the host function `{}` must declare the type of each \
-                                         parameter and its return type",
-                                        f.name
-                                    ),
-                                )
-                                .with_help("write it as `fn double(x: Int) -> Int`"),
-                            );
-                        }
-                    }
-                    other => module.problems.push(
+                let Decl::Fn(f) = decl else {
+                    signature_problems.push(
                         Diagnostic::error(
                             Code::HostSignature,
-                            decl_span(other),
+                            decl_span(decl),
                             "a host function is declared by a `fn` header with no body",
                         )
-                        .with_help("write it as `fn double(x: Int) -> Int`"),
-                    ),
+                        .with_help(help),
+                    );
+                    continue;
+                };
+                f.is_pub = true;
+                if !f.is_signature_only {
+                    signature_problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            f.span,
+                            "a host function is declared by a `fn` header with no body",
+                        )
+                        .with_help(help),
+                    );
+                    continue;
+                }
+                let untyped = f
+                    .params
+                    .iter()
+                    .any(|p| p.kind == ast::ParamKind::Data && p.ty.is_none())
+                    || f.return_type.is_none();
+                if untyped {
+                    signature_problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            f.span,
+                            format!(
+                                "the host function `{}` must declare the type of each \
+                                 parameter and its return type",
+                                f.name
+                            ),
+                        )
+                        .with_help(help),
+                    );
+                }
+                let types = f.params.iter().filter_map(|p| p.ty.as_ref());
+                if types
+                    .chain(&f.return_type)
+                    .any(super::host::mentions_function)
+                {
+                    signature_problems.push(Diagnostic::error(
+                        Code::HostSignature,
+                        f.span,
+                        format!(
+                            "the host function `{}` cannot take or return a function: a host \
+                             function has no way to call one",
+                            f.name
+                        ),
+                    ));
                 }
             }
             let declared = ast.decls.len();
-            if declared != host.fns.len() && module.problems.is_empty() {
-                module.problems.push(Diagnostic::error(
+            if declared != host.fns.len() {
+                signature_problems.push(Diagnostic::error(
                     Code::HostSignature,
-                    Span::point(file, 0),
+                    at_start,
                     format!(
-                        "the host module `{}` has {} functions but its signatures declare {declared}",
+                        "the host module `{}` has {} but its signatures declare {declared}",
                         host.name,
-                        host.fns.len()
+                        plural(host.fns.len(), "function")
                     ),
                 ));
+            } else {
+                for (decl, function) in ast.decls.iter().zip(&host.fns) {
+                    if let (Decl::Fn(f), Some(arity)) = (decl, function.arity)
+                        && f.params.len() != arity
+                    {
+                        signature_problems.push(Diagnostic::error(
+                            Code::HostSignature,
+                            f.span,
+                            format!(
+                                "the host function `{}` is given a Rust function of {}, but \
+                                 its signature declares {}",
+                                f.name,
+                                plural(arity, "argument"),
+                                plural(f.params.len(), "parameter")
+                            ),
+                        ));
+                    }
+                }
             }
+            problems.extend(signature_problems);
         }
+        module.problems.extend(problems);
         id
     }
 
@@ -375,7 +436,13 @@ impl ModuleGraph {
                         if overlays.contains_key(&canonical_key(&target.path))
                             || target.path.exists() =>
                     {
-                        ImportResolution::Unresolved(host_collision(name, &target.path, span))
+                        let dependency = packages.dependency(package, name).is_some();
+                        ImportResolution::Unresolved(host_collision(
+                            name,
+                            &target.path,
+                            dependency,
+                            span,
+                        ))
                     }
                     _ => ImportResolution::Module(host),
                 }
@@ -691,6 +758,30 @@ fn resolve_import(
 /// The help for an import of `name` that names no file in `package`,
 /// when another package of the program declares a dependency by that
 /// name: a dependency's dependencies are its own.
+/// `n` and `word`, `word` made plural unless `n` is one.
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// Whether `name` can be written after `import`: one identifier.
+fn is_module_name(name: &str) -> bool {
+    let Ok(tokens) = Lexer::new(FileId::default(), name).tokenize() else {
+        return false;
+    };
+    let mut tokens = tokens
+        .iter()
+        .map(|(token, _)| token)
+        .filter(|t| !matches!(t, Token::Eof | Token::Newline));
+    matches!(
+        (tokens.next(), tokens.next()),
+        (Some(Token::Ident(s)), None) if resolve(*s) == name
+    )
+}
+
 /// The span of the declaration `decl`.
 fn decl_span(decl: &Decl) -> Span {
     match decl {
@@ -702,16 +793,28 @@ fn decl_span(decl: &Decl) -> Span {
     }
 }
 
-/// The error for an import of the host module `name` that a dependency
-/// or the module file at `path` would also answer.
-fn host_collision(name: Symbol, path: &Path, span: Span) -> Diagnostic {
+/// The error for an import of the host module `name` that the module
+/// file at `path`, or a dependency of that key whose library it is,
+/// would also answer.
+fn host_collision(name: Symbol, path: &Path, dependency: bool, span: Span) -> Diagnostic {
     let shown = crate::git::escape_for_display(&module_path_for_display(path));
+    let (what, help) = if dependency {
+        (
+            format!("the dependency `{name}` ({shown})"),
+            format!("rename the dependency key `{name}` in silt.toml, or the host module"),
+        )
+    } else {
+        (
+            shown.clone(),
+            format!("rename `{shown}` or the host module"),
+        )
+    };
     Diagnostic::error(
         Code::HostModuleCollision,
         span,
-        format!("`import {name}` names both the host module `{name}` and {shown}"),
+        format!("`import {name}` names both the host module `{name}` and {what}"),
     )
-    .with_help(format!("rename `{shown}` or the host module"))
+    .with_help(help)
 }
 
 pub(super) fn undeclared_dependency_help(

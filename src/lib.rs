@@ -53,6 +53,6 @@ pub mod vm;
 #[cfg(feature = "watch")]
 pub mod watch;
 
-// Re-export FFI types for embedders.
+// Re-export the value and conversion types embedders use.
 pub use value::{FromValue, IntoValue, Value};
 pub use vm::{Vm, VmError};

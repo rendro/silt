@@ -78,7 +78,9 @@ import it cannot see it.
 `fn0`, `fn1` and `fn2` convert the arguments from silt values and the
 result back, through the `FromValue` and `IntoValue` traits. The Rust
 types must match the signature: `Int` is `i64`, `String` is `String`, and
-so on (see the table below).
+so on (see the table below). The signature must declare as many
+parameters as the closure takes: `.fn1("fn answer() -> Int", ..)` is an
+error.
 
 ### Functions on values
 
@@ -99,7 +101,14 @@ let lists = HostModule::new("lists").function(
 ```
 
 The checker has already made sure the arguments have the declared types
-and number, so a function can rely on its signature.
+and number, so a function can rely on its signature. The result is
+checked against the signature's return type when the function returns:
+a `-> Int` function that returns a `String` is a runtime error that
+names it (`mylib.count: its signature returns Int, but it returned
+String "three"`).
+
+A host function cannot take or return a function (`fn f(g: Fn(Int) ->
+Int) -> Int` is an error): a host function has no way to call one.
 
 ## Checking
 
@@ -116,9 +125,12 @@ whether or not the program imports it, at `<host:mylib>`:
 
 - a signature that is not one `fn` header without a body, or that
   leaves a parameter or the return type untyped;
+- a signature that takes or returns a function;
+- a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
+  number of parameters;
 - a type the signature names that does not exist;
-- a host module named like a builtin module (`list`), or two host modules
-  with one name.
+- a host module whose name is not an identifier (`my-lib`), one named
+  like a builtin module (`list`), or two host modules with one name.
 
 An `import mylib` in a program whose package also has a `mylib.silt` or a
 dependency named `mylib` is an error at the import.
@@ -195,14 +207,15 @@ several scripts in parallel from Rust, create one `Vm` per thread.
 ## Error Surfacing
 
 - **Static errors** (type errors, unknown names, bad host signatures)
-  are the diagnostics of `session.analyze(file)`; `session.compile`
-  returns `Err` for a program that has them.
+  are the diagnostics of `session.analyze(file)`. `session.compile`
+  returns them as its `Err` for a program that has them.
 - **Runtime errors** (overflow, out-of-bounds, an `Err` or `None` that
   bubbled to the top) return as `Err(VmError)` from `vm.run`.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message
-  starts with the function's name: `mylib.parse: bad input`.
+  starts with the function's name: `mylib.parse: bad input`. So does a
+  result that is not of the type its signature returns.
 - **A panic inside a host function** is caught and becomes a runtime
   error (`host function 'mylib.parse' panicked: ...`). The scheduler
   worker survives and other tasks keep running. Returning `Err` is still
