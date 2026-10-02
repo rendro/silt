@@ -31,7 +31,7 @@ let mut session = Session::new(Config {
     host: vec![mylib],
 });
 let source = "import mylib\nfn main() { mylib.double(21) }";
-let file = session.open_text(Path::new("main.silt"), source);
+let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
 // 3. Check it. Every static error is in the analysis.
 let analysis = session.analyze(file);

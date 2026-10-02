@@ -291,9 +291,9 @@ fn compile_without_analyze_returns_the_analysis_errors() {
         lock: LockPolicy::ReadOnly,
         host: vec![mylib()],
     });
-    let file = session.open_text(
+    let file = session.set_overlay(
         std::path::Path::new("main.silt"),
-        "import mylib\nfn main() { mylib.double(\"x\") }",
+        "import mylib\nfn main() { mylib.double(\"x\") }".to_string(),
     );
     let errors = match session.compile(file, Entry::Main) {
         Ok(_) => panic!("the program has a type error"),
@@ -409,7 +409,7 @@ fn docs_ffi_quick_start() {
         host: vec![mylib],
     });
     let source = "import mylib\nfn main() { mylib.double(21) }";
-    let file = session.open_text(Path::new("main.silt"), source);
+    let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
     // 3. Check it. Every static error is in the analysis.
     let analysis = session.analyze(file);
