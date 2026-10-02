@@ -1225,7 +1225,13 @@ impl Compiler {
                 // "module.item" -> bare "item" for each selected name.
                 self.compile_file_module(&mod_str, span)?;
                 let global = self.module_global(&mod_str);
+                // A type alias and a trait are names for the checker only:
+                // they have no value at run time, so nothing is aliased.
+                let static_only = self.module_static_names(&mod_str);
                 for (item, _) in items {
+                    if static_only.contains(item) {
+                        continue;
+                    }
                     let item_str = resolve(*item);
                     let qualified = format!("{global}.{item_str}");
                     let qi = self.add_constant(Value::String(qualified), span)?;
@@ -1292,6 +1298,30 @@ impl Compiler {
             .and_then(|unit| unit.imports.get(&intern(written)))
             .map(|&target| self.units.modules[target].global.clone())
             .unwrap_or_else(|| written.to_string())
+    }
+
+    /// The names of the type aliases and traits of the module the current
+    /// module imports as `written`: they bind no global.
+    fn module_static_names(&self, written: &str) -> HashSet<Symbol> {
+        let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let Some(&target) = self
+            .units
+            .modules
+            .get(importer)
+            .and_then(|unit| unit.imports.get(&intern(written)))
+        else {
+            return HashSet::new();
+        };
+        self.units.modules[target]
+            .program
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Type(t) if matches!(t.body, TypeBody::Alias(_)) => Some(t.name),
+                Decl::Trait(t) => Some(t.name),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Compile a file-based module's declarations into the current compilation
