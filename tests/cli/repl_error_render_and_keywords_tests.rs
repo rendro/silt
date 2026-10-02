@@ -1,8 +1,8 @@
 //! Round-59 audit locks for REPL error rendering and keyword completion.
 //!
 //! GAP #4 / #5 — a runtime error with a multi-line message renders its
-//! first line in the `error[runtime]:` header and the rest as `= note:` /
-//! `= help:` lines after the locator. The REPL renders runtime errors as
+//! first line in the `error[runtime]:` header and the rest as a `= note:`
+//! after the locator; help comes only from the error's help field. The REPL renders runtime errors as
 //! every front door does, through `VmError::to_diagnostic`, so these lock
 //! that conversion.
 //!
@@ -27,16 +27,18 @@ fn test_runtime_error_header_is_canonical() {
 }
 
 #[test]
-fn test_runtime_error_multiline_message_splits_into_note_and_help() {
-    let msg = "regex error\nunclosed group\nat position 3\nhelp: escape the parenthesis";
-    let d = VmError::new(msg.to_string()).to_diagnostic();
+fn test_runtime_error_multiline_message_is_one_note_and_help_is_structured() {
+    let msg = "regex error\nunclosed group\nhelp: not help";
+    let d = VmError::new(msg.to_string())
+        .with_help("escape the parenthesis")
+        .to_diagnostic();
     assert_eq!(d.message, "regex error");
-    assert_eq!(d.notes, vec!["unclosed group\nat position 3".to_string()]);
+    assert_eq!(d.notes, vec!["unclosed group\nhelp: not help".to_string()]);
     assert_eq!(d.help, vec!["escape the parenthesis".to_string()]);
     let rendered = render_human(&SourceMap::new(), &d);
     assert_eq!(
         rendered,
-        "error[runtime]: regex error\n  = note: unclosed group\n          at position 3\n  = help: escape the parenthesis"
+        "error[runtime]: regex error\n  = note: unclosed group\n          help: not help\n  = help: escape the parenthesis"
     );
 }
 
