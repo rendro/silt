@@ -452,6 +452,16 @@ impl Session {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
             }
+            // A module whose file could not be read: each import of it.
+            for &importer in &ordering.modules {
+                for import in &self.graph.module(importer).imports {
+                    if matches!(import.resolution, ImportResolution::Module(t) if t == id)
+                        && let Some(d) = &import.problem
+                    {
+                        push(d, &mut out);
+                    }
+                }
+            }
         }
         for &id in &ordering.modules {
             for import in &self.graph.module(id).imports {

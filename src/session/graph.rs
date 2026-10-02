@@ -56,6 +56,10 @@ pub struct Module {
     /// Why the module could not be read, its lex error, or its parse
     /// errors.
     pub problems: Vec<Diagnostic>,
+    /// Why the module's file could not be read (the kind and text of the
+    /// I/O error). Each import of the module reports it at its own span
+    /// ([`Import::problem`]).
+    pub load_error: Option<(std::io::ErrorKind, String)>,
     /// The import that first brought the module into the graph: the
     /// importing module, the name written and the span of the `import`.
     pub first_import: Option<(ModuleId, Symbol, Span)>,
@@ -91,6 +95,9 @@ pub struct Import {
     /// The span of the `import` declaration.
     pub span: Span,
     pub resolution: ImportResolution,
+    /// Why the module it names could not be read, at this import: each
+    /// importer gets its own error, made again when it is reparsed.
+    pub problem: Option<Diagnostic>,
 }
 
 /// What an `import` names.
@@ -185,6 +192,7 @@ impl ModuleGraph {
                     file: None,
                     ast: None,
                     problems: Vec::new(),
+                    load_error: None,
                     first_import: None,
                     imports: Vec::new(),
                 })
@@ -211,6 +219,7 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         let (ast, problems) = parse_text(file, text);
+        module.load_error = None;
         module.ast = ast;
         module.problems = problems;
     }
@@ -270,19 +279,32 @@ impl ModuleGraph {
         let package = self.module(id).package;
         let mut imports = Vec::with_capacity(decls.len());
         for (name, span) in decls {
+            let mut problem = None;
             let resolution = if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
             } else {
                 match resolve_import(packages, package, name, span) {
                     Ok(target) => {
-                        let help = undeclared_dependency_help(packages, package, name);
-                        ImportResolution::Module(self.module_for(
-                            target,
-                            (id, name, span),
-                            help,
-                            overlays,
-                            sources,
-                        ))
+                        let target_id =
+                            self.module_for(target, (id, name, span), overlays, sources);
+                        let module = self.module(target_id);
+                        if let Some((kind, text)) = &module.load_error {
+                            let mut d = module::module_load_error(
+                                &resolve(name),
+                                &module.path,
+                                &crate::git::escape_for_display(&module_path_for_display(
+                                    &module.path,
+                                )),
+                                &std::io::Error::new(*kind, text.clone()),
+                                span,
+                            );
+                            if let Some(help) = undeclared_dependency_help(packages, package, name)
+                            {
+                                d.help.insert(0, help);
+                            }
+                            problem = Some(d);
+                        }
+                        ImportResolution::Module(target_id)
                     }
                     Err(d) => ImportResolution::Unresolved(d),
                 }
@@ -291,6 +313,7 @@ impl ModuleGraph {
                 name,
                 span,
                 resolution,
+                problem,
             });
         }
         self.modules[id.index()].imports = imports;
@@ -298,12 +321,12 @@ impl ModuleGraph {
 
     /// The module of the file `target` names, read and parsed if the
     /// graph does not have it yet. `import` is the import that reaches
-    /// it: a file that cannot be read is reported there.
+    /// it first. A file that cannot be read leaves the module's
+    /// `load_error`, which each import reports.
     fn module_for(
         &mut self,
         target: ImportedFile,
         import: (ModuleId, Symbol, Span),
-        help: Option<String>,
         overlays: &HashMap<PathBuf, String>,
         sources: &mut SourceMap,
     ) -> ModuleId {
@@ -319,6 +342,7 @@ impl ModuleGraph {
             file: None,
             ast: None,
             problems: Vec::new(),
+            load_error: None,
             first_import: Some(import),
             imports: Vec::new(),
         });
@@ -343,17 +367,7 @@ impl ModuleGraph {
                     .collect();
             }
             Err(e) => {
-                let mut d = module::module_load_error(
-                    &resolve(name),
-                    &target.path,
-                    &crate::git::escape_for_display(&module_path_for_display(&target.path)),
-                    &e,
-                    span,
-                );
-                if let Some(help) = help {
-                    d.help.insert(0, help);
-                }
-                self.modules[id.index()].problems.push(d);
+                self.modules[id.index()].load_error = Some((e.kind(), e.to_string()));
             }
         }
         id
