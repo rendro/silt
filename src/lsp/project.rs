@@ -23,6 +23,11 @@ pub(super) fn project_dir(path: &Path) -> PathBuf {
     Manifest::find(dir).unwrap_or_else(|| dir.to_path_buf())
 }
 
+/// How many texts a session is given before a new one replaces it. The
+/// session's source map keeps every text it was given, so a long editing
+/// session would otherwise grow without bound.
+const TEXTS_PER_SESSION: usize = 1000;
+
 /// `path` as the key of a file: canonical when it exists.
 pub(super) fn path_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -38,6 +43,8 @@ pub(super) struct Project {
     stamps: Vec<Stamp>,
     /// The text given to the session for each file, by path key.
     overlays: HashMap<PathBuf, Arc<str>>,
+    /// How many texts the session was given.
+    texts_given: usize,
     /// What compiling each analysed entry module found, with the modules
     /// of its graph. Dropped when one of them changes.
     compiled: HashMap<ModuleId, (Vec<ModuleId>, Vec<Diagnostic>)>,
@@ -60,14 +67,16 @@ impl Project {
             config,
             stamps: stamps(dir),
             overlays: HashMap::new(),
+            texts_given: 0,
             compiled: HashMap::new(),
         }
     }
 
-    /// Whether the project's manifest or lockfile changed since the
-    /// session was made.
+    /// Whether the session is to be replaced: the project's manifest or
+    /// lockfile changed since it was made, or it was given
+    /// [`TEXTS_PER_SESSION`] texts.
     pub(super) fn is_stale(&self, dir: &Path) -> bool {
-        stamps(dir) != self.stamps
+        self.texts_given >= TEXTS_PER_SESSION || stamps(dir) != self.stamps
     }
 
     /// Give the session `text` for the file at `path`, unless it has that
@@ -78,6 +87,7 @@ impl Project {
             return None;
         }
         self.overlays.insert(key, text.clone());
+        self.texts_given += 1;
         let file = self.session.set_overlay(path, text.to_string());
         Some(self.session.module_of(file))
     }
