@@ -1,0 +1,11 @@
+-- verdict: same
+-- A `pub let` is exported for real: `import m.{ answer }` binds its
+-- value, and the module's own functions still see it. `run` used to
+-- fail with `undefined global: m.answer` although `check` passed.
+import m.{ answer, primes, bump }
+
+fn main() {
+  println(answer)
+  println(primes)
+  println(bump())
+}

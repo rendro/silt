@@ -1,0 +1,9 @@
+pub let answer = 42
+
+pub let primes = [2, 3, 5]
+
+let hidden = 7
+
+pub fn bump() -> Int {
+  answer + hidden
+}
