@@ -29,11 +29,12 @@
 //!    alias; the second references the same name without import and
 //!    sees an "unknown type" diagnostic. Locks the LSP isolation goal.
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
+use silt::types::Type;
 use silt::types::canonical::{AliasInfo, Resolver};
-use silt::types::{Severity, Type};
 
 // ── 1. Resolver instances are independent ──────────────────────────
 

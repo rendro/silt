@@ -1,7 +1,7 @@
 -- Two `import m as n` with the same alias bind `n` twice.
 -- cmd: check
 -- exit: 1
--- stderr-contains: 'm' is bound twice at the top level: by the import at line 5 and by the import here
+-- stderr-contains: 'm' is bound twice at the top level: by the import and by the import here
 import a as m
 import b as m
 

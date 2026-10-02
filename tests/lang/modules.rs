@@ -137,46 +137,12 @@ fn main() {
     );
 }
 
-// ── G3 (round 15): module parse errors must include a source snippet ──
+// ── Module parse errors are diagnostics in the module's file ──────
 //
-// Before the fix, `format_module_source_error` in src/compiler/mod.rs
-// flattened the inner (module-file) parse error into a single-line
-// message "module 'bad': parse error at bad.silt:3:1 — ..." and the
-// outer renderer's caret landed at the `import bad` line in main.silt.
-// Users had no way to see where the actual parse error was inside the
-// imported module. The fix reproduces the offending source line from
-// the module file plus a caret marker inline in the error message.
-//
-// Mutation reasoning: reverting the `format_module_source_error` body
-// back to the flat one-line format would make this test fail because
-// (a) the `-->` marker pointing at the module file wouldn't appear in
-// the message, and (b) the actual line of module source would not be
-// rendered.
-
-// ── B6: module parse-error snippet must not render twice ───────────
-//
-// When a parse error inside an imported module is rendered via the
-// full `SourceError::Display` path (as main.rs/repl.rs do), the
-// inner module snippet must appear EXACTLY ONCE, not twice. The
-// audit finding (B6) was that round 15 embedded a multi-line
-// `--> ... | ^` snippet into `CompileError.message`; `SourceError::
-// Display` then echoed that entire blob both in the header
-// (`error[compile]: {msg}`) AND on the caret line (`^ {msg}`),
-// duplicating the inner snippet. The fix (errors.rs) truncates
-// `msg` at the first newline when rendering the caret line. This
-// test counts occurrences of the unique inner source line and
-// pins to exactly 1.
-
-// ── G1: module parse error with EOF-past-end span must keep snippet ──
-//
-// A truncated inner module file (e.g. `pub fn broken(\n` with an
-// unexpected EOF) parses with a span pointing at line 2, column 1 —
-// one line past the end of the file. Before the fix,
-// `format_module_source_error` silently dropped the snippet because
-// line 2 has no text. A position past the last line break is now shown
-// at the end of the last real line. This test locks
-// the rendered error message to include both the `pub fn broken(`
-// line and a caret marker.
+// A lex or parse error inside an imported module is reported in the
+// module's file, at its own line and column, with the import that
+// brought the module in as a label. The goldens under
+// tests/golden/lang/modules/ lock the rendering.
 
 // ── G4: circular-import error must render the full chain ───────────
 //

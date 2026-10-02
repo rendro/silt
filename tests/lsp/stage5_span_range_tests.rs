@@ -93,8 +93,23 @@ fn wrap_in_ok_wraps_the_whole_expression() {
         .pointer(&format!("/edit/changes/{}", uri.replace('/', "~1")))
         .and_then(|e| e.as_array())
         .unwrap_or_else(|| panic!("no edits for the document; got {wrap}"));
-    let new_text = edits[0].get("newText").and_then(|t| t.as_str()).unwrap();
-    assert_eq!(new_text, "Ok(compute(1, 2) + 3)");
+    // Apply the edits to the line they are on, the last first.
+    let mut line: Vec<char> = source.lines().nth(2).unwrap().chars().collect();
+    let mut placed: Vec<(u64, u64, &str)> = edits
+        .iter()
+        .map(|e| {
+            let start = e.pointer("/range/start/character").and_then(|c| c.as_u64());
+            let end = e.pointer("/range/end/character").and_then(|c| c.as_u64());
+            let text = e.get("newText").and_then(|t| t.as_str());
+            (start.unwrap(), end.unwrap(), text.unwrap())
+        })
+        .collect();
+    placed.sort_by_key(|e| std::cmp::Reverse(e.0));
+    for (start, end, text) in placed {
+        line.splice(start as usize..end as usize, text.chars());
+    }
+    let line: String = line.into_iter().collect();
+    assert_eq!(line, "  let r: Result(Int, String) = Ok(compute(1, 2) + 3)");
     client.shutdown();
 }
 

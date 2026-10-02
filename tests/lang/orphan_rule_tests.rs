@@ -7,10 +7,10 @@
 //! package" mode below is reachable only through
 //! `typechecker::check_with_package(.., None)`.
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 
 /// Type-check `input` with no package context (REPL / ad-hoc script).
 /// The orphan rule is disabled in this mode.

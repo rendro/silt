@@ -13,10 +13,10 @@
 
 use serde_json::Value;
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 
 use crate::support::LspClient;
 

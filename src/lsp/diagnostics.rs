@@ -15,31 +15,14 @@ use crate::ast::Program;
 use crate::intern::Symbol;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::source::{FileId, SourceFile, SourceName, Span};
+use crate::source::{SourceFile, SourceMap, SourceName};
 use crate::typechecker;
 
 use super::Server;
-use super::conversions::span_to_range;
 use super::definitions::build_definitions;
 use super::local_bindings::collect_local_bindings;
 use super::panic_message;
 use super::state::{DefInfo, Document, LocalBinding};
-
-// ── Diagnostics helper ─────────────────────────────────────────────
-
-pub(super) fn make_diagnostic(
-    message: &str,
-    span: &Span,
-    severity: DiagnosticSeverity,
-    source: &SourceFile,
-) -> Diagnostic {
-    Diagnostic {
-        range: span_to_range(span, source),
-        severity: Some(severity),
-        message: message.to_string(),
-        ..Diagnostic::default()
-    }
-}
 
 // ── Document analysis ──────────────────────────────────────────────
 
@@ -78,60 +61,34 @@ fn analysis_failed_diagnostic() -> Diagnostic {
     }
 }
 
-/// Lex, parse and typecheck `source`. Reads nothing but its arguments.
-fn analyse(source: &SourceFile) -> Analysis {
-    let mut diagnostics = Vec::new();
-
-    let tokens = match Lexer::new(FileId::default(), &source.text).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            diagnostics.push(make_diagnostic(
-                &e.message,
-                &e.span,
-                DiagnosticSeverity::ERROR,
-                source,
-            ));
-            return Analysis::without_program(diagnostics);
-        }
+/// Lex, parse and typecheck `source`, the text of the document `uri`.
+/// Reads nothing but its arguments.
+fn analyse(source: &SourceFile, uri: &Uri) -> Analysis {
+    let mut sources = SourceMap::new();
+    let file = sources.add(source.path.clone(), source.text.clone());
+    let publish = |diagnostics: Vec<crate::diagnostic::Diagnostic>| -> Vec<Diagnostic> {
+        diagnostics
+            .iter()
+            .map(|d| crate::diagnostic::to_lsp(&sources, d, &|_| Some(uri.clone())))
+            .collect()
     };
 
-    let (mut program, parse_errors) = Parser::new(tokens, &source.text)
+    let tokens = match Lexer::new(file, &source.text).tokenize() {
+        Ok(t) => t,
+        Err(e) => return Analysis::without_program(publish(vec![e])),
+    };
+
+    let (mut program, mut diagnostics) = Parser::new(tokens, &source.text)
         .with_docs()
         .parse_program_recovering();
 
-    for e in &parse_errors {
-        diagnostics.push(make_diagnostic(
-            &e.message,
-            &e.span,
-            DiagnosticSeverity::ERROR,
-            source,
-        ));
-    }
-
-    let type_errors = typechecker::check(&mut program);
-    // GAP #8: drop the "unknown module" warning for user-module imports
-    // and the follow-on "undefined" errors for names they bring in. The
-    // type checker has no filesystem access, so every legitimate
-    // `import <user_module>` would otherwise surface as a warning in the
-    // editor, plus noise for every imported name. The compiler resolves
-    // those at link time — if the name truly is missing a hard error
-    // will surface there — so we suppress them here the same way the
-    // CLI does.
-    let has_user_import_warning = type_errors.iter().any(is_unknown_module_warning_te);
-    for e in &type_errors {
-        if is_unknown_module_warning_te(e) {
-            continue;
-        }
-        if has_user_import_warning && is_user_import_resolvable_error_te(e) {
-            continue;
-        }
-        let severity = match e.severity {
-            typechecker::Severity::Error => DiagnosticSeverity::ERROR,
-            typechecker::Severity::Warning => DiagnosticSeverity::WARNING,
-        };
-        let message = e.full_message(|span| source.line_col(span.start).0);
-        diagnostics.push(make_diagnostic(&message, &e.span, severity, source));
-    }
+    // The type checker has no filesystem access, so every `import` of a
+    // user module would surface as an "unknown module" warning plus an
+    // error for every name it brings in. The compiler resolves those
+    // imports; the CLI leaves the same diagnostics out.
+    diagnostics.extend(typechecker::without_import_cascade(typechecker::check(
+        &mut program,
+    )));
 
     let definitions = build_definitions(&program);
     let locals = collect_local_bindings(&program, &source.text);
@@ -140,7 +97,7 @@ fn analyse(source: &SourceFile) -> Analysis {
         program: Some(program),
         definitions,
         locals,
-        diagnostics,
+        diagnostics: publish(diagnostics),
     }
 }
 
@@ -162,13 +119,13 @@ impl Server {
         &mut self,
         uri: Uri,
         source: String,
-        analyse: fn(&SourceFile) -> Analysis,
+        analyse: fn(&SourceFile, &Uri) -> Analysis,
     ) {
         let source = SourceFile::new(
             SourceName::Overlay(uri.path().as_str().into()),
             source.into(),
         );
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source)));
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source, &uri)));
         let analysis = outcome.unwrap_or_else(|payload| {
             eprintln!(
                 "silt-lsp: internal error while analysing {}: {}; the document is kept \
@@ -206,24 +163,6 @@ impl Server {
             .send(Message::Notification(notif))
             .ok();
     }
-}
-
-// Both predicates delegate the message-text matching to
-// `crate::diagnostic_filters` so the LSP and CLI stay in lock-step.
-// The CLI helpers (`is_unknown_module_warning`,
-// `is_user_import_resolvable_error` in src/cli/pipeline.rs) operate on
-// `SourceError` (post-wrapping); these versions operate on the
-// typechecker's native `TypeError` so the LSP can filter before
-// converting to `lsp_types::Diagnostic`. Severity gating stays at the
-// call site because the two error types' shapes differ.
-fn is_unknown_module_warning_te(err: &typechecker::TypeError) -> bool {
-    err.severity == typechecker::Severity::Warning
-        && crate::diagnostic_filters::is_unknown_module_warning_message(&err.message)
-}
-
-fn is_user_import_resolvable_error_te(err: &typechecker::TypeError) -> bool {
-    err.severity == typechecker::Severity::Error
-        && crate::diagnostic_filters::is_user_import_resolvable_error_message(&err.message)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -279,7 +218,7 @@ mod tests {
         let uri = Uri::from_str("file:///test.silt").unwrap();
         server.update_document(uri.clone(), "fn main() { 1 }".to_string());
 
-        server.update_document_with(uri.clone(), "fn main() { 2 }".to_string(), |_| {
+        server.update_document_with(uri.clone(), "fn main() { 2 }".to_string(), |_, _| {
             panic!("deliberate panic in a test")
         });
 

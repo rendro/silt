@@ -30,10 +30,10 @@
 //! reports spanless "type mismatch: expected B, got A" errors, so it does
 //! not compile, and a golden case would have to lock that in.
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 
 /// Typecheck and return warning messages only.
 fn type_warnings(input: &str) -> Vec<String> {

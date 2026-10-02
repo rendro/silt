@@ -43,6 +43,63 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     results
 }
 
+/// How the files of a program are named in its diagnostics, static and
+/// runtime alike: the entry file as the user typed it, every other file
+/// (an imported module, a dependency) in the style of the path the user
+/// typed (see [`display_path_for`]), so the header, the `-->` line and
+/// every call-stack frame agree.
+pub(crate) struct ProgramFiles<'a> {
+    /// The entry file, as the user typed it.
+    path: &'a str,
+    sources: &'a silt::source::SourceMap,
+    user_path_is_absolute: bool,
+    cwd: Option<PathBuf>,
+}
+
+impl<'a> ProgramFiles<'a> {
+    pub(crate) fn new(path: &'a str, sources: &'a silt::source::SourceMap) -> Self {
+        ProgramFiles {
+            path,
+            sources,
+            user_path_is_absolute: Path::new(path).is_absolute(),
+            cwd: std::env::current_dir().ok(),
+        }
+    }
+
+    /// The name of the file `file`.
+    fn name(&self, file: &silt::source::SourceFile) -> String {
+        use silt::source::SourceName;
+        match &file.path {
+            SourceName::Path(p) if p != Path::new(self.path) => {
+                display_path_for(self.user_path_is_absolute, self.cwd.as_deref(), p)
+            }
+            SourceName::Path(_) => self.path.to_string(),
+            other => silt::diagnostic::source_name_for_display(other).unwrap_or_default(),
+        }
+    }
+}
+
+impl silt::diagnostic::SourceView for ProgramFiles<'_> {
+    fn locate(&self, span: silt::source::Span) -> Option<silt::diagnostic::Located> {
+        let file = self.sources.get(span.file)?;
+        Some(silt::diagnostic::Located {
+            file: self.name(file),
+            position: self.sources.position(span),
+        })
+    }
+
+    /// A frame in code silt adds itself is put in the entry file.
+    fn frame(&self, span: silt::source::Span) -> String {
+        match self.locate(span) {
+            Some(located) => {
+                let p = located.position.expect("a file of the map has positions");
+                format!("{}:{}:{}", located.file, p.line, p.col)
+            }
+            None => format!("{}:<unknown location>", self.path),
+        }
+    }
+}
+
 /// Render an error/frame path in the same style the user typed on the
 /// command line (audit rounds 17/21 policy, F13 + G1/G2):
 ///

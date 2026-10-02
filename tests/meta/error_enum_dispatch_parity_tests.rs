@@ -17,8 +17,8 @@
 //!     the typechecker's registration is checked against it by
 //!     behaviour below.
 
+use silt::diagnostic::Severity;
 use silt::module::{builtin_enum_variants, builtin_error_enum_variants_with_arity};
-use silt::types::Severity;
 
 // ── Finding 1 — feature-gate lock ────────────────────────────────────
 

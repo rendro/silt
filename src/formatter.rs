@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::*;
+use crate::diagnostic::Diagnostic;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{LexError, Lexer};
-use crate::parser::{ParseError, Parser};
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 use crate::source::{FileId, SourceFile, SourceName, Span};
 
 const INDENT: &str = "  ";
@@ -2956,16 +2957,12 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
 // ── Public entry point ──────────────────────────────────────────────
 
 /// A failure surfaced from the formatter: the input does not lex or
-/// parse, or the formatter's own result failed the self-check. Callers
-/// can downcast via the enum to render a proper source-line snippet
-/// through `SourceError::from_lex_error` / `from_parse_error`. The
-/// `Display` impl preserves the bare `"lex error: ..."` /
-/// `"parse error: ..."` shape so test-helper callers that just format
-/// the error keep working.
+/// parse, or the formatter's own result failed the self-check. The
+/// `Display` impl gives the phase and the message, `"parse error: ..."`.
 #[derive(Debug)]
 pub enum FmtError {
-    Lex(LexError),
-    Parse(ParseError),
+    /// The input does not lex or parse.
+    Syntax(Diagnostic),
     /// The input is fine, but the text the formatter produced for it
     /// would not parse, would be a different program, or would not carry
     /// the same comments. Nothing is returned for such an input, so the
@@ -2989,8 +2986,7 @@ pub struct InternalError {
 impl fmt::Display for FmtError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FmtError::Lex(e) => write!(f, "lex error: {}", e.message),
-            FmtError::Parse(e) => write!(f, "parse error: {}", e.message),
+            FmtError::Syntax(e) => write!(f, "{} error: {}", e.phase().word(), e.message),
             FmtError::Internal(e) => write!(f, "formatting refused: {}", e.message),
         }
     }
@@ -3007,10 +3003,10 @@ impl std::error::Error for FmtError {}
 pub fn format(source: &str) -> Result<String, FmtError> {
     let (tokens, comments) = Lexer::new(FileId::default(), source)
         .tokenize_with_comments()
-        .map_err(FmtError::Lex)?;
+        .map_err(FmtError::Syntax)?;
     let program = Parser::new(tokens.clone(), source)
         .parse_program()
-        .map_err(FmtError::Parse)?;
+        .map_err(FmtError::Syntax)?;
     let formatted = with_current_source(source, || format_program_with_comments(&program, source));
     let output = splice_inline_block_comments(source, &tokens, formatted);
     // Text that is returned unchanged needs no check.
@@ -9496,7 +9492,7 @@ mod self_check_tests {
             "fn name() {\n  \"local\"\n}\n\nimport zeta.{ name }\n\nfn main() {\n  println(name())\n}\n",
         ] {
             match format(src) {
-                Err(FmtError::Parse(e)) => assert!(
+                Err(FmtError::Syntax(e)) => assert!(
                     e.message.contains("'name' is bound twice at the top level"),
                     "{}",
                     e.message

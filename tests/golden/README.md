@@ -46,6 +46,10 @@ Comparison:
   is only checked by `stdout-contains`.
 - Same for stderr with `<case>.stderr` and the stderr directives.
 - The exit status is always checked.
+- Every error diagnostic in stderr (`error[<kind>]: ...`, indented or not)
+  must be followed by its ` --> ` line: every diagnostic has a place.
+  `error[fmt]` refusals and the messages listed in `UNLOCATED_ERRORS`
+  (`tests/golden/main.rs`) are the exceptions.
 - A case with no expectation beyond the exit status is allowed only when
   the exit status itself is the point (say `-- exit: 0` for "this compiles
   and runs").
@@ -107,10 +111,9 @@ What is compared, per door:
 
 - Only error-severity diagnostics. Each one is keyed by (file relative to
   the case, line, column, the first line of the message, with the case's
-  temporary directory written `<case>`). There are no diagnostic codes
-  yet, so the message stands in for one; the first line only, because the
-  LSP's message holds the whole text and the CLI header only its first
-  line.
+  temporary directory written `<case>`). The human output shows no
+  diagnostic codes, so the message stands in for one; the first line
+  only, because the LSP's message holds the notes and help too.
 - `check`, `run` and `test`: their stderr is read as rendered
   diagnostics, a header `error[<kind>]: <message>` followed by a
   ` --> file:line:col` line. `run` and `test` print their static
@@ -118,7 +121,9 @@ What is compared, per door:
   `error[runtime]` header, and the program's stdout is never read. A
   diagnostic without a location is keyed at 1:1 of the entry file, where
   the LSP puts the same location-less diagnostic. A package error
-  (`error: invalid manifest ...`, no kind) counts when it is the first
+  in a dependency's manifest (`error: invalid manifest ...`, no kind; an
+  error in the package's own `silt.toml` is an `error[package]`
+  diagnostic like the others) counts when it is the first
   line of stderr, stdout is empty and the exit status is 1. `run` and
   `test` get empty stdin and are stopped after 10 seconds of running;
   what they printed by then is their verdict. `check` must exit with 0 or

@@ -11,7 +11,7 @@
 //! The API tests are golden cases in tests/golden/lang/stdlib/uuid_module__*.silt;
 //! the registration cross-check below needs the crate's module table.
 
-use silt::types::Severity;
+use silt::diagnostic::Severity;
 
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)

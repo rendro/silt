@@ -41,7 +41,6 @@ mod round76_row_tail_merge_tests;
 mod round77_errors_clamp_offset_tests;
 mod round77_time_duration_helper_equivalence_tests;
 mod round80_vm_dispatch_bounds_tests;
-mod round85_followup_deferred_close_tests;
 mod round86_check_json_no_ansi_under_force_color_tests;
 mod round88_disabled_feature_help_tests;
 mod round92_bom_tests;

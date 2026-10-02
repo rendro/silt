@@ -70,7 +70,13 @@ pub enum ManifestError {
         span: Option<(usize, usize)>,
     },
     /// Manifest parsed structurally, but a validation rule failed.
-    Validation { message: String, path: PathBuf },
+    Validation {
+        message: String,
+        path: PathBuf,
+        /// Byte-offset span within the file of the key or value that
+        /// broke the rule, when it can be found.
+        span: Option<(usize, usize)>,
+    },
 }
 
 impl fmt::Display for ManifestError {
@@ -94,7 +100,7 @@ impl fmt::Display for ManifestError {
                 write!(f, "invalid manifest {}: ", path.display())?;
                 f.lines(message)
             }
-            ManifestError::Validation { message, path } => {
+            ManifestError::Validation { message, path, .. } => {
                 write!(f, "invalid manifest {}: {}", path.display(), message)
             }
         }
@@ -173,62 +179,20 @@ impl Manifest {
         })?;
 
         // Validation phase ----------------------------------------------------
-        validate_identifier(&raw.package.name, "package name", &absolute)?;
-        // Builtin-collision check: a manifest whose `[package].name`
-        // equals a stdlib module (`io`, `string`, …) is rejected for
-        // the same reason `silt add` rejects builtin-colliding dep
-        // names — the import name would shadow the stdlib. Routed
-        // through the same `is_builtin_module` predicate so init /
-        // add / load all share one source of truth (round-75 DX-5
-        // GAP fix; see also `validate_package_name` below).
-        if is_builtin_module(&raw.package.name) {
-            return Err(ManifestError::Validation {
-                message: format!(
-                    "package name `{}` collides with builtin module `{}`; \
-                     pick a different name",
-                    raw.package.name, raw.package.name
-                ),
-                path: absolute,
-            });
-        }
-        // Reserved-keyword check: a package named after a keyword
-        // (`loop`, `match`, …) lexes as that keyword, so `import loop`
-        // can never parse. Same import-shadowing footgun as the builtin
-        // collision above; share the predicate so init/add/load agree.
-        if is_reserved_keyword(&raw.package.name) {
-            return Err(ManifestError::Validation {
-                message: format!(
-                    "package name `{}` is a reserved silt keyword; \
-                     pick a different name",
-                    raw.package.name
-                ),
-                path: absolute,
-            });
-        }
-        validate_version(&raw.package.version, &absolute)?;
+        // Each rule's error points at the key or value that broke it.
+        let doc = toml_edit::ImDocument::parse(text.as_str()).ok();
+        let at = |keys: &[&str], key_itself: bool| manifest_span(doc.as_ref(), keys, key_itself);
+        validate_package_name_rules(&raw.package.name, &absolute)
+            .map_err(|e| e.at(at(&["package", "name"], false)))?;
+        validate_version(&raw.package.version, &absolute)
+            .map_err(|e| e.at(at(&["package", "version"], false)))?;
 
         let mut dependencies = BTreeMap::new();
         for (raw_name, raw_dep) in raw.dependencies {
-            validate_identifier(&raw_name, "dependency name", &absolute)?;
-            if BUILTIN_MODULES.contains(&raw_name.as_str()) {
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency name `{raw_name}` collides with builtin module `{raw_name}`; \
-                         pick a different name"
-                    ),
-                    path: absolute,
-                });
-            }
-            if is_reserved_keyword(&raw_name) {
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency name `{raw_name}` is a reserved silt keyword; \
-                         pick a different name"
-                    ),
-                    path: absolute,
-                });
-            }
-            let dep = convert_dependency(&raw_name, raw_dep, &absolute)?;
+            let keys = ["dependencies", raw_name.as_str()];
+            validate_dependency_name(&raw_name, &absolute).map_err(|e| e.at(at(&keys, true)))?;
+            let dep = convert_dependency(&raw_name, raw_dep, &absolute)
+                .map_err(|e| e.at(at(&keys, false)))?;
             let sym = intern::intern(&raw_name);
             dependencies.insert(sym, dep);
         }
@@ -394,6 +358,108 @@ pub fn is_reserved_keyword(name: &str) -> bool {
     crate::lexer::KEYWORDS.contains(&name) || crate::lexer::KEYWORD_LITERALS.contains(&name)
 }
 
+/// The rules a `[package].name` follows: an identifier, not a builtin
+/// module, not a keyword.
+fn validate_package_name_rules(name: &str, manifest_path: &Path) -> Result<(), ManifestError> {
+    validate_identifier(name, "package name", manifest_path)?;
+    // Builtin-collision check: a manifest whose `[package].name`
+    // equals a stdlib module (`io`, `string`, …) is rejected for
+    // the same reason `silt add` rejects builtin-colliding dep
+    // names — the import name would shadow the stdlib. Routed
+    // through the same `is_builtin_module` predicate so init /
+    // add / load all share one source of truth.
+    if is_builtin_module(name) {
+        return Err(ManifestError::Validation {
+            message: format!(
+                "package name `{name}` collides with builtin module `{name}`; \
+                 pick a different name"
+            ),
+            path: manifest_path.to_path_buf(),
+            span: None,
+        });
+    }
+    // Reserved-keyword check: a package named after a keyword
+    // (`loop`, `match`, …) lexes as that keyword, so `import loop`
+    // can never parse. Same import-shadowing footgun as the builtin
+    // collision above; share the predicate so init/add/load agree.
+    if is_reserved_keyword(name) {
+        return Err(ManifestError::Validation {
+            message: format!(
+                "package name `{name}` is a reserved silt keyword; \
+                 pick a different name"
+            ),
+            path: manifest_path.to_path_buf(),
+            span: None,
+        });
+    }
+    Ok(())
+}
+
+/// The rules a dependency's name follows: an identifier, not a builtin
+/// module, not a keyword.
+fn validate_dependency_name(name: &str, manifest_path: &Path) -> Result<(), ManifestError> {
+    validate_identifier(name, "dependency name", manifest_path)?;
+    if BUILTIN_MODULES.contains(&name) {
+        return Err(ManifestError::Validation {
+            message: format!(
+                "dependency name `{name}` collides with builtin module `{name}`; \
+                 pick a different name"
+            ),
+            path: manifest_path.to_path_buf(),
+            span: None,
+        });
+    }
+    if is_reserved_keyword(name) {
+        return Err(ManifestError::Validation {
+            message: format!(
+                "dependency name `{name}` is a reserved silt keyword; \
+                 pick a different name"
+            ),
+            path: manifest_path.to_path_buf(),
+            span: None,
+        });
+    }
+    Ok(())
+}
+
+/// The byte range in `doc` of the value at the table path `keys`, or of
+/// its key with `key_itself`.
+fn manifest_span(
+    doc: Option<&toml_edit::ImDocument<&str>>,
+    keys: &[&str],
+    key_itself: bool,
+) -> Option<(usize, usize)> {
+    let (last, tables) = keys.split_last()?;
+    let mut table: &dyn toml_edit::TableLike = doc?.as_table();
+    for key in tables {
+        table = table.get(key)?.as_table_like()?;
+    }
+    let range = if key_itself {
+        table.get_key_value(last)?.0.span()?
+    } else {
+        table.get(last)?.span()?
+    };
+    Some((range.start, range.end))
+}
+
+impl ManifestError {
+    /// The error with `span` as where it is, if it has none yet.
+    fn at(self, span: Option<(usize, usize)>) -> Self {
+        match self {
+            ManifestError::Validation {
+                message,
+                path,
+                span: None,
+            } => ManifestError::Validation {
+                message,
+                path,
+                span,
+            },
+            other => other,
+        }
+    }
+}
+
 fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(), ManifestError> {
     if is_silt_identifier(name) {
         return Ok(());
@@ -417,6 +483,7 @@ fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(
     Err(ManifestError::Validation {
         message: format!("invalid {role} `{name}`: {detail}"),
         path: manifest_path.to_path_buf(),
+        span: None,
     })
 }
 
@@ -499,6 +566,7 @@ fn validate_version(version: &str, manifest_path: &Path) -> Result<(), ManifestE
              may follow, each made of ASCII letters, digits, `-` and `.`"
         ),
         path: manifest_path.to_path_buf(),
+        span: None,
     })
 }
 
@@ -521,6 +589,7 @@ fn convert_dependency(
                          supported; use `path` or `git` instead"
                     ),
                     path: manifest_path.to_path_buf(),
+                    span: None,
                 });
             }
 
@@ -530,6 +599,7 @@ fn convert_dependency(
                         "dependency `{name}`: cannot specify both `path` and `git`; pick one"
                     ),
                     path: manifest_path.to_path_buf(),
+                    span: None,
                 });
             }
 
@@ -553,12 +623,14 @@ fn convert_path_dependency(
             "dependency `{name}`: missing required key `path` (or use `git` for a git dep)"
         ),
         path: manifest_path.to_path_buf(),
+        span: None,
     })?;
     let path_str = path_value
         .as_str()
         .ok_or_else(|| ManifestError::Validation {
             message: format!("dependency `{name}`: `path` must be a string"),
             path: manifest_path.to_path_buf(),
+            span: None,
         })?;
 
     for key in table.keys() {
@@ -568,6 +640,7 @@ fn convert_path_dependency(
                     "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
                 ),
                 path: manifest_path.to_path_buf(),
+                span: None,
             });
         }
     }
@@ -588,6 +661,7 @@ fn convert_git_dependency(
         .ok_or_else(|| ManifestError::Validation {
             message: format!("dependency `{name}`: `git` must be a string URL"),
             path: manifest_path.to_path_buf(),
+            span: None,
         })?
         .to_string();
 
@@ -598,6 +672,7 @@ fn convert_git_dependency(
     crate::git::validate_git_url(&url).map_err(|e| ManifestError::Validation {
         message: format!("dependency `{name}`: {e}"),
         path: manifest_path.to_path_buf(),
+        span: None,
     })?;
 
     // Tally which ref forms are present so we can give a tailored error
@@ -617,6 +692,7 @@ fn convert_git_dependency(
                      `branch`, or `tag`"
                 ),
                 path: manifest_path.to_path_buf(),
+                span: None,
             });
         }
         1 => {
@@ -626,6 +702,7 @@ fn convert_git_dependency(
                 .ok_or_else(|| ManifestError::Validation {
                     message: format!("dependency `{name}`: `{key}` must be a string"),
                     path: manifest_path.to_path_buf(),
+                    span: None,
                 })?
                 .to_string();
             match key {
@@ -644,6 +721,7 @@ fn convert_git_dependency(
                     mentioned.join(", ")
                 ),
                 path: manifest_path.to_path_buf(),
+                span: None,
             });
         }
     };
@@ -662,6 +740,7 @@ fn convert_git_dependency(
                          (allowed keys: `git`, `rev`, `branch`, `tag`)"
                     ),
                     path: manifest_path.to_path_buf(),
+                    span: None,
                 });
             }
         }
@@ -814,6 +893,7 @@ mod tests {
             ManifestError::Validation {
                 message: format!("invalid package name `{HOSTILE}`"),
                 path,
+                span: None,
             },
         ];
         for err in errors {

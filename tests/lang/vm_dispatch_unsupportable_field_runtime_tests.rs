@@ -41,7 +41,7 @@ fn main() {
     assert!(
         errors
             .iter()
-            .all(|e| e.severity != silt::types::Severity::Error),
+            .all(|e| e.severity != silt::diagnostic::Severity::Error),
         "tuple-field record Hash program must typecheck cleanly: {errors:?}"
     );
 

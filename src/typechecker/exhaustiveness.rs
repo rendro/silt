@@ -191,18 +191,22 @@ impl TypeChecker {
 
         if wildcard_useful {
             let msg = self.missing_description(&patterns, &scrutinee_ty);
-            self.error(format!("non-exhaustive match: {msg}"), span);
+            self.error(
+                Code::NonExhaustive,
+                format!("non-exhaustive match: {msg}"),
+                span,
+            );
         } else if depth_exceeded {
             // We bailed out of the usefulness search at the depth bound,
             // so the "exhaustive" verdict is not trustworthy. Surface this
             // to the user with an actionable suggestion rather than
             // silently accepting the match.
             self.warning(
+                Code::NonExhaustive,
                 "could not verify exhaustiveness of match: pattern analysis \
                  exceeded recursion depth limit on a recursive type; \
                  consider adding a wildcard arm (`_ -> ...`) to guarantee \
-                 coverage"
-                    .into(),
+                 coverage",
                 span,
             );
         }
@@ -210,7 +214,8 @@ impl TypeChecker {
         // Warn if ALL arms have guards.
         if !arms.is_empty() && arms.iter().all(|a| a.guard.is_some()) {
             self.warning(
-                "match may be non-exhaustive: all arms have guards".into(),
+                Code::NonExhaustive,
+                "match may be non-exhaustive: all arms have guards",
                 span,
             );
         }

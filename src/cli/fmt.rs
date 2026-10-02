@@ -6,7 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use silt::errors::SourceError;
 use silt::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error, find_project_root};
@@ -181,11 +180,8 @@ fn format_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Render a formatter lex/parse failure as a structured `SourceError` with
-/// the source-line snippet and caret. Without this, `silt fmt` would
-/// surface the bare `ParseError::Display` string (just `[line:col] msg`)
-/// and users would lose the context they get from `silt run` /
-/// `silt check` on the same file.
+/// Render a formatter lex/parse failure as the diagnostic `silt check`
+/// shows for the same file, with its source line and marks.
 ///
 /// A refusal (`FmtError::Internal`) is not an error in the user's file,
 /// so it is rendered under its own `error[fmt]` header, names the file,
@@ -195,12 +191,7 @@ fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -
     let mut sources = SourceMap::new();
     sources.add(SourceName::Path(path.into()), source.into());
     match err {
-        silt::formatter::FmtError::Lex(e) => {
-            format!("{}", SourceError::from_lex_error(e, &sources, path))
-        }
-        silt::formatter::FmtError::Parse(e) => {
-            format!("{}", SourceError::from_parse_error(e, &sources, path))
-        }
+        silt::formatter::FmtError::Syntax(e) => silt::diagnostic::render_human(&sources, e),
         silt::formatter::FmtError::Internal(e) => {
             let mut out = format!("error[fmt]: {path}: formatting refused: {}", e.message);
             if let Some(span) = e.span {

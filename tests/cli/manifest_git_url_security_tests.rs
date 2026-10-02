@@ -161,7 +161,7 @@ fn assert_clean_url_rejection(out: &Output, context: &str) {
         "{context}: expected a clean error exit with code 1; stderr={stderr}"
     );
     assert!(
-        stderr.contains("error: invalid manifest"),
+        stderr.contains("invalid manifest"),
         "{context}: expected a manifest error; stderr={stderr}"
     );
     assert!(

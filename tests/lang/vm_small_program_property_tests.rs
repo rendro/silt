@@ -52,10 +52,10 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
 use silt::compiler::Compiler;
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 use silt::value::Value;
 use silt::vm::Vm;
 

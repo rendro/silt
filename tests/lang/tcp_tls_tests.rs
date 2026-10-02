@@ -184,7 +184,7 @@ fn main() {
     let errors = silt::typechecker::check(&mut program);
     let hard: Vec<_> = errors
         .into_iter()
-        .filter(|e| e.severity == silt::types::Severity::Error)
+        .filter(|e| e.severity == silt::diagnostic::Severity::Error)
         .collect();
     assert!(hard.is_empty(), "got: {hard:?}");
 }

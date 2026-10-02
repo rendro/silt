@@ -1,4 +1,4 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected ')' to close parenthesized expression starting at line 4, found }
+-- stderr-contains: expected ')' to close parenthesized expression, found }
 fn main() { (1 + 2 }

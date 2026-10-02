@@ -211,6 +211,7 @@ impl TypeChecker {
                 let bound_names = collect_pattern_vars(pattern);
                 if bound_names.is_empty() {
                     self.error(
+                        Code::AmbiguousType,
                         "cannot infer the type of this expression — \
                          add an annotation, e.g. `let x: SomeType = ...`"
                             .to_string(),
@@ -235,6 +236,7 @@ impl TypeChecker {
                 if !used_elsewhere {
                     let first = resolve(bound_names[0]);
                     self.error(
+                        Code::AmbiguousType,
                         format!(
                             "cannot infer the type of `{first}` — \
                              add an annotation, e.g. `let {first}: SomeType = ...`"
@@ -447,6 +449,7 @@ impl TypeChecker {
                 if !used_later {
                     let first = resolve(bound_names[0]);
                     self.error(
+                        Code::AmbiguousType,
                         format!(
                             "cannot infer the type of `{first}` — \
                              add an annotation, e.g. `let {first}: SomeType = ...`"

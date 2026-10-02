@@ -58,11 +58,12 @@
 //! `tests/golden/lang/typecheck/numeric_defaulting__*`, plus the test
 //! below.
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker::{self, Severity};
+use silt::typechecker;
 
-fn typecheck(source: &str) -> Vec<typechecker::TypeError> {
+fn typecheck(source: &str) -> Vec<silt::diagnostic::Diagnostic> {
     let tokens = Lexer::new(silt::source::FileId::default(), source)
         .tokenize()
         .expect("lex");
@@ -70,7 +71,7 @@ fn typecheck(source: &str) -> Vec<typechecker::TypeError> {
     typechecker::check(&mut program)
 }
 
-fn errors_only(errs: &[typechecker::TypeError]) -> Vec<&typechecker::TypeError> {
+fn errors_only(errs: &[silt::diagnostic::Diagnostic]) -> Vec<&silt::diagnostic::Diagnostic> {
     errs.iter()
         .filter(|e| e.severity == Severity::Error)
         .collect()

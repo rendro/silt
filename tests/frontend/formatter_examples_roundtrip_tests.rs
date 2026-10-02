@@ -25,9 +25,10 @@
 
 use std::path::{Path, PathBuf};
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker::{self, Severity};
+use silt::typechecker;
 
 /// Recursively collect every `.silt` file under `dir`. Mirrors the
 /// walker in `tests/lang/examples_check.rs` and

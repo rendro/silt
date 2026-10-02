@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: function call argument list
 -- stderr-contains: )
--- stderr-contains: starting at line 7
+-- stderr-contains: ::: error__parse_unclosed_call_args_points_at_opener.silt:7:
 fn main() {
   foo(1, 2,
   3

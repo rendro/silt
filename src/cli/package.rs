@@ -31,9 +31,66 @@ pub fn find_project_root(start: &Path) -> Result<Option<(PathBuf, Manifest)>, Ma
 
 /// Print a manifest error to stderr and exit. Used by callers that need
 /// the manifest to proceed (e.g. `silt run` resolving the entry point).
+/// An error at a place in `silt.toml` is shown there, like any other
+/// diagnostic; one that has no place (the file cannot be read) is a
+/// line of its own.
 pub(crate) fn die_on_manifest_error(err: ManifestError) -> ! {
-    eprintln!("error: {err}");
+    match manifest_diagnostic(&err) {
+        Some((sources, d)) => eprintln!("{}", silt::diagnostic::render_human(&sources, &d)),
+        None => eprintln!("error: {err}"),
+    }
     process::exit(1);
+}
+
+/// The diagnostic for `err` and the source map holding the manifest it
+/// points into, when the error has a place in a file that can be read.
+/// The message names no path: the `-->` line does. Like every manifest
+/// text, it is shown by the display rule.
+fn manifest_diagnostic(
+    err: &ManifestError,
+) -> Option<(silt::source::SourceMap, silt::diagnostic::Diagnostic)> {
+    use silt::diagnostic::{Code, Diagnostic};
+    use silt::source::{SourceMap, SourceName, Span};
+    // The TOML parser's message is shown line by line, as
+    // `manifest::toml_error_message` prepares it; a validation message is
+    // one line, whatever the values it quotes hold.
+    let (lines, path, (start, end)): (Vec<String>, _, _) = match err {
+        ManifestError::Parse {
+            message,
+            path,
+            span: Some(span),
+        } => (
+            message.lines().map(silt::git::escape_for_display).collect(),
+            path,
+            *span,
+        ),
+        ManifestError::Validation {
+            message,
+            path,
+            span: Some(span),
+        } => (vec![silt::git::escape_for_display(message)], path, *span),
+        _ => return None,
+    };
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut sources = SourceMap::new();
+    let file = sources.add(
+        SourceName::Manifest(silt::compiler::module_path_for_display(path).into()),
+        text.into(),
+    );
+    let mut lines = lines.into_iter();
+    let head = lines.next().unwrap_or_default();
+    let span = Span {
+        file,
+        start: start as u32,
+        end: end as u32,
+    };
+    let mut d = Diagnostic::error(
+        Code::ManifestInvalid,
+        span,
+        format!("invalid manifest: {head}"),
+    );
+    d.notes.extend(lines);
+    Some((sources, d))
 }
 
 /// Synthetic package name used when compiling a `.silt` file outside any

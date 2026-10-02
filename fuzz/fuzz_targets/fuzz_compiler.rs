@@ -1,11 +1,11 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use silt::compiler::Compiler;
+use silt::diagnostic::Severity;
 use silt::disassemble::disassemble_function;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 
 // Compiler-stage fuzz target (the stage between the typechecker and
 // the VM). The round-92 string-interpolation bug — >255 segments
@@ -60,7 +60,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // 5. Compile. Must never panic / unwind on any program that lexed,
-    //    parsed, and typechecked cleanly. A `CompileError` result is
+    //    parsed, and typechecked cleanly. A compile error result is
     //    fine — that's the compiler doing its job (e.g. the round-92
     //    "string interpolation has N segments; limited to 255" guard,
     //    or "no project root set" for user-module imports, which this

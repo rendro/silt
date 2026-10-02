@@ -13,8 +13,7 @@
 //!   span-less runtime-error fallback in `silt run` and `silt test`.
 //!   `VmError::Display` starts with `"VM error: ..."`, which was reaching
 //!   users when `Vm::enrich_error` no-opped (empty span table at IP).
-//!   Fix funnels span-less errors through `SourceError::runtime_at` with
-//!   a zero span so output renders with the canonical `error[runtime]:`
+//!   Fix renders span-less errors as diagnostics, so output renders with the canonical `error[runtime]:`
 //!   header.
 
 use std::process::Command;

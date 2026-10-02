@@ -17,7 +17,7 @@ static REPL_EVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Prefix of the synthetic per-expression wrapper function name. Named
 /// so the error renderer can recognise wrapper frames and relabel them
 /// `<repl>` instead of leaking the internal `__repl_eval_<n>` name into
-/// user-facing call stacks (see `repl_call_stack_lines`).
+/// user-facing call stacks (see `repl_runtime_diagnostic`).
 const REPL_WRAPPER_PREFIX: &str = "__repl_eval_";
 
 /// Produce the next unique synthetic wrapper name for an expression
@@ -47,16 +47,15 @@ use rustyline::{Context, Editor, Helper};
 
 use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
 use crate::compiler::Compiler;
-use crate::errors::{ErrorKind, SourceError, active_colors};
+use crate::diagnostic::{Diagnostic, Located, Position, SourceView, render_human};
 use crate::intern;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::source::{FileId, SourceMap, SourceName, Span};
-use crate::typechecker;
 use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
 use crate::vm::Vm;
-use crate::vm::error::{VmError, render_call_stack};
+use crate::vm::error::VmError;
 
 /// Compute the path to the REPL history file.
 ///
@@ -289,24 +288,57 @@ pub fn run_repl() {
 fn report_task_failures() {
     let taken = crate::scheduler::take_unjoined_failures();
     for failure in &taken.failures {
-        let error = failure.report_error();
         eprintln!(
             "{}",
-            render_runtime_error_without_source(&error.message, error.span.is_some())
+            render_human(
+                &DeclarationView,
+                &repl_runtime_diagnostic(&failure.report_error())
+            )
         );
-        for line in repl_call_stack_lines(&error.call_stack) {
-            eprintln!("{line}");
-        }
     }
     for (_, count) in &taken.not_kept {
         eprintln!(
             "{}",
-            render_runtime_error_without_source(
-                &crate::scheduler::UnjoinedFailures::not_kept_message(*count),
-                false
+            render_human(
+                &DeclarationView,
+                &Diagnostic::error(
+                    crate::diagnostic::Code::UnjoinedTaskFailure,
+                    Span::BUILTIN,
+                    crate::scheduler::UnjoinedFailures::not_kept_message(*count),
+                )
             )
         );
     }
+}
+
+/// Every place shown as `<declaration>`: for what is reported when the
+/// session ends, when no input is current.
+struct DeclarationView;
+
+impl SourceView for DeclarationView {
+    fn locate(&self, span: Span) -> Option<Located> {
+        span.is_in_source().then(|| Located {
+            file: "<declaration>".to_string(),
+            position: None,
+        })
+    }
+
+    fn frame(&self, _span: Span) -> String {
+        "<declaration>".to_string()
+    }
+}
+
+/// A runtime error of REPL code as a diagnostic: the synthetic
+/// `__repl_eval_<n>` frame that wraps an expression input is labelled
+/// `<repl>`, so the internal name never reaches the user.
+fn repl_runtime_diagnostic(e: &VmError) -> Diagnostic {
+    let mut d = e.to_diagnostic();
+    for (_, name) in &mut d.labels {
+        if is_repl_wrapper_frame(name) {
+            *name = "<repl>".to_string();
+        }
+    }
+    d
 }
 
 pub fn builtin_names() -> Vec<String> {
@@ -631,58 +663,69 @@ impl ReplEntry<'_> {
         };
         col >= 1 && col <= line_text.chars().count() + 1
     }
+}
 
-    /// A diagnostic at `span` of the compiled text, shown against the
-    /// input. A position past the input's last line moves onto the end
-    /// of that line, as for every other diagnostic.
-    fn error(
-        &self,
-        sources: &SourceMap,
-        kind: ErrorKind,
-        message: String,
-        span: Span,
-        is_warning: bool,
-    ) -> SourceError {
-        let (mut line, mut col) = self.position(sources, span.start);
-        let line_count = self.input.lines().count();
-        if line_count > 0 && line > line_count {
-            line = line_count;
-            col = self.input.lines().last().map_or(0, |l| l.chars().count()) + 1;
+/// How the REPL shows the spans of its diagnostics: against what the user
+/// typed in the input whose code a span is in, the current one or an
+/// earlier one, as `<repl>`. A position that is not in the input's text
+/// (code an earlier input compiled, whose wrapper it falls in) is shown
+/// as `<declaration>`, without a line; so is every call-stack frame.
+struct ReplView<'a> {
+    sources: &'a SourceMap,
+    entry: ReplEntry<'a>,
+}
+
+impl ReplView<'_> {
+    /// `d` rendered for the terminal.
+    fn render(&self, d: &Diagnostic) -> String {
+        render_human(self, d)
+    }
+}
+
+impl SourceView for ReplView<'_> {
+    fn locate(&self, span: Span) -> Option<Located> {
+        if !span.is_in_source() {
+            return None;
         }
-        SourceError {
-            kind,
-            message,
-            span: Some(span),
-            line,
-            col,
-            source_line: self.input.lines().nth(line - 1).map(str::to_string),
-            file: Some("<repl>".to_string()),
-            is_warning,
+        let owner = if span.file == self.entry.file {
+            self.entry
+        } else {
+            ReplEntry::earlier(self.sources, span.file)?
+        };
+        // A position past the input's last line moves onto the end of
+        // that line, as for every other diagnostic.
+        let line_count = owner.input.lines().count();
+        let place = |at: u32| {
+            let (line, col) = owner.position(self.sources, at);
+            if line_count > 0 && line > line_count {
+                let last = owner.input.lines().last().map_or(0, |l| l.chars().count());
+                (line_count, last + 1)
+            } else {
+                (line, col)
+            }
+        };
+        let (line, col) = place(span.start);
+        if !owner.fits((line, col)) {
+            return Some(Located {
+                file: "<declaration>".to_string(),
+                position: None,
+            });
         }
+        let (end_line, end_col) = place(span.end.max(span.start));
+        Some(Located {
+            file: "<repl>".to_string(),
+            position: Some(Position {
+                line,
+                col,
+                end_line,
+                end_col,
+                line_text: owner.input.lines().nth(line - 1).unwrap_or("").to_string(),
+            }),
+        })
     }
 
-    fn lex_error(&self, sources: &SourceMap, e: &crate::lexer::LexError) -> SourceError {
-        self.error(sources, ErrorKind::Lex, e.message.clone(), e.span, false)
-    }
-
-    fn parse_error(&self, sources: &SourceMap, e: &crate::parser::ParseError) -> SourceError {
-        self.error(sources, ErrorKind::Parse, e.message.clone(), e.span, false)
-    }
-
-    fn type_error(&self, sources: &SourceMap, e: &typechecker::TypeError) -> SourceError {
-        let message = e.full_message(|span| self.position(sources, span.start).0 as u32);
-        let is_warning = e.severity == typechecker::Severity::Warning;
-        self.error(sources, ErrorKind::Type, message, e.span, is_warning)
-    }
-
-    fn compile_error(&self, sources: &SourceMap, e: &crate::compiler::CompileError) -> SourceError {
-        self.error(
-            sources,
-            ErrorKind::Compile,
-            e.message.clone(),
-            e.span,
-            false,
-        )
+    fn frame(&self, _span: Span) -> String {
+        "<declaration>".to_string()
     }
 }
 
@@ -697,14 +740,14 @@ fn eval_declaration(
     let tokens = match Lexer::new(entry.file, input).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("{}", entry.lex_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
     let mut program = match Parser::new(tokens, input).for_repl().parse_program() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("{}", entry.parse_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
@@ -713,11 +756,11 @@ fn eval_declaration(
     // defined names are visible to this input.
     let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
-        eprintln!("{}", entry.type_error(sources, te));
+        eprintln!("{}", ReplView { sources, entry }.render(te));
     }
     if type_errors
         .iter()
-        .any(|e| e.severity == typechecker::Severity::Error)
+        .any(|e| e.severity == crate::diagnostic::Severity::Error)
     {
         return;
     }
@@ -732,7 +775,7 @@ fn eval_declaration(
     let functions = match compiler.compile_declarations(&program) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{}", entry.compile_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
@@ -879,90 +922,14 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
     }
 }
 
-/// Render a runtime `VmError` to stderr in the REPL's canonical shape.
-///
-/// Shared between `eval_declaration` and `eval_expression`; `entry` is the
-/// input being run.
-///
-///   * If `e.span` is in `entry` and its position fits the input, render
-///     a caret-aligned `error[runtime]` diagnostic.
-///   * If `e.span` is in another input (the code was compiled in a
-///     previous REPL entry, e.g. a `fn` called from a later expression),
-///     or does not fit, call `render_runtime_error_without_source(msg,
-///     true)` to get the `--> <declaration>` locator shape.
-///   * Then iterate `repl_call_stack_lines(...)` printing every frame at
-///     `<declaration>`, with synthetic `__repl_eval_<n>` wrapper frames
-///     relabelled `<repl>`.
-///   * If `e.span` is `None`, call
-///     `render_runtime_error_without_source(msg, false)` — a plain
-///     `error[runtime]:` header with no locator.
+/// Render a runtime `VmError` of the input `entry` to stderr. Its
+/// location and call stack are shown by [`ReplView`].
 fn render_repl_vm_error(e: &VmError, sources: &SourceMap, entry: &ReplEntry<'_>) {
-    if let Some(span) = e.span {
-        // The span is in this input, or in the earlier input whose code
-        // raised the error (a `fn` called from a later expression): the
-        // session's source map holds both.
-        let owner = if span.file == entry.file {
-            Some(*entry)
-        } else {
-            ReplEntry::earlier(sources, span.file)
-        };
-        match owner {
-            Some(owner) if owner.fits(owner.position(sources, span.start)) => {
-                let source_err =
-                    owner.error(sources, ErrorKind::Runtime, e.message.clone(), span, false);
-                eprintln!("{source_err}");
-            }
-            // A span that does not fit its input: render with the
-            // `<declaration>` locator and split multi-line messages into
-            // `= note:`/`= help:` continuation, matching the
-            // `SourceError::Display` shape. Round-59 GAP #5.
-            _ => eprintln!("{}", render_runtime_error_without_source(&e.message, true)),
-        }
-        // Print the call stack for the non-synthetic frames, every frame
-        // labelled `<declaration>`. The synthetic `__repl_eval_<n>`
-        // expression wrapper is relabelled `<repl>` so the internal name
-        // never reaches the user.
-        for line in repl_call_stack_lines(&e.call_stack) {
-            eprintln!("{line}");
-        }
-    } else {
-        // Span-less runtime error: route through the shared helper so the
-        // `error[runtime]:` header gets the same ANSI color gating and
-        // `= note:` continuation splitting as every other REPL diagnostic
-        // (`VmError::Display` emits the same header but is intentionally
-        // plain text — see src/vm/error.rs). Round-59 GAP #4.
-        eprintln!("{}", render_runtime_error_without_source(&e.message, false));
-    }
-}
-
-/// Render a REPL runtime-error call stack as user-facing lines.
-///
-/// Synthetic per-expression wrapper frames (`__repl_eval_<n>`) are
-/// relabelled `<repl>` before rendering so the internal implementation
-/// name never leaks to users, while the frame itself is kept — it marks
-/// the REPL top-level call site the same way `<module:...>` frames mark
-/// module init, and dropping it would erase real user frames from the
-/// output (`render_call_stack` filters stacks that shrink below two
-/// meaningful frames). `render_call_stack` keeps the `<repl>` label
-/// explicitly (src/vm/error.rs).
-///
-/// Every frame's location is `<declaration>`: a frame's code can come
-/// from any input of the session.
-///
-/// `pub` so the regression lock (tests/cli/repl_wrapper_frame_leak_tests.rs)
-/// can exercise the exact production rendering path.
-pub fn repl_call_stack_lines(call_stack: &[(String, Span)]) -> Vec<String> {
-    let display_stack: Vec<(String, Span)> = call_stack
-        .iter()
-        .map(|(name, span)| {
-            if is_repl_wrapper_frame(name) {
-                ("<repl>".to_string(), *span)
-            } else {
-                (name.clone(), *span)
-            }
-        })
-        .collect();
-    render_call_stack(&display_stack, |_name, _span| "<declaration>".to_string())
+    let view = ReplView {
+        sources,
+        entry: *entry,
+    };
+    eprintln!("{}", view.render(&repl_runtime_diagnostic(e)));
 }
 
 /// Pop the first function out of a freshly-compiled `Vec<Function>` and
@@ -1018,7 +985,7 @@ fn eval_expression_value(
     let type_errors = type_ctx.check(&mut program);
     if let Some(err) = type_errors
         .iter()
-        .find(|e| e.severity == typechecker::Severity::Error)
+        .find(|e| e.severity == crate::diagnostic::Severity::Error)
     {
         return Err(format!("type error: {}", err.message));
     }
@@ -1061,7 +1028,7 @@ fn eval_declaration_value(
     let type_errors = type_ctx.check(&mut program);
     if let Some(err) = type_errors
         .iter()
-        .find(|e| e.severity == typechecker::Severity::Error)
+        .find(|e| e.severity == crate::diagnostic::Severity::Error)
     {
         return Err(format!("type error: {}", err.message));
     }
@@ -1096,14 +1063,14 @@ fn eval_expression(
     let tokens = match Lexer::new(entry.file, &wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("{}", entry.lex_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
     let mut program = match Parser::new(tokens, &wrapped).parse_program() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("{}", entry.parse_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
@@ -1112,11 +1079,11 @@ fn eval_expression(
     // defined names are visible to this input.
     let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
-        eprintln!("{}", entry.type_error(sources, te));
+        eprintln!("{}", ReplView { sources, entry }.render(te));
     }
     if type_errors
         .iter()
-        .any(|e| e.severity == typechecker::Severity::Error)
+        .any(|e| e.severity == crate::diagnostic::Severity::Error)
     {
         return;
     }
@@ -1135,7 +1102,7 @@ fn eval_expression(
     let functions = match compiler.compile_program_with_entry(&program, &wrapper_name) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{}", entry.compile_error(sources, &e));
+            eprintln!("{}", ReplView { sources, entry }.render(&e));
             return;
         }
     };
@@ -1154,120 +1121,6 @@ fn eval_expression(
         // span-less errors lives inside `render_repl_vm_error`.
         Err(e) => render_repl_vm_error(&e, sources, &entry),
     }
-}
-
-/// Render a runtime-error diagnostic for the REPL when no usable source
-/// location is available. Two shapes share this code path:
-///
-///   * `VmError::span == None` — the VM reported a runtime failure with
-///     no span at all. Previously this fell through to `eprintln!("{e}")`,
-///     which at the time emitted a legacy internal Display prefix (since
-///     fixed: `VmError::Display` now emits the canonical `error[runtime]:`
-///     header, though deliberately without color — see src/vm/error.rs).
-///     Routing through this helper keeps the output colored and
-///     note-split exactly like `silt run` / `silt test`.
-///
-///   * `VmError::span == Some(_)` but the span doesn't fit the current
-///     REPL entry — the error originated inside a chunk compiled in a
-///     *previous* entry (e.g. a `fn` called from a later expression).
-///     Aligning a caret against this entry's text would point at
-///     phantom whitespace, so the primary location is rendered as
-///     `--> <declaration>`, matching how the call-stack frames already
-///     label prior-entry frames.
-///
-/// `show_declaration_locator` controls which shape is emitted:
-///   * `true`  → include ` --> <declaration>` below the header.
-///   * `false` → omit the locator entirely (`SourceError::Display` does
-///     the same for an error without a span).
-///
-/// Multi-line messages are split on the first `\n`: the first line goes
-/// into the `error[runtime]:` header, and subsequent lines render AFTER
-/// the locator as `  = note: …` / `  = help: …` continuation, matching
-/// the layout emitted by `SourceError::Display` (see src/errors.rs).
-///
-/// Public so `tests/cli/repl_error_render_and_keywords_tests.rs` can lock
-/// the output shape directly rather than round-tripping through a
-/// subprocess.
-pub fn render_runtime_error_without_source(
-    message: &str,
-    show_declaration_locator: bool,
-) -> String {
-    let (header_msg, note_body): (&str, Option<&str>) = match message.split_once('\n') {
-        Some((head, rest)) => (head, Some(rest)),
-        None => (message, None),
-    };
-
-    // Round-84 fix: consult `active_colors()` so this helper honors
-    // `NO_COLOR` / `FORCE_COLOR` in the same way `SourceError::Display`
-    // does. Previously this branch always emitted plain text, leaving
-    // span-less / out-of-range runtime errors asymmetric with the
-    // span-in-range path (which routes through `SourceError::Display`
-    // and renders colored when appropriate). Lock:
-    // `tests/round84_repl_render_runtime_error_force_color_tests.rs`.
-    let c = active_colors();
-
-    let mut out = String::new();
-    // Header: bold red `error[runtime]:` followed by bold message,
-    // matching the shape `SourceError::Display` emits for runtime
-    // errors with a real span.
-    out.push_str(c.bold);
-    out.push_str(c.red);
-    out.push_str("error[runtime]");
-    out.push_str(c.reset);
-    out.push_str(c.bold);
-    out.push_str(": ");
-    out.push_str(header_msg);
-    out.push_str(c.reset);
-
-    if show_declaration_locator {
-        // Cyan `-->` arrow, matching the locator line in
-        // `SourceError::Display`.
-        out.push_str("\n ");
-        out.push_str(c.cyan);
-        out.push_str("-->");
-        out.push_str(c.reset);
-        out.push_str(" <declaration>");
-    }
-
-    // Multi-line body: first line becomes `= note:` (unless it
-    // starts with `help: `, in which case it becomes `= help:`);
-    // every subsequent line is aligned-indented continuation.
-    // Matches `SourceError::Display`'s body-line formatting so
-    // multi-line REPL errors look identical to CLI errors.
-    if let Some(body) = note_body {
-        let mut first = true;
-        for line in body.lines() {
-            let (prefix, content) = if let Some(rest) = line.strip_prefix("help: ") {
-                first = false;
-                ("= help:", rest)
-            } else if first {
-                first = false;
-                ("= note:", line)
-            } else {
-                // 7-char padding aligns continuation content under
-                // `= note:`/`= help:` content (same trick as
-                // `SourceError::Display`).
-                ("       ", line)
-            };
-            out.push_str("\n  ");
-            // Continuation-line gutter is colored cyan in the
-            // `SourceError::Display` path, but only for the `= note:`
-            // / `= help:` prefixes — pure-spacing continuation lines
-            // stay plain (otherwise the empty escape pair adds noise
-            // without any visible effect).
-            if prefix.starts_with('=') {
-                out.push_str(c.cyan);
-                out.push_str(prefix);
-                out.push_str(c.reset);
-            } else {
-                out.push_str(prefix);
-            }
-            out.push(' ');
-            out.push_str(content);
-        }
-    }
-
-    out
 }
 
 /// Completion candidates for a given prefix, using the REPL's builtin name

@@ -9,9 +9,9 @@
 //! the parser accepts.
 
 use silt::ast::{Decl, ExprKind, ImportTarget, PatternKind, Program};
-use silt::errors::SourceError;
+use silt::diagnostic::{Code, Diagnostic};
 use silt::intern::resolve;
-use silt::source::SourceMap;
+use silt::source::{FileId, Span};
 
 /// Name of the global that a compiled program calls as its entry point
 /// (see `Compiler::compile_program`).
@@ -107,11 +107,7 @@ pub(crate) fn looks_like_library_module(program: &Program) -> bool {
 /// Library modules and test files are not entry points: they are
 /// imported or run by `silt test`, never started through their `main`.
 /// They are exempt here as they are from the missing-`main` error.
-pub(crate) fn main_signature_error(
-    program: &Program,
-    sources: &SourceMap,
-    path: &str,
-) -> Option<SourceError> {
+pub(crate) fn main_signature_error(program: &Program) -> Option<Diagnostic> {
     if looks_like_library_module(program) || looks_like_test_file(program) {
         return None;
     }
@@ -135,36 +131,47 @@ pub(crate) fn main_signature_error(
     } else {
         (format!("{count} parameters"), "them")
     };
-    Some(SourceError::compile_error_at(
-        format!(
-            "the entry point 'main' must take no parameters, but it declares {these}\n\
-             help: remove {them}; the command-line arguments are available from io.args()"
-        ),
-        Some(span),
-        sources,
-        path,
-    ))
+    Some(
+        Diagnostic::error(
+            Code::MainSignature,
+            span,
+            format!("the entry point 'main' must take no parameters, but it declares {these}"),
+        )
+        .with_help(format!(
+            "remove {them}; the command-line arguments are available from io.args()"
+        )),
+    )
+}
+
+/// The span of the name of the top-level function `name` of `program`.
+pub(crate) fn fn_name_span(program: &Program, name: &str) -> Option<Span> {
+    program.decls.iter().find_map(|decl| match decl {
+        Decl::Fn(f) if resolve(f.name) == name => Some(f.name_span),
+        _ => None,
+    })
 }
 
 /// The diagnostic for a program that binds no `main`. With
 /// `suggest_silt_test`, a test file gets a pointer to `silt test` instead
-/// of the advice to add a `main`.
+/// of the advice to add a `main`. It is about the whole entry file, so it
+/// points at the file's start.
 pub(crate) fn missing_main_error(
     program: &Program,
-    sources: &SourceMap,
     path: &str,
     suggest_silt_test: bool,
-) -> SourceError {
-    let message = if suggest_silt_test && looks_like_test_file(program) {
-        format!(
-            "program has no main() function\nThis looks like a test file — run it with 'silt test {path}' instead."
-        )
+) -> Diagnostic {
+    let d = Diagnostic::error(
+        Code::MissingMain,
+        Span::point(FileId::default(), 0),
+        "program has no main() function",
+    );
+    if suggest_silt_test && looks_like_test_file(program) {
+        d.with_note(format!(
+            "This looks like a test file — run it with 'silt test {path}' instead."
+        ))
     } else {
-        "program has no main() function\nadd one as the entry point".to_string()
-    };
-    // There is no source location for "the file has no main": without a
-    // span the renderer prints the header and the note, and no locator.
-    SourceError::compile_error_at(message, None, sources, path)
+        d.with_note("add one as the entry point")
+    }
 }
 
 #[cfg(test)]
@@ -172,14 +179,6 @@ mod tests {
     use super::*;
     use silt::lexer::Lexer;
     use silt::parser::Parser;
-    use silt::source::SourceName;
-
-    /// A map holding `source` as its only file.
-    fn sources(source: &str) -> SourceMap {
-        let mut map = SourceMap::new();
-        map.add(SourceName::Path("main.silt".into()), source.into());
-        map
-    }
 
     fn parse(source: &str) -> Program {
         let tokens = Lexer::new(silt::source::FileId::default(), source)
@@ -255,26 +254,26 @@ mod tests {
     #[test]
     fn main_with_parameters_is_an_error() {
         let source = "fn main(x: Int) { x }";
-        let error = main_signature_error(&parse(source), &sources(source), "main.silt")
-            .expect("a main with a parameter is an error");
+        let error =
+            main_signature_error(&parse(source)).expect("a main with a parameter is an error");
         assert!(
-            error.message.contains("declares 1 parameter\n"),
+            error.message.ends_with("declares 1 parameter"),
             "{}",
             error.message
         );
-        assert_eq!((error.line, error.col), (1, 9));
+        assert_eq!(error.span.start, 8);
 
         let source = "let main = { a, b -> a + b }";
-        let error = main_signature_error(&parse(source), &sources(source), "main.silt")
+        let error = main_signature_error(&parse(source))
             .expect("a closure main with parameters is an error");
         assert!(
-            error.message.contains("declares 2 parameters\n"),
+            error.message.ends_with("declares 2 parameters"),
             "{}",
             error.message
         );
 
         for source in ["fn main() { 1 }", "fn helper(x) { x }", "let main = 3", ""] {
-            assert!(main_signature_error(&parse(source), &sources(source), "main.silt").is_none());
+            assert!(main_signature_error(&parse(source)).is_none());
         }
 
         // Library modules and test files are not entry points.
@@ -283,7 +282,7 @@ mod tests {
             "fn main(args: List(String)) { () }\nfn test_a() { 1 }",
             "import test\nfn main(x: Int) { x }",
         ] {
-            assert!(main_signature_error(&parse(source), &sources(source), "lib.silt").is_none());
+            assert!(main_signature_error(&parse(source)).is_none());
         }
     }
 }

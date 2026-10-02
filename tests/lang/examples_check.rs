@@ -471,7 +471,7 @@ fn all_doc_fn_main_blocks_compile() {
             let type_errors = typechecker::check(&mut program);
             let hard_type_errors: Vec<_> = type_errors
                 .iter()
-                .filter(|e| e.severity == typechecker::Severity::Error)
+                .filter(|e| e.severity == silt::diagnostic::Severity::Error)
                 .collect();
 
             // Compile. This is where the missing-import error surfaces.

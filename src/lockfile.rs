@@ -1198,6 +1198,7 @@ mod tests {
             LockfileError::ManifestError(ManifestError::Validation {
                 message: format!("invalid package version `{HOSTILE}`"),
                 path,
+                span: None,
             }),
         ];
         for err in errors {

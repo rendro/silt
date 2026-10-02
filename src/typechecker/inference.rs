@@ -128,10 +128,8 @@ enum CtorQualifierResolution {
     Invalid,
 }
 
-/// Format an "undefined variable '<typo>'" error message with an
-/// optional "did you mean `<cand>`?" hint appended as a `help:` body
-/// line so `SourceError::Display` renders it as a `= help:` continuation
-/// below the caret. Sourced candidates come from every in-scope name
+/// Format an "undefined variable '<typo>'" error message, with an
+/// optional "did you mean `<cand>`?" help line. Sourced candidates come from every in-scope name
 /// the typechecker's env chain exposes (locals, fn params, top-level
 /// decls, stdlib builtins) — the caller hands us `env`. If no candidate
 /// passes the suggest-similar threshold, we emit the plain error.
@@ -142,7 +140,7 @@ pub(super) fn format_undefined_variable_message(
     name: Symbol,
     env: &TypeEnv,
     suffix: &str,
-) -> String {
+) -> (String, Option<String>) {
     let name_str = resolve(name);
     let base = if suffix.is_empty() {
         format!("undefined variable '{name_str}'")
@@ -173,7 +171,7 @@ pub(super) fn format_undefined_variable_message(
         _ => None,
     };
     if let Some(hint) = foreign_keyword_hint {
-        return format!("{base}\nhelp: {hint}");
+        return (base, Some(hint.to_string()));
     }
     let mut candidates = BTreeSet::new();
     env.collect_names(&mut candidates);
@@ -185,18 +183,19 @@ pub(super) fn format_undefined_variable_message(
         .map(|s| resolve(*s))
         .filter(|s| !s.contains('.') && s != "self")
         .collect();
-    if let Some(hint) = suggest_similar(&name_str, candidate_strs.iter()) {
-        format!("{base}\nhelp: did you mean `{hint}`?")
-    } else {
-        base
-    }
+    let help = suggest_similar(&name_str, candidate_strs.iter())
+        .map(|hint| format!("did you mean `{hint}`?"));
+    (base, help)
 }
 
 /// Format an "unknown function '<field>' on module '<module>'" error
 /// with a "did you mean `<cand>`?" hint when one of the module's builtin
 /// functions is a close edit-distance match. See
 /// `src/module.rs::builtin_module_functions` for the candidate source.
-pub(super) fn format_unknown_module_function_message(field: Symbol, module_str: &str) -> String {
+pub(super) fn format_unknown_module_function_message(
+    field: Symbol,
+    module_str: &str,
+) -> (String, Option<String>) {
     let field_str = resolve(field);
     let base = format!("unknown function '{field_str}' on module '{module_str}'");
     let fns = crate::module::builtin_module_functions(module_str);
@@ -207,11 +206,9 @@ pub(super) fn format_unknown_module_function_message(field: Symbol, module_str: 
     let mut merged: Vec<&str> = fns.into_iter().chain(consts).collect();
     merged.sort();
     merged.dedup();
-    if let Some(hint) = suggest_similar(&field_str, merged.iter()) {
-        format!("{base}\nhelp: did you mean `{hint}`?")
-    } else {
-        base
-    }
+    let help =
+        suggest_similar(&field_str, merged.iter()).map(|hint| format!("did you mean `{hint}`?"));
+    (base, help)
 }
 
 /// GAP (round 26 L5): append a "did you mean `<cand>`?" hint when a
@@ -226,14 +223,12 @@ pub(super) fn format_record_field_suggestion(
     base: String,
     field: Symbol,
     record_fields: &[(Symbol, Type)],
-) -> String {
+) -> (String, Option<String>) {
     let field_str = resolve(field);
     let candidates: Vec<String> = record_fields.iter().map(|(n, _)| resolve(*n)).collect();
-    if let Some(hint) = suggest_similar(&field_str, candidates.iter()) {
-        format!("{base}\nhelp: did you mean `{hint}`?")
-    } else {
-        base
-    }
+    let help = suggest_similar(&field_str, candidates.iter())
+        .map(|hint| format!("did you mean `{hint}`?"));
+    (base, help)
 }
 
 /// GAP (round 23 #3): append a "did you mean `<cand>`?" hint to an
@@ -247,7 +242,7 @@ pub(super) fn format_unknown_method_message(
     display_type_name: &str,
     method_table: &HashMap<(Symbol, Symbol), MethodEntry>,
     table_key: Symbol,
-) -> String {
+) -> (String, Option<String>) {
     let field_str = resolve(field);
     let base = format!("unknown method '{field_str}' on {display_type_name}");
     let candidates: Vec<String> = method_table
@@ -255,11 +250,9 @@ pub(super) fn format_unknown_method_message(
         .filter(|(ty, _)| *ty == table_key)
         .map(|(_, m)| resolve(*m).to_string())
         .collect();
-    if let Some(hint) = suggest_similar(&field_str, candidates.iter()) {
-        format!("{base}\nhelp: did you mean `{hint}`?")
-    } else {
-        base
-    }
+    let help = suggest_similar(&field_str, candidates.iter())
+        .map(|hint| format!("did you mean `{hint}`?"));
+    (base, help)
 }
 
 impl TypeChecker {
@@ -352,6 +345,7 @@ impl TypeChecker {
                 .map(|sym| format!("`{}.{method_name}()`", resolve(sym)))
                 .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
             self.error(
+                Code::InvalidMethodCall,
                 format!(
                     "method `{method_name}` takes no `self` — \
                      call it on the type instead: {suggestion}"
@@ -448,6 +442,7 @@ impl TypeChecker {
                 // descriptor's carried type name.
                 let Some(trait_names) = self.active_constraints.get(v).cloned() else {
                     self.error(
+                        Code::UnknownMethod,
                         format!(
                             "no method '{field}' on `type {inner}` — \
                              the type variable has no trait constraints. \
@@ -493,6 +488,7 @@ impl TypeChecker {
                         .collect::<Vec<_>>()
                         .join(" + ");
                     self.error(
+                        Code::UnknownMethod,
                         format!(
                             "no method '{field}' found on `type {inner}` \
                              in trait constraints ({traits_str})"
@@ -508,6 +504,7 @@ impl TypeChecker {
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.error(
+                        Code::AmbiguousMethod,
                         format!(
                             "ambiguous method '{field}' on `type {inner}`: \
                              provided by multiple traits ({trait_list})"
@@ -593,6 +590,7 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if !self.traits.contains_key(trait_name) {
                 self.error(
+                    Code::UnknownTrait,
                     format!(
                         "unknown trait '{}' in where clause for '{}'",
                         trait_name, type_param
@@ -798,14 +796,11 @@ impl TypeChecker {
         if !is_qmark_shape {
             return;
         }
-        // No explicit "note:" prefix — the renderer (errors.rs) already
-        // emits continuation lines as `= note: ...`.
         if let Some(err) = self.errors.last_mut() {
-            err.line_note = Some(crate::types::LineNote {
-                span: qspan,
-                before: "the ? on line ",
-                after: format!(" requires this function to return {ret_resolved}"),
-            });
+            err.labels.push((
+                qspan,
+                format!("this `?` requires this function to return {ret_resolved}"),
+            ));
         }
     }
 
@@ -848,7 +843,8 @@ impl TypeChecker {
                         // through the deferred-field-access path so typos
                         // on Record-shaped receivers get the same hint.
                         let base = format!("unknown field '{field}' on type {resolved}");
-                        self.error(
+                        self.error_help(
+                            Code::UnknownField,
                             format_record_field_suggestion(base, field, rec_fields),
                             span,
                         );
@@ -865,7 +861,8 @@ impl TypeChecker {
                         let candidates: Vec<(Symbol, Type)> =
                             af.iter().map(|(k, v)| (*k, v.clone())).collect();
                         let base = format!("anon record has no field '{field}'");
-                        self.error(
+                        self.error_help(
+                            Code::NoSuchField,
                             format_record_field_suggestion(base, field, &candidates),
                             span,
                         );
@@ -939,7 +936,7 @@ impl TypeChecker {
                     // `.hash()` entry — name the offending field instead
                     // of a generic "unknown method".
                     if let Some(msg) = self.method_auto_derive_violation(type_name, field) {
-                        self.error(msg, span);
+                        self.error(Code::NotDerivable, msg, span);
                         continue;
                     }
                     // GAP (round 35 F7): thread did-you-mean suggestion
@@ -948,12 +945,13 @@ impl TypeChecker {
                     let msg = if let Some(rec_info) = self.records.get(&type_name) {
                         format_record_field_suggestion(base, field, &rec_info.fields)
                     } else {
-                        base
+                        (base, None)
                     };
-                    self.error(msg, span);
+                    self.error_help(Code::UnknownField, msg, span);
                 }
                 _ => {
                     self.error(
+                        Code::UnknownField,
                         format!("unknown field or method '{field}' on type {resolved}"),
                         span,
                     );
@@ -1000,7 +998,11 @@ impl TypeChecker {
             };
             if !valid {
                 if matches!(op_desc, "'+'" | "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'") {
-                    self.error(arith_operand_message(op_desc, &resolved), span);
+                    self.error(
+                        Code::UnsupportedOperation,
+                        arith_operand_message(op_desc, &resolved),
+                        span,
+                    );
                     continue;
                 }
                 let domain = match op_desc {
@@ -1009,6 +1011,7 @@ impl TypeChecker {
                     _ => "a valid operand",
                 };
                 self.error(
+                    Code::UnsupportedOperation,
                     format!("operator {op_desc} requires {domain}, got '{resolved}'"),
                     span,
                 );
@@ -1019,7 +1022,7 @@ impl TypeChecker {
                 // Round 93: deferred mirror of the concrete comparison
                 // arm — a late-resolved nominal operand may wrap fields
                 // that cannot support the Value-level operation.
-                self.error(msg, span);
+                self.error(Code::NotDerivable, msg, span);
             }
         }
 
@@ -1045,6 +1048,7 @@ impl TypeChecker {
                 }
                 other => {
                     self.error(
+                        Code::InvalidQuestion,
                         format!("'?' operator requires Result or Option type, got '{other}'"),
                         span,
                     );
@@ -1056,6 +1060,7 @@ impl TypeChecker {
             self.unify(&args[0], &result_ty, span);
             let Some(ret) = expected_ret else {
                 self.error(
+                    Code::InvalidQuestion,
                     "? operator can only be used inside a function that returns Result or Option"
                         .to_string(),
                     span,
@@ -1085,11 +1090,15 @@ impl TypeChecker {
                 // resolved to Int). Curated message, same class as the
                 // inline no-context error.
                 other => {
-                    self.error(
-                        format!(
-                            "? operator can only be used inside a function that returns Result or Option\nthe ?-ed expression is {resolved}, but the enclosing function returns {other}"
-                        ),
-                        span,
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::InvalidQuestion,
+                            span,
+                            "? operator can only be used inside a function that returns Result or Option",
+                        )
+                        .with_note(format!(
+                            "the ?-ed expression is {resolved}, but the enclosing function returns {other}"
+                        )),
                     );
                 }
             }
@@ -1179,7 +1188,7 @@ impl TypeChecker {
                     let fn_label = callee_fn_name
                         .map(|s| format!("'{}'", resolve(s)))
                         .unwrap_or_else(|| "<callee>".to_string());
-                    self.error(
+                    self.error(Code::MissingConstraint,
                         format!(
                             "enclosing function does not declare constraint required by call to {fn_label}: `a: {trait_name}`"
                         ),
@@ -1258,6 +1267,7 @@ impl TypeChecker {
             None => (self.refutable_type_reason(ty), pattern.span),
         };
         self.error(
+            Code::InvalidPatternUse,
             format!(
                 "refutable pattern in {}: {reason}; {}",
                 site.place(),
@@ -1349,6 +1359,7 @@ impl TypeChecker {
         });
         for (name, dup_span) in dups {
             self.error(
+                Code::DuplicateBinding,
                 format!("duplicate binding '{}' in pattern", resolve(name)),
                 dup_span,
             );
@@ -1371,6 +1382,7 @@ impl TypeChecker {
         }
         for (name, dup_span) in dups {
             self.error(
+                Code::DuplicateBinding,
                 format!("duplicate binding '{}' in pattern", resolve(name)),
                 dup_span,
             );
@@ -1400,6 +1412,7 @@ impl TypeChecker {
                 // outer record-pattern span otherwise.
                 let dup_span = sub_pat.as_ref().map(|p| p.span).unwrap_or(outer_span);
                 self.error(
+                    Code::DuplicateRecordField,
                     format!(
                         "duplicate field '{}' in record pattern",
                         resolve(*field_name)
@@ -1597,9 +1610,8 @@ impl TypeChecker {
     ///     but exports no such record → a precise "module has no record
     ///     type" error with a did-you-mean over that module's records;
     ///   * qualifier is not in scope at all → an "undefined type"
-    ///     diagnostic. That prefix is deliberate: it is in the
-    ///     import-cascade suppression set
-    ///     (`diagnostic_filters::is_user_import_resolvable_error_message`),
+    ///     diagnostic. That code is deliberate: it is in the
+    ///     import-cascade suppression set (`without_import_cascade`),
     ///     so when the module exists but its exports were unresolvable
     ///     (the "unknown module" warning case) the user sees one
     ///     module-level diagnostic instead of follow-on noise — exactly
@@ -1629,6 +1641,7 @@ impl TypeChecker {
             let name_str = resolve(name);
             let where_ = if in_pattern { " in pattern" } else { "" };
             self.error(
+                Code::Shadowing,
                 format!(
                     "cannot use '{module_str}' as a module qualifier for \
                      '{module_str}.{name_str}'{where_}: a local binding named '{module_str}' \
@@ -1654,14 +1667,20 @@ impl TypeChecker {
                 .keys()
                 .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
                 .collect();
-            let mut msg = format!("module '{module_str}' has no record type '{name_str}'");
-            if let Some(cand) = suggest_similar(&name_str, candidates.iter()) {
-                msg.push_str(&format!("; did you mean `{cand}`?"));
-            }
-            self.error(msg, span);
+            let help = suggest_similar(&name_str, candidates.iter())
+                .map(|cand| format!("did you mean `{cand}`?"));
+            self.error_help(
+                Code::UndefinedType,
+                (
+                    format!("module '{module_str}' has no record type '{name_str}'"),
+                    help,
+                ),
+                span,
+            );
         } else {
             let where_ = if in_pattern { " in pattern" } else { "" };
             self.error(
+                Code::UndefinedType,
                 format!(
                     "undefined type '{module_str}.{name_str}'{where_} — no module '{module_str}' \
                      in scope; import it with `import {module_str}`"
@@ -1697,6 +1716,7 @@ impl TypeChecker {
                 Some(owner) if owner == qualifier => CtorQualifierResolution::EnumOwned,
                 Some(owner) => {
                     self.error(
+                        Code::NoSuchVariant,
                         format!(
                             "'{}' is not a variant of enum '{}' (it belongs to '{}')",
                             resolve(name),
@@ -1709,6 +1729,7 @@ impl TypeChecker {
                 }
                 None => {
                     self.error(
+                        Code::NoSuchVariant,
                         format!(
                             "enum '{}' has no variant '{}'",
                             resolve(qualifier),
@@ -1736,6 +1757,7 @@ impl TypeChecker {
             let qual_str = resolve(qualifier);
             let name_str = resolve(name);
             self.error(
+                Code::Shadowing,
                 format!(
                     "cannot use '{qual_str}' as a module qualifier for \
                      '{qual_str}.{name_str}' in pattern: a local binding named '{qual_str}' \
@@ -1766,6 +1788,7 @@ impl TypeChecker {
             // `util.Pt(x)` where `Pt` is a record — same shape hint the
             // bare path gives for `Pt(x)`.
             self.error(
+                Code::InvalidPatternUse,
                 format!(
                     "'{name_str}' is a record type; use record-pattern syntax \
                      `{qual_str}.{name_str} {{ ... }}` instead of constructor-pattern syntax"
@@ -1779,16 +1802,22 @@ impl TypeChecker {
                 .keys()
                 .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
                 .collect();
-            let mut msg = format!("module '{qual_str}' has no variant '{name_str}'");
-            if let Some(cand) = suggest_similar(&name_str, candidates.iter()) {
-                msg.push_str(&format!("; did you mean `{cand}`?"));
-            }
-            self.error(msg, span);
+            let help = suggest_similar(&name_str, candidates.iter())
+                .map(|cand| format!("did you mean `{cand}`?"));
+            self.error_help(
+                Code::NoSuchVariant,
+                (
+                    format!("module '{qual_str}' has no variant '{name_str}'"),
+                    help,
+                ),
+                span,
+            );
         } else {
             // "undefined constructor" prefix keeps this inside the
             // import-cascade suppression set — see
             // `lookup_qualified_record` for the rationale.
             self.error(
+                Code::UndefinedConstructor,
                 format!(
                     "undefined constructor '{qual_str}.{name_str}' in pattern — '{qual_str}' \
                      is neither an imported module nor an enum type"
@@ -1867,6 +1896,7 @@ impl TypeChecker {
                         // directly so the message reads "expected <N>, got
                         // <M>" from the pattern's point of view.
                         self.error(
+                            Code::TypeMismatch,
                             format!(
                                 "tuple length mismatch: expected {}, got {}",
                                 pats.len(),
@@ -1950,6 +1980,7 @@ impl TypeChecker {
                         // Fix A: point the caret at the constructor pattern
                         // itself, not at the enclosing let/when scrutinee.
                         self.error(
+                            Code::ArityMismatch,
                             format!(
                                 "constructor '{}' expects {} {}, but pattern has {}",
                                 name,
@@ -1999,7 +2030,7 @@ impl TypeChecker {
                 // `pattern.span`, not the outer `span` (the outer span
                 // is the enclosing let/match scrutinee).
                 if self.records.contains_key(name) {
-                    self.error(
+                    self.error(Code::InvalidPatternUse,
                         format!(
                             "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
                         ),
@@ -2007,6 +2038,7 @@ impl TypeChecker {
                     );
                 } else {
                     self.error(
+                        Code::UndefinedConstructor,
                         format!("undefined constructor '{name}' in pattern"),
                         pattern.span,
                     );
@@ -2062,6 +2094,7 @@ impl TypeChecker {
                         }
                         None => {
                             self.error(
+                                Code::UndefinedType,
                                 format!("undefined record type '{rec_name}' in pattern"),
                                 span,
                             );
@@ -2143,7 +2176,8 @@ impl TypeChecker {
                             // hint when a near edit-distance field
                             // exists on this record.
                             let base = format!("record '{rec_name}' has no field '{field_name}'");
-                            self.error(
+                            self.error_help(
+                                Code::NoSuchField,
                                 format_record_field_suggestion(base, *field_name, field_types),
                                 span,
                             );
@@ -2168,7 +2202,8 @@ impl TypeChecker {
                             // GAP (round 26 L5): same hint on the generic
                             // resolution path.
                             let base = format!("record '{rec_name}' has no field '{field_name}'");
-                            self.error(
+                            self.error_help(
+                                Code::NoSuchField,
                                 format_record_field_suggestion(base, *field_name, &field_types),
                                 span,
                             );
@@ -2192,7 +2227,7 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    self.error(
+                    self.error(Code::TypeMismatch,
                         format!(
                             "record pattern requires a record value, but '{resolved}' is not a record type"
                         ),
@@ -2223,6 +2258,7 @@ impl TypeChecker {
                             // user-facing diagnostic. Render the sets as
                             // sorted comma-separated lists of resolved names.
                             self.error(
+                                Code::InvalidPatternUse,
                                 format!(
                                     "or-pattern alternatives must bind the same variables; \
                                      first alternative binds {}, alternative {} binds {}",
@@ -2270,7 +2306,7 @@ impl TypeChecker {
                                         // Replace the generic unify error with
                                         // a clearer or-pattern-specific one.
                                         self.errors.truncate(err_count);
-                                        self.error(
+                                        self.error(Code::TypeMismatch,
                                             format!(
                                                 "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
                                                 name, a, b
@@ -2305,7 +2341,7 @@ impl TypeChecker {
                 if let Type::Map(existing_key, _) = &resolved_scrutinee {
                     let existing_key = self.apply(existing_key);
                     if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
-                        self.error(
+                        self.error(Code::InvalidPatternUse,
                             format!(
                                 "map patterns currently only match string keys; your scrutinee has key type '{existing_key}'"
                             ),
@@ -2337,7 +2373,7 @@ impl TypeChecker {
                     // LATENT (round 26 L4): point the caret at the pin
                     // pattern, not the enclosing match/let scrutinee.
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error(msg, pattern.span);
+                    self.error_help(Code::UndefinedVariable, msg, pattern.span);
                 }
             }
             PatternKind::AnonRecord { fields, rest } => {
@@ -2477,7 +2513,7 @@ impl TypeChecker {
                                 .trait_impl_set
                                 .contains(&(intern("Display"), type_name))
                         {
-                            self.error(
+                            self.error(Code::MissingTraitImpl,
                                 format!(
                                     "type '{}' does not implement Display (required for string interpolation)",
                                     type_name
@@ -2555,7 +2591,7 @@ impl TypeChecker {
                                 self.apply(t)
                             };
                             let first_resolved = self.apply(&first_ty);
-                            self.error(
+                            self.error(Code::TypeMismatch,
                                 format!(
                                     "list elements must have the same type: first element is {}, but element {} is {}",
                                     first_resolved,
@@ -2600,7 +2636,7 @@ impl TypeChecker {
                             self.errors.truncate(err_count);
                             let first_resolved = self.apply(&first_k);
                             let kt_resolved = self.apply(&kt);
-                            self.error(
+                            self.error(Code::TypeMismatch,
                                 format!(
                                     "map keys must have the same type: first key is {first_resolved}, but key {entry_num} is {kt_resolved}"
                                 ),
@@ -2613,7 +2649,7 @@ impl TypeChecker {
                             self.errors.truncate(err_count);
                             let first_resolved = self.apply(&first_v);
                             let vt_resolved = self.apply(&vt);
-                            self.error(
+                            self.error(Code::TypeMismatch,
                                 format!(
                                     "map values must have the same type: first value is {first_resolved}, but value {entry_num} is {vt_resolved}"
                                 ),
@@ -2644,7 +2680,7 @@ impl TypeChecker {
                             self.errors.truncate(err_count);
                             let first_resolved = self.apply(&elem_type);
                             let t_resolved = self.apply(&t);
-                            self.error(
+                            self.error(Code::TypeMismatch,
                                 format!(
                                     "set elements must have the same type: first element is {}, but element {} is {}",
                                     first_resolved,
@@ -2674,7 +2710,7 @@ impl TypeChecker {
                     self.fresh_var()
                 } else {
                     let msg = format_undefined_variable_message(name, env, "");
-                    self.error(msg, span);
+                    self.error_help(Code::UndefinedVariable, msg, span);
                     self.fresh_var()
                 }
             }
@@ -2728,11 +2764,21 @@ impl TypeChecker {
                     if crate::module::is_builtin_module(&module_name_str)
                         && !self.imported_modules.contains(&module_name)
                     {
-                        self.error(
-                            format!(
-                                "module '{module_name_str}' is not imported; add `import {module_name_str}` at the top of the file"
+                        self.errors.push(
+                            Diagnostic::error(
+                                Code::ModuleNotImported,
+                                span,
+                                format!(
+                                    "module '{module_name_str}' is not imported; add `import {module_name_str}` at the top of the file"
+                                ),
+                            )
+                            .with_fix(
+                                format!("Add import for `{module_name_str}`"),
+                                vec![(
+                                    Span::point(span.file, 0),
+                                    format!("import {module_name_str}\n"),
+                                )],
                             ),
-                            span,
                         );
                         let fresh = self.fresh_var();
                         expr.ty = Some(fresh.clone());
@@ -2765,6 +2811,7 @@ impl TypeChecker {
                             }
                             Some(owner) => {
                                 self.error(
+                                    Code::NoSuchVariant,
                                     format!(
                                         "'{}' is not a variant of enum '{}' (it belongs to '{}')",
                                         resolve(field),
@@ -2779,6 +2826,7 @@ impl TypeChecker {
                             }
                             None => {
                                 self.error(
+                                    Code::NoSuchVariant,
                                     format!(
                                         "enum '{}' has no variant '{}'",
                                         resolve(module_name),
@@ -2803,7 +2851,7 @@ impl TypeChecker {
                     let module_str = resolve(module_name);
                     if crate::module::is_builtin_module(&module_str) {
                         let msg = format_unknown_module_function_message(field, &module_str);
-                        self.error(msg, span);
+                        self.error_help(Code::UnknownModuleMember, msg, span);
                         let fresh = self.fresh_var();
                         expr.ty = Some(fresh.clone());
                         return fresh;
@@ -2821,6 +2869,7 @@ impl TypeChecker {
                     if self.imported_modules.contains(&module_name) {
                         let field_str = resolve(field);
                         self.error(
+                            Code::UnknownModuleMember,
                             format!("unknown function '{field_str}' on module '{module_str}'"),
                             span,
                         );
@@ -2893,7 +2942,8 @@ impl TypeChecker {
                             let candidates: Vec<(Symbol, Type)> =
                                 fields.iter().map(|(k, v)| (*k, v.clone())).collect();
                             let base = format!("anon record has no field '{field}'");
-                            self.error(
+                            self.error_help(
+                                Code::NoSuchField,
                                 format_record_field_suggestion(base, field, &candidates),
                                 span,
                             );
@@ -2920,7 +2970,7 @@ impl TypeChecker {
                             // `.compare()` / `.hash()` entry — name the
                             // offending field instead of a generic
                             // "no field or method".
-                            self.error(msg, span);
+                            self.error(Code::NotDerivable, msg, span);
                             Type::Error
                         } else {
                             // GAP (round 26 L5): append a did-you-mean
@@ -2928,7 +2978,11 @@ impl TypeChecker {
                             // exists on this record.
                             let base =
                                 format!("record {rec_name} has no field or method '{field}'");
-                            self.error(format_record_field_suggestion(base, field, fields), span);
+                            self.error_help(
+                                Code::NoSuchField,
+                                format_record_field_suggestion(base, field, fields),
+                                span,
+                            );
                             Type::Error
                         }
                     }
@@ -2994,7 +3048,7 @@ impl TypeChecker {
                         // offending field instead of a generic
                         // "unknown method".
                         if let Some(msg) = self.method_auto_derive_violation(*type_name, field) {
-                            self.error(msg, span);
+                            self.error(Code::NotDerivable, msg, span);
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
@@ -3006,9 +3060,9 @@ impl TypeChecker {
                         let msg = if let Some(rec_info) = self.records.get(type_name) {
                             format_record_field_suggestion(base, field, &rec_info.fields)
                         } else {
-                            base
+                            (base, None)
                         };
-                        self.error(msg, span);
+                        self.error_help(Code::UnknownField, msg, span);
                         Type::Error
                     }
                     // Primitive types — check method table for trait methods.
@@ -3058,7 +3112,8 @@ impl TypeChecker {
                         // header prefix still pass; the hint is appended
                         // on its own `help:` line.
                         let display = format!("type {type_name}");
-                        self.error(
+                        self.error_help(
+                            Code::UnknownMethod,
                             format_unknown_method_message(
                                 field,
                                 &display,
@@ -3115,6 +3170,7 @@ impl TypeChecker {
                                 && field_str.bytes().all(|b| b.is_ascii_digit())
                             {
                                 self.error(
+                                    Code::UnsupportedOperation,
                                     format!(
                                         "tuple indexing ('t.{field_str}') is not supported; \
                                          destructure instead: 'let (a, b) = t'"
@@ -3125,7 +3181,8 @@ impl TypeChecker {
                             }
                         }
                         let display = resolve(type_name).to_string();
-                        self.error(
+                        self.error_help(
+                            Code::UnknownMethod,
                             format_unknown_method_message(
                                 field,
                                 &display,
@@ -3155,7 +3212,7 @@ impl TypeChecker {
                                     .map(|(name, _)| format!("{name}"))
                                     .collect::<Vec<_>>()
                                     .join(", ");
-                                self.error(
+                                self.error(Code::AmbiguousMethod,
                                     format!(
                                         "ambiguous method '{field}': provided by multiple traits ({trait_list})"
                                     ),
@@ -3191,7 +3248,7 @@ impl TypeChecker {
                                     .map(|s| format!("{s}"))
                                     .collect::<Vec<_>>()
                                     .join(" + ");
-                                self.error(
+                                self.error(Code::UnknownMethod,
                                     format!(
                                         "no method '{field}' found in trait constraints ({traits_str})"
                                     ),
@@ -3243,6 +3300,7 @@ impl TypeChecker {
                     }
                     _ => {
                         self.error(
+                            Code::UnknownField,
                             format!("unknown field or method '{field}' on type {obj_ty}"),
                             span,
                         );
@@ -3278,7 +3336,11 @@ impl TypeChecker {
                                 Type::Error
                             }
                             (Type::String, _) | (_, Type::String) => {
-                                self.error(arith_operand_message(op_str, &Type::String), span);
+                                self.error(
+                                    Code::UnsupportedOperation,
+                                    arith_operand_message(op_str, &Type::String),
+                                    span,
+                                );
                                 Type::Error
                             }
                             _ => {
@@ -3318,6 +3380,7 @@ impl TypeChecker {
                                         }
                                         _ if !is_valid_arith_operand(&resolved) => {
                                             self.error(
+                                                Code::UnsupportedOperation,
                                                 arith_operand_message(op_str, &resolved),
                                                 span,
                                             );
@@ -3361,7 +3424,11 @@ impl TypeChecker {
                                     ));
                                 }
                                 _ if !is_valid_arith_operand(&resolved) => {
-                                    self.error(arith_operand_message("'/'", &resolved), span);
+                                    self.error(
+                                        Code::UnsupportedOperation,
+                                        arith_operand_message("'/'", &resolved),
+                                        span,
+                                    );
                                 }
                                 _ => {}
                             }
@@ -3431,6 +3498,7 @@ impl TypeChecker {
                                         "Int, Float, String, List, Range, Record, or Variant"
                                     };
                                     self.error(
+                                        Code::UnsupportedOperation,
                                         format!(
                                             "operator {op_str} requires {domain}, got '{resolved}'"
                                         ),
@@ -3450,7 +3518,7 @@ impl TypeChecker {
                                     if let Some(msg) =
                                         self.operand_builtin_trait_violation(&resolved, is_equality)
                                     {
-                                        self.error(msg, span);
+                                        self.error(Code::NotDerivable, msg, span);
                                     }
                                 }
                             }
@@ -3487,6 +3555,7 @@ impl TypeChecker {
                             }
                             _ => {
                                 self.error(
+                                    Code::UnsupportedOperation,
                                     format!("unary '-' requires Int or Float, got '{}'", resolved),
                                     operand_span,
                                 );
@@ -3569,6 +3638,7 @@ impl TypeChecker {
                                     all_arg_types.len(),
                                 ) {
                                     self.error(
+                                        Code::ArityMismatch,
                                         format!(
                                             "function expects {}, got {}",
                                             accepted_arity_text(params.len(), optional_last_param),
@@ -3652,7 +3722,7 @@ impl TypeChecker {
                             // remaining args.
                             if !call_arity_matches(params.len(), optional_last_param, 1) {
                                 let n = params.len();
-                                self.error(
+                                self.error(Code::ArityMismatch,
                                     format!(
                                         "cannot pipe into function taking {} {}; wrap in a call or use partial application",
                                         n,
@@ -3674,6 +3744,7 @@ impl TypeChecker {
                         }
                         _ => {
                             self.error(
+                                Code::TypeMismatch,
                                 "pipe operator requires a function on the right-hand side"
                                     .to_string(),
                                 rhs.span,
@@ -3719,7 +3790,7 @@ impl TypeChecker {
                                 Type::Generic(intern("Result"), vec![fresh_ok, err_ty]);
                             self.unify(&expected_ret, &expected_result, span);
                         } else {
-                            self.error(
+                            self.error(Code::InvalidQuestion,
                                 "? operator can only be used inside a function that returns Result or Option".to_string(),
                                 span,
                             );
@@ -3733,7 +3804,7 @@ impl TypeChecker {
                                 Type::Generic(intern("Option"), vec![fresh_inner]);
                             self.unify(&expected_ret, &expected_option, span);
                         } else {
-                            self.error(
+                            self.error(Code::InvalidQuestion,
                                 "? operator can only be used inside a function that returns Result or Option".to_string(),
                                 span,
                             );
@@ -3765,6 +3836,7 @@ impl TypeChecker {
                     }
                     _ => {
                         self.error(
+                            Code::InvalidQuestion,
                             format!(
                                 "'?' operator requires Result or Option type, got '{inner_ty}'"
                             ),
@@ -3940,6 +4012,7 @@ impl TypeChecker {
                                 None => "function".to_string(),
                             };
                             self.error(
+                                Code::ArityMismatch,
                                 format!(
                                     "{what} expects {}, got {}",
                                     accepted_arity_text(params.len(), optional_last_param),
@@ -3968,7 +4041,11 @@ impl TypeChecker {
                             Type::Var(_) => "an expression of unknown type".to_string(),
                             t => format!("`{t}`"),
                         };
-                        self.error(format!("{rendered} is not callable"), span);
+                        self.error(
+                            Code::TypeMismatch,
+                            format!("{rendered} is not callable"),
+                            span,
+                        );
                         self.fresh_var()
                     }
                 };
@@ -4018,14 +4095,17 @@ impl TypeChecker {
                     && let Some(cur) = self.current_fn_name
                     && !self.fully_annotated_fn_names.contains(&cur)
                 {
-                    self.warning(
-                        format!(
-                            "help: '{}' is recursing with arguments of a different type \
-                             than its inferred signature; add explicit type annotations \
-                             to enable polymorphic recursion",
-                            resolve(cur)
-                        ),
-                        recursion_hint_span,
+                    self.errors.push(
+                        Diagnostic::warning(
+                            Code::PolymorphicRecursion,
+                            recursion_hint_span,
+                            format!(
+                                "'{}' is recursing with arguments of a different type \
+                                 than its inferred signature",
+                                resolve(cur)
+                            ),
+                        )
+                        .with_help("add explicit type annotations to enable polymorphic recursion"),
                     );
                 }
 
@@ -4109,6 +4189,7 @@ impl TypeChecker {
                     for (field_name, _) in fields.iter() {
                         if !seen.insert(*field_name) {
                             self.error(
+                                Code::DuplicateRecordField,
                                 format!(
                                     "duplicate field '{}' in record literal for '{}'",
                                     field_name, name
@@ -4172,6 +4253,7 @@ impl TypeChecker {
                         let missing_str: Vec<String> =
                             missing.iter().map(|s| format!("{s}")).collect();
                         self.error(
+                            Code::MissingField,
                             format!(
                                 "missing field{} in {}: {}",
                                 if missing.len() > 1 { "s" } else { "" },
@@ -4191,7 +4273,8 @@ impl TypeChecker {
                             // hint for record-literal typos — e.g.
                             // `User { nam: ... }` → `did you mean \`name\`?`.
                             let base = format!("unknown field '{}' in {}", field_name, name);
-                            self.error(
+                            self.error_help(
+                                Code::UnknownField,
                                 format_record_field_suggestion(base, *field_name, &rec_info.fields),
                                 span,
                             );
@@ -4211,7 +4294,11 @@ impl TypeChecker {
                         let _ = self.infer_expr(e, env);
                     }
                     if module.is_none() {
-                        self.error(format!("undefined type '{name}'"), span);
+                        self.error(
+                            Code::UndefinedType,
+                            format!("undefined type '{name}'"),
+                            span,
+                        );
                     }
                     Type::Error
                 }
@@ -4231,6 +4318,7 @@ impl TypeChecker {
                     for (field_name, _) in fields.iter() {
                         if !seen.insert(*field_name) {
                             self.error(
+                                Code::DuplicateRecordField,
                                 format!("duplicate field '{}' in record update", field_name),
                                 span,
                             );
@@ -4279,7 +4367,8 @@ impl TypeChecker {
                                 af.iter().map(|(k, v)| (*k, v.clone())).collect();
                             let base =
                                 format!("unknown field '{field_name}' in closed anon record");
-                            self.error(
+                            self.error_help(
+                                Code::UnknownField,
                                 format_record_field_suggestion(base, *field_name, &candidates),
                                 span,
                             );
@@ -4297,7 +4386,8 @@ impl TypeChecker {
                         } else {
                             // GAP (round 26 L5): did-you-mean on record-update.
                             let base = format!("unknown field '{field_name}' in {rec_name}");
-                            self.error(
+                            self.error_help(
+                                Code::UnknownField,
                                 format_record_field_suggestion(base, *field_name, rec_fields),
                                 span,
                             );
@@ -4343,7 +4433,8 @@ impl TypeChecker {
                             // GAP (round 26 L5): did-you-mean on the
                             // generic-record update path.
                             let base = format!("unknown field '{field_name}' in {type_name}");
-                            self.error(
+                            self.error_help(
+                                Code::UnknownField,
                                 format_record_field_suggestion(
                                     base,
                                     *field_name,
@@ -4404,7 +4495,7 @@ impl TypeChecker {
                                 // program has a field with this name,
                                 // so regardless of how `r` narrows at
                                 // call sites, this update would fail.
-                                self.error(
+                                self.error(Code::UnknownField,
                                     format!(
                                         "unknown field '{field_name}' — not declared on any record type in scope"
                                     ),
@@ -4414,7 +4505,7 @@ impl TypeChecker {
                         }
                     }
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                        self.error(
+                        self.error(Code::TypeMismatch,
                             format!(
                                 "record update requires a record base, but '{resolved}' is not a record type"
                             ),
@@ -4436,6 +4527,7 @@ impl TypeChecker {
                     for (fn_name, _) in fields.iter() {
                         if !seen.insert(*fn_name) {
                             self.error(
+                                Code::DuplicateRecordField,
                                 format!("duplicate field '{}' in anon record literal", fn_name),
                                 span,
                             );
@@ -4501,7 +4593,7 @@ impl TypeChecker {
                             }
                             _ => {
                                 if !matches!(base_canon, Type::Error | Type::Var(_) | Type::Never) {
-                                    self.error(
+                                    self.error(Code::TypeMismatch,
                                         format!(
                                             "spread requires a record base, but '{base_canon}' is not a record type"
                                         ),
@@ -4516,7 +4608,7 @@ impl TypeChecker {
                     // support).
                     for (n, _) in &new_field_tys {
                         if base_fields.contains_key(n) {
-                            self.error(
+                            self.error(Code::DuplicateRecordField,
                                 format!(
                                     "cannot extend record with existing field '{n}'; v1 row polymorphism does not support override"
                                 ),
@@ -4590,7 +4682,7 @@ impl TypeChecker {
                                 scrutinee_span,
                             );
                             if self.errors.len() > pat_err_count {
-                                let new_diags: Vec<TypeError> =
+                                let new_diags: Vec<Diagnostic> =
                                     self.errors.drain(pat_err_count..).collect();
                                 for d in new_diags {
                                     if matches!(d.severity, Severity::Error) {
@@ -4603,7 +4695,7 @@ impl TypeChecker {
                                         matches!(d.severity, Severity::Error),
                                     );
                                     if seen_arm_diags.insert(key) {
-                                        // Re-inserting a pre-built TypeError drained
+                                        // Re-inserting a pre-built Diagnostic drained
                                         // above for dedup — not a new emission site,
                                         // so `self.error(...)` does not apply. This
                                         // is the sanctioned exception counted by the
@@ -4655,6 +4747,7 @@ impl TypeChecker {
                             .collect();
                         match defaults.first() {
                             None => self.error(
+                                Code::NonExhaustive,
                                 "a `match` without a scrutinee must end with a `_ -> ...` arm \
                                  for when no condition is true"
                                     .to_string(),
@@ -4663,6 +4756,7 @@ impl TypeChecker {
                             Some(&first) => {
                                 if arms[first + 1..].iter().any(|arm| arm.guard.is_some()) {
                                     self.error(
+                                        Code::UnreachablePattern,
                                         "the `_` arm must be last: it always matches, so the \
                                          arms after it never run"
                                             .to_string(),
@@ -4671,6 +4765,7 @@ impl TypeChecker {
                                 }
                                 for &i in &defaults[1..] {
                                     self.error(
+                                        Code::UnreachablePattern,
                                         "unreachable `_` arm: an earlier `_` arm always matches"
                                             .to_string(),
                                         arms[i].pattern.span,
@@ -4756,6 +4851,7 @@ impl TypeChecker {
                     if recur_count != binding_types.len() {
                         let bindings_n = binding_types.len();
                         self.error(
+                            Code::ArityMismatch,
                             format!(
                                 "loop has {} {}, but `loop(...)` supplies {} {}",
                                 bindings_n,
@@ -4774,6 +4870,7 @@ impl TypeChecker {
                     }
                 } else {
                     self.error(
+                        Code::InvalidControlFlow,
                         "`loop(...)` can only appear inside a `loop` body — it restarts \
                          the enclosing loop with new binding values"
                             .to_string(),
@@ -4804,6 +4901,7 @@ impl TypeChecker {
                 match pos {
                     RecurPos::Tail => {}
                     RecurPos::NotTail => self.error(
+                        Code::InvalidControlFlow,
                         "`loop(...)` must be in tail position: it restarts the loop, so \
                          nothing can use its result — make it the last expression of \
                          the loop body, or of a block, match arm or `when ... else` body \
@@ -4812,6 +4910,7 @@ impl TypeChecker {
                         expr.span,
                     ),
                     RecurPos::InClosure => self.error(
+                        Code::InvalidControlFlow,
                         "`loop(...)` inside a closure is not the loop's tail: the closure \
                          runs when it is called, not as the loop body, so it cannot \
                          restart the loop — return a value from the closure and call \
@@ -5012,6 +5111,7 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
+                        Code::InvalidControlFlow,
                         "'when let' else body must diverge — end it with 'return', 'panic' or, \
                          inside a loop, 'loop(...)'"
                             .to_string(),
@@ -5043,6 +5143,7 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
+                        Code::InvalidControlFlow,
                         "'when' else body must diverge — end it with 'return', 'panic' or, \
                          inside a loop, 'loop(...)'"
                             .to_string(),
@@ -5147,6 +5248,7 @@ impl TypeChecker {
                                 // alternative arm is wrong when multiple
                                 // constructors appear in a match.
                                 self.error(
+                                    Code::ArityMismatch,
                                     format!(
                                         "constructor '{}' expects {} {}, but pattern has {}",
                                         name,
@@ -5177,7 +5279,7 @@ impl TypeChecker {
                                 // use `Circle { radius: r }` pattern
                                 // syntax. Surface the real issue and
                                 // point at the correct shape.
-                                self.error(
+                                self.error(Code::InvalidPatternUse,
                                     format!(
                                         "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
                                     ),
@@ -5189,6 +5291,7 @@ impl TypeChecker {
                                 }
                             } else {
                                 self.error(
+                                    Code::ArityMismatch,
                                     format!(
                                         "constructor '{}' expects 0 fields, but pattern has {}",
                                         name,
@@ -5206,6 +5309,7 @@ impl TypeChecker {
                     // scrutinee — round-17 F4 threaded pattern.span
                     // through arity sites but missed this fallback.
                     self.error(
+                        Code::UndefinedConstructor,
                         format!("undefined constructor '{name}' in pattern"),
                         pattern.span,
                     );
@@ -5275,7 +5379,8 @@ impl TypeChecker {
                                 // exists on the record.
                                 let base =
                                     format!("record '{rec_name}' has no field '{field_name}'");
-                                self.error(
+                                self.error_help(
+                                    Code::NoSuchField,
                                     format_record_field_suggestion(
                                         base,
                                         *field_name,
@@ -5295,6 +5400,7 @@ impl TypeChecker {
                         // `lookup_qualified_record`.
                         if module.is_none() {
                             self.error(
+                                Code::UndefinedType,
                                 format!("undefined record type '{rec_name}' in pattern"),
                                 span,
                             );
@@ -5331,6 +5437,7 @@ impl TypeChecker {
                             // user-facing diagnostic. Render the sets as
                             // sorted comma-separated lists of resolved names.
                             self.error(
+                                Code::InvalidPatternUse,
                                 format!(
                                     "or-pattern alternatives must bind the same variables; \
                                      first alternative binds {}, alternative {} binds {}",
@@ -5370,7 +5477,7 @@ impl TypeChecker {
                                     self.unify(&a, &b, span);
                                     if self.errors.len() > err_count {
                                         self.errors.truncate(err_count);
-                                        self.error(
+                                        self.error(Code::TypeMismatch,
                                             format!(
                                                 "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
                                                 name, a, b
@@ -5402,7 +5509,7 @@ impl TypeChecker {
                 if let Type::Map(existing_key, _) = &resolved_scrutinee {
                     let existing_key = self.apply(existing_key);
                     if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
-                        self.error(
+                        self.error(Code::InvalidPatternUse,
                             format!(
                                 "map patterns currently only match string keys; your scrutinee has key type '{existing_key}'"
                             ),
@@ -5433,7 +5540,7 @@ impl TypeChecker {
                     // LATENT (round 26 L4): point the caret at the pin
                     // pattern, not the enclosing match scrutinee.
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error(msg, pattern.span);
+                    self.error_help(Code::UndefinedVariable, msg, pattern.span);
                 }
             }
             PatternKind::AnonRecord { fields, rest } => {
@@ -5538,7 +5645,7 @@ impl TypeChecker {
                     .iter()
                     .any(|e| e.message == msg && e.span == te.span);
                 if !already {
-                    self.error(msg, te.span);
+                    self.error(Code::ArityMismatch, msg, te.span);
                 }
             }
             TypeExprKind::Generic(_, args) => {
@@ -5623,13 +5730,14 @@ impl TypeChecker {
             } else {
                 (&resolved_r, &resolved_l, rhs_span)
             };
-            let mut msg = domain_msg(offender);
-            if let Some(hint) = Self::chain_hint(offender, other) {
-                msg.push('\n');
-                msg.push_str(&hint);
-            }
+            let mut d = Diagnostic::error(
+                Code::UnsupportedOperation,
+                offender_span,
+                domain_msg(offender),
+            );
+            d.help.extend(Self::chain_hint(offender, other));
             self.errors.truncate(err_count_before);
-            self.error(msg, offender_span);
+            self.errors.push(d);
         }
         true
     }

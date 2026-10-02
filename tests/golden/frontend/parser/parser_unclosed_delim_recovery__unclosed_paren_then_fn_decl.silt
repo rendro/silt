@@ -2,7 +2,7 @@
 -- exit: 1
 -- An unclosed opener followed by a top-level fn decl blames the opener.
 -- stderr-contains: error[parse]
--- stderr-contains: starting at line 7
+-- stderr-contains: ::: parser_unclosed_delim_recovery__unclosed_paren_then_fn_decl.silt:7:
 -- stderr-not-contains: expected (, found b
 fn a() { (1, 2,
 fn b() { 99 }

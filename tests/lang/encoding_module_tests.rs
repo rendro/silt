@@ -3,7 +3,7 @@
 //! signature. The behavioural tests of the module are golden cases
 //! (`tests/golden/lang/stdlib/encoding_module__*`).
 
-use silt::types::Severity;
+use silt::diagnostic::Severity;
 
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)

@@ -28,7 +28,6 @@ mod repl_completion_short_commands_tests;
 mod repl_error_render_and_keywords_tests;
 mod repl_is_declaration_mod_tests;
 mod repl_keyword_parity_with_lexer_tests;
-mod repl_wrapper_frame_leak_tests;
 mod round73_cli_help_gaps_tests;
 mod round75_silt_init_builtin_collision_tests;
 mod round77_repl_enum_completion_tests;

@@ -5,7 +5,7 @@
 //! 1. **Lexer** (`lexer`) -- tokenizes source text into a stream of tokens.
 //! 2. **Parser** (`parser`) -- builds an AST (`ast`) from the token stream.
 //! 3. **Type checker** (`typechecker`) -- infers and validates types (`types`)
-//!    across the AST, reporting diagnostics via `errors`.
+//!    across the AST, reporting diagnostics (`diagnostic`).
 //! 4. **Compiler** (`compiler`) -- lowers the typed AST to bytecode (`bytecode`).
 //! 5. **VM** (`vm`) -- executes bytecode, using the `scheduler` for
 //!    concurrent tasks and `builtins` for the standard library.
@@ -20,9 +20,8 @@ pub mod ast;
 pub mod builtins;
 pub mod bytecode;
 pub mod compiler;
-pub mod diagnostic_filters;
+pub mod diagnostic;
 pub mod disassemble;
-pub mod errors;
 pub mod feature_stub;
 pub mod file_discovery;
 pub mod formatter;

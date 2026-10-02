@@ -2,9 +2,9 @@
 //! `silt fmt`, `silt disasm`, and `silt test` CLI paths.
 //!
 //! Centralized here so each subcommand renders identical diagnostics
-//! for the same input — see `reportable_type_errors` for the dance
-//! we do to reconcile the type-checker's "unknown module" warning
-//! with the compiler's later resolution of those same imports.
+//! for the same input — see `analyse_parsed_entry_file` for how the
+//! type-checker's "unknown module" warning is reconciled with the
+//! compiler's later resolution of those same imports.
 
 use std::collections::HashMap;
 use std::fs;
@@ -14,7 +14,7 @@ use std::process;
 use silt::ast::{Decl, ImportTarget, Program};
 use silt::bytecode::Function;
 use silt::compiler::Compiler;
-use silt::errors::SourceError;
+use silt::diagnostic::{Code, Diagnostic};
 use silt::intern::{Symbol, resolve};
 use silt::lexer::Lexer;
 use silt::module;
@@ -23,6 +23,7 @@ use silt::source::{FileId, SourceMap, SourceName};
 use silt::typechecker;
 
 use crate::cli::package::package_setup_for_file;
+use crate::cli::paths::ProgramFiles;
 use crate::cli::source_scan::main_signature_error;
 
 /// What the compile step of the pipeline emits.
@@ -51,7 +52,7 @@ pub(crate) struct ParsedEntryFile {
     /// when the text does not lex.
     pub(crate) program: Option<Program>,
     /// The lex error, or the parse errors.
-    pub(crate) parse_errors: Vec<SourceError>,
+    pub(crate) parse_errors: Vec<Diagnostic>,
 }
 
 /// Result of running the full compilation pipeline (lex → parse → typecheck → compile).
@@ -67,15 +68,15 @@ pub(crate) struct CompilePipelineResult {
     /// `source` for them.
     pub(crate) program: Option<Program>,
     /// Parse errors (may be non-empty even when compilation proceeds).
-    pub(crate) parse_errors: Vec<SourceError>,
+    pub(crate) parse_errors: Vec<Diagnostic>,
     /// Type errors and warnings.
-    pub(crate) type_errors: Vec<SourceError>,
+    pub(crate) type_errors: Vec<Diagnostic>,
     /// Compiled functions — `None` if hard errors prevented compilation.
     pub(crate) functions: Option<Vec<Function>>,
     /// Compile errors (if compilation was attempted but failed).
-    pub(crate) compile_errors: Vec<SourceError>,
+    pub(crate) compile_errors: Vec<Diagnostic>,
     /// Compiler warnings (empty if compilation was not attempted).
-    pub(crate) compile_warnings: Vec<SourceError>,
+    pub(crate) compile_warnings: Vec<Diagnostic>,
 }
 
 /// Run the full compilation pipeline for `path`: read file → lex → parse (recovering)
@@ -126,23 +127,16 @@ pub(crate) fn parse_entry_file(path: &str, source: String) -> ParsedEntryFile {
         Err(e) => {
             // Lex errors are fatal for all callers. Return a result with the error
             // so that `check_file` can format it as JSON when needed.
-            let source_err =
-                SourceError::from_lex_error(&e, &sources, file_label(&sources, e.span, path));
             return ParsedEntryFile {
                 source,
                 sources,
                 program: None,
-                parse_errors: vec![source_err],
+                parse_errors: vec![e],
             };
         }
     };
 
-    let (program, raw_parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
-
-    let parse_errors: Vec<SourceError> = raw_parse_errors
-        .iter()
-        .map(|e| SourceError::from_parse_error(e, &sources, file_label(&sources, e.span, path)))
-        .collect();
+    let (program, parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
     ParsedEntryFile {
         source,
         sources,
@@ -238,7 +232,19 @@ pub(crate) fn analyse_parsed_entry_file(
     // stitched back into the compiler afterward so the trait-impl
     // emission path (`Decl::TraitImpl` arm) sees the accumulated
     // alias state when canonicalising target-type symbols.
-    let mut type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
+    //
+    // When the program imports a module the type checker can't see, the
+    // "unknown module" warning and every name that module would supply
+    // surfacing as "undefined" are left out, so the user gets one clear
+    // module-level error from the compile stage instead of a wall of
+    // undefined-name noise (`typechecker::without_import_cascade`).
+    // Resolvable imports (sibling modules, declared deps) are
+    // pre-typechecked, so the warning never fires for them.
+    //
+    // The typechecker and the compiler both report "module 'X' is not
+    // imported" for the same call site; the compiler's copy is the one
+    // that blocks bytecode emission, so the typechecker's is left out.
+    let mut type_errors: Vec<Diagnostic> = if !has_parse_errors || typecheck_on_parse_errors {
         let resolver = compiler.take_resolver();
         let (raw_type_errors, _entry_exports, resolver) =
             typechecker::check_with_package_and_imports_resolver(
@@ -248,12 +254,9 @@ pub(crate) fn analyse_parsed_entry_file(
                 Some(resolver),
             );
         compiler.put_resolver(resolver);
-        raw_type_errors
-            .iter()
-            .map(|e| {
-                let file = file_label(compiler.sources(), e.span, path);
-                SourceError::from_type_error(e, compiler.sources(), file)
-            })
+        typechecker::without_import_cascade(raw_type_errors)
+            .into_iter()
+            .filter(|d| d.code != Code::ModuleNotImported)
             .collect()
     } else {
         Vec::new()
@@ -299,28 +302,17 @@ pub(crate) fn analyse_parsed_entry_file(
     // start: the entry point is called without arguments. Reported here,
     // with the compile errors, so that every front door rejects it
     // before anything runs.
-    let entry_point_error = main_signature_error(&program, compiler.sources(), path);
+    let entry_point_error = main_signature_error(&program);
     match compile_result {
         Ok(functions) => {
-            let compile_warnings: Vec<SourceError> = compiler
-                .warnings()
-                .iter()
-                .map(|w| {
-                    let file = file_label(compiler.sources(), w.span, path);
-                    SourceError::compile_warning(&w.message, w.span, compiler.sources(), file)
-                })
-                .collect();
+            let compile_warnings: Vec<Diagnostic> = compiler.warnings().to_vec();
             // An Ok compile can still have accumulated module parse
             // errors if a future refactor teaches the compiler to keep
             // going past a broken module. Today the first error short-
             // circuits, so this is defensive — but draining on both
             // arms keeps the "every diagnostic, one run" invariant
             // robust against that evolution.
-            let mut compile_errors: Vec<SourceError> = compiler
-                .module_parse_errors()
-                .iter()
-                .map(|e| compile_error(e, compiler.sources(), path))
-                .collect();
+            let mut compile_errors: Vec<Diagnostic> = compiler.module_parse_errors().to_vec();
             compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
@@ -339,20 +331,15 @@ pub(crate) fn analyse_parsed_entry_file(
             // parse-source order) so the composite output is uniform.
             // A `loop(...)` outside its loop is already a type error at
             // the same place; report it once.
-            let already_reported = e.message == silt::compiler::LOOP_CALL_OUTSIDE_LOOP
+            let already_reported = e.code == Code::LoopCallOutsideLoop
                 && type_errors
                     .iter()
-                    .any(|t| !t.is_warning && t.span.is_some_and(|s| s.start == e.span.start));
+                    .any(|t| t.is_error() && t.span.start == e.span.start);
             let mut compile_errors = Vec::new();
             if !already_reported {
-                compile_errors.push(compile_error(&e, compiler.sources(), path));
+                compile_errors.push(e);
             }
-            compile_errors.extend(
-                compiler
-                    .module_parse_errors()
-                    .iter()
-                    .map(|extra| compile_error(extra, compiler.sources(), path)),
-            );
+            compile_errors.extend(compiler.module_parse_errors().iter().cloned());
             compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
@@ -366,26 +353,6 @@ pub(crate) fn analyse_parsed_entry_file(
             }
         }
     }
-}
-
-/// How the file of `span` is named in a diagnostic of the program at
-/// `path`: the entry file as the user typed it, another file (a module
-/// that imports a broken module, a module whose declaration a type error
-/// in the entry file points at) by its path relative to the working
-/// directory. Every diagnostic of the pipeline is named this way, so its
-/// file always comes from its span.
-fn file_label(sources: &SourceMap, span: silt::source::Span, path: &str) -> String {
-    match sources.get(span.file).map(|file| &file.path) {
-        Some(SourceName::Path(p)) if p != std::path::Path::new(path) => {
-            silt::compiler::module_path_for_display(p)
-        }
-        _ => path.to_string(),
-    }
-}
-
-/// A compile error, in the file its span is in.
-fn compile_error(e: &silt::compiler::CompileError, sources: &SourceMap, path: &str) -> SourceError {
-    SourceError::from_compile_error(e, sources, file_label(sources, e.span, path))
 }
 
 /// Round 93: make declared package dependencies statically visible to
@@ -492,157 +459,18 @@ pub(crate) fn register_dep_import_exports(
     }
 }
 
-/// Return the type-checker diagnostics that should still be reported for `result`
-/// after dropping noise that the compiler will resolve.
-///
-/// Why: the type checker runs before module resolution (which happens during
-/// compilation). When a program imports from an unknown module, the checker
-/// emits an "unknown module" *warning* for that import. We want to drop that
-/// warning (and ONLY that warning) from the `compile_file` path so the user
-/// isn't told about an import they actually wrote correctly. All other
-/// diagnostics — real type errors, other warnings — must flow through
-/// untouched so they continue to abort the run.
-///
-/// Previously this helper did substring matching on every entry and
-/// suppressed ALL type diagnostics whenever any of them mentioned "unknown
-/// module", which silently masked real type errors in any file that also
-/// happened to import a user module. Filtering per-entry fixes that while
-/// keeping the clean UX for importers.
-pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&SourceError> {
-    let has_user_import_warning = result.type_errors.iter().any(is_unknown_module_warning);
-    result
-        .type_errors
-        .iter()
-        // When the program imports a user module the type checker can't
-        // see, both the "unknown module" warning AND every name it
-        // exports surfacing as "undefined" must be suppressed, so the
-        // user gets one clear module-level error from the compile stage
-        // instead of a wall of undefined-name noise. Resolvable imports
-        // (sibling modules, declared deps) are pre-typechecked so the
-        // warning never fires for them and this filter stays dormant —
-        // see `is_user_import_resolvable_error` for why that matters.
-        // `silt test` reports through this same function, so the
-        // front doors cannot drift.
-        .filter(|e| !should_suppress_import_cascade(e, has_user_import_warning))
-        // B9 (round 60): the typechecker and the compiler both emit
-        // "module 'X' is not imported" for the same call site. Without
-        // this filter, `silt check main.silt` prints the identical
-        // sentence twice — once as `error[type]`, once as
-        // `error[compile]`. The compiler's version is the authoritative
-        // one (it's what actually blocks bytecode emission), so drop
-        // the typechecker's copy in the CLI pipeline when compilation
-        // will re-surface it. The typechecker-only callers (LSP,
-        // `missing_import_recommends_tests`) still see the diagnostic
-        // via `typechecker::check` directly.
-        .filter(|e| !is_module_not_imported_typecheck_error(e))
-        .collect()
-}
-
 /// Every diagnostic of `result` that is shown to the user, in the order it
-/// is printed: parse errors, type diagnostics (filtered, see
-/// [`reportable_type_errors`]), compile errors, compile warnings. One list
-/// for `silt run`, `silt check`, `silt disasm` and `silt test`.
-pub(crate) fn reportable_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
+/// is printed: parse errors, type diagnostics, compile errors, compile
+/// warnings. One list for `silt run`, `silt check`, `silt disasm` and
+/// `silt test`.
+pub(crate) fn reportable_diagnostics(result: &CompilePipelineResult) -> Vec<&Diagnostic> {
     result
         .parse_errors
         .iter()
-        .chain(reportable_type_errors(result))
+        .chain(result.type_errors.iter())
         .chain(result.compile_errors.iter())
         .chain(result.compile_warnings.iter())
         .collect()
-}
-
-/// Single shared predicate deciding whether a typechecker diagnostic for a
-/// user-module import should be suppressed from CLI output. `silt run`,
-/// `silt check` and `silt test` all report through
-/// `reportable_type_errors`, which applies it: a file that imports a
-/// sibling user module must behave identically under all three.
-///
-/// Suppress when the diagnostic is the "unknown module" warning itself, OR
-/// (when that warning is present) when it is one of the follow-on
-/// undefined-name / trait-cascade errors the compiler resolves at link
-/// time. `has_user_import_warning` must be computed across the whole
-/// diagnostic set by the caller (i.e. `iter().any(is_unknown_module_warning)`).
-pub(crate) fn should_suppress_import_cascade(
-    err: &SourceError,
-    has_user_import_warning: bool,
-) -> bool {
-    is_unknown_module_warning(err)
-        || (has_user_import_warning && is_user_import_resolvable_error(err))
-}
-
-/// Returns true iff `err` is the "unknown module" warning that the type
-/// checker emits for imports the compiler will later resolve. We gate on
-/// both the warning severity and the message prefix so a future real type
-/// error that happens to mention those words isn't swallowed.
-///
-/// Message-text matching is delegated to
-/// `silt::diagnostic_filters::is_unknown_module_warning_message` so the
-/// LSP's `TypeError`-shaped sibling stays in lock-step.
-pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
-    err.is_warning
-        && err.kind == silt::errors::ErrorKind::Type
-        && silt::diagnostic_filters::is_unknown_module_warning_message(&err.message)
-}
-
-/// Returns true iff `err` is the typechecker's "module 'X' is not
-/// imported" error. The compiler emits the same diagnostic (with
-/// identical wording, see `src/compiler/mod.rs:2565`, `:2661`, `:3480`)
-/// as a hard compile error that actually blocks bytecode emission, so
-/// the CLI pipeline drops the typechecker's copy to avoid rendering the
-/// same sentence twice. See `reportable_type_errors` for the call site.
-pub(crate) fn is_module_not_imported_typecheck_error(err: &SourceError) -> bool {
-    err.kind == silt::errors::ErrorKind::Type
-        && !err.is_warning
-        && err.message.contains("is not imported")
-        && err.message.contains("add `import ")
-}
-
-/// Returns true iff `err` is a typechecker diagnostic that the
-/// compiler is likely to resolve at link time (because the name comes
-/// from a user-module import that the type checker can't see into).
-///
-/// When the type checker cannot resolve an imported module it emits an
-/// "unknown module" warning, and every name that module would have
-/// supplied then surfaces as "undefined variable" / "undefined
-/// constructor" / "undefined type" / "unknown field". We suppress that
-/// cascade so the user sees one clear module-level diagnostic instead
-/// of dozens of follow-ons.
-///
-/// Since rounds 64/92/93 the warning should only fire for genuinely
-/// unresolvable modules (typos, missing deps): same-package sibling
-/// modules and declared `silt.toml` dependencies are pre-typechecked
-/// and their exports registered before the entrypoint check runs
-/// (`Compiler::pre_typecheck_imports` + `register_dep_import_exports`),
-/// so real undefined names in importing files surface statically.
-/// NOTE: the suppression is NOT backstopped by the compiler — an
-/// undefined global passes compilation silently and only traps in the
-/// VM when (if ever) the code path executes. That is exactly why the
-/// cascade filter must never trigger for resolvable imports: while it
-/// is active, every suppressed name in the file is unchecked until
-/// runtime.
-///
-/// Trait-impl cascades: when the unknown module is the one that would
-/// have supplied a type's trait impl (or defined a supertrait), the
-/// typechecker emits one of three shapes, all containing
-/// `"does not implement"`:
-///   - `"type '<X>' does not implement trait '<Y>'"`
-///   - `"type '<X>' does not implement Display (required for string interpolation)"`
-///   - `"type '<X>' implements '<T>' but does not implement supertrait '<S>'"`
-/// We match those via the narrow substring `"does not implement"`
-/// rather than `starts_with("type ")`, which would also swallow every
-/// real `"type mismatch: expected ..., got ..."` and
-/// `"type argument count mismatch ..."` produced by the typechecker —
-/// the old prefix silently demoted real type errors in any file that
-/// also happened to import a user module (GAP #7).
-///
-/// Message-text matching is delegated to
-/// `silt::diagnostic_filters::is_user_import_resolvable_error_message`
-/// so the LSP's `TypeError`-shaped sibling stays in lock-step.
-pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
-    err.kind == silt::errors::ErrorKind::Type
-        && !err.is_warning
-        && silt::diagnostic_filters::is_user_import_resolvable_error_message(&err.message)
 }
 
 /// Exit gate for `compile_file_with_options`: does `result` carry a
@@ -663,10 +491,7 @@ pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
 /// 0. Pure (no printing, no `process::exit`) so it is unit-testable —
 /// lock: `tests::compile_error_with_functions_still_trips_the_gate`.
 pub(crate) fn pipeline_has_real_hard_errors(result: &CompilePipelineResult) -> bool {
-    // Filter per-entry: drop the "unknown module" warnings the compiler
-    // will resolve, but keep every other type diagnostic so real errors
-    // still surface. See `reportable_type_errors` for the rationale.
-    let has_real_type_error = reportable_type_errors(result).iter().any(|e| !e.is_warning);
+    let has_real_type_error = result.type_errors.iter().any(Diagnostic::is_error);
     !result.parse_errors.is_empty() || has_real_type_error || !result.compile_errors.is_empty()
 }
 
@@ -708,7 +533,10 @@ pub(crate) fn compile_file(path: &str, auto_update_lock: bool) -> CompiledFile {
     // of text. Matches rustc/gcc convention.
     // Lock: tests/cli/cli_test_rendering_tests.rs
     // `test_multiple_errors_render_with_blank_separator`.
-    silt::errors::eprintln_errors_with_separator(&reportable_diagnostics(&result));
+    silt::diagnostic::eprint_all(
+        &ProgramFiles::new(path, &result.sources),
+        reportable_diagnostics(&result),
+    );
 
     // Exit gate: abort iff a real (non-suppressed) hard error exists.
     if has_real_hard_errors {
@@ -742,19 +570,14 @@ pub(crate) fn compile_file(path: &str, auto_update_lock: bool) -> CompiledFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use silt::errors::ErrorKind;
     use silt::source::Span;
 
-    fn diag(kind: ErrorKind, message: &str, is_warning: bool) -> SourceError {
-        SourceError {
-            kind,
-            message: message.to_string(),
-            span: Some(Span::point(FileId::default(), 0)),
-            line: 1,
-            col: 1,
-            source_line: None,
-            file: Some("main.silt".to_string()),
-            is_warning,
+    fn diag(code: Code, message: &str, is_warning: bool) -> Diagnostic {
+        let span = Span::point(FileId::default(), 0);
+        if is_warning {
+            Diagnostic::warning(code, span, message)
+        } else {
+            Diagnostic::error(code, span, message)
         }
     }
 
@@ -777,19 +600,15 @@ mod tests {
     /// compiled functions AND an `error[compile]` diagnostic (the shape
     /// the Ok-arm `module_parse_errors()` drain produces if the
     /// compiler ever keeps going past a broken imported module) must
-    /// trip the hard-error gate. Before the fix the gate was
-    /// `parse_errors || real type error` only, so `silt run` would
-    /// print the compile error and then execute the program anyway,
-    /// exiting 0.
+    /// trip the hard-error gate.
     #[test]
     fn compile_error_with_functions_still_trips_the_gate() {
         let mut result = clean_ok_result();
-        let err = diag(
-            ErrorKind::Compile,
-            "module 'broken' has a parse error",
+        result.compile_errors.push(diag(
+            Code::ModuleNotFound,
+            "cannot load module 'broken'",
             false,
-        );
-        result.compile_errors.push(err);
+        ));
         assert!(
             pipeline_has_real_hard_errors(&result),
             "an error[compile] diagnostic must abort the run even when \
@@ -797,16 +616,17 @@ mod tests {
         );
     }
 
-    /// Positive control: warnings alone (compile warnings and
-    /// non-suppressed type warnings) must NOT trip the gate — the
-    /// program should still run.
+    /// Positive control: warnings alone (compile warnings and type
+    /// warnings) must NOT trip the gate — the program should still run.
     #[test]
     fn warnings_alone_do_not_trip_the_gate() {
         let mut result = clean_ok_result();
-        let compile_warning = diag(ErrorKind::Compile, "unused function 'helper'", true);
-        result.compile_warnings.push(compile_warning);
-        let type_warning = diag(ErrorKind::Type, "unused variable 'x'", true);
-        result.type_errors.push(type_warning);
+        result
+            .compile_warnings
+            .push(diag(Code::ShadowsModule, "variable 'list' shadows", true));
+        result
+            .type_errors
+            .push(diag(Code::PolymorphicRecursion, "'f' is recursing", true));
         assert!(
             !pipeline_has_real_hard_errors(&result),
             "warnings must not abort the run"
@@ -817,17 +637,19 @@ mod tests {
     #[test]
     fn parse_and_type_errors_trip_the_gate() {
         let mut with_parse = clean_ok_result();
-        let parse_err = diag(ErrorKind::Parse, "unexpected token '}'", false);
-        with_parse.parse_errors.push(parse_err);
+        with_parse.parse_errors.push(diag(
+            Code::ExpectedExpression,
+            "unexpected token '}'",
+            false,
+        ));
         assert!(pipeline_has_real_hard_errors(&with_parse));
 
         let mut with_type = clean_ok_result();
-        let type_err = diag(
-            ErrorKind::Type,
+        with_type.type_errors.push(diag(
+            Code::TypeMismatch,
             "type mismatch: expected Int, got String",
             false,
-        );
-        with_type.type_errors.push(type_err);
+        ));
         assert!(pipeline_has_real_hard_errors(&with_type));
 
         assert!(!pipeline_has_real_hard_errors(&clean_ok_result()));

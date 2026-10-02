@@ -349,9 +349,16 @@ fn assert_hostile_value_is_escaped(out: &Outcome, expected: &str, times: usize, 
         out.stderr.contains(expected),
         "{context}: expected `{expected}` on stderr; {out:?}"
     );
+    // The header and the lines below the snippet: the marks under the
+    // snippet repeat the message.
+    let shown = out
+        .stderr
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('|'))
+        .map(|line| line.matches(HOSTILE_ESCAPED).count())
+        .sum::<usize>();
     assert_eq!(
-        out.stderr.matches(HOSTILE_ESCAPED).count(),
-        times,
+        shown, times,
         "{context}: the escaped value must be shown {times} time(s); {out:?}"
     );
     assert_no_forged_line(out, context);
@@ -361,7 +368,8 @@ fn assert_hostile_value_is_escaped(out: &Outcome, expected: &str, times: usize, 
 /// line of it starts with the forged words, indented or not.
 fn assert_no_forged_line(out: &Outcome, context: &str) {
     assert!(
-        out.stderr.starts_with("error: ") && !out.stderr.starts_with(FORGED_LINE),
+        (out.stderr.starts_with("error: ") || out.stderr.starts_with("error[package]: "))
+            && !out.stderr.starts_with(FORGED_LINE),
         "{context}: stderr must start with silt's error line; {out:?}"
     );
     for line in out.stderr.lines() {
@@ -821,15 +829,14 @@ fn manifest_syntax_error_keeps_the_lines_of_the_parser() {
 
     assert_printable_outcome(&out, 1, "manifest_syntax");
     let lines: Vec<&str> = out.stderr.lines().collect();
-    assert_eq!(lines.len(), 2, "expected the parser's two lines; {out:?}");
-    assert!(
-        lines[0].starts_with("error: invalid manifest ")
-            && lines[0].ends_with("silt.toml: invalid string"),
+    assert_eq!(
+        lines[0], "error[package]: invalid manifest: invalid string",
         "expected the parser's first line; {out:?}"
     );
+    assert_eq!(lines[1], " --> silt.toml:2:8", "{out:?}");
     assert!(
-        lines[1].starts_with("expected "),
-        "expected the parser's second line; {out:?}"
+        lines.last().unwrap().starts_with("  = note: expected "),
+        "expected the parser's second line as a note; {out:?}"
     );
     let _ = fs::remove_dir_all(&ws);
 }
@@ -854,15 +861,14 @@ fn manifest_syntax_error_is_one_line_if_a_value_can_hold_a_line_break() {
         let out = silt(&ws, &app, &["check"]);
 
         assert_printable_outcome(&out, 1, tag);
-        assert_eq!(
-            out.stderr.lines().count(),
-            1,
-            "{tag}: the error must be one line; {out:?}"
+        assert!(
+            out.stderr
+                .starts_with("error[package]: invalid manifest: invalid string\\nexpected "),
+            "{tag}: expected the parser's message on one line; {out:?}"
         );
         assert!(
-            out.stderr.starts_with("error: invalid manifest ")
-                && out.stderr.contains("silt.toml: invalid string\\nexpected "),
-            "{tag}: expected the parser's message on one line; {out:?}"
+            !out.stderr.contains("= note:"),
+            "{tag}: the message must not go on; {out:?}"
         );
         let _ = fs::remove_dir_all(&ws);
     }
@@ -925,15 +931,18 @@ fn visible_characters_in_the_path_of_a_manifest_are_printed_as_they_are() {
         "[package]\nname = \"app\"\nversion = \"not-a-version\"\n",
     );
 
-    let out = silt(&ws, &app, &["check"]);
+    // From the workspace, the manifest is named by a path through the
+    // directory.
+    let entry = format!("{dir_name}/app/src/main.silt");
+    let out = silt(&ws, &ws, &["check", &entry]);
 
     assert_printable_outcome(&out, 1, "visible_manifest_path");
     assert!(
-        out.stderr.starts_with("error: invalid manifest ")
-            && out.stderr.contains(&dir_name)
-            && out
-                .stderr
-                .contains("silt.toml: invalid package version `not-a-version`: "),
+        out.stderr.starts_with(
+            "error[package]: invalid manifest: invalid package version `not-a-version`: "
+        ) && out
+            .stderr
+            .contains(&format!(" --> {dir_name}/app/silt.toml:3:11")),
         "expected the manifest error with the directory name as it is; {out:?}"
     );
     assert!(
@@ -1119,19 +1128,17 @@ fn assert_url_rejected(url: &str, rule: &str) {
     let context = format!("git URL {url:?}");
     assert_printable_outcome(&out, 1, &context);
     assert!(
-        out.stderr.starts_with("error: invalid manifest "),
+        out.stderr.starts_with("error[package]: invalid manifest: "),
         "{context}: the URL must be rejected; {out:?}"
     );
     let shown_url: String = url.chars().map(shown).collect();
     let expected = format!("dependency `remote`: invalid git URL `{shown_url}`: {rule}");
     assert!(
-        out.stderr.contains(&expected),
-        "{context}: expected `{expected}` on stderr; {out:?}"
-    );
-    assert_eq!(
-        out.stderr.lines().count(),
-        1,
-        "{context}: the error must be one line; {out:?}"
+        out.stderr
+            .lines()
+            .next()
+            .is_some_and(|l| l.contains(&expected)),
+        "{context}: expected `{expected}` on the first line; {out:?}"
     );
 }
 

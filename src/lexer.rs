@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
 use crate::source::{FileId, Span};
 
@@ -172,12 +173,6 @@ pub struct SourceComment {
     pub span: Span,
 }
 
-#[derive(Debug)]
-pub struct LexError {
-    pub message: String,
-    pub span: Span,
-}
-
 /// Authoritative keyword list. Reserved words a user cannot bind as an
 /// identifier; each name corresponds to a non-`Bool` match arm in
 /// `scan_ident_or_keyword` below.
@@ -245,7 +240,7 @@ impl Lexer {
         lexer
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, LexError> {
+    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, Diagnostic> {
         let mut tokens = Vec::new();
         loop {
             let (tok, start) = self.next_token()?;
@@ -269,7 +264,7 @@ impl Lexer {
     /// to the one `tokenize` produces.
     pub fn tokenize_with_comments(
         &mut self,
-    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), LexError> {
+    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), Diagnostic> {
         self.comments = Some(Vec::new());
         let tokens = self.tokenize()?;
         let comments = self.comments.take().unwrap_or_default();
@@ -287,6 +282,15 @@ impl Lexer {
                 ..span
             };
             comments.push(SourceComment { text, span });
+        }
+    }
+
+    /// The span from the start of `start` to the current position: a
+    /// token the lexer has just read.
+    fn since(&self, start: Span) -> Span {
+        Span {
+            end: self.byte_offset as u32,
+            ..start
         }
     }
 
@@ -336,7 +340,7 @@ impl Lexer {
         }
     }
 
-    fn skip_block_comment(&mut self) -> Result<(), LexError> {
+    fn skip_block_comment(&mut self) -> Result<(), Diagnostic> {
         // We've already consumed `{-`
         let mut depth = 1;
         let start = self.span();
@@ -352,10 +356,11 @@ impl Lexer {
                 }
                 Some(_) => {}
                 None => {
-                    return Err(LexError {
-                        message: "unterminated block comment".to_string(),
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnterminatedComment,
+                        start,
+                        "unterminated block comment",
+                    ));
                 }
             }
         }
@@ -366,7 +371,7 @@ impl Lexer {
         &mut self,
         is_continuation: bool,
         start: Span,
-    ) -> Result<SpannedToken, LexError> {
+    ) -> Result<SpannedToken, Diagnostic> {
         let mut text = String::new();
 
         loop {
@@ -377,10 +382,7 @@ impl Lexer {
                     } else {
                         "unterminated string".to_string()
                     };
-                    return Err(LexError {
-                        message,
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(Code::UnterminatedString, start, message));
                 }
                 Some('\\') => {
                     // Capture the backslash's position BEFORE consuming
@@ -404,25 +406,25 @@ impl Lexer {
                         // `unexpected character` catch-all below. Printable
                         // unknown escapes (`\q`, …) keep their plain form.
                         Some(c) if c.is_control() => {
-                            return Err(LexError {
-                                message: format!(
-                                    "unknown escape sequence: \\{}",
-                                    c.escape_default()
-                                ),
-                                span: self.span(),
-                            });
+                            return Err(Diagnostic::error(
+                                Code::InvalidEscape,
+                                self.span(),
+                                format!("unknown escape sequence: \\{}", c.escape_default()),
+                            ));
                         }
                         Some(c) => {
-                            return Err(LexError {
-                                message: format!("unknown escape sequence: \\{c}"),
-                                span: esc_span,
-                            });
+                            return Err(Diagnostic::error(
+                                Code::InvalidEscape,
+                                esc_span,
+                                format!("unknown escape sequence: \\{c}"),
+                            ));
                         }
                         None => {
-                            return Err(LexError {
-                                message: "unterminated escape sequence".to_string(),
-                                span: start,
-                            });
+                            return Err(Diagnostic::error(
+                                Code::UnterminatedString,
+                                start,
+                                "unterminated escape sequence",
+                            ));
                         }
                     }
                 }
@@ -454,7 +456,7 @@ impl Lexer {
         }
     }
 
-    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         // We've already consumed the opening `"""`.
         // Read raw content until closing `"""`.
         // No escape processing, no interpolation.
@@ -463,10 +465,11 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => {
-                    return Err(LexError {
-                        message: "unterminated triple-quoted string".to_string(),
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnterminatedString,
+                        start,
+                        "unterminated triple-quoted string",
+                    ));
                 }
                 Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
                     // Consume closing """
@@ -546,7 +549,7 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, Diagnostic> {
         // Handle hex (0x) and binary (0b) prefixes
         if first == '0'
             && let Some(prefix) = self.peek()
@@ -611,10 +614,11 @@ impl Lexer {
             }
             // Must have at least one digit after e
             if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                return Err(LexError {
-                    message: "expected digit after exponent".into(),
-                    span: start,
-                });
+                return Err(Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "expected digit after exponent",
+                ));
             }
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() || ch == '_' {
@@ -629,27 +633,34 @@ impl Lexer {
         }
 
         if is_float {
-            let val: f64 = num.parse().map_err(|_| LexError {
-                message: "number literal too large".into(),
-                span: start,
+            let val: f64 = num.parse().map_err(|_| {
+                Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal too large",
+                )
             })?;
             if !val.is_finite() {
-                return Err(LexError {
-                    message: "number literal out of range (not finite)".into(),
-                    span: start,
-                });
+                return Err(Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal out of range (not finite)",
+                ));
             }
             Ok((Token::Float(val), start))
         } else {
-            let val: i64 = num.parse().map_err(|_| LexError {
-                message: "number literal too large".into(),
-                span: start,
+            let val: i64 = num.parse().map_err(|_| {
+                Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal too large",
+                )
             })?;
             Ok((Token::Int(val), start))
         }
     }
 
-    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch.is_ascii_hexdigit() || ch == '_' {
@@ -662,19 +673,23 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(LexError {
-                message: "expected hex digit after 0x".into(),
-                span: start,
-            });
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "expected hex digit after 0x",
+            ));
         }
-        let val = i64::from_str_radix(&digits, 16).map_err(|_| LexError {
-            message: "hex literal too large".into(),
-            span: start,
+        let val = i64::from_str_radix(&digits, 16).map_err(|_| {
+            Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "hex literal too large",
+            )
         })?;
         Ok((Token::Int(val), start))
     }
 
-    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch == '0' || ch == '1' || ch == '_' {
@@ -687,14 +702,18 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(LexError {
-                message: "expected binary digit after 0b".into(),
-                span: start,
-            });
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "expected binary digit after 0b",
+            ));
         }
-        let val = i64::from_str_radix(&digits, 2).map_err(|_| LexError {
-            message: "binary literal too large".into(),
-            span: start,
+        let val = i64::from_str_radix(&digits, 2).map_err(|_| {
+            Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "binary literal too large",
+            )
         })?;
         Ok((Token::Int(val), start))
     }
@@ -735,7 +754,7 @@ impl Lexer {
         (tok, start)
     }
 
-    fn next_token(&mut self) -> Result<SpannedToken, LexError> {
+    fn next_token(&mut self) -> Result<SpannedToken, Diagnostic> {
         // Skip whitespace, tracking newlines
         let mut had_newline = self.skip_whitespace();
 
@@ -936,28 +955,29 @@ impl Lexer {
                     self.advance_char();
                     Ok((Token::AndAnd, start))
                 } else {
-                    Err(LexError {
-                        message: "unexpected character '&', did you mean '&&'?".to_string(),
-                        span: start,
-                    })
+                    Err(Diagnostic::error(
+                        Code::UnexpectedChar,
+                        self.since(start),
+                        "unexpected character '&', did you mean '&&'?",
+                    ))
                 }
             }
 
-            ';' => Err(LexError {
-                message: "semicolons are not used in silt — use a newline to separate statements"
-                    .to_string(),
-                span: start,
-            }),
+            ';' => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                "semicolons are not used in silt — use a newline to separate statements",
+            )),
             // A BOM after the start of the file (the leading one is
             // skipped in `Lexer::new`) is invisible and zero-width, so
             // quoting the raw char would render an empty-looking error.
             // Name it instead.
-            '\u{FEFF}' => Err(LexError {
-                message: "unexpected character: byte-order mark (U+FEFF); \
-                          a BOM is only permitted at the very start of the file"
-                    .to_string(),
-                span: start,
-            }),
+            '\u{FEFF}' => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                "unexpected character: byte-order mark (U+FEFF); \
+                          a BOM is only permitted at the very start of the file",
+            )),
             // ASCII/Unicode control characters (U+0001–U+001F, U+007F,
             // …) are invisible, so quoting the raw byte renders an
             // empty-looking error in any non-`cat -v` sink (log files,
@@ -966,14 +986,16 @@ impl Lexer {
             // to every invisible control char. `escape_default` yields
             // `\u{1}`, `\t`, etc.; printable chars (`@`, …) are not
             // control and keep their plain quoted form.
-            _ if ch.is_control() => Err(LexError {
-                message: format!("unexpected character: '{}'", ch.escape_default()),
-                span: start,
-            }),
-            _ => Err(LexError {
-                message: format!("unexpected character: '{ch}'"),
-                span: start,
-            }),
+            _ if ch.is_control() => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!("unexpected character: '{}'", ch.escape_default()),
+            )),
+            _ => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!("unexpected character: '{ch}'"),
+            )),
         }
     }
 }

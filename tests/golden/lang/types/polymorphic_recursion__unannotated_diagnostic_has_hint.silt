@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: warning[type]: help: 'myfn' is recursing with arguments of a different type
+-- stderr-contains: warning[type]: 'myfn' is recursing with arguments of a different type
 -- stderr-contains: add explicit type annotations to enable polymorphic recursion
 fn myfn(p) {
   let x = p + 1

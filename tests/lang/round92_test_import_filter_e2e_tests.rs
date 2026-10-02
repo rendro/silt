@@ -5,7 +5,7 @@
 //! shared `should_suppress_import_cascade` predicate instead of the old
 //! warning-only `is_unknown_module_warning(&source_err)` filter. The
 //! round-91 lock tests pinned only the PREDICATE
-//! (`silt::diagnostic_filters::should_suppress_import_cascade_message`),
+//! (now `silt::typechecker::without_import_cascade`),
 //! not the WIRING — reverting test.rs to the old filter left the whole
 //! suite green. This file locks the wiring behaviorally by running the
 //! compiled `silt` binary on temp packages.
@@ -84,7 +84,7 @@ fn ghost_module_scenario_produces_round91_cascade_shape() {
     assert!(
         type_errors
             .iter()
-            .any(|te| te.severity == silt::typechecker::Severity::Warning
+            .any(|te| te.severity == silt::diagnostic::Severity::Warning
                 && te.message.contains("unknown module 'ghost_mod'")),
         "expected the unknown-module warning in the raw diagnostics, got: {:?}",
         type_errors.iter().map(|te| &te.message).collect::<Vec<_>>()
@@ -92,7 +92,7 @@ fn ghost_module_scenario_produces_round91_cascade_shape() {
     assert!(
         type_errors
             .iter()
-            .any(|te| te.severity == silt::typechecker::Severity::Error
+            .any(|te| te.severity == silt::diagnostic::Severity::Error
                 && te.message.starts_with("undefined variable 'answer'")),
         "expected the undefined-variable cascade error in the raw diagnostics, got: {:?}",
         type_errors.iter().map(|te| &te.message).collect::<Vec<_>>()

@@ -400,7 +400,7 @@ fn static_diagnostics(
 
 /// `error[kind]: message` or `warning[kind]: message`, split into
 /// (is it an error, kind, message).
-fn header(line: &str) -> Option<(bool, &str, &str)> {
+pub fn header(line: &str) -> Option<(bool, &str, &str)> {
     let (is_error, rest) = if let Some(rest) = line.strip_prefix("error[") {
         (true, rest)
     } else {

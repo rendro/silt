@@ -11,14 +11,15 @@ use crate::module;
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, CompileError, Compiler};
+use super::{BindDestructKind, Compiler};
+use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
     /// Emit the shape test of a tuple pattern with `len` elements for the
     /// value on TOS and return the failure jump. The pattern `()` has no
     /// elements and matches the unit value, which is not a tuple at run
     /// time. Shared by both pattern-test compilers below.
-    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, CompileError> {
+    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, Diagnostic> {
         if len == 0 {
             let unit = self.add_constant(Value::Unit, span)?;
             self.current_chunk().emit_op_u16(Op::TestEqual, unit, span);
@@ -39,7 +40,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<Vec<usize>, CompileError> {
+    ) -> Result<Vec<usize>, Diagnostic> {
         match &pattern.kind {
             PatternKind::Wildcard | PatternKind::Ident(_) => {
                 // Always matches, no test needed
@@ -82,10 +83,11 @@ impl Compiler {
                 if let Some(required) = module::gated_constructor_module(&name_str)
                     && !self.imported_builtin_modules.contains(required)
                 {
-                    return Err(CompileError {
-                        message: format!("'{name}' requires `import {required}`"),
+                    return Err(Diagnostic::error(
+                        Code::CompileModuleNotImported,
                         span,
-                    });
+                        format!("'{name}' requires `import {required}`"),
+                    ));
                 }
                 // Test: tag matches?
                 let idx = self.add_constant(Value::String(name_str), span)?;
@@ -110,10 +112,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 // Test shape
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
@@ -307,7 +310,9 @@ impl Compiler {
                             if depth == 0 {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -316,7 +321,9 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             }
                         }
                     } else {
@@ -359,9 +366,9 @@ impl Compiler {
                                         .find(|&&(d, _)| d == depth)
                                         .unwrap()
                                         .1;
-                                    self.current_chunk()
-                                        .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError { message: msg, span })?;
+                                    self.current_chunk().patch_jump_to(fj, target).map_err(
+                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
+                                    )?;
                                 }
                             }
 
@@ -449,7 +456,7 @@ impl Compiler {
         pattern: &Pattern,
         span: Span,
         base_depth: usize,
-    ) -> Result<Vec<(usize, usize)>, CompileError> {
+    ) -> Result<Vec<(usize, usize)>, Diagnostic> {
         match &pattern.kind {
             // ── Simple (leaf) patterns ──────────────────────────
             // These never push intermediate Destruct values, so the
@@ -530,10 +537,11 @@ impl Compiler {
                 if let Some(required) = module::gated_constructor_module(&name_str)
                     && !self.imported_builtin_modules.contains(required)
                 {
-                    return Err(CompileError {
-                        message: format!("'{name}' requires `import {required}`"),
+                    return Err(Diagnostic::error(
+                        Code::CompileModuleNotImported,
                         span,
-                    });
+                        format!("'{name}' requires `import {required}`"),
+                    ));
                 }
                 let idx = self.add_constant(Value::String(name_str), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
@@ -556,10 +564,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
@@ -720,7 +729,9 @@ impl Compiler {
                             if depth <= base_depth {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -729,7 +740,9 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             }
                         }
                     } else {
@@ -766,9 +779,9 @@ impl Compiler {
                                         .find(|&&(d, _)| d == depth)
                                         .unwrap()
                                         .1;
-                                    self.current_chunk()
-                                        .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError { message: msg, span })?;
+                                    self.current_chunk().patch_jump_to(fj, target).map_err(
+                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
+                                    )?;
                                 }
                             }
 
@@ -804,7 +817,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if !Self::pattern_can_fail(pattern) {
             return self.compile_pattern_bind(pattern, span);
         }
@@ -893,7 +906,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         match &pattern.kind {
             PatternKind::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
@@ -928,10 +941,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 self.compile_compound_bind(
                     pats.iter()
@@ -950,10 +964,11 @@ impl Compiler {
 
             PatternKind::List(elements, rest) => {
                 if elements.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "list pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "list pattern cannot have more than 255 elements",
+                    ));
                 }
                 let mut items: Vec<(BindDestructKind, Pattern)> = elements
                     .iter()
@@ -1031,11 +1046,11 @@ impl Compiler {
                     // sub-value happens to be on TOS.
                     let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
                     if names.len() > u8::MAX as usize {
-                        return Err(CompileError {
-                            message: "anon record pattern cannot exclude more than 255 fields"
-                                .into(),
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
                             span,
-                        });
+                            "anon record pattern cannot exclude more than 255 fields",
+                        ));
                     }
                     items.push((
                         BindDestructKind::RecordRest(names),
@@ -1068,10 +1083,11 @@ impl Compiler {
                 for alt in &alternatives[1..] {
                     let actual = Self::pattern_binding_names(alt);
                     if actual != expected {
-                        return Err(CompileError {
-                            message: "or-pattern alternatives must bind the same variables".into(),
+                        return Err(Diagnostic::error(
+                            Code::InvalidConstruct,
                             span,
-                        });
+                            "or-pattern alternatives must bind the same variables",
+                        ));
                     }
                 }
 
@@ -1195,7 +1211,7 @@ impl Compiler {
                             };
                             self.current_chunk()
                                 .patch_jump_to(fj, target)
-                                .map_err(|msg| CompileError { message: msg, span })?;
+                                .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))?;
                         }
                     }
                 }
@@ -1232,7 +1248,7 @@ impl Compiler {
         &mut self,
         items: Vec<(BindDestructKind, Pattern)>,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if items.is_empty() {
             return Ok(());
         }

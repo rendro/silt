@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: the ? on line 11 requires this function to return Result(_, String)
+-- stderr-contains: this `?` requires this function to return Result(_, String)
 -- stderr-contains: expected Result(_, String), got ()
 -- `?` in an unannotated fn: the mismatch carries a note naming the `?` line.
 fn parse() -> Result(Int, String) {

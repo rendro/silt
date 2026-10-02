@@ -97,7 +97,7 @@ fn front_end_errors(source: &str) -> Result<(), String> {
     }
     let type_errors: Vec<_> = silt::typechecker::check(&mut program)
         .into_iter()
-        .filter(|e| e.severity == silt::types::Severity::Error)
+        .filter(|e| e.severity == silt::diagnostic::Severity::Error)
         .collect();
     if !type_errors.is_empty() {
         return Err(format!("type errors: {type_errors:?}"));

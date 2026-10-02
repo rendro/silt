@@ -9,7 +9,6 @@ mod round73_error_trait_dispatch_table_tests;
 mod round73_postgres_typed_timeout_tests;
 mod round74_hash_eq_ord_contract_tests;
 mod round74_infinite_type_canonical_form_tests;
-mod round74_vmerror_display_aligned_tests;
 mod round75_fuzz_typechecker_target_tests;
 mod round75_kind_naming_canonical_tests;
 mod round76_iopool_panic_typed_err_tests;

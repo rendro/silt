@@ -2,18 +2,18 @@
 //! program with the bytecode VM. Also backs the bare `silt
 //! <file>.silt` convenience shim.
 
-use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
-use silt::errors::SourceError;
-use silt::source::{SourceMap, SourceName, Span};
+use silt::diagnostic::{Code, Diagnostic, render_human};
+use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Vm, VmError};
 
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
+use crate::cli::paths::ProgramFiles;
 use crate::cli::pipeline::{CompiledFile, compile_file};
-use crate::cli::source_scan::{missing_main_error, program_has_main};
+use crate::cli::source_scan::{fn_name_span, missing_main_error, program_has_main};
 
 /// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -188,7 +188,13 @@ pub(crate) fn vm_run_file(path: &str) {
     // rejected here, before any of it runs, with the diagnostic
     // `silt check` gives. A test file gets a pointer to `silt test`.
     if !program_has_main(&program) {
-        eprintln!("{}", missing_main_error(&program, &sources, path, true));
+        eprintln!(
+            "{}",
+            render_human(
+                &ProgramFiles::new(path, &sources),
+                &missing_main_error(&program, path, true)
+            )
+        );
         process::exit(1);
     }
 
@@ -215,8 +221,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // `fn main() -> Result(Int, String) { Err("boom") }` (or a `?`
     // propagating an Err out of main) exited 0 with no diagnostic and
     // CI/shell callers saw success on failure. Render through the
-    // canonical `error[runtime]:` header (no span — there is no single
-    // source location for "main's result was Err") and exit 1,
+    // canonical `error[runtime]:` header, at `main`'s name, and exit 1,
     // matching the exit code every other runtime error uses.
     // `Ok(..)` and non-Result returns (Unit, Int, ...) are unchanged.
     // `silt test` applies the same rule to a test function, through the
@@ -224,13 +229,13 @@ pub(crate) fn vm_run_file(path: &str) {
     if let Ok(value) = &run_result
         && let Some(payload) = returned_err(value)
     {
-        let source_err = SourceError::runtime_at(
+        let span = fn_name_span(&program, "main").unwrap_or(Span::point(FileId::default(), 0));
+        let d = Diagnostic::error(
+            Code::MainReturnedErr,
+            span,
             format!("main returned Err: {payload}"),
-            None,
-            &sources,
-            path,
         );
-        eprintln!("{source_err}");
+        eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
         process::exit(1);
     }
     if let Err(e) = run_result {
@@ -256,91 +261,16 @@ fn report_task_failures(path: &str, sources: &SourceMap) -> bool {
     }
     let not_kept: usize = failures.not_kept.iter().map(|(_, count)| count).sum();
     if not_kept > 0 {
-        let source_err = SourceError::runtime_at(
+        // Which tasks they were is not known: the report is about the
+        // whole program, at the start of its entry file.
+        let d = Diagnostic::error(
+            Code::UnjoinedTaskFailure,
+            Span::point(FileId::default(), 0),
             silt::scheduler::UnjoinedFailures::not_kept_message(not_kept),
-            None,
-            sources,
-            path,
         );
-        eprintln!("{source_err}");
+        eprintln!("{}", render_human(&ProgramFiles::new(path, sources), &d));
     }
     !failures.is_empty()
-}
-
-/// How the files of a program are named in its runtime errors: in the
-/// style of the path the user typed on the command line (relative or
-/// absolute), so the header, the `-->` line and every call-stack frame
-/// agree. Each location is in the file its span names: the program's
-/// own file, or the imported module (or dependency) the code comes from.
-///
-/// Lock: tests/cli/cli_test_rendering_tests.rs
-/// `test_cross_module_call_stack_uses_consistent_path_style`
-/// `test_run_module_error_paths_consistently_normalized`.
-///
-/// Round-101: the normalization body lives in the shared
-/// `crate::cli::paths::display_path_for` helper, so `silt run` and
-/// `silt test` can never drift. Lock:
-/// tests/meta/round101_display_path_helper_lock_tests.rs.
-pub(crate) struct RuntimeFiles<'a> {
-    /// The entry file, as the user typed it.
-    path: &'a str,
-    sources: &'a SourceMap,
-    user_path_is_absolute: bool,
-    cwd: Option<PathBuf>,
-}
-
-impl<'a> RuntimeFiles<'a> {
-    pub(crate) fn new(path: &'a str, sources: &'a SourceMap) -> Self {
-        RuntimeFiles {
-            path,
-            sources,
-            user_path_is_absolute: Path::new(path).is_absolute(),
-            cwd: std::env::current_dir().ok(),
-        }
-    }
-
-    fn normalize(&self, candidate: &Path) -> String {
-        crate::cli::paths::display_path_for(
-            self.user_path_is_absolute,
-            self.cwd.as_deref(),
-            candidate,
-        )
-    }
-
-    /// The name of the file `span` is in. A span in no file of the
-    /// program (code silt adds itself) is put in the entry file. With
-    /// `entry_as_typed`, the entry file is named exactly as typed.
-    pub(crate) fn label(&self, span: Span, entry_as_typed: bool) -> String {
-        let entry = Path::new(self.path);
-        match self.sources.get(span.file).map(|file| &file.path) {
-            Some(SourceName::Path(p)) if p != entry => self.normalize(p),
-            _ if entry_as_typed => self.path.to_string(),
-            _ => self.normalize(entry),
-        }
-    }
-
-    /// The location of a call-stack frame: `file:line:col`, or
-    /// `file:<unknown location>` for code silt adds itself.
-    pub(crate) fn frame(&self, span: Span, entry_as_typed: bool) -> String {
-        let label = self.label(span, entry_as_typed);
-        match self.sources.get(span.file) {
-            Some(file) => {
-                let (line, col) = file.line_col(span.start);
-                format!("{label}:{line}:{col}")
-            }
-            None => format!("{label}:<unknown location>"),
-        }
-    }
-
-    /// The error itself: the header, and the location with its source
-    /// line.
-    pub(crate) fn error(&self, e: &VmError, entry_as_typed: bool) -> SourceError {
-        let file = match e.span {
-            Some(span) => self.label(span, entry_as_typed),
-            None => self.path.to_string(),
-        };
-        SourceError::runtime_at(&e.message, e.span, self.sources, file)
-    }
 }
 
 /// Render a runtime error of the program at `path`, the way `silt run`
@@ -349,33 +279,5 @@ impl<'a> RuntimeFiles<'a> {
 /// meaningful frame. `silt test` renders the failures of tasks with it as
 /// well.
 pub(crate) fn render_runtime_error(e: &VmError, path: &str, sources: &SourceMap) -> String {
-    let files = RuntimeFiles::new(path, sources);
-    if e.span.is_none() {
-        // Span-less runtime error: funnel through `SourceError` so the
-        // output carries the file path and the ANSI color gating every
-        // other diagnostic gets — a bare `VmError` Display is plain text
-        // with no file to point at.
-        return files.error(e, true).to_string();
-    }
-    let mut rendered = files.error(e, false).to_string();
-    // The call stack, if there are user frames beyond the error site.
-    // Synthetic entry-point frames (<script>, <call:...>) are dropped
-    // by name rather than by span — a frame without a location inside
-    // an otherwise good stack shouldn't cause the whole stack to be
-    // discarded. <module:...> frames are kept.
-    //
-    // Round-73 G1: filter and truncation live in the shared
-    // `render_call_stack` helper so `silt run` and `silt test` can
-    // never drift again.
-    let stack_lines = silt::vm::error::render_call_stack(&e.call_stack, |_name, frame_span| {
-        files.frame(*frame_span, false)
-    });
-    if !stack_lines.is_empty() {
-        rendered.push_str("\n\ncall stack:");
-        for line in stack_lines {
-            rendered.push('\n');
-            rendered.push_str(&line);
-        }
-    }
-    rendered
+    render_human(&ProgramFiles::new(path, sources), &e.to_diagnostic())
 }

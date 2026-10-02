@@ -7,10 +7,10 @@
 //! reports "module 'list' is not imported"; the discrepancy is reported to
 //! the integrator rather than captured as a golden.
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::Severity;
 
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = Lexer::new(silt::source::FileId::default(), input)

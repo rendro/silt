@@ -12,7 +12,7 @@ use silt::module::builtin_error_enum_variants_with_arity;
 #[cfg(not(feature = "postgres"))]
 #[test]
 fn bloat1_pg_error_skipped_when_feature_off_at_typecheck() {
-    use silt::types::Severity;
+    use silt::diagnostic::Severity;
     // If PgError were still in the typechecker's trait_impl_set when
     // the postgres feature is off, calling `.message()` on it would
     // typecheck but then crash at runtime (trait_impl_set advertises a

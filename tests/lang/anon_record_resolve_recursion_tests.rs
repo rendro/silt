@@ -27,12 +27,13 @@
 use std::collections::HashMap;
 
 use silt::ast::{Expr, ExprKind, Stmt};
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
-use silt::types::{RowTail, Severity, Type};
+use silt::types::{RowTail, Type};
 
-fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::types::TypeError>) {
+fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::diagnostic::Diagnostic>) {
     let tokens = Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
         .expect("lexer error");

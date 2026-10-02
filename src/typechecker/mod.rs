@@ -23,7 +23,9 @@ pub(super) use crate::intern::{Symbol, intern, resolve};
 pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
-pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
+pub use crate::types::{Scheme, TyVar, Type};
+
+use crate::diagnostic::{Code, Diagnostic, Severity};
 
 /// Snapshot of a user type's resolved body, used only by the auto-
 /// derive synthesis pass (`synthesize_auto_derive_impls`). Captures the
@@ -597,7 +599,7 @@ pub struct TypeChecker {
     pub(super) impl_self_types: HashMap<(Symbol, Symbol), Type>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
-    pub errors: Vec<TypeError>,
+    pub errors: Vec<Diagnostic>,
     /// Tracks the types of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity and types can be validated.
     pub(super) loop_binding_types: Option<Vec<Type>>,
@@ -1106,6 +1108,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::NoSuchField,
                         format!(
                             "record literal has unexpected field{} not declared in target type: {}",
                             if names.len() == 1 { "" } else { "s" },
@@ -1120,6 +1123,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::MissingField,
                         format!(
                             "record literal is missing required field{}: {}",
                             if names.len() == 1 { "" } else { "s" },
@@ -1147,6 +1151,7 @@ impl TypeChecker {
                 // satisfy.
                 if !only_in_1.is_empty() || !only_in_2.is_empty() {
                     self.error(
+                        Code::TypeMismatch,
                         "row variable shared between two records with mismatched field sets"
                             .to_string(),
                         span,
@@ -1170,13 +1175,13 @@ impl TypeChecker {
                     self.subst[v1] = Some(to_v1);
                 } else {
                     let msg = Self::infinite_type_message(&to_v1);
-                    self.error(msg, span);
+                    self.error(Code::InfiniteType, msg, span);
                 }
                 if !occurs_in(v2, &to_v2) {
                     self.subst[v2] = Some(to_v2);
                 } else {
                     let msg = Self::infinite_type_message(&to_v2);
-                    self.error(msg, span);
+                    self.error(Code::InfiniteType, msg, span);
                 }
             }
         }
@@ -1209,6 +1214,7 @@ impl TypeChecker {
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
             self.error(
+                Code::TypeMismatch,
                 format!(
                     "record open side has fields not present in closed target: {}",
                     names.join(", ")
@@ -1224,7 +1230,11 @@ impl TypeChecker {
         if !occurs_in(v, &leftover) {
             self.subst[v] = Some(leftover);
         } else {
-            self.error(Self::infinite_type_message(&leftover), span);
+            self.error(
+                Code::InfiniteType,
+                Self::infinite_type_message(&leftover),
+                span,
+            );
         }
     }
 
@@ -1265,6 +1275,7 @@ impl TypeChecker {
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
             self.error(
+                Code::NoSuchField,
                 format!(
                     "anon record has fields not declared on the nominal record: {}",
                     names.join(", ")
@@ -1281,6 +1292,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::MissingField,
                         format!(
                             "anon record is missing fields the nominal record requires: {}",
                             names.join(", ")
@@ -1297,7 +1309,11 @@ impl TypeChecker {
                 if !occurs_in(v, &leftover) {
                     self.subst[v] = Some(leftover);
                 } else {
-                    self.error(Self::infinite_type_message(&leftover), span);
+                    self.error(
+                        Code::InfiniteType,
+                        Self::infinite_type_message(&leftover),
+                        span,
+                    );
                 }
             }
         }
@@ -1348,6 +1364,7 @@ impl TypeChecker {
                         && matches!(&args[0], Type::Var(inner) if inner == v)
                     {
                         self.error(
+                            Code::TypeMismatch,
                             "cannot return a `type a` parameter as a value of type `a` — \
                              the parameter is a type descriptor, not an instance. \
                              Construct an `a` in the body instead."
@@ -1355,7 +1372,7 @@ impl TypeChecker {
                             span,
                         );
                     } else {
-                        self.error(Self::infinite_type_message(t), span);
+                        self.error(Code::InfiniteType, Self::infinite_type_message(t), span);
                     }
                 } else {
                     self.subst[*v] = Some(t.clone());
@@ -1372,6 +1389,7 @@ impl TypeChecker {
                     // reversed the diagnostic.
                     let (exp, got) = (p2.len(), p1.len());
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "function expects {exp} {arg_word}, got {got}",
                             arg_word = if exp == 1 { "argument" } else { "arguments" }
@@ -1453,6 +1471,7 @@ impl TypeChecker {
                     // t2 (=b) is the "expected" side. Earlier wording
                     // "expected {a.len()}, got {b.len()}" reversed this.
                     self.error(
+                        Code::TypeMismatch,
                         format!(
                             "tuple length mismatch: expected {}, got {}",
                             b.len(),
@@ -1470,6 +1489,7 @@ impl TypeChecker {
             (Type::Record(n1, f1), Type::Record(n2, f2)) => {
                 if n1 != n2 {
                     self.error(
+                        Code::TypeMismatch,
                         format!("record type mismatch: expected {n2}, got {n1}"),
                         span,
                     );
@@ -1487,7 +1507,7 @@ impl TypeChecker {
                         if let Some((_, t2_inner)) = f2.iter().find(|(n, _)| n == name) {
                             self.unify(t1_inner, t2_inner, span);
                         } else {
-                            self.error(
+                            self.error(Code::NoSuchField,
                                 format!(
                                     "unexpected field '{name}' in record; type '{n1}' has no such field"
                                 ),
@@ -1498,6 +1518,7 @@ impl TypeChecker {
                     for (name, _t2_inner) in f2 {
                         if !f1.iter().any(|(n, _)| n == name) {
                             self.error(
+                                Code::MissingField,
                                 format!(
                                     "missing field '{name}' in record; type '{n1}' requires it"
                                 ),
@@ -1517,6 +1538,7 @@ impl TypeChecker {
                 // path swallowed the arity violation. Reject explicitly.
                 if !self.record_param_var_ids.contains_key(n1) && self.records.contains_key(n1) {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected 0, got {}",
                             a2.len()
@@ -1552,6 +1574,7 @@ impl TypeChecker {
                     .unwrap_or(0);
                 if expected != 0 {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {expected}, got 0"
                         ),
@@ -1563,6 +1586,7 @@ impl TypeChecker {
                 // B2 (round 60) mirror: parameterless record with Generic args.
                 if !self.record_param_var_ids.contains_key(n2) && self.records.contains_key(n2) {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected 0, got {}",
                             a1.len()
@@ -1594,6 +1618,7 @@ impl TypeChecker {
                     .unwrap_or(0);
                 if expected != 0 {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected {expected}, got 0"
                         ),
@@ -1665,18 +1690,21 @@ impl TypeChecker {
                     // `Type` values so `Type::Display`'s args rendering
                     // and TypeOf special-casing apply (mirrors the
                     // catch-all arm at the bottom of `unify`).
-                    let mut msg = format!("type mismatch: expected {t2}, got {t1}");
-                    if let Some(hint) = Self::chain_hint(&t1, &t2) {
-                        msg.push('\n');
-                        msg.push_str(&hint);
-                    }
-                    self.error(msg, span);
+                    let mut d = Diagnostic::error(
+                        Code::TypeMismatch,
+                        span,
+                        format!("type mismatch: expected {t2}, got {t1}"),
+                    );
+                    d.help.extend(Self::chain_hint(&t1, &t2));
+                    Self::add_ok_wrap_fix(&mut d, &t1, &t2);
+                    self.errors.push(d);
                 } else if a1.len() != a2.len() {
                     // Directional convention: t1 (=a1) is the "got" side,
                     // t2 (=a2) is the "expected" side (see the Record arm
                     // above and the unify() callsite convention). Earlier
                     // wording had a1/a2 reversed.
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {}, got {}",
                             a2.len(),
@@ -1721,7 +1749,11 @@ impl TypeChecker {
                     // Different trait or different member: genuinely
                     // distinct abstract types. Directional convention:
                     // t1 is the "got" side, t2 the "expected" side.
-                    self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                    self.error(
+                        Code::TypeMismatch,
+                        format!("type mismatch: expected {t2}, got {t1}"),
+                        span,
+                    );
                 }
             }
 
@@ -1739,6 +1771,7 @@ impl TypeChecker {
                 match (&t1, &t2) {
                     (Type::Var(_), other) | (other, Type::Var(_)) => {
                         self.error(
+                            Code::AmbiguousType,
                             format!(
                                 "cannot determine a consistent type here; \
                                  one side resolved to `{other}` but the other \
@@ -1748,12 +1781,14 @@ impl TypeChecker {
                         );
                     }
                     _ => {
-                        let mut msg = format!("type mismatch: expected {t2}, got {t1}");
-                        if let Some(hint) = Self::chain_hint(&t1, &t2) {
-                            msg.push('\n');
-                            msg.push_str(&hint);
-                        }
-                        self.error(msg, span);
+                        let mut d = Diagnostic::error(
+                            Code::TypeMismatch,
+                            span,
+                            format!("type mismatch: expected {t2}, got {t1}"),
+                        );
+                        d.help.extend(Self::chain_hint(&t1, &t2));
+                        Self::add_ok_wrap_fix(&mut d, &t1, &t2);
+                        self.errors.push(d);
                     }
                 }
             }
@@ -2124,6 +2159,7 @@ impl TypeChecker {
         };
         if !self.trait_impl_set.contains(&(trait_name, type_name)) {
             self.error(
+                Code::MissingTraitImpl,
                 format!(
                     "type '{}' does not implement trait '{}'",
                     type_name, trait_name
@@ -2165,6 +2201,7 @@ impl TypeChecker {
                 && !self.impl_self_args_consistent(&obligated_args, &impl_args)
             {
                 self.error(
+                    Code::MissingTraitImpl,
                     format!(
                         "type '{}' does not implement trait '{}': the only impl is for '{}'",
                         resolved, trait_name, impl_self
@@ -2190,6 +2227,7 @@ impl TypeChecker {
                 let i = self.apply(impl_arg);
                 if !self.trait_arg_compatible(&b, &i) {
                     self.error(
+                        Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}({})': \
                              the matched impl is '{}({})'",
@@ -2434,6 +2472,22 @@ impl TypeChecker {
     /// Result(String, _)" message is correct but doesn't tell users
     /// how to fix it; the hint points at `?` and `result.flat_map` /
     /// `option.flat_map`.
+    /// The quick fix for a value where a `Result` is expected: wrap the
+    /// expression in `Ok(...)`.
+    fn add_ok_wrap_fix(d: &mut Diagnostic, got: &Type, expected: &Type) {
+        let is_result = |t: &Type| matches!(t, Type::Generic(n, _) if resolve(*n) == "Result");
+        if is_result(expected) && !is_result(got) && d.span.is_in_source() {
+            let (start, end) = (
+                Span::point(d.span.file, d.span.start),
+                Span::point(d.span.file, d.span.end),
+            );
+            d.fixes.push(crate::diagnostic::Fix {
+                title: "Wrap expression in `Ok(...)`".to_string(),
+                edits: vec![(start, "Ok(".to_string()), (end, ")".to_string())],
+            });
+        }
+    }
+
     fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool {
             matches!(t, Type::Generic(n, _) if resolve(*n) == name)
@@ -2443,7 +2497,7 @@ impl TypeChecker {
         }
         if is_wrapper(got, "Result") {
             return Some(
-                "help: to chain through a `Result`, use `?` to propagate the \
+                "to chain through a `Result`, use `?` to propagate the \
                  error, or `|> result.flat_map { x -> ... }` to continue the \
                  pipeline on the Ok value"
                     .to_string(),
@@ -2451,7 +2505,7 @@ impl TypeChecker {
         }
         if is_wrapper(got, "Option") {
             return Some(
-                "help: to chain through an `Option`, use `?` to propagate \
+                "to chain through an `Option`, use `?` to propagate \
                  `None`, or `|> option.flat_map { x -> ... }` to continue the \
                  pipeline on the Some value"
                     .to_string(),
@@ -2460,22 +2514,35 @@ impl TypeChecker {
         None
     }
 
-    pub(super) fn error(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError {
-            message,
-            span,
-            severity: Severity::Error,
-            line_note: None,
-        });
+    pub(super) fn error(
+        &mut self,
+        code: Code,
+        message: impl Into<std::string::String>,
+        span: Span,
+    ) {
+        self.errors.push(Diagnostic::error(code, span, message));
     }
 
-    pub(super) fn warning(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError {
-            message,
-            span,
-            severity: Severity::Warning,
-            line_note: None,
-        });
+    pub(super) fn warning(
+        &mut self,
+        code: Code,
+        message: impl Into<std::string::String>,
+        span: Span,
+    ) {
+        self.errors.push(Diagnostic::warning(code, span, message));
+    }
+
+    /// An error with a message and, when there is one, a help line: what
+    /// the `*_message` helpers that suggest a close name return.
+    pub(super) fn error_help(
+        &mut self,
+        code: Code,
+        (message, help): (std::string::String, Option<std::string::String>),
+        span: Span,
+    ) {
+        let mut d = Diagnostic::error(code, span, message);
+        d.help.extend(help);
+        self.errors.push(d);
     }
 
     /// The known type that `name`, a name in a type annotation, spells
@@ -3072,6 +3139,7 @@ impl TypeChecker {
                     }
                 } else {
                     self.warning(
+                        Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; imported items will not be type-checked"
                         ),
@@ -3117,7 +3185,7 @@ impl TypeChecker {
                     // user wrote).
                     self.imported_modules.insert(*alias);
                 } else {
-                    self.warning(
+                    self.warning(Code::UnknownModule,
                         format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
                         *span,
                     );
@@ -3140,7 +3208,7 @@ impl TypeChecker {
                     // heuristic in main.rs fires, and add a minimal binding for
                     // the module name itself so downstream `module.foo(...)`
                     // calls don't cascade into "undefined variable" errors.
-                    self.warning(
+                    self.warning(Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; imported module will not be type-checked"
                         ),
@@ -3470,6 +3538,7 @@ impl TypeChecker {
         // inconsistent with the body" diagnostic.
         for (name, fn_span) in annotated_signature_mismatches {
             self.error(
+                Code::TypeMismatch,
                 format!(
                     "function '{}' has a polymorphic signature but its body uses \
                      a parameter as a concrete type; either add a `where` constraint \
@@ -3598,6 +3667,7 @@ impl TypeChecker {
             for sup in supertraits {
                 if !self.traits.contains_key(sup) {
                     self.error(
+                        Code::UnknownTrait,
                         format!("trait '{trait_name}' lists unknown supertrait '{sup}'"),
                         *decl_span,
                     );
@@ -3627,7 +3697,11 @@ impl TypeChecker {
 
             // Check that the trait exists first.
             let Some(trait_info) = self.traits.get(trait_name).cloned() else {
-                self.error(format!("trait '{trait_name}' is not declared"), diag_span);
+                self.error(
+                    Code::UnknownTrait,
+                    format!("trait '{trait_name}' is not declared"),
+                    diag_span,
+                );
                 continue;
             };
 
@@ -3665,7 +3739,7 @@ impl TypeChecker {
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
                 if !self.trait_impl_set.contains(&(*supertrait, *type_name)) {
-                    self.error(
+                    self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
                         ),
@@ -3712,7 +3786,7 @@ impl TypeChecker {
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
-                    self.error(
+                    self.error(Code::InvalidTraitImpl,
                         format!(
                             "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
                             resolve(*trait_name),
@@ -3791,6 +3865,7 @@ impl TypeChecker {
                     // (which is the normal pre-synthesis path) — silent
                     // is correct.
                     self.error(
+                        Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
                             trait_name, type_name, method_name
@@ -3831,8 +3906,9 @@ impl TypeChecker {
         let td_name_str = resolve(td.name);
         if td_name_str == "TypeOf" {
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!("'{td_name_str}' is a reserved type name used by the type system"),
-                td.span,
+                td.name_span,
             );
             return;
         }
@@ -3849,11 +3925,12 @@ impl TypeChecker {
         // shape below.
         if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!(
                     "type '{td_name_str}' shadows builtin type '{td_name_str}'; \
                      choose a different name"
                 ),
-                td.span,
+                td.name_span,
             );
             return;
         }
@@ -3884,13 +3961,14 @@ impl TypeChecker {
             && prev_enum_owner != td.name
         {
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!(
                     "type '{}' shadows variant of builtin enum '{}'; \
                      choose a different name or fully-qualify the variant",
                     resolve(td.name),
                     resolve(prev_enum_owner)
                 ),
-                td.span,
+                td.name_span,
             );
             return;
         }
@@ -3939,12 +4017,20 @@ impl TypeChecker {
                 // constructor binding and no diagnostic was emitted.
                 let mut seen_variants: std::collections::HashSet<Symbol> =
                     std::collections::HashSet::new();
+                let mut first_variant: HashMap<Symbol, Span> = HashMap::new();
                 for variant in variants {
                     if !seen_variants.insert(variant.name) {
-                        self.error(
+                        let mut d = Diagnostic::error(
+                            Code::DuplicateDeclaration,
+                            variant.name_span,
                             format!("duplicate variant '{}' in enum '{}'", variant.name, td.name),
-                            td.span,
                         );
+                        if let Some(&first) = first_variant.get(&variant.name) {
+                            d = d.with_label(first, "first declared here");
+                        }
+                        self.errors.push(d);
+                    } else {
+                        first_variant.insert(variant.name, variant.name_span);
                     }
                 }
 
@@ -4041,7 +4127,7 @@ impl TypeChecker {
                     //      builtin shadow.
                     if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
                         if prev_owner != td.name {
-                            self.warning(
+                            self.warning(Code::Shadowing,
                                 format!(
                                     "variant '{}' of enum '{}' shadows same-named variant of enum '{}'; \
                                      earlier variant is no longer resolvable by bare name",
@@ -4049,12 +4135,12 @@ impl TypeChecker {
                                     resolve(td.name),
                                     resolve(prev_owner)
                                 ),
-                                td.span,
+                                variant.name_span,
                             );
                         } else if self.enums.contains_key(&td.name) {
                             // Sub-case (b): user type shadowing a builtin
                             // of the same name.
-                            self.warning(
+                            self.warning(Code::Shadowing,
                                 format!(
                                     "variant '{}' of enum '{}' shadows same-named variant of builtin enum '{}'; \
                                      builtin variant is no longer resolvable by bare name",
@@ -4062,7 +4148,7 @@ impl TypeChecker {
                                     resolve(td.name),
                                     resolve(prev_owner)
                                 ),
-                                td.span,
+                                variant.name_span,
                             );
                         }
                     }
@@ -4110,12 +4196,20 @@ impl TypeChecker {
                 // by the second at the VM record layout level.
                 let mut seen_fields: std::collections::HashSet<Symbol> =
                     std::collections::HashSet::new();
+                let mut first_field: HashMap<Symbol, Span> = HashMap::new();
                 for f in fields {
                     if !seen_fields.insert(f.name) {
-                        self.error(
+                        let mut d = Diagnostic::error(
+                            Code::DuplicateRecordField,
+                            f.name_span,
                             format!("duplicate field '{}' in record type '{}'", f.name, td.name),
-                            td.span,
                         );
+                        if let Some(&first) = first_field.get(&f.name) {
+                            d = d.with_label(first, "first declared here");
+                        }
+                        self.errors.push(d);
+                    } else {
+                        first_field.insert(f.name, f.name_span);
                     }
                 }
                 let field_types: Vec<(Symbol, Type)> = fields
@@ -4352,7 +4446,7 @@ impl TypeChecker {
         undeclared.sort_by_key(|s| resolve(*s));
         for name in undeclared {
             let name_str = resolve(name);
-            self.error(
+            self.error(Code::InvalidTypeDeclaration,
                 format!(
                     "undeclared type parameter '{name_str}' in alias target — did you mean `type {}({name_str}) = ...`?",
                     resolve(td.name)
@@ -4370,6 +4464,7 @@ impl TypeChecker {
             // each alias in the chain that closes the loop.
             let chain: Vec<String> = cycle.iter().map(|s| crate::intern::resolve(*s)).collect();
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!(
                     "type alias '{}' forms a cycle: {}",
                     td.name,
@@ -4613,7 +4708,11 @@ impl TypeChecker {
                             // in lowercase (`x: int`): that is a typo for
                             // the type, not a type variable.
                             if self.case_mismatched_type_name(&name_str, false).is_some() {
-                                self.error(self.unknown_type_message(&name_str, false), te.span);
+                                self.error(
+                                    Code::UnknownType,
+                                    self.unknown_type_message(&name_str, false),
+                                    te.span,
+                                );
                                 return Type::Error;
                             }
                             let tv = self.fresh_var();
@@ -4649,7 +4748,11 @@ impl TypeChecker {
                             // record / enum bare-name path).
                             let is_user_alias = self.type_aliases.contains(name);
                             if !is_user_record && !is_user_enum && !is_user_alias {
-                                self.error(self.unknown_type_message(&name_str, false), te.span);
+                                self.error(
+                                    Code::UnknownType,
+                                    self.unknown_type_message(&name_str, false),
+                                    te.span,
+                                );
                                 return Type::Error;
                             }
                             let arity = self
@@ -4719,7 +4822,7 @@ impl TypeChecker {
                     }
                     "Bytes" | "TcpListener" | "TcpStream" => {
                         let err_span = self.current_type_anno_span.unwrap_or(te.span);
-                        self.error(
+                        self.error(Code::ArityMismatch,
                             format!(
                                 "type argument count mismatch for builtin type '{}': expected 0, got {}",
                                 name_str.as_str(),
@@ -4765,7 +4868,11 @@ impl TypeChecker {
                         // ghost `Type::Generic("Frobnitz", [Int])` cascaded
                         // into Display / type-mismatch noise.
                         if expected_arity.is_none() {
-                            self.error(self.unknown_type_message(&name_str, true), te.span);
+                            self.error(
+                                Code::UnknownType,
+                                self.unknown_type_message(&name_str, true),
+                                te.span,
+                            );
                             return Type::Error;
                         }
                         if let Some(expected) = expected_arity
@@ -4779,7 +4886,7 @@ impl TypeChecker {
                                 "enum"
                             };
                             let err_span = self.current_type_anno_span.unwrap_or(te.span);
-                            self.error(
+                            self.error(Code::ArityMismatch,
                                 format!(
                                     "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
                                     resolved_args.len()
@@ -4844,6 +4951,7 @@ impl TypeChecker {
                 let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
                 if resolve(*trait_name) == "__no_enclosing_trait__" {
                     self.error(
+                        Code::InvalidTypeAnnotation,
                         "`Self::Item` is only valid inside a trait or trait-impl body; \
                          use the qualified form `<T as Trait>::Item` here"
                             .to_string(),
@@ -4875,6 +4983,7 @@ impl TypeChecker {
                 for (n, t) in fields {
                     if !seen.insert(*n) {
                         self.error(
+                            Code::DuplicateRecordField,
                             format!("duplicate field '{}' in anon record type", n),
                             te.span,
                         );
@@ -4999,7 +5108,7 @@ impl TypeChecker {
             for name in param_map.keys() {
                 if !pre_return_keys.contains(name) {
                     let n = resolve(*name);
-                    self.error(
+                    self.error(Code::InvalidTypeAnnotation,
                         format!(
                             "type variable '{}' in return type is not introduced by any parameter; \
                              add a `type {}` parameter or anchor it on an existing parameter's type",
@@ -5067,7 +5176,7 @@ impl TypeChecker {
                         _ => "_".to_string(),
                     })
                     .unwrap_or_else(|| "_".to_string());
-                self.error(
+                self.error(Code::InvalidTypeAnnotation,
                     format!(
                         "type variable '{}' in where clause is not introduced in the function signature; \
                          use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
@@ -5110,8 +5219,9 @@ impl TypeChecker {
         let trait_name_str = resolve(t.name);
         if BUILTIN_TRAIT_NAMES.contains(&trait_name_str.as_str()) {
             self.error(
+                Code::InvalidTraitDeclaration,
                 format!("trait '{trait_name_str}' is a builtin trait and cannot be redefined"),
-                t.span,
+                t.name_span,
             );
             return;
         }
@@ -5132,6 +5242,7 @@ impl TypeChecker {
             for m in &t.methods {
                 if !seen.insert(m.name) {
                     self.error(
+                        Code::DuplicateDeclaration,
                         format!("duplicate method '{}' in trait '{}'", m.name, t.name),
                         m.span,
                     );
@@ -5275,6 +5386,7 @@ impl TypeChecker {
         for a in &t.assoc_types {
             if !seen_assoc.insert(a.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate associated type '{}' in trait '{}'",
                         resolve(a.name),
@@ -5364,6 +5476,7 @@ impl TypeChecker {
         });
         for (trait_name, span) in errors {
             self.error(
+                Code::InvalidTraitImpl,
                 format!(
                     "trait '{trait_name}' cannot be implemented by hand: it is derived \
                      structurally for every type whose fields support it — remove this \
@@ -6284,6 +6397,7 @@ impl TypeChecker {
             .map(resolve)
             .unwrap_or_else(|| "(scratch)".to_string());
         self.error(
+            Code::OrphanImpl,
             format!(
                 "orphan impl: trait '{}' is from package '{}' and type '{}' is from package '{}'; \
                  either the trait or the type must be defined in the current package '{}'",
@@ -6331,6 +6445,7 @@ impl TypeChecker {
                 .unwrap_or(true);
             if !is_overriding_auto {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate implementation of trait '{}' for type '{}'",
                         ti.trait_name, ti.target_type
@@ -6435,6 +6550,7 @@ impl TypeChecker {
                 && !is_user_alias
             {
                 self.error(
+                    Code::UnknownType,
                     format!("trait impl target '{name_str}' is not a declared type"),
                     ti.span,
                 );
@@ -6560,7 +6676,7 @@ impl TypeChecker {
             if let Some((expected, kind)) = expected_arity
                 && expected != ti.target_type_args.len()
             {
-                self.error(
+                self.error(Code::ArityMismatch,
                     format!(
                         "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
                         resolve(ti.target_type),
@@ -6683,6 +6799,7 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if !self.traits.contains_key(trait_name) {
                 self.error(
+                    Code::UnknownTrait,
                     format!(
                         "unknown trait '{}' in where clause on trait impl '{} for {}'",
                         resolve(*trait_name),
@@ -6742,7 +6859,7 @@ impl TypeChecker {
                     // and register no positional obligation.
                 }
                 None => {
-                    self.error(
+                    self.error(Code::InvalidTypeAnnotation,
                         format!(
                             "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
                              declare it as a target parameter: `trait {} for {}({}, ...)`",
@@ -6783,6 +6900,7 @@ impl TypeChecker {
             if ti.trait_args.len() != trait_info.params.len() {
                 let expected = trait_info.params.len();
                 self.error(
+                    Code::ArityMismatch,
                     format!(
                         "trait '{}' expects {} {}, got {} in impl for '{}'",
                         resolve(ti.trait_name),
@@ -6856,6 +6974,7 @@ impl TypeChecker {
         for binding in &ti.assoc_type_bindings {
             if !seen_binding.insert(binding.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
                         resolve(binding.name),
@@ -6876,6 +6995,7 @@ impl TypeChecker {
                 && !known
             {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "associated type '{}' is not declared in trait '{}'",
                         resolve(binding.name),
@@ -6922,7 +7042,7 @@ impl TypeChecker {
                             cycle.via.1, cycle.via.0, cycle.via.2
                         )
                     };
-                    self.error(
+                    self.error(Code::InvalidTraitImpl,
                         format!(
                             "associated type binding for <{} as {}>::{} is self-referential{via_msg}",
                             cycle.head, cycle.trait_name, cycle.assoc_name,
@@ -6937,6 +7057,7 @@ impl TypeChecker {
         for assoc in &trait_assoc_types {
             let Some(bound_ty) = impl_binding_map.get(&assoc.name) else {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "impl of '{}' for '{}' is missing required associated type '{}'",
                         resolve(ti.trait_name),
@@ -6951,6 +7072,7 @@ impl TypeChecker {
             for (bound_trait, bound_args) in &assoc.bounds {
                 if !self.traits.contains_key(bound_trait) {
                     self.error(
+                        Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in bound on associated type '{}::{}'",
                             resolve(*bound_trait),
@@ -6990,6 +7112,7 @@ impl TypeChecker {
         for method in &ti.methods {
             if !seen_impl_methods.insert(method.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate method '{}' in trait impl '{} for {}'",
                         method.name, ti.trait_name, ti.target_type
@@ -7001,6 +7124,7 @@ impl TypeChecker {
                 && !names.contains(&method.name)
             {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "method '{}' is not declared in trait '{}'",
                         method.name, ti.trait_name
@@ -7072,6 +7196,7 @@ impl TypeChecker {
                 && existing_trait != ti.trait_name
             {
                 self.error(
+                    Code::AmbiguousMethod,
                     format!(
                         "ambiguous method '{}' on type '{}': provided by traits {}, {}",
                         method.name, ti.target_type, existing_trait, ti.trait_name
@@ -7100,6 +7225,7 @@ impl TypeChecker {
                 let trait_args = &wc.trait_args;
                 if !self.traits.contains_key(trait_name) {
                     self.error(
+                        Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in where clause on '{}.{}'",
                             resolve(*trait_name),
@@ -7144,7 +7270,7 @@ impl TypeChecker {
                         // Give the user the full "declare it in the sig or
                         // target" hint — this is the same spirit as the
                         // register_fn_decl error at mod.rs:5276.
-                        self.error(
+                        self.error(Code::InvalidTypeAnnotation,
                             format!(
                                 "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
                                  arguments or in the method's parameter annotations",
@@ -7245,7 +7371,7 @@ impl TypeChecker {
             .iter()
             .any(|e| e.message == msg && e.span == span)
         {
-            self.error(msg, span);
+            self.error(Code::ArityMismatch, msg, span);
         }
         false
     }
@@ -8061,8 +8187,33 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
+/// The type diagnostics of one file, without those that an import the
+/// checker cannot see into causes: the unknown-module warning itself
+/// and, while that warning is among them, the errors about names the
+/// module would have supplied (undefined names, unknown fields, missing
+/// trait impls). The compiler reports the import itself.
+pub fn without_import_cascade(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let has_unknown_module = diagnostics.iter().any(|d| d.code == Code::UnknownModule);
+    diagnostics
+        .into_iter()
+        .filter(|d| {
+            d.code != Code::UnknownModule
+                && !(has_unknown_module
+                    && d.is_error()
+                    && matches!(
+                        d.code,
+                        Code::UndefinedVariable
+                            | Code::UndefinedConstructor
+                            | Code::UndefinedType
+                            | Code::UnknownField
+                            | Code::MissingTraitImpl
+                    ))
+        })
+        .collect()
+}
+
 /// Run the type checker on a program. Returns a list of type errors (warnings).
-pub fn check(program: &mut Program) -> Vec<TypeError> {
+pub fn check(program: &mut Program) -> Vec<Diagnostic> {
     let mut checker = TypeChecker::new();
     checker.check_program(program);
     checker.errors
@@ -8076,7 +8227,7 @@ pub fn check(program: &mut Program) -> Vec<TypeError> {
 /// and records were declared locally. Pass `None` for ad-hoc scripts /
 /// REPL inputs to disable orphan enforcement (every decl looks local
 /// to the scratch package).
-pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec<TypeError> {
+pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec<Diagnostic> {
     let mut checker = TypeChecker::new();
     checker.current_package = package;
     checker.check_program(program);
@@ -8097,7 +8248,7 @@ pub fn check_with_package_and_imports(
     program: &mut Program,
     package: Option<Symbol>,
     module_exports: HashMap<Symbol, ModuleExports>,
-) -> (Vec<TypeError>, ModuleExports) {
+) -> (Vec<Diagnostic>, ModuleExports) {
     let (errors, exports, _resolver) =
         check_with_package_and_imports_resolver(program, package, module_exports, None);
     (errors, exports)
@@ -8122,7 +8273,7 @@ pub fn check_with_package_and_imports_resolver(
     module_exports: HashMap<Symbol, ModuleExports>,
     resolver: Option<crate::types::canonical::Resolver>,
 ) -> (
-    Vec<TypeError>,
+    Vec<Diagnostic>,
     ModuleExports,
     crate::types::canonical::Resolver,
 ) {
@@ -8177,7 +8328,7 @@ impl ReplTypeContext {
     /// Type-check a REPL input (one or more declarations/expressions) against
     /// the accumulated environment.  New bindings are persisted for future inputs.
     /// Returns any type errors from this input.
-    pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
+    pub fn check(&mut self, program: &mut Program) -> Vec<Diagnostic> {
         // Clear errors from the previous input
         self.checker.errors.clear();
 
@@ -8217,6 +8368,7 @@ impl ReplTypeContext {
                     }
                 } else {
                     self.checker.warning(
+                        Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; imported items will not be type-checked"
                         ),
@@ -8257,7 +8409,7 @@ impl ReplTypeContext {
                     // the user-written prefix.
                     self.checker.imported_modules.insert(*alias);
                 } else {
-                    self.checker.warning(
+                    self.checker.warning(Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; aliased imports will not be type-checked"
                         ),
@@ -8278,7 +8430,7 @@ impl ReplTypeContext {
                     // bare-module imports.
                     self.checker.imported_modules.insert(*module);
                 } else {
-                    self.checker.warning(
+                    self.checker.warning(Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; imported module will not be type-checked"
                         ),
@@ -8851,7 +9003,7 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
 pub(super) mod test_helpers {
     use super::*;
 
-    pub(super) fn check_errors(input: &str) -> Vec<TypeError> {
+    pub(super) fn check_errors(input: &str) -> Vec<Diagnostic> {
         let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .expect("lexer error");

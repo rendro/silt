@@ -15,11 +15,12 @@ use crate::ast::{
     RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::Lexer;
 use crate::module;
 use crate::parser::Parser;
-use crate::source::{SourceFile, SourceMap, SourceName, Span};
+use crate::source::{SourceMap, SourceName, Span};
 use crate::typechecker;
 use crate::types::canonical::canonicalize_type_name;
 use crate::value::Value;
@@ -236,16 +237,19 @@ impl CompileContext {
 
 /// Convert a frame height to the `u16` slot operand of `GetLocal`,
 /// `SetLocal`, `Recur` and `Slide`.
-fn frame_slot(height: usize, span: Span) -> Result<u16, CompileError> {
-    u16::try_from(height).map_err(|_| CompileError {
-        message: format!(
-            "this function keeps more than {} values on its stack at once \
+fn frame_slot(height: usize, span: Span) -> Result<u16, Diagnostic> {
+    u16::try_from(height).map_err(|_| {
+        Diagnostic::error(
+            Code::CompileLimit,
+            span,
+            format!(
+                "this function keeps more than {} values on its stack at once \
              (its local bindings plus the values of the expression being evaluated); \
              move some of its statements into separate functions, or split a large \
              expression into smaller parts",
-            u16::MAX
-        ),
-        span,
+                u16::MAX
+            ),
+        )
     })
 }
 
@@ -257,11 +261,6 @@ struct Local {
 
 // ── Compiler warnings ────────────────────────────────────────────────
 
-pub struct CompileWarning {
-    pub message: String,
-    pub span: Span,
-}
-
 // ── Compiler errors ─────────────────────────────────────────────────
 
 /// The compiler's error for a `loop(...)` with no enclosing loop in the
@@ -270,106 +269,17 @@ pub struct CompileWarning {
 /// drops this error when a type error stands at the same place.
 pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
 
-#[derive(Debug, Clone)]
-pub struct CompileError {
-    pub message: String,
-    pub span: Span,
+/// A lex or parse error `e` in the imported module `module_name`, with
+/// the import at `import_span` that brought the module in as a label.
+fn imported_at(e: Diagnostic, module_name: &str, import_span: Span) -> Diagnostic {
+    e.with_label(
+        import_span,
+        format!("module '{module_name}' is imported here"),
+    )
 }
 
-/// Render a lex/parse error that happened inside an imported module into a
-/// human-readable `CompileError.message`. The resulting string embeds:
-///
-///   1. A `module '<name>': <kind> at <file>:<line>:<col> — <inner_msg>` header.
-///   2. A source snippet from the *module* file with a caret pointing at
-///      the offending token, formatted to resemble the outer
-///      `SourceError::Display` snippet style (`  --> file:line:col` +
-///      line gutter + `^` caret).
-///
-/// The outer `SourceError::Display` impl will still render its own snippet
-/// against the *main* file at the `import` statement — that's the
-/// surrounding context the user expects. What was broken before (G3) is
-/// that the user had no visibility into where the actual parse/lex error
-/// was inside the imported module: the caret-free "module 'bad': parse
-/// error at bad.silt:3:1" line left the user guessing. Now the module
-/// source line is reproduced directly in the error message, so the final
-/// rendered stderr contains both the outer caret (at `import bad`) and
-/// the inner caret (at the real parse error inside bad.silt).
-fn format_module_source_error(
-    module_name: &str,
-    file_path: &str,
-    file: &SourceFile,
-    kind: &str,
-    inner_message: &str,
-    span: Span,
-) -> String {
-    // `locate` moves a position past EOF back onto the last real line so
-    // unexpected-EOF parse errors still render a snippet. Without this,
-    // truncated module files (e.g. `pub fn broken(\n` with an EOF on
-    // line 2) produce a header-only error with no caret line — the G1
-    // audit finding.
-    // Lock: tests/lang/modules.rs `test_module_parse_error_eof_renders_snippet`.
-    let (line, col, source_line) = crate::errors::locate(file, span.start);
-    let mut out =
-        format!("module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",);
-
-    // Pull the offending source line from the module file so the reader
-    // can see exactly where the caret points. An empty file has no line
-    // to show.
-    if let Some(src_line) = source_line.as_deref() {
-        // Width of the line-number gutter for alignment. Matches the
-        // convention in src/errors.rs::SourceError::Display by calling
-        // the shared `errors::line_num_width` helper.
-        let line_num = line;
-        let gutter_width = crate::errors::line_num_width(line_num);
-        let gutter_blank: String = " ".repeat(gutter_width);
-        // A long line is cut to a window around the error, as in
-        // `SourceError::Display`.
-        let (src_line, caret_col) = crate::errors::excerpt_around(src_line, col.saturating_sub(1));
-        let src_line = src_line.as_str();
-        // Preserve tabs so the caret lines up with the actual char.
-        // Use the shared helper from `errors.rs` so CJK / emoji /
-        // other double-wide chars get one space per display cell
-        // (not one per `char`), keeping this site symmetric with
-        // `SourceError::Display`.
-        let caret_spacing: String = crate::errors::caret_spacing(src_line, caret_col);
-
-        // Round-85 follow-up: route the inner snippet glyphs through
-        // `active_colors()` so this site honors NO_COLOR / FORCE_COLOR
-        // symmetrically with the outer `SourceError::Display` path.
-        // Previously the inner `-->` / `|` / `^` glyphs were always
-        // plain text, producing colored outer header + plain inner
-        // snippet under FORCE_COLOR=1 in a TTY.
-        let c = crate::errors::active_colors();
-        out.push_str(&format!(
-            "\n {arrow} {file_path}:{line}:{col}",
-            arrow = format_args!("{}-->{}", c.cyan, c.reset),
-            file_path = file_path,
-            line = line_num,
-        ));
-        out.push_str(&format!(
-            "\n {gutter_blank} {bar}",
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-        ));
-        out.push_str(&format!(
-            "\n {gutter_lit} {bar} {src_line}",
-            gutter_lit = format_args!("{}{}{}", c.cyan, line_num, c.reset),
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-        ));
-        out.push_str(&format!(
-            "\n {gutter_blank} {bar} {caret_spacing}{caret} {inner_message}",
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-            caret = format_args!("{}{}^{}", c.bold, c.red, c.reset),
-        ));
-    }
-
-    out
-}
-
-/// Render a module file path as CWD-relative when possible. Mirrors the
-/// `normalize_path` closure in `src/cli/run.rs` that does the same for
-/// runtime SourceError rendering. Keeps the inner `--> helper.silt:...`
-/// snippet consistent with the outer diagnostic's `-->` style, so a
-/// single stderr diagnostic doesn't mix absolute and relative paths.
+/// Render a module file path as CWD-relative when possible, for the
+/// path a "cannot load module" diagnostic says it looked for.
 ///
 /// We strip only the CWD prefix — if the module lives outside the CWD
 /// (e.g. a dependency under ~/.silt/deps) we fall back to the raw
@@ -446,12 +356,13 @@ pub fn module_path_for_display(p: &std::path::Path) -> String {
 /// around and branch to garbage. Extracted into a free function so the
 /// bounds check can be unit-tested without wiring up an entire compile
 /// context.
-fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), CompileError> {
+fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic> {
     if jump_back_dist > u16::MAX as usize {
-        return Err(CompileError {
-            message: "loop body too large (exceeds 65535 bytes of bytecode)".to_string(),
+        return Err(Diagnostic::error(
+            Code::CompileLimit,
             span,
-        });
+            "loop body too large (exceeds 65535 bytes of bytecode)",
+        ));
     }
     Ok(())
 }
@@ -546,7 +457,7 @@ pub struct Compiler {
     /// the dep's source root, not the consumer's.
     compiling_package_stack: Vec<Symbol>,
     /// Warnings emitted during compilation.
-    warnings: Vec<CompileWarning>,
+    warnings: Vec<Diagnostic>,
     /// Extra parse errors from imported modules that were recovered past
     /// via `Parser::parse_program_recovering`. The first such error is
     /// still returned as the hard `Err` from `compile_program` so the
@@ -554,29 +465,22 @@ pub struct Compiler {
     /// remainder live here and are drained by the CLI pipeline so the
     /// user sees every diagnostic at once instead of fixing-then-rerunning.
     ///
-    /// Each entry's `message` is pre-formatted via
-    /// `format_module_source_error`, so it already embeds the imported
-    /// module's file path, line, and source snippet. The `span` refers
-    /// to the outer `import` statement in the entrypoint, matching the
-    /// single-error flow so `SourceError::from_compile_error` renders
-    /// the outer caret against the correct file.
-    module_parse_errors: Vec<CompileError>,
+    /// Each entry is a diagnostic in the module's file, labelled with
+    /// the import that brought the module in.
+    module_parse_errors: Vec<Diagnostic>,
     /// Round 92: hard typechecker errors found in *imported* user
     /// modules that the compiler will NOT resolve at link time (i.e.
     /// real type errors, not the import-resolvable undefined-name /
-    /// trait cascade — see `crate::diagnostic_filters`). Previously the
+    /// trait cascade — see `typechecker::without_import_cascade`). Previously the
     /// per-module typecheck results in `pre_typecheck_user_module` and
     /// `compile_file_module_inner` were bound to `_errors` /
     /// `_type_errors` and dropped wholesale, so `silt check` exited 0
     /// on a program whose imported module fails its own direct check.
     ///
-    /// Each entry is already a fully-formed [`crate::errors::SourceError`]
-    /// rendered against the imported module's own source text and
-    /// (CWD-normalized) file path, so spans and snippets point into the
-    /// module file, not the import site. Drained by the CLI pipeline
-    /// via [`Compiler::take_module_type_errors`] and merged into the
-    /// entrypoint's type diagnostics.
-    module_type_errors: Vec<crate::errors::SourceError>,
+    /// Each entry's span is in the imported module's own file. Drained
+    /// by the CLI pipeline via [`Compiler::take_module_type_errors`] and
+    /// merged into the entrypoint's type diagnostics.
+    module_type_errors: Vec<Diagnostic>,
     /// Module files already harvested into `module_type_errors`. The
     /// same module is typechecked up to twice per session (once by the
     /// pre-typecheck pass, once by `compile_file_module_inner`); keying
@@ -870,7 +774,7 @@ impl Compiler {
     }
 
     /// Returns warnings emitted during compilation.
-    pub fn warnings(&self) -> &[CompileWarning] {
+    pub fn warnings(&self) -> &[Diagnostic] {
         &self.warnings
     }
 
@@ -885,28 +789,25 @@ impl Compiler {
     /// don't have to fix-then-rerun when a module has several unrelated
     /// mistakes.
     ///
-    /// Each entry's `message` is pre-formatted (module file path + inner
-    /// snippet) and its `span` points at the `import` statement in the
-    /// entrypoint, so lifting with `SourceError::from_compile_error` uses
-    /// exactly the same context as the primary error.
-    pub fn module_parse_errors(&self) -> &[CompileError] {
+    /// Each entry is a diagnostic in the module's file, like the primary
+    /// error.
+    pub fn module_parse_errors(&self) -> &[Diagnostic] {
         &self.module_parse_errors
     }
 
     /// Drain the hard type errors harvested from *imported* user
-    /// modules (round 92). Each entry is a fully-formed
-    /// [`crate::errors::SourceError`] whose span/snippet point into the
-    /// imported module's own file. The CLI pipeline merges these into
+    /// modules (round 92). Each entry's span is in the imported
+    /// module's own file. The CLI pipeline merges these into
     /// the entrypoint's type diagnostics so `silt check`/`silt run`
     /// report an ill-typed imported module instead of exiting 0 and
     /// deferring to a runtime error.
     ///
     /// Import-resolvable shapes (the undefined-name / trait cascade
     /// behind an "unknown module" warning — see
-    /// `crate::diagnostic_filters`) are already filtered out at harvest
+    /// `typechecker::without_import_cascade`) are already filtered out at harvest
     /// time, preserving the round-91 suppression contract for
     /// transitive imports.
-    pub fn take_module_type_errors(&mut self) -> Vec<crate::errors::SourceError> {
+    pub fn take_module_type_errors(&mut self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.module_type_errors)
     }
 
@@ -930,42 +831,15 @@ impl Compiler {
     /// First-wins per module file: the pre-typecheck pass and
     /// `compile_file_module_inner` both typecheck the same module, so
     /// the harvest is keyed by `file_path` to avoid duplicates.
-    fn harvest_module_type_errors(
-        &mut self,
-        errors: &[typechecker::TypeError],
-        file_path: &std::path::Path,
-    ) {
+    fn harvest_module_type_errors(&mut self, errors: Vec<Diagnostic>, file_path: &std::path::Path) {
         if !self.module_type_error_files.insert(file_path.to_path_buf()) {
             return;
         }
-        // `SourceError.file` holds the path as it is: its `Display`
-        // escapes it for a terminal, and `silt check --format json`
-        // JSON-escapes it. A display-escaped path would be escaped twice
-        // there.
-        let file = module_path_for_display(file_path);
-        let converted: Vec<crate::errors::SourceError> = errors
-            .iter()
-            .map(|e| crate::errors::SourceError::from_type_error(e, &self.sources, &file))
-            .collect();
-        let has_user_import_warning = converted.iter().any(|e| {
-            e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
-        });
-        for err in converted {
-            if err.is_warning {
-                continue;
-            }
-            if crate::diagnostic_filters::should_suppress_import_cascade_message(
-                &err.message,
-                err.is_warning,
-                has_user_import_warning,
-            ) {
-                continue;
-            }
-            if err.message.contains("is not imported") && err.message.contains("add `import ") {
-                continue;
-            }
-            self.module_type_errors.push(err);
-        }
+        self.module_type_errors.extend(
+            typechecker::without_import_cascade(errors)
+                .into_iter()
+                .filter(|d| d.is_error() && d.code != Code::ModuleNotImported),
+        );
     }
 
     /// Mark all builtin modules as imported (used by the REPL).
@@ -981,7 +855,7 @@ impl Compiler {
     ///
     /// The first function in the returned `Vec` is the top-level `<script>`,
     /// which ends with `GetGlobal "main" ; Call 0 ; Return`.
-    pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
+    pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.compile_program_with_entry(program, "main")
     }
 
@@ -1003,7 +877,7 @@ impl Compiler {
         &mut self,
         program: &Program,
         entry_point: &str,
-    ) -> Result<Vec<Function>, CompileError> {
+    ) -> Result<Vec<Function>, Diagnostic> {
         // Push a top-level script context.
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
@@ -1040,10 +914,11 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError {
-                message: "compiler bug: missing script context".into(),
-                span: Span::BUILTIN,
-            })?
+            .ok_or(Diagnostic::error(
+                Code::CompilerBug,
+                Span::BUILTIN,
+                "compiler bug: missing script context",
+            ))?
             .function;
 
         // Build the result: script first, then all compiled functions.
@@ -1057,10 +932,7 @@ impl Compiler {
     /// Returns all compiled functions. The first is a `<script>` that
     /// registers globals and returns Unit.  Useful for test runners and the
     /// REPL where `main()` is not the entry-point.
-    pub fn compile_declarations(
-        &mut self,
-        program: &Program,
-    ) -> Result<Vec<Function>, CompileError> {
+    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
@@ -1080,10 +952,11 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError {
-                message: "compiler bug: missing script context".into(),
-                span: Span::BUILTIN,
-            })?
+            .ok_or(Diagnostic::error(
+                Code::CompilerBug,
+                Span::BUILTIN,
+                "compiler bug: missing script context",
+            ))?
             .function;
         let mut result = vec![script];
         result.append(&mut self.functions);
@@ -1253,7 +1126,7 @@ impl Compiler {
         definitions.into_iter().chain(lets).collect()
     }
 
-    fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
+    fn compile_decl(&mut self, decl: &Decl) -> Result<(), Diagnostic> {
         match decl {
             Decl::Fn(fn_decl) => {
                 let span = fn_decl.span;
@@ -1264,14 +1137,15 @@ impl Compiler {
                 // callee and blew up with "cannot call value of type
                 // Int". Reject at compile time instead.
                 if fn_decl.params.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "function '{}' has {} parameters; silt functions are limited to 255",
                             resolve(fn_decl.name),
                             fn_decl.params.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let arity = fn_decl.params.len() as u8;
 
@@ -1290,10 +1164,11 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
 
                 // Pop the context, recovering the compiled function.
-                let ctx = self.contexts.pop().ok_or(CompileError {
-                    message: "compiler bug: missing function context".into(),
+                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                    Code::CompilerBug,
                     span,
-                })?;
+                    "compiler bug: missing function context",
+                ))?;
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
@@ -1330,10 +1205,11 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                     _ => {
-                        return Err(CompileError {
-                            message: "unsupported pattern in top-level let".into(),
+                        return Err(Diagnostic::error(
+                            Code::InvalidConstruct,
                             span,
-                        });
+                            "unsupported pattern in top-level let",
+                        ));
                     }
                 }
 
@@ -1511,19 +1387,20 @@ impl Compiler {
 
                 // Inner closure so we can restore `imported_builtin_modules`
                 // on every exit path (success and error).
-                let result: Result<(), CompileError> = (|| {
+                let result: Result<(), Diagnostic> = (|| {
                     for method in &trait_impl.methods {
                         let span = method.span;
                         if method.params.len() > u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
+                            return Err(Diagnostic::error(
+                                Code::CompileLimit,
+                                span,
+                                format!(
                                     "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
                                     trait_impl.target_type,
                                     method.name,
                                     method.params.len()
                                 ),
-                                span,
-                            });
+                            ));
                         }
                         let arity = method.params.len() as u8;
                         let qualified_name = format!("{}.{}", canonical_target, method.name);
@@ -1536,10 +1413,11 @@ impl Compiler {
                         self.compile_expr(&method.body)?;
                         self.current_chunk().emit_op(Op::Return, span);
 
-                        let ctx = self.contexts.pop().ok_or(CompileError {
-                            message: "compiler bug: missing trait method context".into(),
+                        let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                            Code::CompilerBug,
                             span,
-                        })?;
+                            "compiler bug: missing trait method context",
+                        ))?;
                         let func = ctx.function;
                         let vm_closure = Arc::new(VmClosure {
                             function: Arc::new(func),
@@ -1573,7 +1451,7 @@ impl Compiler {
 
     // ── Import compilation ─────────────────────────────────────────
 
-    fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), CompileError> {
+    fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), Diagnostic> {
         match target {
             ImportTarget::Module(name) => {
                 // Builtin modules (io, string, list, ...) are already registered
@@ -1686,7 +1564,7 @@ impl Compiler {
         &mut self,
         module_name: &str,
         span: Span,
-    ) -> Result<Vec<String>, CompileError> {
+    ) -> Result<Vec<String>, Diagnostic> {
         // Resolve which package this import belongs to and where its
         // source file lives. The resolution is the only place
         // `package_roots` participates; everything downstream uses the
@@ -1743,12 +1621,13 @@ impl Compiler {
                 resolved.cache_key.clone()
             });
             let rendered_chain = chain.join(" -> ");
-            return Err(CompileError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::ImportCycle,
+                span,
+                format!(
                     "circular import detected: {rendered_chain} (module '{module_name}' imports itself directly or indirectly)"
                 ),
-                span,
-            });
+            ));
         }
         self.compiling_modules.insert(resolved.cache_key.clone());
         self.compiling_modules_stack.push(CompilingFrame {
@@ -1788,11 +1667,7 @@ impl Compiler {
 
     /// Resolve an import segment to a concrete file path and package
     /// context. See [`compile_file_module`] for the resolution rules.
-    fn resolve_import(
-        &self,
-        module_name: &str,
-        span: Span,
-    ) -> Result<ResolvedImport, CompileError> {
+    fn resolve_import(&self, module_name: &str, span: Span) -> Result<ResolvedImport, Diagnostic> {
         let segment_sym = intern(module_name);
 
         // Cross-package import? `module_name` matches a registered package.
@@ -1810,14 +1685,15 @@ impl Compiler {
             if !is_local_self_import {
                 let lib_path = pkg_root.join("lib.silt");
                 if !lib_path.exists() {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::ModuleNotFound,
+                        span,
+                        format!(
                             "package '{module_name}' has no library entry point — \
                              expected `src/lib.silt` in the dep at {}",
                             crate::git::escape_for_display(&pkg_root.display().to_string())
                         ),
-                        span,
-                    });
+                    ));
                 }
                 return Ok(ResolvedImport {
                     file_path: lib_path,
@@ -1834,13 +1710,14 @@ impl Compiler {
         let pkg_root = match pkg.and_then(|p| self.package_roots.get(&p)) {
             Some(root) => root,
             None => {
-                return Err(CompileError {
-                    message: format!(
+                return Err(Diagnostic::error(
+                    Code::ModuleNotFound,
+                    span,
+                    format!(
                         "cannot import module '{module_name}': no project root set \
                          (use Compiler::with_package_roots)"
                     ),
-                    span,
-                });
+                ));
             }
         };
         let pkg_name = resolve(pkg.unwrap());
@@ -1934,7 +1811,7 @@ impl Compiler {
         &mut self,
         module_name: &str,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // Resolve the module file path the same way compile_file_module
         // does, so cross-package vs intra-package routing is identical.
         let resolved = self.resolve_import(module_name, span)?;
@@ -1958,50 +1835,24 @@ impl Compiler {
         });
         self.compiling_package_stack.push(resolved.package);
 
-        let result = (|| -> Result<(), CompileError> {
-            let source =
-                std::fs::read_to_string(&resolved.file_path).map_err(|e| CompileError {
-                    // Round 93: enriched with attempted path + sibling
-                    // did-you-mean + dependency-channel help. See
-                    // `module::format_module_load_error`.
-                    message: module::format_module_load_error(
-                        module_name,
-                        &resolved.file_path,
-                        &normalize_module_path(&resolved.file_path),
-                        &e,
-                    ),
+        let result = (|| -> Result<(), Diagnostic> {
+            let source = std::fs::read_to_string(&resolved.file_path).map_err(|e| {
+                module::module_load_error(
+                    module_name,
+                    &resolved.file_path,
+                    &normalize_module_path(&resolved.file_path),
+                    &e,
                     span,
-                })?;
+                )
+            })?;
 
-            // Round 83 STYLE/BLOAT fix: previously this map_err discarded
-            // the underlying `LexError` and built a bare generic message
-            // mentioning only the module name. Because the only caller
-            // (`pre_typecheck_user_imports` at line ~1353) drops the
-            // Result entirely (`let _ = ...`), that message was
-            // unreachable to end users. Mirror the rich path used by
-            // `compile_file_module_inner` (line ~1466) so the diagnostic
-            // would carry a real file path, line, column, and snippet if
-            // this function's error path is ever propagated.
-            // Lock: tests/lang/round83_anonrec_spread_eq_tests.rs grep-asserts
-            // the old wording never returns.
-            let file_display = normalize_module_path(&resolved.file_path);
             let file = self.sources.add(
                 SourceName::Path(resolved.file_path.clone()),
                 source.as_str().into(),
             );
             let tokens = Lexer::new(file, &source)
                 .tokenize()
-                .map_err(|e| CompileError {
-                    message: format_module_source_error(
-                        module_name,
-                        &file_display,
-                        self.sources.file(file),
-                        "lex error",
-                        &e.message,
-                        e.span,
-                    ),
-                    span,
-                })?;
+                .map_err(|e| imported_at(e, module_name, span))?;
             let (mut program, _) = Parser::new(tokens, &source).parse_program_recovering();
 
             // Recurse: pre-typecheck this module's own imports first.
@@ -2024,7 +1875,7 @@ impl Compiler {
             // of dropping the whole batch. Import-resolvable shapes
             // stay suppressed inside the harvest — see
             // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(&module_errors, &resolved.file_path);
+            self.harvest_module_type_errors(module_errors, &resolved.file_path);
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -2056,31 +1907,17 @@ impl Compiler {
         module_name: &str,
         file_path: &std::path::Path,
         span: Span,
-    ) -> Result<Vec<String>, CompileError> {
-        let source = std::fs::read_to_string(file_path).map_err(|e| CompileError {
-            // Round 93: enriched with attempted path + sibling
-            // did-you-mean + dependency-channel help. See
-            // `module::format_module_load_error`.
-            message: module::format_module_load_error(
+    ) -> Result<Vec<String>, Diagnostic> {
+        let source = std::fs::read_to_string(file_path).map_err(|e| {
+            module::module_load_error(
                 module_name,
                 file_path,
                 &normalize_module_path(file_path),
                 &e,
-            ),
-            span,
+                span,
+            )
         })?;
 
-        // Round-36 GAP: render the module file as a CWD-relative path when
-        // possible so the inner `--> helper.silt:...` snippet matches the
-        // outer `--> main.silt:...` style. Previously this used the raw
-        // (absolute, because `package_roots` canonicalize()s paths) file
-        // path, which produced mixed-style diagnostics: outer relative,
-        // inner absolute — the G3/G4 audit finding.
-        //
-        // Mirrors the `normalize_path` helper in `src/cli/run.rs` that does
-        // the same job for runtime SourceError rendering. Lock:
-        // tests/lang/compiler_module_path_norm_round36_tests.rs.
-        let file_display = normalize_module_path(file_path);
         let file = self.sources.add(
             SourceName::Path(file_path.to_path_buf()),
             source.as_str().into(),
@@ -2088,17 +1925,7 @@ impl Compiler {
 
         let tokens = Lexer::new(file, &source)
             .tokenize()
-            .map_err(|e| CompileError {
-                message: format_module_source_error(
-                    module_name,
-                    &file_display,
-                    self.sources.file(file),
-                    "lex error",
-                    &e.message,
-                    e.span,
-                ),
-                span,
-            })?;
+            .map_err(|e| imported_at(e, module_name, span))?;
 
         // Parse with the recovery parser so a module with multiple
         // independent parse errors surfaces every one of them in a
@@ -2111,29 +1938,13 @@ impl Compiler {
         // onto `self.module_parse_errors`, drained by the CLI pipeline
         // alongside the primary.
         //
-        // Each parse error is formatted with the SAME
-        // `format_module_source_error` helper the single-error path used,
-        // so the module file path + inline snippet + caret render
-        // identically regardless of how many errors the module produced.
-        // The outer `span` (the import statement in the entrypoint) is
-        // reused for every accumulated error; `SourceError` rendering then
-        // pins the outer caret at the import site while the pre-formatted
-        // message carries the inner module location.
+        // Each error is a diagnostic in the module's file, labelled with
+        // the import that brought the module in.
         let (mut program, parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
         if !parse_errors.is_empty() {
-            let mut formatted: Vec<CompileError> = parse_errors
-                .iter()
-                .map(|e| CompileError {
-                    message: format_module_source_error(
-                        module_name,
-                        &file_display,
-                        self.sources.file(file),
-                        "parse error",
-                        &e.message,
-                        e.span,
-                    ),
-                    span,
-                })
+            let mut formatted: Vec<Diagnostic> = parse_errors
+                .into_iter()
+                .map(|e| imported_at(e, module_name, span))
                 .collect();
             // Preserve source order: the parser collects errors in the
             // order it encounters them, so `formatted[0]` is the first
@@ -2179,7 +1990,7 @@ impl Compiler {
         // `harvest_module_type_errors`). First-wins keying by file path
         // means this is a no-op when the pre-typecheck pass already
         // harvested the same module.
-        self.harvest_module_type_errors(&module_type_errors, file_path);
+        self.harvest_module_type_errors(module_type_errors, file_path);
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
@@ -2248,14 +2059,15 @@ impl Compiler {
                 Decl::Fn(fn_decl) => {
                     let fn_span = fn_decl.span;
                     if fn_decl.params.len() > u8::MAX as usize {
-                        return Err(CompileError {
-                            message: format!(
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
+                            fn_span,
+                            format!(
                                 "imported function '{}' has {} parameters; silt functions are limited to 255",
                                 resolve(fn_decl.name),
                                 fn_decl.params.len()
                             ),
-                            span: fn_span,
-                        });
+                        ));
                     }
                     let arity = fn_decl.params.len() as u8;
 
@@ -2277,10 +2089,11 @@ impl Compiler {
                     self.in_tail_position = false;
                     self.current_chunk().emit_op(Op::Return, fn_span);
 
-                    let ctx = self.contexts.pop().ok_or(CompileError {
-                        message: "compiler bug: missing module function context".into(),
+                    let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                        Code::CompilerBug,
                         span,
-                    })?;
+                        "compiler bug: missing module function context",
+                    ))?;
                     let func = ctx.function;
 
                     let vm_closure = Arc::new(VmClosure {
@@ -2387,10 +2200,11 @@ impl Compiler {
         // Close the module init function and call it inline.
         self.current_chunk().emit_op(Op::Unit, span);
         self.current_chunk().emit_op(Op::Return, span);
-        let init_ctx = self.contexts.pop().ok_or(CompileError {
-            message: "compiler bug: missing module init context".into(),
+        let init_ctx = self.contexts.pop().ok_or(Diagnostic::error(
+            Code::CompilerBug,
             span,
-        })?;
+            "compiler bug: missing module init context",
+        ))?;
         let init_closure = Arc::new(VmClosure {
             function: Arc::new(init_ctx.function),
             upvalues: vec![],
@@ -2407,7 +2221,7 @@ impl Compiler {
 
     // ── Statements ────────────────────────────────────────────────
 
-    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), CompileError> {
+    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
                 // The bound value is NOT the block result, so it must never
@@ -2543,18 +2357,13 @@ impl Compiler {
     // ── Expressions ───────────────────────────────────────────────
 
     /// If `module` is a known file-based module and `name` is a `fn` declared
-    /// in it without `pub`, return a `CompileError` that names the function,
+    /// in it without `pub`, return a `Diagnostic` that names the function,
     /// the module, the source file, and the exact syntactic fix. Returning
     /// `None` means either the module isn't a tracked user module or the name
     /// doesn't match a private function — in both cases callers should fall
     /// through to the existing resolution path (and let the VM raise
     /// "undefined global" at runtime for typos).
-    fn private_module_fn_error(
-        &self,
-        module: &str,
-        name: &str,
-        span: Span,
-    ) -> Option<CompileError> {
+    fn private_module_fn_error(&self, module: &str, name: &str, span: Span) -> Option<Diagnostic> {
         // Don't shadow intra-module lookups: if we're compiling inside
         // `module` itself, the caller already has access via `module_scope`.
         if let Some((ref cur_mod, _)) = self.module_scope
@@ -2571,13 +2380,14 @@ impl Compiler {
         if !priv_set.contains(name) {
             return None;
         }
-        Some(CompileError {
-            message: format!(
+        Some(Diagnostic::error(
+            Code::NotExported,
+            span,
+            format!(
                 "`{name}` exists in module `{module}` but is not `pub` — \
                  mark it `pub fn {name}` in {module}.silt to export it"
             ),
-            span,
-        })
+        ))
     }
 
     /// Emit the call sequence for a callee + `argc` arguments already on
@@ -2597,7 +2407,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
+    fn compile_expr(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
         let span = expr.span;
         let tail = self.in_tail_position;
         self.in_tail_position = false;
@@ -2715,10 +2525,11 @@ impl Compiler {
                     if let Some(required) = module::gated_constructor_module(&name_str)
                         && !self.imported_builtin_modules.contains(required)
                     {
-                        return Err(CompileError {
-                            message: format!("'{name}' requires `import {required}`"),
+                        return Err(Diagnostic::error(
+                            Code::CompileModuleNotImported,
                             span,
-                        });
+                            format!("'{name}' requires `import {required}`"),
+                        ));
                     }
                     // If we're inside a module and this name matches a sibling function,
                     // qualify it so intra-module calls resolve correctly.
@@ -2750,13 +2561,14 @@ impl Compiler {
                 // call path adds the receiver so the limit is 254
                 // explicit arguments in that case.
                 if args.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "call has {} arguments; silt calls are limited to 255",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 // Check if this is a module-qualified builtin call like list.map(...)
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
@@ -2822,13 +2634,14 @@ impl Compiler {
                         // fail at runtime with `undefined global`.
                         let variant_str = resolve(*name);
                         if args.len() >= u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
+                            return Err(Diagnostic::error(
+                                Code::CompileLimit,
+                                span,
+                                format!(
                                     "method call has {} arguments (plus receiver); silt calls are limited to 255",
                                     args.len()
                                 ),
-                                span,
-                            });
+                            ));
                         }
                         let var_idx = self.add_constant(Value::String(variant_str), span)?;
                         self.current_chunk()
@@ -2868,12 +2681,13 @@ impl Compiler {
                             if module::is_builtin_module(&mod_str)
                                 && !self.imported_builtin_modules.contains(&mod_str)
                             {
-                                return Err(CompileError {
-                                    message: format!(
+                                return Err(Diagnostic::error(
+                                    Code::CompileModuleNotImported,
+                                    span,
+                                    format!(
                                         "module '{module}' is not imported; add `import {module}` at the top of the file"
                                     ),
-                                    span,
-                                });
+                                ));
                             }
                             // Compile-time visibility check: if this module is
                             // a known user file module and `method` exists as
@@ -2901,13 +2715,14 @@ impl Compiler {
                         // receiver takes one slot of the 255-argument
                         // budget so the explicit-arg cap is 254 here.
                         if args.len() >= u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
+                            return Err(Diagnostic::error(
+                                Code::CompileLimit,
+                                span,
+                                format!(
                                     "method call has {} arguments (plus receiver); silt calls are limited to 255",
                                     args.len()
                                 ),
-                                span,
-                            });
+                            ));
                         }
                         self.compile_operands(std::iter::once(&**receiver).chain(args))?;
                         let argc = (args.len() + 1) as u8; // receiver + args
@@ -2961,12 +2776,13 @@ impl Compiler {
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
                         {
-                            return Err(CompileError {
-                                message: format!(
+                            return Err(Diagnostic::error(
+                                Code::CompileModuleNotImported,
+                                span,
+                                format!(
                                     "module '{name}' is not imported; add `import {name}` at the top of the file"
                                 ),
-                                span,
-                            });
+                            ));
                         }
                         // Compile-time visibility check for user file
                         // modules: bare `mymod.helper` where `helper` is a
@@ -3027,13 +2843,14 @@ impl Compiler {
                 // values and produced garbled output. Reject at compile
                 // time instead, mirroring the call/tuple/record guards.
                 if parts.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "string interpolation has {} segments; silt string interpolations are limited to 255",
                             parts.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 // Every part stays on the stack until `StringConcat`.
                 let base = self.ctx().height;
@@ -3074,13 +2891,14 @@ impl Compiler {
 
             ExprKind::Lambda { params, body, .. } => {
                 if params.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "closure has {} parameters; silt functions are limited to 255",
                             params.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let arity = params.len() as u8;
 
@@ -3096,10 +2914,11 @@ impl Compiler {
                 self.in_tail_position = false;
                 self.current_chunk().emit_op(Op::Return, span);
 
-                let ctx = self.contexts.pop().ok_or(CompileError {
-                    message: "compiler bug: missing lambda context".into(),
+                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                    Code::CompilerBug,
                     span,
-                })?;
+                    "compiler bug: missing lambda context",
+                ))?;
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
@@ -3128,10 +2947,11 @@ impl Compiler {
 
             ExprKind::Tuple(elems) => {
                 if elems.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple cannot have more than 255 elements",
+                    ));
                 }
                 self.compile_operands(elems)?;
                 self.current_chunk().emit_op(Op::MakeTuple, span);
@@ -3147,14 +2967,15 @@ impl Compiler {
                 // literals at compile time with a clear error — the same
                 // shape as the `u8`-bounded tuple/record checks above.
                 if elems.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "list literal too large: {} elements (max {})",
                             elems.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
                 if !has_spread {
@@ -3188,14 +3009,15 @@ impl Compiler {
                                 self.compile_expr(e)?;
                                 single_count += 1;
                                 if single_count > u16::MAX as usize {
-                                    return Err(CompileError {
-                                        message: format!(
+                                    return Err(Diagnostic::error(
+                                        Code::CompileLimit,
+                                        span,
+                                        format!(
                                             "list literal too large: more than {} consecutive \
                                              singleton elements between spreads",
                                             u16::MAX
                                         ),
-                                        span,
-                                    });
+                                    ));
                                 }
                             }
                             ListElem::Spread(e) => {
@@ -3243,14 +3065,15 @@ impl Compiler {
                 // literals at compile time so the VM never sees a wrapped
                 // count. See the B2 comment on the list path above.
                 if pairs.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "map literal too large: {} pairs (max {})",
                             pairs.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 self.compile_operands(pairs.iter().flat_map(|(k, v)| [k, v]))?;
                 let pair_count = pairs.len() as u16;
@@ -3262,14 +3085,15 @@ impl Compiler {
                 // MakeSet count is emitted as u16 — reject oversized
                 // literals at compile time (B2).
                 if elems.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "set literal too large: {} elements (max {})",
                             elems.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 self.compile_operands(elems)?;
                 let count = elems.len() as u16;
@@ -3311,10 +3135,11 @@ impl Compiler {
                 fields,
             } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "record cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "record cannot have more than 255 fields",
+                    ));
                 }
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
@@ -3331,10 +3156,11 @@ impl Compiler {
 
             ExprKind::RecordUpdate { expr, fields } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "record update cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "record update cannot have more than 255 fields",
+                    ));
                 }
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(
@@ -3350,10 +3176,11 @@ impl Compiler {
 
             ExprKind::AnonRecord { spread, fields } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "anon record literal cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "anon record literal cannot have more than 255 fields",
+                    ));
                 }
                 if let Some(base) = spread {
                     // Extend op: compile base, then RecordUpdate-style merge
@@ -3405,9 +3232,8 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
-                let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
-                    message: LOOP_CALL_OUTSIDE_LOOP.into(),
-                    span,
+                let loop_info = self.ctx().loop_stack.last().ok_or_else(|| {
+                    Diagnostic::error(Code::LoopCallOutsideLoop, span, LOOP_CALL_OUTSIDE_LOOP)
                 })?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
@@ -3418,26 +3244,25 @@ impl Compiler {
                     } else {
                         "arguments"
                     };
-                    return Err(CompileError {
-                        message: format!(
-                            "loop() expects {expected} {arg_word}, got {}",
-                            args.len()
-                        ),
+                    return Err(Diagnostic::error(
+                        Code::InvalidConstruct,
                         span,
-                    });
+                        format!("loop() expects {expected} {arg_word}, got {}", args.len()),
+                    ));
                 }
                 // Defence in depth: `binding_count` is already a u8 so
                 // `expected <= 255` — but keep the limit explicit so a
                 // future refactor that widens `binding_count` doesn't
                 // silently reintroduce a wrap.
                 if args.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "`loop(...)` has {} arguments; silt loops are limited to 255 bindings",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
 
                 self.compile_operands(args)?;
@@ -3470,7 +3295,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // ── Guardless match (no scrutinee) ───────────────────────
         let Some(scrutinee) = scrutinee else {
             return self.compile_guardless_match(arms, span, tail);
@@ -3581,7 +3406,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         let mut end_jumps = Vec::new();
 
         for arm in arms {
@@ -3631,7 +3456,7 @@ impl Compiler {
         right: &Expr,
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // val |> f(args) -> f(val, args)
         // val |> f       -> f(val)
         //
@@ -3647,13 +3472,14 @@ impl Compiler {
                 // The piped value takes one slot, so the explicit-arg
                 // cap is 254 here. Reject before the `+1` can wrap.
                 if args.len() >= u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "pipe call has {} arguments (plus piped value); silt calls are limited to 255",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
                     // With a piped value the type argument of a decoding
@@ -3692,18 +3518,19 @@ impl Compiler {
         bindings: &[(Symbol, Span, Expr)],
         body: &Expr,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // `binding_count` is stored in `LoopInfo` as a `u8`, so more
         // than 255 bindings would silently wrap and cause `recur`
         // arity mismatches to be misreported. Reject up front.
         if bindings.len() > u8::MAX as usize {
-            return Err(CompileError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
                     "loop has {} bindings; silt loops are limited to 255",
                     bindings.len()
                 ),
-                span,
-            });
+            ));
         }
 
         self.begin_scope();
@@ -3749,7 +3576,7 @@ impl Compiler {
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
     /// return the qualified name. Only returns Some if the ident is NOT a
     /// local/upvalue AND belongs to a known builtin module.
-    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, CompileError> {
+    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, Diagnostic> {
         if let ExprKind::FieldAccess(expr, field, _) = &callee.kind
             && let ExprKind::Ident(module) = &expr.kind
         {
@@ -3763,12 +3590,13 @@ impl Compiler {
             {
                 if module::is_builtin_module(&mod_str) {
                     if !self.imported_builtin_modules.contains(&mod_str) {
-                        return Err(CompileError {
-                            message: format!(
+                        return Err(Diagnostic::error(
+                            Code::CompileModuleNotImported,
+                            callee.span,
+                            format!(
                                 "module '{module}' is not imported; add `import {module}` at the top of the file"
                             ),
-                            span: callee.span,
-                        });
+                        ));
                     }
                     return Ok(Some(format!("{module}.{field}")));
                 }
@@ -3936,7 +3764,7 @@ impl Compiler {
         builtin_name: &str,
         type_arg: Option<&Expr>,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if !DECODING_BUILTINS.contains(&builtin_name) {
             return Ok(());
         }
@@ -3976,23 +3804,25 @@ impl Compiler {
             } else {
                 format!("and `{}` has no decoder", found.part)
             };
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}\n\
-                     help: {DECODABLE_TYPES_HELP}",
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
+                span,
+                format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}",
                     found.field, found.field_type
                 ),
-                span,
-            });
+            )
+            .with_help(DECODABLE_TYPES_HELP));
         }
         if self.known_enum_variants.contains_key(&type_name) {
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder\n\
-                     help: decode into a record type"
-                ),
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
                 span,
-            });
+                format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
+                ),
+            )
+            .with_help("decode into a record type"));
         }
         // Builtin type names. `json.parse`, `json.parse_map` and
         // `toml.parse_map` also decode the primitive types; every other
@@ -4010,13 +3840,14 @@ impl Compiler {
             } else {
                 "a record type"
             };
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}\n\
-                     help: declare a record type with a field of the type you want, and decode into the record"
-                ),
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
                 span,
-            });
+                format!("`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"),
+            )
+            .with_help(
+                "declare a record type with a field of the type you want, and decode into the record",
+            ));
         }
         Ok(())
     }
@@ -4055,18 +3886,18 @@ impl Compiler {
         &mut self.ctx_mut().function.chunk
     }
 
-    /// Add a constant to the current chunk, converting overflow to `CompileError`.
-    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, CompileError> {
+    /// Add a constant to the current chunk, converting overflow to `Diagnostic`.
+    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, Diagnostic> {
         self.current_chunk()
             .add_constant(value)
-            .map_err(|msg| CompileError { message: msg, span })
+            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
     }
 
-    /// Patch a jump in the current chunk, converting overflow to `CompileError`.
-    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), CompileError> {
+    /// Patch a jump in the current chunk, converting overflow to `Diagnostic`.
+    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), Diagnostic> {
         self.current_chunk()
             .patch_jump(patch_offset)
-            .map_err(|msg| CompileError { message: msg, span })
+            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
     }
 
     fn begin_scope(&mut self) {
@@ -4100,7 +3931,7 @@ impl Compiler {
     /// above the scope's locals, and drop the locals from under it. In
     /// tail position (`tail`) the result is returned at once and the
     /// frame goes with it, so nothing is emitted.
-    fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), CompileError> {
+    fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), Diagnostic> {
         let end = self.ctx().height;
         let start = self.end_scope();
         if end > start && !tail {
@@ -4112,7 +3943,7 @@ impl Compiler {
     /// Emit `Slide`: the value on top of the stack becomes the value in
     /// slot `height`, and everything that was above that slot is dropped.
     /// Afterwards the frame holds `height` values plus that one.
-    fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), CompileError> {
+    fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), Diagnostic> {
         let slot = frame_slot(height, span)?;
         self.current_chunk().emit_op_u16(Op::Slide, slot, span);
         Ok(())
@@ -4121,7 +3952,7 @@ impl Compiler {
     /// Make the value on top of the stack a local named `name`. Its slot
     /// is the current frame height, which is where that value is.
     /// (For a parameter the value is the argument the caller pushed.)
-    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, CompileError> {
+    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, Diagnostic> {
         let slot = frame_slot(self.ctx().height, span)?;
         let ctx = self.ctx_mut();
         let depth = ctx.scope_depth;
@@ -4138,7 +3969,7 @@ impl Compiler {
     fn compile_operands<'a>(
         &mut self,
         operands: impl IntoIterator<Item = &'a Expr>,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         self.compile_operands_above(0, operands)
     }
 
@@ -4149,7 +3980,7 @@ impl Compiler {
         &mut self,
         pending: usize,
         operands: impl IntoIterator<Item = &'a Expr>,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         let base = self.ctx().height;
         self.ctx_mut().height = base + pending;
         for operand in operands {
@@ -4163,7 +3994,7 @@ impl Compiler {
     /// Register a function's parameters as locals and destructure those
     /// written as patterns. The arguments are already in the frame, in
     /// slots `0..params.len()`.
-    fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), CompileError> {
+    fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), Diagnostic> {
         let mut destructured = Vec::new();
         for (i, param) in params.iter().enumerate() {
             match &param.pattern.kind {
@@ -4192,13 +4023,14 @@ impl Compiler {
     fn warn_if_shadows_module(&mut self, name: Symbol, span: Span) {
         let s = resolve(name);
         if module::is_builtin_module(&s) {
-            self.warnings.push(CompileWarning {
-                message: format!(
+            self.warnings.push(Diagnostic::warning(
+                Code::ShadowsModule,
+                span,
+                format!(
                     "variable '{s}' shadows the builtin '{s}' module; \
                      use a different name to access '{s}.*' functions"
                 ),
-                span,
-            });
+            ));
         }
     }
 
@@ -4238,7 +4070,7 @@ impl Compiler {
     /// If the variable is found as a local in an enclosing scope, it is captured
     /// as an upvalue (is_local = true). If the enclosing scope already has it as
     /// an upvalue, it is chained through (is_local = false, transitive capture).
-    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, CompileError> {
+    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, Diagnostic> {
         let current_idx = self.contexts.len() - 1;
         if current_idx == 0 {
             return Ok(None); // Top-level script has no enclosing scope.
@@ -4251,7 +4083,7 @@ impl Compiler {
         name: Symbol,
         context_index: usize,
         span: Span,
-    ) -> Result<Option<u8>, CompileError> {
+    ) -> Result<Option<u8>, Diagnostic> {
         if context_index == 0 {
             return Ok(None); // No more enclosing scopes.
         }
@@ -4272,12 +4104,11 @@ impl Compiler {
             // local itself needs no open/closed tracking — see
             // VmClosure doc in src/bytecode.rs.
             let index = if slot > u8::MAX as u16 {
-                return Err(CompileError {
-                    message: format!(
-                        "cannot capture local in slot {slot} as upvalue (max slot 255)"
-                    ),
+                return Err(Diagnostic::error(
+                    Code::CompileLimit,
                     span,
-                });
+                    format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
+                ));
             } else {
                 slot as u8
             };
@@ -4318,14 +4149,14 @@ impl Compiler {
     /// writing 2N operand bytes after it — those bytes would then be
     /// reinterpreted as bytecode at runtime. Mirrors the sibling
     /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255"
-    /// path so both hard limits surface as `CompileError` rather than
+    /// path so both hard limits surface as `Diagnostic` rather than
     /// panics or silent miscompiles.
     fn add_upvalue(
         &mut self,
         context_index: usize,
         desc: UpvalueDesc,
         span: Span,
-    ) -> Result<u8, CompileError> {
+    ) -> Result<u8, Diagnostic> {
         let ctx = &mut self.contexts[context_index];
         // Check if we already have this exact upvalue.
         for (i, existing) in ctx.upvalues.iter().enumerate() {
@@ -4335,13 +4166,14 @@ impl Compiler {
         }
         let index = ctx.upvalues.len();
         if index >= u8::MAX as usize {
-            return Err(CompileError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
                     "too many upvalues: closure captures more than {} values (max)",
                     u8::MAX as usize
                 ),
-                span,
-            });
+            ));
         }
         ctx.upvalues.push(desc);
         ctx.function.upvalue_count = ctx.upvalues.len() as u8;
@@ -4370,7 +4202,7 @@ mod tests {
     }
 
     /// Compile expecting an error, return the error.
-    fn compile_err(input: &str) -> CompileError {
+    fn compile_err(input: &str) -> Diagnostic {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
@@ -4380,7 +4212,7 @@ mod tests {
     }
 
     /// Compile without builtin imports (to test import gating).
-    fn compile_no_imports(input: &str) -> Result<Vec<Function>, CompileError> {
+    fn compile_no_imports(input: &str) -> Result<Vec<Function>, Diagnostic> {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
@@ -5461,7 +5293,7 @@ fn f(expected, actual) {
         // A distance that exactly fits must pass.
         assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::BUILTIN).is_ok());
 
-        // One beyond the limit must produce a CompileError and not a
+        // One beyond the limit must produce a Diagnostic and not a
         // panic/wrap.
         let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::BUILTIN)
             .expect_err("expected u16 overflow to be rejected");
@@ -5532,7 +5364,7 @@ fn f(expected, actual) {
         };
         let err = compiler
             .add_upvalue(inner_idx, overflowing, Span::BUILTIN)
-            .expect_err("expected 256th upvalue to return CompileError");
+            .expect_err("expected 256th upvalue to return Diagnostic");
         assert!(
             err.message.contains("too many upvalues"),
             "expected too-many-upvalues error, got: {}",

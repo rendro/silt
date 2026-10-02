@@ -1,5 +1,6 @@
 //! VM error type.
 
+use crate::diagnostic::{Code, Diagnostic};
 use crate::source::Span;
 
 #[derive(Debug, Clone)]
@@ -33,69 +34,54 @@ impl VmError {
     }
 }
 
-/// The canonical "frame location" formatter used by `VmError::Display`.
-///
-/// Production CLIs (`silt run`, `silt test`, REPL) supply their own
-/// `format_frame` closure to `render_call_stack` so they can use file
-/// paths, lines and columns from the source map.  `VmError::Display` has
-/// no source map (it's a fallback formatter that may be invoked from
-/// arbitrary sinks), so it uses a path-free `"byte N"` shape — the
-/// offset the span holds — but it MUST go through
-/// the same `render_call_stack` helper as the production paths, applying
-/// the same `<module:...>`-keep filter and the same `"  -> name  at …"`
-/// line layout.  Any drift between this helper and `render_call_stack`
-/// would re-introduce the round-74 GAP (Display dropping module frames
-/// silently, plus a one-vs-two-space `at` separator divergence).
-pub fn vm_error_display_frame(_name: &str, span: &Span) -> String {
-    if span.is_in_source() {
-        format!("byte {}", span.start)
-    } else {
-        "<unknown location>".to_string()
+impl VmError {
+    /// The error as a diagnostic: the first line of the message is its
+    /// message; a later line that starts with `help: ` is help, and the
+    /// others are notes, a line continuing the note or help before it.
+    /// The labels are the call stack, innermost frame first. An error
+    /// with no span is about no place of the program, and has
+    /// [`Span::BUILTIN`].
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let mut lines = self.message.lines();
+        let head = lines.next().unwrap_or("");
+        let mut d = Diagnostic::error(Code::RuntimeError, self.span.unwrap_or(Span::BUILTIN), head);
+        // Which list the last body line went to.
+        let mut last_was_help = false;
+        let mut first = true;
+        for line in lines {
+            if let Some(help) = line.strip_prefix("help: ") {
+                d.help.push(help.to_string());
+                last_was_help = true;
+            } else if first {
+                d.notes.push(line.to_string());
+                last_was_help = false;
+            } else {
+                let last = if last_was_help {
+                    d.help.last_mut()
+                } else {
+                    d.notes.last_mut()
+                };
+                if let Some(last) = last {
+                    last.push('\n');
+                    last.push_str(line);
+                }
+            }
+            first = false;
+        }
+        d.labels = self
+            .call_stack
+            .iter()
+            .map(|(name, span)| (*span, name.clone()))
+            .collect();
+        d
     }
 }
 
+/// The message alone: a front door renders a runtime error through
+/// [`VmError::to_diagnostic`] and its source map, which give it a place.
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Canonicalize to the same `error[runtime]: <msg>` shape produced
-        // by `SourceError::Display` for runtime diagnostics. Production
-        // paths route around this via `SourceError::runtime_at` (round 36
-        // fix), but this Display is an attractive nuisance: any fallback
-        // `eprintln!("{e}")` on a bare VmError would previously re-emit
-        // the raw `"VM error: ..."` prefix, leaking an internal label to
-        // users. Matching SourceError's header means any such fallback
-        // produces a correctly-formed diagnostic instead of a second
-        // dialect. (Audit LATENT L3.)
-        //
-        // No span → no `-->` locator line. With one, the locator names
-        // the byte offset: without the source map there is no line, no
-        // column and no source snippet. Call-stack rendering delegates to the
-        // shared `render_call_stack` helper so the filter + line shape
-        // can never drift from `silt run` / `silt test` / REPL output.
-        // Round-74 GAP: previously this method had its own filter
-        // (`!name.starts_with('<')`, dropping `<module:...>` frames) and
-        // its own format string (one space before `at`), so a bare
-        // `format!("{e}")` would silently lose module-init provenance
-        // and use a different line shape than the production CLIs.
-        //
-        // NOTE: this Display intentionally does NOT do ANSI coloring —
-        // SourceError::Display gates color on `isatty(stderr)`, but a
-        // bare VmError may be formatted to arbitrary sinks (test logs,
-        // panic messages, operator audits). Plain text is the safe
-        // lowest-common-denominator for a fallback.
-        write!(f, "error[runtime]: {}", self.message)?;
-        if let Some(span) = self.span
-            && span.is_in_source()
-        {
-            write!(f, "\n --> <input> byte {}", span.start)?;
-        }
-        let stack_lines = render_call_stack(&self.call_stack, vm_error_display_frame);
-        if !stack_lines.is_empty() {
-            write!(f, "\ncall stack:")?;
-            for line in &stack_lines {
-                write!(f, "\n{line}")?;
-            }
-        }
-        Ok(())
+        write!(f, "error[runtime]: {}", self.message)
     }
 }
 

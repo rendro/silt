@@ -17,7 +17,7 @@ const WATCH_BANNER: &str = "\n[watch] Watching for changes...";
 /// --watch 2> watch.log`), this returns `""` so the literal escape bytes
 /// (`^[[2J^[[H`) are never written into the log. Honors `NO_COLOR` for
 /// parity with the rest of silt's terminal-control gating (see
-/// `src/errors.rs`'s `is_terminal`-based color decision).
+/// `diagnostic::use_color`'s `is_terminal`-based color decision).
 ///
 /// Behavior on a TTY is unchanged: the full sequence is emitted before
 /// every (re)run.

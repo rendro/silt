@@ -1,17 +1,10 @@
 use crate::ast::*;
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
 use crate::lexer::{SpannedToken, Token};
 use crate::source::{SourceFile, SourceName, Span};
 
-// ── Error type ───────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct ParseError {
-    pub message: String,
-    pub span: Span,
-}
-
-type Result<T> = std::result::Result<T, ParseError>;
+type Result<T> = std::result::Result<T, Diagnostic>;
 
 // ── Doc-comment scanner ──────────────────────────────────────────────
 //
@@ -461,7 +454,7 @@ fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
             ImportTarget::Module(m) => vec![(*m, *span, "import")],
             ImportTarget::Items(_, items) => items
                 .iter()
-                .map(|(item, _)| (*item, *span, "import"))
+                .map(|(item, item_span)| (*item, *item_span, "import"))
                 .collect(),
             ImportTarget::Alias(_, alias) => vec![(*alias, *span, "import")],
         },
@@ -535,7 +528,7 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
 /// declaration, or two declarations may not share it, so which one a use
 /// refers to never depends on their order. (Shadowing inside a function
 /// body is unaffected.)
-fn top_level_name_errors(decls: &[Decl], source: &SourceFile) -> Vec<ParseError> {
+fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
     let mut first: std::collections::HashMap<Symbol, (Span, &'static str)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
@@ -545,14 +538,18 @@ fn top_level_name_errors(decls: &[Decl], source: &SourceFile) -> Vec<ParseError>
                 continue;
             }
             match first.get(&name) {
-                Some(&(first_span, first_kind)) => errors.push(ParseError {
-                    message: format!(
-                        "'{name}' is bound twice at the top level: by the {first_kind} at line {} \
-                         and by the {kind} here — a top-level name can be bound only once",
-                        source.line_col(first_span.start).0
-                    ),
-                    span,
-                }),
+                Some(&(first_span, first_kind)) => errors.push(
+                    Diagnostic::error(
+                        Code::DuplicateTopLevel,
+                        span,
+                        format!(
+                            "'{name}' is bound twice at the top level: by the {first_kind} \
+                             and by the {kind} here"
+                        ),
+                    )
+                    .with_label(first_span, format!("first bound here, by the {first_kind}"))
+                    .with_note("a top-level name can be bound only once"),
+                ),
                 None => {
                     first.insert(name, (span, kind));
                 }
@@ -647,7 +644,7 @@ pub struct Parser {
     /// count errs on the high side. Checked against
     /// `MAX_EXPR_OPERATIONS` by `check_expr_height`.
     expr_height: usize,
-    errors: Vec<ParseError>,
+    errors: Vec<Diagnostic>,
     depth: usize,
     /// Depth guard for recovery-stub generation. When recovery fires inside
     /// an already-stubbed declaration (e.g., two back-to-back malformed
@@ -773,16 +770,17 @@ impl Parser {
     /// because the whole expression is what has to be split up.
     fn check_expr_height(&self, start: Span) -> Result<()> {
         if self.expr_height > MAX_EXPR_OPERATIONS {
-            return Err(ParseError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::NestingTooDeep,
+                start,
+                format!(
                     "expression is too deep: it is more than {MAX_EXPR_OPERATIONS} levels \
                      deep (each operator, pipe, call or field access in a chain adds a \
                      level, a method call `x.f()` adds two, and so does each enclosing \
                      bracket, call, list, string interpolation or `match`); split it up \
                      with intermediate `let` bindings"
                 ),
-                span: start,
-            });
+            ));
         }
         Ok(())
     }
@@ -923,10 +921,11 @@ impl Parser {
         if self.at(expected) {
             Ok(self.advance())
         } else {
-            Err(ParseError {
-                message: format!("expected {expected}, found {}", self.peek()),
-                span: self.span(),
-            })
+            Err(Diagnostic::error(
+                Code::ExpectedToken,
+                self.span(),
+                format!("expected {expected}, found {}", self.peek()),
+            ))
         }
     }
 
@@ -938,10 +937,11 @@ impl Parser {
                 self.advance();
                 Ok((name, span))
             }
-            _ => Err(ParseError {
-                message: format!("expected identifier, found {}", self.peek()),
-                span: self.span(),
-            }),
+            _ => Err(Diagnostic::error(
+                Code::ExpectedIdentifier,
+                self.span(),
+                format!("expected identifier, found {}", self.peek()),
+            )),
         }
     }
 
@@ -957,15 +957,16 @@ impl Parser {
 
     /// Build an "unclosed delimiter" error for a construct that uses commas
     /// to separate elements (list, tuple, map, set, call args, fn params).
-    fn delim_unclosed_err(&self, construct: &str, closer: char, opener_span: Span) -> ParseError {
-        ParseError {
-            message: format!(
-                "expected '{closer}' or ',' to continue {construct} starting at line {}, found {}",
-                self.line_of(opener_span),
+    fn delim_unclosed_err(&self, construct: &str, closer: char, opener_span: Span) -> Diagnostic {
+        Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!(
+                "expected '{closer}' or ',' to continue {construct}, found {}",
                 self.peek()
             ),
-            span: self.span(),
-        }
+        )
+        .with_label(opener_span, format!("the {construct} starts here"))
     }
 
     /// Build an "unclosed delimiter" error for a construct that does not
@@ -975,15 +976,16 @@ impl Parser {
         construct: &str,
         closer: char,
         opener_span: Span,
-    ) -> ParseError {
-        ParseError {
-            message: format!(
-                "expected '{closer}' to close {construct} starting at line {}, found {}",
-                self.line_of(opener_span),
+    ) -> Diagnostic {
+        Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!(
+                "expected '{closer}' to close {construct}, found {}",
                 self.peek()
             ),
-            span: self.span(),
-        }
+        )
+        .with_label(opener_span, format!("the {construct} starts here"))
     }
 
     /// True if the current token is a closing delimiter that is NOT the
@@ -1061,13 +1063,42 @@ impl Parser {
         if let Some(op) = opener {
             return Err(self.delim_unclosed_err(construct, closer, op));
         }
-        Err(ParseError {
-            message: format!(
+        Err(Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!(
                 "expected '{closer}' or ',' to continue {construct}, found {}",
                 self.peek()
             ),
-            span: self.span(),
-        })
+        ))
+    }
+
+    /// The error for a function type written `(A -> B)`, at its `->`,
+    /// with the quick fix that rewrites it to `Fn(A) -> B` when the rest
+    /// is a type and a `)`. `start` is the `(`; `param` is `A`.
+    fn arrow_fn_type_error(&mut self, start: Span, param: &TypeExpr) -> Diagnostic {
+        let err = Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!(
+                "expected ')' or ',' to continue tuple type, found {}",
+                self.peek()
+            ),
+        );
+        self.advance();
+        let Ok(ret) = self.parse_type_expr() else {
+            return err;
+        };
+        if !self.at(&Token::RParen) {
+            return err;
+        }
+        let close = self.span();
+        let text = |span: Span| &self.source.text[span.start_offset()..span.end_offset()];
+        let replacement = format!("Fn({}) -> {}", text(param.span), text(ret.span));
+        err.with_fix(
+            "Change `(a -> b)` to `Fn(a) -> b`",
+            vec![(start.to(close), replacement)],
+        )
     }
 
     fn save(&self) -> usize {
@@ -1090,10 +1121,7 @@ impl Parser {
             }
             self.skip_nl();
         }
-        if let Some(err) = top_level_name_errors(&decls, &self.source)
-            .into_iter()
-            .next()
-        {
+        if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
             return Err(err);
         }
         Ok(Program { decls })
@@ -1109,7 +1137,7 @@ impl Parser {
     /// a source of "trusted signature, unchecked body" so that later
     /// references to the stubbed name do not cascade into "undefined
     /// variable" errors (Option B).
-    pub fn parse_program_recovering(&mut self) -> (Program, Vec<ParseError>) {
+    pub fn parse_program_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut decls = Vec::new();
         self.skip_nl();
         while !self.at(&Token::Eof) {
@@ -1186,8 +1214,7 @@ impl Parser {
             }
             self.skip_nl();
         }
-        self.errors
-            .extend(top_level_name_errors(&decls, &self.source));
+        self.errors.extend(top_level_name_errors(&decls));
         (Program { decls }, std::mem::take(&mut self.errors))
     }
 
@@ -1204,7 +1231,7 @@ impl Parser {
     /// that starts a declaration is a second declaration on the line;
     /// any other token (`with`, `5`, `!`, ...) is left to the plain
     /// "expected declaration" error the next `parse_decl` reports.
-    fn same_line_decl_err(&self) -> Option<ParseError> {
+    fn same_line_decl_err(&self) -> Option<Diagnostic> {
         let starts_decl = matches!(
             self.peek(),
             Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
@@ -1292,10 +1319,11 @@ impl Parser {
                             _ => unreachable!("parse_let_decl always returns Decl::Let"),
                         }
                     }
-                    _ => Err(ParseError {
-                        message: "expected fn, type, or let after pub".into(),
-                        span: self.span(),
-                    }),
+                    _ => Err(Diagnostic::error(
+                        Code::ExpectedDeclaration,
+                        self.span(),
+                        "expected fn, type, or let after pub",
+                    )),
                 }
             }
             Token::Fn => Ok(Decl::Fn(self.parse_fn_decl()?)),
@@ -1305,15 +1333,17 @@ impl Parser {
             Token::Let => self.parse_let_decl(),
             _ => {
                 if self.at_double_slash() {
-                    return Err(ParseError {
-                        message: Self::DOUBLE_SLASH_HINT.into(),
-                        span: self.span(),
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        self.span(),
+                        Self::DOUBLE_SLASH_HINT,
+                    ));
                 }
-                Err(ParseError {
-                    message: format!("expected declaration, found {}", self.peek()),
-                    span: self.span(),
-                })
+                Err(Diagnostic::error(
+                    Code::ExpectedDeclaration,
+                    self.span(),
+                    format!("expected declaration, found {}", self.peek()),
+                ))
             }
         }
     }
@@ -1377,7 +1407,7 @@ impl Parser {
     ///
     /// Implements the depth guard: if we're already inside recovery, no
     /// new stubs are emitted for nested failures.
-    fn parse_fn_decl_recovering(&mut self) -> Result<(FnDecl, Option<ParseError>)> {
+    fn parse_fn_decl_recovering(&mut self) -> Result<(FnDecl, Option<Diagnostic>)> {
         // Depth guard: if we somehow re-entered during recovery (e.g. the
         // salvage path tried to keep parsing and hit another fn), bail to
         // the non-recovering path so the caller can handle it.
@@ -1422,7 +1452,7 @@ impl Parser {
         name_span: Span,
         span: Span,
         doc: Option<String>,
-    ) -> std::result::Result<FnDecl, Box<(FnDecl, ParseError)>> {
+    ) -> std::result::Result<FnDecl, Box<(FnDecl, Diagnostic)>> {
         // Try to parse params. On failure, emit a stub with empty params.
         let params = match self.parse_fn_params() {
             Ok(p) => p,
@@ -1581,11 +1611,11 @@ impl Parser {
                 self.advance();
                 let pattern = self.parse_simple_param_pattern()?;
                 if self.peek_skip_nl() == &Token::Colon {
-                    return Err(ParseError {
-                        message: "'type' parameter cannot carry a type annotation; write `type a`"
-                            .to_string(),
-                        span: self.span(),
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        self.span(),
+                        "'type' parameter cannot carry a type annotation; write `type a`",
+                    ));
                 }
                 params.push(Param {
                     kind: ParamKind::Type,
@@ -1601,12 +1631,11 @@ impl Parser {
                     // the innocent data param that follows. The reader
                     // then sees the arrow at the thing that needs to
                     // move, not at the thing sitting in a legal place.
-                    return Err(ParseError {
-                        message:
-                            "'type' parameters must come after all data parameters; move the `type` param to the end of the parameter list"
-                                .to_string(),
-                        span: type_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        type_span,
+                        "'type' parameters must come after all data parameters; move the `type` param to the end of the parameter list",
+                    ));
                 }
                 let pattern = self.parse_param_pattern()?;
                 let ty = if self.peek_skip_nl() == &Token::Colon {
@@ -1637,10 +1666,11 @@ impl Parser {
         let start = self.pos;
         self.parse_pattern().map_err(|err| {
             if self.pos == start && err.message.starts_with("expected pattern") {
-                ParseError {
-                    message: format!("expected parameter name, found {}", self.peek()),
-                    span: err.span,
-                }
+                Diagnostic::error(
+                    Code::ExpectedIdentifier,
+                    err.span,
+                    format!("expected parameter name, found {}", self.peek()),
+                )
             } else {
                 err
             }
@@ -1655,10 +1685,11 @@ impl Parser {
                 self.advance();
                 Ok(self.mk_pattern(PatternKind::Ident(name), start))
             }
-            _ => Err(ParseError {
-                message: format!("expected parameter name, found {}", self.peek()),
-                span: self.span(),
-            }),
+            _ => Err(Diagnostic::error(
+                Code::ExpectedIdentifier,
+                self.span(),
+                format!("expected parameter name, found {}", self.peek()),
+            )),
         }
     }
 
@@ -1761,14 +1792,15 @@ impl Parser {
             // enum variant may be a variant spelled in lower case.
             if fields.is_empty() && self.peek_skip_nl() != &Token::Colon {
                 let text = intern::resolve(name);
-                return Err(ParseError {
-                    message: format!(
+                return Err(Diagnostic::error(
+                    Code::ExpectedToken,
+                    name_span,
+                    format!(
                         "expected `:` after record field '{text}'; if '{text}' is meant as an \
                          enum variant, variant names start with an uppercase letter, e.g. `{}`",
                         capitalized(&text)
                     ),
-                    span: name_span,
-                });
+                ));
             }
             self.expect(&Token::Colon)?;
             let ty = self.parse_type_expr()?;
@@ -1944,30 +1976,28 @@ impl Parser {
                 // `trait` keyword. Each arg carries its own span now.
                 let arg_span = arg.span;
                 let TypeExprKind::Named(arg_sym) = &arg.kind else {
-                    return Err(ParseError {
-                        message: "trait declaration parameters must be lowercase type variables \
-                             (e.g. `trait TryInto(b) { ... }`)"
-                            .to_string(),
-                        span: arg_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        arg_span,
+                        "trait declaration parameters must be lowercase type variables \
+                             (e.g. `trait TryInto(b) { ... }`)",
+                    ));
                 };
                 let arg_str = intern::resolve(*arg_sym);
                 let first_char = arg_str.chars().next().unwrap_or('A');
                 if !first_char.is_lowercase() {
-                    return Err(ParseError {
-                        message: format!(
-                            "trait parameter '{arg_str}' must be a lowercase type variable"
-                        ),
-                        span: arg_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        arg_span,
+                        format!("trait parameter '{arg_str}' must be a lowercase type variable"),
+                    ));
                 }
                 if params.contains(arg_sym) {
-                    return Err(ParseError {
-                        message: format!(
-                            "duplicate type variable '{arg_str}' in trait declaration"
-                        ),
-                        span: arg_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        arg_span,
+                        format!("duplicate type variable '{arg_str}' in trait declaration"),
+                    ));
                 }
                 params.push(*arg_sym);
             }
@@ -2016,12 +2046,12 @@ impl Parser {
             // Supertrait bounds (`trait X: A for Int { ... }`) are not allowed
             // on impls — supertraits live on the trait decl only.
             if !supertraits.is_empty() {
-                return Err(ParseError {
-                    message: "supertrait bounds (`: Trait`) are only allowed on trait \
-                              declarations, not on trait impls"
-                        .to_string(),
+                return Err(Diagnostic::error(
+                    Code::InvalidDeclaration,
                     span,
-                });
+                    "supertrait bounds (`: Trait`) are only allowed on trait \
+                     declarations, not on trait impls",
+                ));
             }
             self.expect(&Token::Ident(intern::intern("for")))?;
             let target_span = self.span();
@@ -2039,11 +2069,11 @@ impl Parser {
                 TypeExprKind::Named(sym) => (sym, Vec::new()),
                 TypeExprKind::Generic(sym, args) => (sym, args),
                 _ => {
-                    return Err(ParseError {
-                        message: "trait impl target must be a named type (e.g. `Box` or `Box(a)`)"
-                            .to_string(),
-                        span: target_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        target_span,
+                        "trait impl target must be a named type (e.g. `Box` or `Box(a)`)",
+                    ));
                 }
             };
 
@@ -2056,32 +2086,34 @@ impl Parser {
             let mut target_param_names: Vec<Symbol> = Vec::new();
             for arg in &target_type_args {
                 let TypeExprKind::Named(arg_sym) = &arg.kind else {
-                    return Err(ParseError {
-                        message: "impl target arguments must be lowercase type variables; \
-                                  silt has no trait specialization"
-                            .to_string(),
-                        span: target_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        target_span,
+                        "impl target arguments must be lowercase type variables; \
+                                  silt has no trait specialization",
+                    ));
                 };
                 let arg_str = intern::resolve(*arg_sym);
                 let first_char = arg_str.chars().next().unwrap_or('A');
                 if !first_char.is_lowercase() {
-                    return Err(ParseError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        target_span,
+                        format!(
                             "impl target argument '{arg_str}' must be a lowercase type variable; \
                              silt has no trait specialization"
                         ),
-                        span: target_span,
-                    });
+                    ));
                 }
                 if target_param_names.contains(arg_sym) {
-                    return Err(ParseError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        target_span,
+                        format!(
                             "duplicate type variable '{arg_str}' in impl target; \
                              each binder must be distinct"
                         ),
-                        span: target_span,
-                    });
+                    ));
                 }
                 target_param_names.push(*arg_sym);
             }
@@ -2197,13 +2229,12 @@ impl Parser {
             }
         }
         if self.at(&Token::Eq) {
-            return Err(ParseError {
-                message: "associated-type defaults are not supported in v1; \
-                          declare the type abstractly (`type Item`) and bind it \
-                          in each impl"
-                    .to_string(),
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
                 span,
-            });
+                "associated-type defaults are not supported in v1",
+            )
+            .with_help("declare the type abstractly (`type Item`) and bind it in each impl"));
         }
         Ok(crate::ast::AssocTypeDecl {
             name,
@@ -2237,10 +2268,11 @@ impl Parser {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
-            return Err(ParseError {
-                message: "type nesting exceeds maximum depth".into(),
-                span: self.span(),
-            });
+            return Err(Diagnostic::error(
+                Code::NestingTooDeep,
+                self.span(),
+                "type nesting exceeds maximum depth",
+            ));
         }
         let result = self.parse_type_expr_inner();
         self.depth -= 1;
@@ -2320,13 +2352,14 @@ impl Parser {
                 Ok(ty) => format!("`{}`", crate::formatter::format_type_expr(&ty)),
                 Err(_) => "`Fn(...) -> ...`".to_string(),
             };
-            return Err(ParseError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::ExpectedType,
+                start,
+                format!(
                     "expected a type, found fn: a function type is written with `Fn`; \
                      did you mean {hint}?"
                 ),
-                span: start,
-            });
+            ));
         }
         // Tuple type: (A, B, ...)
         if self.at(&Token::LParen) {
@@ -2334,7 +2367,11 @@ impl Parser {
             let mut elems = Vec::new();
             self.skip_nl();
             while !self.at(&Token::RParen) {
-                elems.push(self.parse_type_expr()?);
+                let elem = self.parse_type_expr()?;
+                if elems.is_empty() && self.at(&Token::Arrow) {
+                    return Err(self.arrow_fn_type_error(start, &elem));
+                }
+                elems.push(elem);
                 self.expect_list_sep("tuple type", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
@@ -2363,10 +2400,11 @@ impl Parser {
                 self.skip_nl();
                 let fty = self.parse_type_expr()?;
                 if !seen.insert(fname) {
-                    return Err(ParseError {
-                        message: format!("duplicate field '{}' in anon record type", fname),
-                        span: fname_span,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::DuplicateField,
+                        fname_span,
+                        format!("duplicate field '{}' in anon record type", fname),
+                    ));
                 }
                 fields.push((fname, fty));
                 self.expect_list_sep("anon record type fields", '}', &Token::RBrace)?;
@@ -2499,25 +2537,23 @@ impl Parser {
     /// top-level declaration) on the same line. Statements are separated
     /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
     /// are rejected here instead of being read as two statements.
-    fn same_line_err(&self, what: &str) -> ParseError {
+    fn same_line_err(&self, what: &str) -> Diagnostic {
         // `let r = if x { ... }`: the statement ended at a foreign keyword
         // read as an identifier, so point at the silt equivalent instead.
         if let Some((Token::Ident(prev), prev_span)) =
             self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
             && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
         {
-            return ParseError {
-                message: hint.into(),
-                span: *prev_span,
-            };
+            return Diagnostic::error(Code::UnsupportedSyntax, *prev_span, hint);
         }
-        ParseError {
-            message: format!(
+        Diagnostic::error(
+            Code::MissingNewline,
+            self.span(),
+            format!(
                 "expected a newline before '{}': each {what} must start on its own line",
                 self.peek()
             ),
-            span: self.span(),
-        }
+        )
     }
 
     /// G1 hint table: messages for C-family control-flow keywords that
@@ -2593,10 +2629,7 @@ impl Parser {
                 // erroneous construct: an expression-start token (paren,
                 // ident, literal, unary, brace).
                 if Self::g1_next_starts_expression(&next) {
-                    return Err(ParseError {
-                        message: msg.into(),
-                        span,
-                    });
+                    return Err(Diagnostic::error(Code::UnsupportedSyntax, span, msg));
                 }
             }
 
@@ -2608,12 +2641,13 @@ impl Parser {
             // `x = y` expression is already a parse error today ("expected
             // expression, found ="), so we're strictly improving the message.
             if matches!(next, Token::Eq) {
-                return Err(ParseError {
-                    message: format!(
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    span,
+                    format!(
                         "'let' bindings in silt are immutable — rebind with 'let {text} = ...' in a new scope"
                     ),
-                    span,
-                });
+                ));
             }
         }
 
@@ -2621,12 +2655,12 @@ impl Parser {
         // an `if ... { } else { }` ported from another language: `if`
         // parses as an identifier and the statement ends before `else`.
         if self.at(&Token::Else) {
-            return Err(ParseError {
-                message: "'else' only follows a 'when' condition; silt has no 'if' keyword — \
-                          for a conditional value use 'match cond { true -> ..., false -> ... }'"
-                    .into(),
-                span: self.span(),
-            });
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                "'else' only follows a 'when' condition; silt has no 'if' keyword — \
+                          for a conditional value use 'match cond { true -> ..., false -> ... }'",
+            ));
         }
 
         match self.peek().clone() {
@@ -2779,10 +2813,11 @@ impl Parser {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
-            return Err(ParseError {
-                message: "expression nesting exceeds maximum depth".into(),
-                span: self.span(),
-            });
+            return Err(Diagnostic::error(
+                Code::NestingTooDeep,
+                self.span(),
+                "expression nesting exceeds maximum depth",
+            ));
         }
         // Height accounting (see `expr_height`): start from zero for this
         // expression's own operands, then fold the finished height into
@@ -2970,10 +3005,11 @@ impl Parser {
                                          import the type and use '{ty} {{ ... }}'"
                                     ),
                                 };
-                                return Err(ParseError {
+                                return Err(Diagnostic::error(
+                                    Code::UnsupportedSyntax,
+                                    field_span,
                                     message,
-                                    span: field_span,
-                                });
+                                ));
                             }
                         }
                         let span = left.span;
@@ -3374,15 +3410,17 @@ impl Parser {
             // select is no longer a keyword; use channel.select([...])
             _ => {
                 if self.at_double_slash() {
-                    return Err(ParseError {
-                        message: Self::DOUBLE_SLASH_HINT.into(),
-                        span: self.span(),
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        self.span(),
+                        Self::DOUBLE_SLASH_HINT,
+                    ));
                 }
-                Err(ParseError {
-                    message: format!("expected expression, found {}", self.peek()),
-                    span: self.span(),
-                })
+                Err(Diagnostic::error(
+                    Code::ExpectedExpression,
+                    self.span(),
+                    format!("expected expression, found {}", self.peek()),
+                ))
             }
         }
     }
@@ -3418,10 +3456,11 @@ impl Parser {
                     break;
                 }
                 _ => {
-                    return Err(ParseError {
-                        message: "invalid expression in string interpolation; use \\{ for a literal brace".into(),
-                        span: self.span(),
-                    });
+                    return Err(Diagnostic::error(
+                        Code::ExpectedExpression,
+                        self.span(),
+                        "invalid expression in string interpolation; use \\{ for a literal brace",
+                    ));
                 }
             }
         }
@@ -3471,12 +3510,12 @@ impl Parser {
         // accessors users should reach for instead.
         let _ = left;
         let bracket_span = self.span();
-        Err(ParseError {
-            message: "postfix indexing is not supported; use list.get(xs, i), \
-                      map.get(m, k), or string.slice(s, i, i + 1)"
-                .to_string(),
-            span: bracket_span,
-        })
+        Err(Diagnostic::error(
+            Code::UnsupportedSyntax,
+            bracket_span,
+            "postfix indexing is not supported; use list.get(xs, i), \
+                      map.get(m, k), or string.slice(s, i, i + 1)",
+        ))
     }
 
     // ── Trailing closures ────────────────────────────────────────────
@@ -3725,11 +3764,11 @@ impl Parser {
                 break;
             }
             if self.at(&Token::Type) {
-                return Err(ParseError {
-                    message: "a closure cannot take a 'type' parameter; declare a named function"
-                        .to_string(),
-                    span: self.span(),
-                });
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    self.span(),
+                    "a closure cannot take a 'type' parameter; declare a named function",
+                ));
             }
             let pattern = self.parse_param_pattern()?;
             let ty = if self.peek_skip_nl() == &Token::Colon {
@@ -3753,13 +3792,14 @@ impl Parser {
                 self.advance();
                 self.skip_nl();
             } else {
-                return Err(ParseError {
-                    message: format!(
+                return Err(Diagnostic::error(
+                    Code::UnclosedDelimiter,
+                    self.span(),
+                    format!(
                         "expected '->' or ',' to continue closure parameter list, found {}",
                         self.peek()
                     ),
-                    span: self.span(),
-                });
+                ));
             }
         }
         Ok(params)
@@ -3985,11 +4025,11 @@ impl Parser {
                 self.advance();
                 self.skip_nl();
             } else if !self.at(&Token::RBrace) {
-                return Err(ParseError {
-                    message: "expected ',' or '}' after spread expression in anon record literal"
-                        .into(),
-                    span: self.span(),
-                });
+                return Err(Diagnostic::error(
+                    Code::ExpectedToken,
+                    self.span(),
+                    "expected ',' or '}' after spread expression in anon record literal",
+                ));
             }
         }
         let mut fields: Vec<(Symbol, Expr)> = Vec::new();
@@ -3997,22 +4037,22 @@ impl Parser {
         while !self.at(&Token::RBrace) {
             self.skip_nl();
             if self.at(&Token::DotDotDot) {
-                return Err(ParseError {
-                    message:
-                        "v1 row polymorphism allows only one spread head per anon record literal"
-                            .into(),
-                    span: self.span(),
-                });
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    self.span(),
+                    "v1 row polymorphism allows only one spread head per anon record literal",
+                ));
             }
             let (name, name_span) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             self.skip_nl();
             let value = self.parse_expr()?;
             if !seen.insert(name) {
-                return Err(ParseError {
-                    message: format!("duplicate field '{}' in anon record literal", name),
-                    span: name_span,
-                });
+                return Err(Diagnostic::error(
+                    Code::DuplicateField,
+                    name_span,
+                    format!("duplicate field '{}' in anon record literal", name),
+                ));
             }
             fields.push((name, value));
             self.expect_list_sep("anon record literal fields", '}', &Token::RBrace)?;
@@ -4026,10 +4066,11 @@ impl Parser {
         self.skip_nl();
         while !self.at(&Token::RBrace) {
             if self.at(&Token::DotDot) || self.at(&Token::Dot) {
-                return Err(ParseError {
-                    message: "spread syntax is not supported; use `value.{ field: expr }` for record updates".into(),
-                    span: self.span(),
-                });
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    self.span(),
+                    "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                ));
             }
             let (name, _) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
@@ -4047,10 +4088,11 @@ impl Parser {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
-            return Err(ParseError {
-                message: "pattern nesting exceeds maximum depth".into(),
-                span: self.span(),
-            });
+            return Err(Diagnostic::error(
+                Code::NestingTooDeep,
+                self.span(),
+                "pattern nesting exceeds maximum depth",
+            ));
         }
         let result = self.parse_pattern_inner();
         self.depth -= 1;
@@ -4099,16 +4141,18 @@ impl Parser {
                         self.advance();
                         Ok(PatternKind::Range(start, -m))
                     }
-                    _ => Err(ParseError {
-                        message: "expected integer after - in range pattern".into(),
-                        span: self.span(),
-                    }),
+                    _ => Err(Diagnostic::error(
+                        Code::ExpectedPattern,
+                        self.span(),
+                        "expected integer after - in range pattern",
+                    )),
                 }
             }
-            _ => Err(ParseError {
-                message: "expected integer end for range pattern".into(),
-                span: self.span(),
-            }),
+            _ => Err(Diagnostic::error(
+                Code::ExpectedPattern,
+                self.span(),
+                "expected integer end for range pattern",
+            )),
         }
     }
 
@@ -4129,16 +4173,18 @@ impl Parser {
                         self.advance();
                         Ok(PatternKind::FloatRange(start, -m))
                     }
-                    _ => Err(ParseError {
-                        message: "expected float after - in range pattern".into(),
-                        span: self.span(),
-                    }),
+                    _ => Err(Diagnostic::error(
+                        Code::ExpectedPattern,
+                        self.span(),
+                        "expected float after - in range pattern",
+                    )),
                 }
             }
-            _ => Err(ParseError {
-                message: "expected float end for range pattern".into(),
-                span: self.span(),
-            }),
+            _ => Err(Diagnostic::error(
+                Code::ExpectedPattern,
+                self.span(),
+                "expected float end for range pattern",
+            )),
         }
     }
 
@@ -4157,13 +4203,14 @@ impl Parser {
                 Some(m) => format!("{}.{}", intern::resolve(m), intern::resolve(name)),
                 None => intern::resolve(name),
             };
-            return Err(ParseError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                format!(
                     "nested qualifiers are not supported in patterns ('{head}.' has more than one segment); \
                      use a single 'module.Name' qualifier"
                 ),
-                span: self.span(),
-            });
+            ));
         }
         Ok(())
     }
@@ -4280,16 +4327,17 @@ impl Parser {
                 // never errored).
                 if self.at(&Token::Dot) {
                     self.advance();
-                    let (variant, _) = self.expect_ident()?;
+                    let (variant, variant_span) = self.expect_ident()?;
                     if !is_constructor(variant) {
-                        return Err(ParseError {
-                            message: format!(
+                        return Err(Diagnostic::error(
+                            Code::ExpectedIdentifier,
+                            variant_span,
+                            format!(
                                 "expected a variant name after '{}.', found '{}'",
                                 intern::resolve(name),
                                 intern::resolve(variant)
                             ),
-                            span: self.span(),
-                        });
+                        ));
                     }
                     module = Some(name);
                     name = variant;
@@ -4307,16 +4355,17 @@ impl Parser {
                 // cannot change the meaning of any accepted program.
                 if self.at(&Token::Dot) {
                     self.advance();
-                    let (type_name, _) = self.expect_ident()?;
+                    let (type_name, type_name_span) = self.expect_ident()?;
                     if !is_constructor(type_name) {
-                        return Err(ParseError {
-                            message: format!(
+                        return Err(Diagnostic::error(
+                            Code::ExpectedIdentifier,
+                            type_name_span,
+                            format!(
                                 "expected a type or variant name after '{}.' in pattern, found '{}'",
                                 intern::resolve(name),
                                 intern::resolve(type_name)
                             ),
-                            span: self.span(),
-                        });
+                        ));
                     }
                     let module = Some(name);
                     self.reject_nested_pattern_qualifier(module, type_name)?;
@@ -4460,10 +4509,11 @@ impl Parser {
                             s
                         }
                         _ => {
-                            return Err(ParseError {
-                                message: "expected string key in map pattern".into(),
-                                span: self.span(),
-                            });
+                            return Err(Diagnostic::error(
+                                Code::ExpectedPattern,
+                                self.span(),
+                                "expected string key in map pattern",
+                            ));
                         }
                     };
                     self.expect(&Token::Colon)?;
@@ -4497,10 +4547,11 @@ impl Parser {
                             Ok(mk(PatternKind::Float(-n)))
                         }
                     }
-                    _ => Err(ParseError {
-                        message: "expected number after -".into(),
-                        span: self.span(),
-                    }),
+                    _ => Err(Diagnostic::error(
+                        Code::ExpectedPattern,
+                        self.span(),
+                        "expected number after -",
+                    )),
                 }
             }
             Token::Caret => {
@@ -4510,16 +4561,18 @@ impl Parser {
                         self.advance();
                         Ok(mk(PatternKind::Pin(name)))
                     }
-                    _ => Err(ParseError {
-                        message: "expected identifier after ^ in pin pattern".into(),
-                        span: self.span(),
-                    }),
+                    _ => Err(Diagnostic::error(
+                        Code::ExpectedIdentifier,
+                        self.span(),
+                        "expected identifier after ^ in pin pattern",
+                    )),
                 }
             }
-            _ => Err(ParseError {
-                message: format!("expected pattern, found {}", self.peek()),
-                span: self.span(),
-            }),
+            _ => Err(Diagnostic::error(
+                Code::ExpectedPattern,
+                self.span(),
+                format!("expected pattern, found {}", self.peek()),
+            )),
         }
     }
 
@@ -4563,29 +4616,31 @@ fn check_type_decl_names(name: Symbol, name_span: Span, body: &TypeBody) -> Resu
         .is_some_and(char::is_lowercase);
     if starts_lowercase {
         let text = intern::resolve(name);
-        return Err(ParseError {
-            message: format!(
+        return Err(Diagnostic::error(
+            Code::InvalidDeclaration,
+            name_span,
+            format!(
                 "type name '{text}' must start with an uppercase letter, e.g. `type {}`: \
                  a lowercase name where a type is expected is a type variable, so this \
                  type could never be referred to",
                 capitalized(&text)
             ),
-            span: name_span,
-        });
+        ));
     }
     if let TypeBody::Enum(variants) = body {
         for variant in variants {
             if !is_constructor(variant.name) {
                 let text = intern::resolve(variant.name);
-                return Err(ParseError {
-                    message: format!(
+                return Err(Diagnostic::error(
+                    Code::InvalidDeclaration,
+                    variant.name_span,
+                    format!(
                         "enum variant '{text}' must start with an uppercase letter, e.g. `{}`: \
                          a lowercase name in a pattern binds a variable, so this variant \
                          could never be matched",
                         capitalized(&text)
                     ),
-                    span: variant.name_span,
-                });
+                ));
             }
         }
     }
@@ -5077,14 +5132,14 @@ fn main() {
 
     // ── Error-recovery helpers ──────────────────────────────────────
 
-    fn parse_err(input: &str) -> ParseError {
+    fn parse_err(input: &str) -> Diagnostic {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
         Parser::new(tokens, input).parse_program().unwrap_err()
     }
 
-    fn parse_recovering(input: &str) -> (Program, Vec<ParseError>) {
+    fn parse_recovering(input: &str) -> (Program, Vec<Diagnostic>) {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
@@ -5114,15 +5169,19 @@ fn main() {
         assert!(
             errs[0]
                 .message
-                .contains("by the import at line 1 and by the import here")
+                .contains("by the import and by the import here")
         );
         assert!(
             errs[1]
                 .message
-                .contains("by the import at line 1 and by the function here")
+                .contains("by the import and by the function here")
         );
-        // The second `x` is the function's name, on line 3.
+        // Each error points at the second binder: the item `x` of the
+        // second import, then the function's name on line 3; the label
+        // points at the first binder, the item `x` of the first import.
+        assert_eq!(errs[0].span.start, 26);
         assert_eq!(errs[1].span.start, 33);
+        assert_eq!(errs[1].labels[0].0.start, 11);
     }
 
     #[test]

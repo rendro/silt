@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: parse error at bad.silt:4:
+-- stderr-contains: --> bad.silt:4:
 -- stderr-contains: --> bad.silt:4:
 -- stderr-contains:  4 | }
 import bad

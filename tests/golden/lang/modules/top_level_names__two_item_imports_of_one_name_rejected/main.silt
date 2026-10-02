@@ -3,8 +3,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[parse]
--- stderr-contains: 'double' is bound twice at the top level: by the import at line 8 and by the import here
--- stderr-contains: main.silt:9:1
+-- stderr-contains: 'double' is bound twice at the top level: by the import and by the import here
+-- stderr-contains: main.silt:9:12
 import a.{ double }
 import b.{ double }
 
