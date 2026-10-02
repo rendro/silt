@@ -385,3 +385,31 @@ fn each_importer_of_a_missing_module_gets_its_own_error() {
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A workspace opened through a symbolic link: the diagnostics go to the
+/// open document's URI (the link's spelling), not to the indexed
+/// canonical one. Several servers, since the bug depended on hash order.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_workspace_publishes_to_the_open_uri() {
+    let main = "import helper\n\nfn main() {\n  println(\"{helper.twice(missing)}\")\n}\n";
+    let real = project("real", &[("helper.silt", HELPER), ("main.silt", main)]);
+    let link = real.with_file_name(format!(
+        "{}_link",
+        real.file_name().and_then(|n| n.to_str()).expect("name")
+    ));
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    let main_uri = uri(&link.join("main.silt"));
+    for _ in 0..4 {
+        let mut client = LspClient::spawn_with_root(Some(&uri(&link)));
+        let publish = client.did_open_and_wait(&main_uri, main);
+        assert!(
+            messages(&publish).iter().any(|m| m.contains("missing")),
+            "the open document gets its error: {publish}"
+        );
+        client.shutdown();
+    }
+    let _ = fs::remove_file(&link);
+    let _ = fs::remove_dir_all(&real);
+}

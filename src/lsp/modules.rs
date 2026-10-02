@@ -94,13 +94,19 @@ impl Server {
         })
     }
 
-    /// The URI of the file at `path`: the document's, when one names it.
+    /// The URI of the file at `path`: the open document's when one names
+    /// it, else an indexed one's.
     pub(super) fn uri_for_path(&self, path: &Path) -> Option<Uri> {
         let key = path_key(path);
-        self.documents
-            .iter()
-            .find(|(_, doc)| doc.path == path || path_key(&doc.path) == key)
-            .map(|(uri, _)| uri.clone())
+        let named = |doc: &Document| doc.path == path || doc.key == key;
+        let found = |open: bool| {
+            self.documents
+                .iter()
+                .find(|(_, doc)| doc.open == open && named(doc))
+                .map(|(uri, _)| uri.clone())
+        };
+        found(true)
+            .or_else(|| found(false))
             .or_else(|| super::path_to_file_uri(path))
     }
 }

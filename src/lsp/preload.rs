@@ -134,7 +134,9 @@ fn load_file(server: &mut Server, path: &Path) {
         }
     };
 
-    let uri = match path_to_file_uri(path) {
+    // The URI spells the path as the client's root does (through a
+    // symbolic link, say), as the client names the documents it opens.
+    let uri = match file_uri(path) {
         Some(u) => u,
         None => {
             eprintln!(
@@ -166,7 +168,11 @@ fn load_file(server: &mut Server, path: &Path) {
 /// containing a space or non-ASCII character, so preload silently
 /// skipped those files.
 pub fn path_to_file_uri(path: &Path) -> Option<Uri> {
-    let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    file_uri(&fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// The `file://` URI of the absolute path `abs`, spelled as given.
+fn file_uri(abs: &Path) -> Option<Uri> {
     let s = abs.to_str()?;
 
     // On Unix, absolute paths start with `/`; LSP wants `file:///path`.

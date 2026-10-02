@@ -49,6 +49,8 @@ pub(super) struct Document {
     pub(super) source: SourceFile,
     /// The file the document's URI names.
     pub(super) path: PathBuf,
+    /// `path` as a file key (canonical when it exists), computed once.
+    pub(super) key: PathBuf,
     /// Whether the editor has the document open. A document that is not
     /// open is a workspace file indexed for the cross-file features: its
     /// declarations as parsed, without types and without diagnostics.

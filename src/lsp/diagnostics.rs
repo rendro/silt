@@ -80,6 +80,7 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
         .unwrap_or_default();
     Document {
         source: SourceFile::new(SourceName::Path(path.clone()), text),
+        key: path_key(&path),
         path,
         open: false,
         module: None,
@@ -105,6 +106,7 @@ impl Server {
             .entry(uri.clone())
             .or_insert_with(|| Document {
                 source: SourceFile::new(SourceName::Overlay(path.clone()), "".into()),
+                key: path_key(&path),
                 path: path.clone(),
                 open: true,
                 module: None,
@@ -234,14 +236,19 @@ impl Server {
             .documents
             .values()
             .filter(|doc| doc.open)
-            .map(|doc| path_key(&doc.path))
+            .map(|doc| doc.key.clone())
             .collect();
 
-        let uris_by_key: HashMap<PathBuf, Uri> = self
-            .documents
-            .iter()
-            .map(|(uri, doc)| (path_key(&doc.path), uri.clone()))
-            .collect();
+        // The URI of each file: an open document's when it has one (a
+        // workspace file can be indexed under another spelling of the
+        // same file, through a symbolic link).
+        let mut uris_by_key: HashMap<PathBuf, Uri> = HashMap::new();
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| !doc.open) {
+            uris_by_key.insert(doc.key.clone(), uri.clone());
+        }
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| doc.open) {
+            uris_by_key.insert(doc.key.clone(), uri.clone());
+        }
         let mut diagnostics: HashMap<Uri, Vec<Diagnostic>> = HashMap::new();
         let mut analysed: Vec<(Uri, ModuleRef)> = Vec::new();
         for (dir, uris) in &by_project {
