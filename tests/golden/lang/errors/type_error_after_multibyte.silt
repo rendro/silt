@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A type error after multi-byte characters on the same line gets the
+-- column of the expression, counted in characters, as the CLI prints it
+-- (see lsp/type_error_after_multibyte).
+
+fn main() {
+  let t = ("é😀", 1 + true)
+  println("{t}")
+}

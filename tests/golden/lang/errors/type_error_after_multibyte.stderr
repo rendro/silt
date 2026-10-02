@@ -1,0 +1,5 @@
+error[type]: operator '+' requires Int or Float, got 'Bool'
+ --> type_error_after_multibyte.silt:9:22
+   |
+ 9 |   let t = ("é😀", 1 + true)
+   |                       ^ operator '+' requires Int or Float, got 'Bool'
