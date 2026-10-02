@@ -1,0 +1,7 @@
+-- verdict: same
+-- In the dependency, `util` is the alias of its helper module and
+-- `helper` the alias of its util module.
+import sb
+fn main() {
+  println(sb.both())
+}
