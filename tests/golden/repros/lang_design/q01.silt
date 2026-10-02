@@ -1,7 +1,7 @@
 -- verdict: same
 import int
 
-fn total(a: String, b: String) -> Result(Int, ParseError) {
+fn total(a: String, b: String) -> Result(Int, int.ParseError) {
   let n = 1 + int.parse(a)?
   Ok(n)
 }

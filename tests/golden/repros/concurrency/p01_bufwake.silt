@@ -15,7 +15,7 @@ fn main() {
     match n < 6 {
       true -> {
         match channel.receive(ch) {
-          Message(v) -> println("got {v}")
+          channel.Message(v) -> println("got {v}")
           _ -> println("other")
         }
         loop(n + 1)

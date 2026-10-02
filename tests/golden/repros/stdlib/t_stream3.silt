@@ -9,7 +9,7 @@ fn main() {
   let out = stream.from_list([1, 2, 3])
     |> stream.map(fn(x) {
       match channel.receive(gate) {
-        Message(v) -> x + v
+        channel.Message(v) -> x + v
         _ -> 0 - 1
       }
     })

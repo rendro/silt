@@ -22,8 +22,8 @@ fn program() {
   let consumer = task.spawn({ ->
     loop total = 0 {
       match channel.receive(ch) {
-        Message(val) -> loop(total + val)
-        Closed -> total
+        channel.Message(val) -> loop(total + val)
+        channel.Closed -> total
         _ -> total
       }
     }

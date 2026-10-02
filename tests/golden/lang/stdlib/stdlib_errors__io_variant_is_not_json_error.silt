@@ -2,7 +2,8 @@
 -- exit: 1
 -- stderr-contains: error[type]
 import io
+import json
 fn main() {
-  let e: JsonError = IoNotFound("x")
+  let e: json.JsonError = io.IoNotFound("x")
   println("unreachable")
 }

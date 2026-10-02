@@ -13,14 +13,14 @@ fn main() {
     time.sleep(time.ms(300))
     x
   }
-  match channel.select([Recv(idle), Recv(out)]) {
-    (_, Message(v)) -> println("first {v}")
-    (_, Closed) -> println("closed")
+  match channel.select([channel.Recv(idle), channel.Recv(out)]) {
+    (_, channel.Message(v)) -> println("first {v}")
+    (_, channel.Closed) -> println("closed")
     _ -> println("other")
   }
-  match channel.select([Recv(out), Recv(idle)]) {
-    (_, Message(v)) -> println("second {v}")
-    (_, Closed) -> println("closed")
+  match channel.select([channel.Recv(out), channel.Recv(idle)]) {
+    (_, channel.Message(v)) -> println("second {v}")
+    (_, channel.Closed) -> println("closed")
     _ -> println("other")
   }
 }

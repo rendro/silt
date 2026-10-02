@@ -7,7 +7,7 @@
 -- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, ParseError)'
 import int
 
-fn f() -> Result(Int, ParseError) {
+fn f() -> Result(Int, int.ParseError) {
   Ok(int.parse("1") + int.parse("2")?)
 }
 

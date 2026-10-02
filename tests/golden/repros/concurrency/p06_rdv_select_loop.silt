@@ -5,7 +5,7 @@ import time
 
 fn flag(done) {
   match channel.try_receive(done) {
-    Message(_) -> 1
+    channel.Message(_) -> 1
     _ -> 0
   }
 }
@@ -16,8 +16,8 @@ fn one_round() {
   let gate = channel.new()
   let done = channel.new(4)
   let r = task.spawn(fn() {
-    match channel.select([Recv(a), Recv(b)]) {
-      (_, Message(v)) -> v
+    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+      (_, channel.Message(v)) -> v
       _ -> 0
     }
   })

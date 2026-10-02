@@ -11,7 +11,7 @@ fn main() {
   -- First receiver: gets cancelled. Its waker stays at HEAD of FIFO.
   let dead = task.spawn({ ->
     match channel.receive(ch) {
-      Message(_v) -> 1
+      channel.Message(_v) -> 1
       _ -> -1
     }
   })
@@ -19,7 +19,7 @@ fn main() {
   -- Second receiver: real, behind `dead` in FIFO.
   let real = task.spawn({ ->
     match channel.receive(ch) {
-      Message(v) -> v
+      channel.Message(v) -> v
       _ -> -1
     }
   })

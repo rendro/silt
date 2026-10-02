@@ -3,7 +3,7 @@ import json
 fn program() {
   match json.parse_map("[1, 2, 3]", String) {
     Ok(_) -> "unexpected"
-    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(json.JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
     Err(e) -> e.message()
   }
 }

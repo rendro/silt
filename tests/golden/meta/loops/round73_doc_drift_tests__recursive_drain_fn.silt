@@ -2,11 +2,11 @@ import channel
 fn process(v) { println("{v}") }
 fn drain(ch) {
   match channel.receive(ch) {
-    Message(val) -> {
+    channel.Message(val) -> {
       process(val)
       drain(ch)
     }
-    Closed -> ()
+    channel.Closed -> ()
     _ -> drain(ch)
   }
 }

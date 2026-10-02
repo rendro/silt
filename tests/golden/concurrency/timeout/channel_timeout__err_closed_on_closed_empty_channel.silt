@@ -6,8 +6,8 @@ fn main() {
   channel.close(ch)
   let r = match channel.recv_timeout(ch, time.ms(500)) {
     Ok(_) -> "ok"
-    Err(ChannelTimeout) -> "timeout"
-    Err(ChannelClosed) -> "closed"
+    Err(channel.ChannelTimeout) -> "timeout"
+    Err(channel.ChannelClosed) -> "closed"
   }
   println(r)
 }

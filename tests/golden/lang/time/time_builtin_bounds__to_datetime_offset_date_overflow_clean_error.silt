@@ -6,7 +6,7 @@
 import time
 fn main() {
   -- 150_000_000_000 minutes is about 285_388 years: past chrono's max year
-  let inst = Instant { epoch_ns: 0 }
+  let inst = time.Instant { epoch_ns: 0 }
   let dt = time.to_datetime(inst, 150000000000)
   println(dt.date.year)
 }

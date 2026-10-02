@@ -29,10 +29,10 @@ fn program() {
   task.join(w2)
 
   -- Collect 4 results
-  when let Message(a) = channel.receive(results) else { panic("pattern did not match") }
-  when let Message(b) = channel.receive(results) else { panic("pattern did not match") }
-  when let Message(c) = channel.receive(results) else { panic("pattern did not match") }
-  when let Message(d) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(a) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(b) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(c) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(d) = channel.receive(results) else { panic("pattern did not match") }
 
   -- Each original value is processed exactly once.
   -- Strip the worker prefix and sum the base values.

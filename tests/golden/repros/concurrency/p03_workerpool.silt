@@ -8,7 +8,7 @@ fn collect(ch, n, acc) {
     0 -> acc
     _ -> {
       match channel.receive(ch) {
-        Message(v) -> collect(ch, n - 1, acc + v)
+        channel.Message(v) -> collect(ch, n - 1, acc + v)
         _ -> acc
       }
     }

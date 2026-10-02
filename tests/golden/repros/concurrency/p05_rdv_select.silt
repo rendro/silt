@@ -9,9 +9,9 @@ fn main() {
   let done = channel.new(4)
   -- one receiver, takes exactly ONE message from either a or b, then exits
   let r = task.spawn(fn() {
-    match channel.select([Recv(a), Recv(b)]) {
-      (^a, Message(v)) -> "r took a:{v}"
-      (^b, Message(v)) -> "r took b:{v}"
+    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+      (^a, channel.Message(v)) -> "r took a:{v}"
+      (^b, channel.Message(v)) -> "r took b:{v}"
       _ -> "r other"
     }
   })
@@ -23,7 +23,7 @@ fn main() {
   -- rendezvous: exactly one sender can have completed
   loop _ = () {
     match channel.try_receive(done) {
-      Message(m) -> { println(m)  loop(()) }
+      channel.Message(m) -> { println(m)  loop(()) }
       _ -> ()
     }
   }

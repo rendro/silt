@@ -11,7 +11,7 @@ type Todo {
 
 fn process(t: Todo) -> Todo { t }
 
-fn fetch_todo(url: String) -> Result(Todo, HttpError) {
+fn fetch_todo(url: String) -> Result(Todo, http.HttpError) {
   let resp = http.get(url)?
   let _parsed = resp.body
     |> json.parse(Todo)

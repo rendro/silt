@@ -11,17 +11,17 @@ fn program() {
   let t1 = task.spawn({ ->
     -- Send ping, wait for pong, repeat
     channel.send(ping, 1)
-    when let Message(v1) = channel.receive(pong) else { panic("pattern did not match") }
+    when let channel.Message(v1) = channel.receive(pong) else { panic("pattern did not match") }
     channel.send(ping, v1 + 1)
-    when let Message(v2) = channel.receive(pong) else { panic("pattern did not match") }
+    when let channel.Message(v2) = channel.receive(pong) else { panic("pattern did not match") }
     v2
   })
 
   let t2 = task.spawn({ ->
     -- Receive ping, send pong, repeat
-    when let Message(v1) = channel.receive(ping) else { panic("pattern did not match") }
+    when let channel.Message(v1) = channel.receive(ping) else { panic("pattern did not match") }
     channel.send(pong, v1 + 1)
-    when let Message(v2) = channel.receive(ping) else { panic("pattern did not match") }
+    when let channel.Message(v2) = channel.receive(ping) else { panic("pattern did not match") }
     channel.send(pong, v2 + 1)
   })
 

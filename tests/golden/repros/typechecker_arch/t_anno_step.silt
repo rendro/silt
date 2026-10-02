@@ -1,3 +1,5 @@
 -- verdict: same
-fn f(x: Step) -> Int { 1 }
+import list
+
+fn f(x: list.Step) -> Int { 1 }
 fn main() { println("ok") }

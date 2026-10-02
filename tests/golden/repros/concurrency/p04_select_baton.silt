@@ -8,9 +8,9 @@ fn main() {
   let b = channel.new(4)
   -- R1: one-shot select over a and b
   let r1 = task.spawn(fn() {
-    match channel.select([Recv(a), Recv(b)]) {
-      (^a, Message(v)) -> "r1 took a:{v}"
-      (^b, Message(v)) -> "r1 took b:{v}"
+    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+      (^a, channel.Message(v)) -> "r1 took a:{v}"
+      (^b, channel.Message(v)) -> "r1 took b:{v}"
       _ -> "r1 other"
     }
   })
@@ -18,7 +18,7 @@ fn main() {
   -- R2: plain receive on a (registered behind R1 in a's waker FIFO)
   let r2 = task.spawn(fn() {
     match channel.receive(a) {
-      Message(v) -> "r2 took a:{v}"
+      channel.Message(v) -> "r2 took a:{v}"
       _ -> "r2 other"
     }
   })

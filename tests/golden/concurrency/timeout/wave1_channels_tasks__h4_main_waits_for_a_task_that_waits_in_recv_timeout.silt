@@ -12,13 +12,13 @@ fn main() {
   let h = task.spawn({ ->
     let waited = match channel.recv_timeout(quiet, time.ms(600)) {
       Ok(_) -> "value"
-      Err(ChannelTimeout) -> "timed out"
-      Err(ChannelClosed) -> "closed"
+      Err(channel.ChannelTimeout) -> "timed out"
+      Err(channel.ChannelClosed) -> "closed"
     }
     channel.send(x, waited)
   })
   match channel.receive(x) {
-    Message(v) -> println("main got: {v}")
+    channel.Message(v) -> println("main got: {v}")
     _ -> println("main got no message")
   }
   task.join(h)

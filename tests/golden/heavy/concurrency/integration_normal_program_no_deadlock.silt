@@ -15,9 +15,9 @@ fn program() {
 
   let consumer = task.spawn({ ->
     let total = 0
-    when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }
-    when let Message(b) = channel.receive(ch) else { panic("pattern did not match") }
-    when let Message(c) = channel.receive(ch) else { panic("pattern did not match") }
+    when let channel.Message(a) = channel.receive(ch) else { panic("pattern did not match") }
+    when let channel.Message(b) = channel.receive(ch) else { panic("pattern did not match") }
+    when let channel.Message(c) = channel.receive(ch) else { panic("pattern did not match") }
     a + b + c
   })
 

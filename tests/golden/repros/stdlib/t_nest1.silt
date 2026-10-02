@@ -33,8 +33,8 @@ fn main() {
     let g = regex.replace_all_with("[0-9]", "a1b2") { m -> slow(m) }
     let h = Ok(1) |> result.map_ok { x -> slow(x) + 1 }
     let i = list.fold_until([1, 2, 3, 4], 0) { acc, x -> match slow(x) > 2 {
-      true -> Stop(acc)
-      false -> Continue(acc + x)
+      true -> list.Stop(acc)
+      false -> list.Continue(acc + x)
     } }
     let j = list.flat_map([1, 2]) { x -> list.map([x, x]) { y -> slow(y) } }
     let k = map.update(#{"a": 1}, "a", 0) { v -> slow(v) + 1 }

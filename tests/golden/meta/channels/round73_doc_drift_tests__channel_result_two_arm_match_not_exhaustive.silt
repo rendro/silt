@@ -8,7 +8,7 @@ fn main() {
   let ch = channel.new(1)
   channel.close(ch)
   match channel.receive(ch) {
-    Message(_) -> ()
-    Closed -> ()
+    channel.Message(_) -> ()
+    channel.Closed -> ()
   }
 }

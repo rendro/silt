@@ -1,5 +1,5 @@
 import shapes.{ area, Shape }
 
 fn main() {
-  println(area(Rect(3.0, 4.0)) == 12.0)
+  println(area(Shape.Rect(3.0, 4.0)) == 12.0)
 }

@@ -8,7 +8,7 @@ fn player(inp, out, rounds) {
     0 -> 0
     _ -> {
       match channel.receive(inp) {
-        Message(v) -> {
+        channel.Message(v) -> {
           channel.send(out, v + 1)
           player(inp, out, rounds - 1)
         }
@@ -28,7 +28,7 @@ fn main() {
       channel.send(a, 0)
       player(b, a, 19)
       match channel.receive(b) {
-        Message(v) -> v
+        channel.Message(v) -> v
         _ -> 0 - 1
       }
     })

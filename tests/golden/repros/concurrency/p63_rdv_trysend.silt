@@ -6,7 +6,7 @@ fn main() {
   let ch = channel.new()
   println("try_send, no receiver: {channel.try_send(ch, 1)}")
   let r = task.spawn(fn() {
-    match channel.receive(ch) { Message(v) -> v  _ -> 0 - 1 }
+    match channel.receive(ch) { channel.Message(v) -> v  _ -> 0 - 1 }
   })
   time.sleep(time.ms(100))
   println("try_send, receiver parked: {channel.try_send(ch, 2)}")

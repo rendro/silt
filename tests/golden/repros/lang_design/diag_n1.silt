@@ -1,6 +1,6 @@
 -- verdict: same
 import int
-fn f(s) -> Result(Int, ParseError) {
+fn f(s) -> Result(Int, int.ParseError) {
   let n = int.parse(s)
     ?
   Ok(n)

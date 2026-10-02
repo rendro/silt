@@ -5,10 +5,10 @@ import time
 
 type Person {
   name: String,
-  dob: Date,
+  dob: time.Date,
 }
 
-fn age(dob: Date) -> Int {
+fn age(dob: time.Date) -> Int {
   let today = time.today()
   let years = today.year - dob.year
   match today.month < dob.month || today.month == dob.month && today.day < dob.day {
@@ -17,7 +17,7 @@ fn age(dob: Date) -> Int {
   }
 }
 
-fn next_birthday(dob: Date) -> Date {
+fn next_birthday(dob: time.Date) -> time.Date {
   let today = time.today()
   let year = today.year
   let this_year = match time.date(year, dob.month, dob.day) {

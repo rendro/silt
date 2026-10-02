@@ -5,6 +5,6 @@
 import channel
 fn main() {
   let ch: Channel(Int) = channel.new(1)
-  let _ = channel.select([Recv(ch), Send(ch, 1)])
+  let _ = channel.select([channel.Recv(ch), channel.Send(ch, 1)])
   ()
 }

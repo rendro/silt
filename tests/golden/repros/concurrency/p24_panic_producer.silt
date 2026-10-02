@@ -6,8 +6,8 @@ fn main() {
   let ch = channel.new(0)
   let consumer = task.spawn(fn() {
     match channel.receive(ch) {
-      Message(v) -> "got {v}"
-      Closed -> "closed"
+      channel.Message(v) -> "got {v}"
+      channel.Closed -> "closed"
       _ -> "other"
     }
   })

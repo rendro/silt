@@ -1,6 +1,6 @@
 type Secret { S(Int), Other }
 type Rec { a: Int, b: String }
-trait Peek { fn peek(self) -> Int }
+pub trait Peek { fn peek(self) -> Int }
 trait Peek for Secret {
   fn peek(self) -> Int {
     match self {

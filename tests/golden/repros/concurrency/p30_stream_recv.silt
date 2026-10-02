@@ -13,8 +13,8 @@ fn main() {
   }
   -- streams ARE channels, so channel.receive is a legal consumer
   match channel.receive(s) {
-    Message(v) -> println("got {v}")
-    Closed -> println("closed")
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
     _ -> println("other")
   }
 }

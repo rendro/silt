@@ -11,14 +11,14 @@ fn spin(n) {
 
 fn consume(ch, n) {
   match channel.receive(ch) {
-    Message(_) -> consume(ch, n + 1)
+    channel.Message(_) -> consume(ch, n + 1)
     _ -> n
   }
 }
 
 fn produce(ch, n) {
-  match channel.select([Send(ch, n)]) {
-    (_, Sent) -> produce(ch, n + 1)
+  match channel.select([channel.Send(ch, n)]) {
+    (_, channel.Sent) -> produce(ch, n + 1)
     _ -> n
   }
 }

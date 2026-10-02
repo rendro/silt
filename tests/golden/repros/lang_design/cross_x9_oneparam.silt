@@ -4,7 +4,7 @@ let ch = channel.new(3)
 fn drain(unused) {
   loop {
     match channel.receive(ch) {
-      Message(v) -> {
+      channel.Message(v) -> {
         println("got {v}")
         loop()
       }

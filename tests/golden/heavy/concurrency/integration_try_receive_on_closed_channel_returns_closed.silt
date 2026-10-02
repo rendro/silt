@@ -6,7 +6,7 @@ fn program() {
   let ch = channel.new(5)
   channel.close(ch)
   match channel.try_receive(ch) {
-    Closed -> "closed"
+    channel.Closed -> "closed"
     _ -> "other"
   }
 }

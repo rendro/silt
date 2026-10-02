@@ -2,7 +2,7 @@ import io
 import list
 fn program() {
   [1, 2, 3]
-  |> list.fold_until(99) { acc, x -> Stop(acc) }
+  |> list.fold_until(99) { acc, x -> list.Stop(acc) }
 }
 
 fn main() {

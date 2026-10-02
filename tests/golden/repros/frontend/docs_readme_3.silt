@@ -10,7 +10,7 @@ fn main() {
       Ok(cfg) -> println("loaded: {cfg.name}")
       Err(e) -> println("parse error: {e.message()}")
     }
-    Err(IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
+    Err(io.IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
     Err(e) -> println("read error: {e.message()}")
   }
 }

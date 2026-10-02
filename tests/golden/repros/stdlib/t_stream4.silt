@@ -9,7 +9,7 @@ fn main() {
     |> stream.map(fn(x) {
       time.sleep(time.ms(50))
       match channel.receive(gate) {
-        Message(v) -> x + v
+        channel.Message(v) -> x + v
         _ -> 0 - 1
       }
     })

@@ -9,13 +9,13 @@ import time
 fn main() {
   let n = 200000
   let chans = 1..n |> list.map { i -> channel.new(1) }
-  let ops = chans |> list.map { c -> Recv(c) }
+  let ops = chans |> list.map { c -> channel.Recv(c) }
   match list.last(chans) {
     None -> println("no channels")
     Some(last_ch) -> {
       let a = task.spawn(fn() {
         match channel.select(ops) {
-          (_, Message(v)) -> "A got {v}"
+          (_, channel.Message(v)) -> "A got {v}"
           _ -> "A other"
         }
       })

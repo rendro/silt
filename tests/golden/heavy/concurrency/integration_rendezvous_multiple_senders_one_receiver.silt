@@ -12,9 +12,9 @@ fn program() {
   let s3 = task.spawn({ -> channel.send(ch, 30) })
 
   -- Receive all three messages
-  when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }
-  when let Message(b) = channel.receive(ch) else { panic("pattern did not match") }
-  when let Message(c) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(a) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(b) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(c) = channel.receive(ch) else { panic("pattern did not match") }
 
   task.join(s1)
   task.join(s2)

@@ -6,7 +6,7 @@ fn main() {
   let hch = channel.new(1)
   let h = task.spawn(fn() {
     match channel.receive(hch) {
-      Message(me) -> {
+      channel.Message(me) -> {
         println("task: joining myself")
         task.join(me)
         println("task: join-self returned")

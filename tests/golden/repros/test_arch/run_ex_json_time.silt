@@ -5,18 +5,18 @@ import time
 
 type Event {
   name: String,
-  date: Date,
+  date: time.Date,
 }
 
 type Meeting {
   title: String,
-  start: DateTime,
+  start: time.DateTime,
 }
 
 type Schedule {
   event: String,
-  date: Date,
-  time: Time,
+  date: time.Date,
+  time: time.Time,
 }
 
 fn main() {

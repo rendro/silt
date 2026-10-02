@@ -3,8 +3,8 @@ import channel
 fn total(ch, base) {
   base + loop {
     match channel.try_receive(ch) {
-      Message(v) when v < 3 -> loop()
-      Message(v) -> v
+      channel.Message(v) when v < 3 -> loop()
+      channel.Message(v) -> v
       _ -> 0
     }
   }

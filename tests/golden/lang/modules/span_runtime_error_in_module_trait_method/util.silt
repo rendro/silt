@@ -10,7 +10,7 @@ pub fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
 pub fn maker() -> Fn(Int) -> Int {
   { x -> x / 0 }
 }
-trait Doer { fn act(self) -> Int }
+pub trait Doer { fn act(self) -> Int }
 pub type Box { v: Int }
 trait Doer for Box {
   fn act(self) -> Int { self.v / 0 }

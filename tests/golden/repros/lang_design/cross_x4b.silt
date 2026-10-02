@@ -7,7 +7,7 @@ fn main() {
   channel.close(ch)
   loop {
     match channel.receive(ch) {
-      Message(v) -> {
+      channel.Message(v) -> {
         println(v)
         loop()
       }

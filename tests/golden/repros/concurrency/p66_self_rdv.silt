@@ -7,10 +7,10 @@ fn main() {
   -- a single task offering BOTH directions on one unbuffered channel.
   -- There is no second party, so neither arm can ever complete.
   let h = task.spawn(fn() {
-    match channel.select([Recv(ch), Send(ch, 7)]) {
-      (_, Sent) -> "Sent (to whom?)"
-      (_, Message(v)) -> "Message {v}"
-      (_, Closed) -> "Closed"
+    match channel.select([channel.Recv(ch), channel.Send(ch, 7)]) {
+      (_, channel.Sent) -> "Sent (to whom?)"
+      (_, channel.Message(v)) -> "Message {v}"
+      (_, channel.Closed) -> "Closed"
       _ -> "other"
     }
   })

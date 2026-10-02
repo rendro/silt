@@ -1,7 +1,7 @@
 import io
 import json
 import time
-type Event { name: String, ts: DateTime }
+type Event { name: String, ts: time.DateTime }
 fn program() {
   -- 14:30 in UTC+5:30 = 09:00 UTC
   when let Ok(e) = json.parse("\{\"name\": \"x\", \"ts\": \"2024-03-15T14:30:00+05:30\"\}", Event) else { panic("unexpected Err") }

@@ -5,15 +5,15 @@ fn main() {
   let b = channel.new(1)
   channel.close(a)
   channel.close(b)
-  match channel.select([Recv(a), Recv(b)]) {
-    (^a, Closed) -> println("a closed")
-    (^b, Closed) -> println("b closed")
+  match channel.select([channel.Recv(a), channel.Recv(b)]) {
+    (^a, channel.Closed) -> println("a closed")
+    (^b, channel.Closed) -> println("b closed")
     _ -> println("other")
   }
   -- Send arm on closed channel
-  match channel.select([Send(a, 1)]) {
-    (_, Closed) -> println("send arm -> Closed")
-    (_, Sent) -> println("send arm -> Sent")
+  match channel.select([channel.Send(a, 1)]) {
+    (_, channel.Closed) -> println("send arm -> Closed")
+    (_, channel.Sent) -> println("send arm -> Sent")
     _ -> println("other")
   }
   -- double close

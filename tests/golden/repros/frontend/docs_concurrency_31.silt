@@ -2,12 +2,12 @@
 import channel
 fn drain(ch) {
   match channel.try_receive(ch) {
-    Message(val) -> {
+    channel.Message(val) -> {
       println("got: {val}")
       drain(ch)
     }
-    Empty  -> println("no more data (channel still open)")
-    Closed -> println("channel closed, all done")
+    channel.Empty  -> println("no more data (channel still open)")
+    channel.Closed -> println("channel closed, all done")
     _ -> ()
   }
 }

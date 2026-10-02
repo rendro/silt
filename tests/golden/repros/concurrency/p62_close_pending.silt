@@ -17,7 +17,7 @@ fn main() {
   channel.close(ch)
   time.sleep(time.ms(100))
   -- drain what is there
-  match channel.receive(ch) { Message(v) -> println("drain {v}")  Closed -> println("closed")  _ -> () }
-  match channel.receive(ch) { Message(v) -> println("drain {v}")  Closed -> println("closed")  _ -> () }
+  match channel.receive(ch) { channel.Message(v) -> println("drain {v}")  channel.Closed -> println("closed")  _ -> () }
+  match channel.receive(ch) { channel.Message(v) -> println("drain {v}")  channel.Closed -> println("closed")  _ -> () }
   println(task.join(list.get(senders, 0) |> option.unwrap_or(task.spawn(fn() { "x" }))))
 }

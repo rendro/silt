@@ -4,7 +4,7 @@ let ch = channel.new(10)
 fn drain() {
   loop {
     match channel.try_receive(ch) {
-      Message(v) -> {
+      channel.Message(v) -> {
         println("got {v}")
         loop()
       }

@@ -13,7 +13,7 @@ fn spin_loop(n, acc) {
 fn worker(ch, n) {
   let _ = spin_loop(30000, 0)
   match channel.receive(ch) {
-    Message(v) -> {
+    channel.Message(v) -> {
       println("worker: processed message {v}")
       worker(ch, n + 1)
     }

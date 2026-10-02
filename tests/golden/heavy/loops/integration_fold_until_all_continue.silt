@@ -2,7 +2,7 @@ import io
 import list
 fn program() {
   [1, 2, 3]
-  |> list.fold_until(0) { acc, x -> Continue(acc + x) }
+  |> list.fold_until(0) { acc, x -> list.Continue(acc + x) }
 }
 
 fn main() {

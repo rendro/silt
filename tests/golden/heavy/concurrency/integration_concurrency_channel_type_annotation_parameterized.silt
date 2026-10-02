@@ -9,10 +9,10 @@ fn program() {
   let ch: Channel(Int) = channel.new(10)
   channel.send(ch, 42)
   match channel.receive(ch) {
-    Message(v) -> v
-    Sent -> 0
-    Closed -> 0
-    Empty -> 0
+    channel.Message(v) -> v
+    channel.Sent -> 0
+    channel.Closed -> 0
+    channel.Empty -> 0
   }
 }
 

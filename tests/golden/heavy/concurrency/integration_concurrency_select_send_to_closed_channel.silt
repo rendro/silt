@@ -6,9 +6,9 @@ fn program() {
   let ch = channel.new(1)
   channel.close(ch)
 
-  match channel.select([Send(ch, 42)]) {
-    (_, Closed) -> "closed"
-    (_, Sent) -> "sent"
+  match channel.select([channel.Send(ch, 42)]) {
+    (_, channel.Closed) -> "closed"
+    (_, channel.Sent) -> "sent"
     _ -> "other"
   }
 }

@@ -23,10 +23,10 @@ fn main() {
   -- Drain the buffer until Closed.
   let drained = loop c = 0 {
     match channel.try_receive(ch) {
-      Message(_v) -> loop(c + 1)
-      Empty -> c
-      Closed -> c
-      Sent -> c
+      channel.Message(_v) -> loop(c + 1)
+      channel.Empty -> c
+      channel.Closed -> c
+      channel.Sent -> c
     }
   }
   senders |> list.each { h ->

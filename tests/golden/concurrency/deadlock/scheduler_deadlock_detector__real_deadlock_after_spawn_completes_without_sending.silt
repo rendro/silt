@@ -11,7 +11,7 @@ fn main() {
   let ch = channel.new(0)
   let _h = task.spawn({ -> 1 })
   match channel.receive(ch) {
-    Message(_) -> println("unreachable")
+    channel.Message(_) -> println("unreachable")
     _ -> println("unreachable")
   }
 }

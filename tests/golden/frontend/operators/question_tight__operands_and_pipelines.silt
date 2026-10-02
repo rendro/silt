@@ -5,7 +5,7 @@ import int
 import list
 import result
 
-fn add(a: String, b: String) -> Result(Int, ParseError) {
+fn add(a: String, b: String) -> Result(Int, int.ParseError) {
   let total = int.parse(a)? + int.parse(b)?
   Ok(-int.parse(a)? + total)
 }

@@ -1,12 +1,12 @@
 -- verdict: same
 import int
 
-fn total(a: String, b: String) -> Result(Int, ParseError) {
+fn total(a: String, b: String) -> Result(Int, int.ParseError) {
   let n = int.parse(a)? + int.parse(b)?
   Ok(n)
 }
 
-fn neg(a: String) -> Result(Int, ParseError) {
+fn neg(a: String) -> Result(Int, int.ParseError) {
   Ok(-int.parse(a)?)
 }
 

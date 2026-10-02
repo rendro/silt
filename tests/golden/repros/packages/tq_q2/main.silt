@@ -1,6 +1,6 @@
 -- verdict: same
 import shapes
-fn f(s: Shape) -> Int {
+fn f(s: shapes.Shape) -> Int {
   match s {
     shapes.Circle(r) -> r
     shapes.Square(x) -> x

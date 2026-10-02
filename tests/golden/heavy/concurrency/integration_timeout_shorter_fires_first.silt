@@ -6,8 +6,8 @@ fn program() {
   let short = channel.timeout(10)
   let long = channel.timeout(5000)
 
-  match channel.select([Recv(long), Recv(short)]) {
-    (ch, Closed) -> {
+  match channel.select([channel.Recv(long), channel.Recv(short)]) {
+    (ch, channel.Closed) -> {
       -- The channel that fired should be 'short'
       -- We can verify by checking it's the second channel
       "short_fired"

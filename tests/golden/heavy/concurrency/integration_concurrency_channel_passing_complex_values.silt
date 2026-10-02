@@ -4,7 +4,7 @@ import channel
 fn program() {
   let ch = channel.new(5)
   channel.send(ch, [1, 2, 3])
-  when let Message(list) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(list) = channel.receive(ch) else { panic("pattern did not match") }
   list
 }
 

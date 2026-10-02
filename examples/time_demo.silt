@@ -97,7 +97,7 @@ fn main() {
   println("500 ms: {time.ms(500)}")
   -- Duration arithmetic
   let timeout = time.minutes(5)
-  let half = Duration { ns: timeout.ns / 2 }
+  let half = time.Duration { ns: timeout.ns / 2 }
   println("half of 5m: {half}")
   -- ── Instant arithmetic ──────────────────────────────────────────────
   let start = time.now()
@@ -152,8 +152,8 @@ fn main() {
   |> time.weekday
   println("90 days from now is a: {day_name}")
   -- ── Weekday comparison ──────────────────────────────────────────────
-  println("Monday < Friday: {Monday < Friday}")
-  println("Sunday > Monday: {Sunday > Monday}")
+  println("Monday < Friday: {time.Monday < time.Friday}")
+  println("Sunday > Monday: {time.Sunday > time.Monday}")
   -- ── Sleep ───────────────────────────────────────────────────────────
   let before = time.now()
   time.sleep(time.ms(50))

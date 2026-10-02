@@ -4,8 +4,8 @@ fn program() {
   [1, 3, 5, 4, 6]
   |> list.fold_until(None) { acc, x ->
     match x % 2 == 0 {
-      true -> Stop(Some(x))
-      _ -> Continue(None)
+      true -> list.Stop(Some(x))
+      _ -> list.Continue(None)
     }
   }
 }

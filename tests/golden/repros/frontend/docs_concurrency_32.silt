@@ -29,7 +29,7 @@ fn spawn_worker(id, jobs, outcomes) {
 
 fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
   when outstanding > 0 else { return }
-  when let Message((id, outcome)) = channel.receive(outcomes) else { return }
+  when let channel.Message((id, outcome)) = channel.receive(outcomes) else { return }
   match outcome {
     Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
     Crashed(msg) -> {

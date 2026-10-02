@@ -5,9 +5,9 @@ fn program() {
   let ch = channel.new(10)
   channel.send(ch, 42)
 
-  let result = channel.select([Recv(ch)])
+  let result = channel.select([channel.Recv(ch)])
   match result {
-    (_, Message(val)) -> val
+    (_, channel.Message(val)) -> val
     _ -> 0
   }
 }

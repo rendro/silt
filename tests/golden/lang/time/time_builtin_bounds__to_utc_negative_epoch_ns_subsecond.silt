@@ -1,7 +1,7 @@
 import time
 fn main() {
   -- same signed-remainder case through to_utc
-  let dt = time.to_utc(Instant { epoch_ns: -500000000 })
+  let dt = time.to_utc(time.Instant { epoch_ns: -500000000 })
   println(dt.date.year == 1969
     && dt.date.month == 12
     && dt.date.day == 31

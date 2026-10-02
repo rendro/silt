@@ -18,13 +18,13 @@ fn main() {
   -- waker (no-op) and `real` never wakes. With the fix, `real`
   -- wakes and its value lands in the buffer.
   match channel.receive(ch) {
-    Message(_) -> ()
+    channel.Message(_) -> ()
     _ -> ()
   }
   let _ = task.join(real)
   -- After `real` sent, its 7 must be in the buffer.
   match channel.receive(ch) {
-    Message(v) -> println(v)
+    channel.Message(v) -> println(v)
     _ -> println("CLOSED_OR_EMPTY")
   }
 }

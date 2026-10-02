@@ -3,11 +3,11 @@
 -- stderr-contains: error[type]
 import io
 import http
-fn describe(e: IoError) -> String {
+fn describe(e: io.IoError) -> String {
   match e {
-    HttpConnect(m) -> "nope"
-    IoNotFound(p) -> "ok"
+    http.HttpConnect(m) -> "nope"
+    io.IoNotFound(p) -> "ok"
     _ -> "other"
   }
 }
-fn main() { println(describe(IoNotFound("x"))) }
+fn main() { println(describe(io.IoNotFound("x"))) }

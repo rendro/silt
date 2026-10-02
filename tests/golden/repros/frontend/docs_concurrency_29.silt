@@ -22,7 +22,7 @@ fn main() {
 
   -- Wait for the worker to finish
   task.join(worker)
-  when let Message(status) = channel.receive(done) else { return }
+  when let channel.Message(status) = channel.receive(done) else { return }
   println(status)
 }
 -- prints:

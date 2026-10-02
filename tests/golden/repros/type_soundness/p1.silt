@@ -5,8 +5,8 @@ fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
   channel.send(ch, "hello")
-  let Message(a) = channel.receive(ch)
-  let Message(b) = channel.receive(ch)
+  let channel.Message(a) = channel.receive(ch)
+  let channel.Message(b) = channel.receive(ch)
   println(a + 1)
   println(b)
 }

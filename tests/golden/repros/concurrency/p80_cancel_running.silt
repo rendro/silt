@@ -14,7 +14,7 @@ fn worker(ch, n) {
   -- busy for a while (so cancel arrives while RUNNING), then park on receive
   let _ = spin_loop(30000, 0)
   match channel.receive(ch) {
-    Message(v) -> {
+    channel.Message(v) -> {
       println("worker: processed message {v} (iteration {n})")
       worker(ch, n + 1)
     }

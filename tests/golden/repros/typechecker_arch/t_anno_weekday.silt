@@ -1,3 +1,5 @@
 -- verdict: same
-fn f(x: Weekday) -> Int { 1 }
+import time
+
+fn f(x: time.Weekday) -> Int { 1 }
 fn main() { println("ok") }

@@ -2,8 +2,8 @@
 import channel
 fn main() {
     let out = channel.new(1)
-    match channel.select([Send(out, 42)]) {
-        (^out, Sent) -> println("sent")
+    match channel.select([channel.Send(out, 42)]) {
+        (^out, channel.Sent) -> println("sent")
         _ -> println("other")
     }
 }

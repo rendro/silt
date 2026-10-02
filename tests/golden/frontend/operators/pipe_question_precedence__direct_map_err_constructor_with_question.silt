@@ -1,7 +1,7 @@
 import io
 import result
 
-type E { Wrap(IoError) }
+type E { Wrap(io.IoError) }
 
 fn load() -> Result(String, E) {
   let raw = result.map_err(io.read_file("/nope"), Wrap)?

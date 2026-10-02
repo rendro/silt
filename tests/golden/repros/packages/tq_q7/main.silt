@@ -4,7 +4,7 @@ import other
 fn describe(s: Shape) -> Int {
   match s {
     Circle(r) -> r
-    Square(x) -> x
+    shapes.Square(x) -> x
   }
 }
 fn main() {

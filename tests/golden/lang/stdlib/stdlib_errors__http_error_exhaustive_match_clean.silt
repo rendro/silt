@@ -1,14 +1,14 @@
 import http
-fn describe(e: HttpError) -> String {
+fn describe(e: http.HttpError) -> String {
   match e {
-    HttpConnect(m) -> "connect"
-    HttpTls(m) -> "tls"
-    HttpTimeout -> "timeout"
-    HttpInvalidUrl(u) -> "url"
-    HttpInvalidResponse(m) -> "bad resp"
-    HttpClosedEarly -> "closed"
-    HttpStatusCode(s, b) -> "status"
-    HttpUnknown(m) -> "unknown"
+    http.HttpConnect(m) -> "connect"
+    http.HttpTls(m) -> "tls"
+    http.HttpTimeout -> "timeout"
+    http.HttpInvalidUrl(u) -> "url"
+    http.HttpInvalidResponse(m) -> "bad resp"
+    http.HttpClosedEarly -> "closed"
+    http.HttpStatusCode(s, b) -> "status"
+    http.HttpUnknown(m) -> "unknown"
   }
 }
-fn main() { println(describe(HttpTimeout)) }
+fn main() { println(describe(http.HttpTimeout)) }

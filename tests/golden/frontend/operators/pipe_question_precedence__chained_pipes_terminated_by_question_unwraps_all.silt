@@ -1,7 +1,7 @@
 import io
 import result
 
-type E { Wrap(IoError) }
+type E { Wrap(io.IoError) }
 
 fn run() -> Result(String, E) {
   -- All three pipes fire, `?` unwraps the final Result, Ok
@@ -15,7 +15,7 @@ fn run() -> Result(String, E) {
 fn outcome() {
   match run() {
     Ok(_) -> "ok"
-    Err(Wrap(IoNotFound(_))) -> "not-found"
+    Err(Wrap(io.IoNotFound(_))) -> "not-found"
     Err(Wrap(_)) -> "other"
   }
 }

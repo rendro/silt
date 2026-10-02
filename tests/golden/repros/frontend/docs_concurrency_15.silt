@@ -9,7 +9,7 @@ fn main() {
   })
   match outcome {
     Ok(contents) -> println(contents)
-    Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+    Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
     Err(_) -> println("other io error")
   }
 }

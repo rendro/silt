@@ -29,10 +29,10 @@ type Config {
 -- the underlying module's trait impl.
 
 type AppError {
-  ConfigRead(IoError),
-  ConfigParse(JsonError),
-  ApiCall(HttpError),
-  ApiResponse(JsonError),
+  ConfigRead(io.IoError),
+  ConfigParse(json.JsonError),
+  ApiCall(http.HttpError),
+  ApiResponse(json.JsonError),
   Custom(String),
 }
 
@@ -60,11 +60,11 @@ fn main() {
     Ok(body) -> println("Got {body}")
     Err(e) -> match e {
       -- Granular handling per domain.
-      ConfigRead(IoNotFound(path)) -> println("create a config at: {path}")
+      ConfigRead(io.IoNotFound(path)) -> println("create a config at: {path}")
       ConfigRead(inner) -> println("config file: {inner.message()}")
       ConfigParse(inner) -> println("config JSON invalid: {inner.message()}")
-      ApiCall(HttpTimeout) -> println("API timed out — retry later")
-      ApiCall(HttpStatusCode(code, _)) -> println("API returned {code}")
+      ApiCall(http.HttpTimeout) -> println("API timed out — retry later")
+      ApiCall(http.HttpStatusCode(code, _)) -> println("API returned {code}")
       ApiCall(inner) -> println("API call failed: {inner.message()}")
       ApiResponse(inner) -> println("API response invalid: {inner.message()}")
       Custom(msg) -> println("app: {msg}")

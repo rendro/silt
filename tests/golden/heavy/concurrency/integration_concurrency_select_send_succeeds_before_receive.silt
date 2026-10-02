@@ -7,9 +7,9 @@ fn program() {
   let send_ch = channel.new(1)
 
   -- empty_ch has nothing to receive, but send_ch has room
-  match channel.select([Recv(empty_ch), Send(send_ch, 99)]) {
-    (_, Sent) -> "sent_first"
-    (_, Message(_)) -> "received"
+  match channel.select([channel.Recv(empty_ch), channel.Send(send_ch, 99)]) {
+    (_, channel.Sent) -> "sent_first"
+    (_, channel.Message(_)) -> "received"
     _ -> "other"
   }
 }

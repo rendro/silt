@@ -2,7 +2,8 @@
 -- exit: 1
 -- stderr-contains: error[type]
 import io
+import http
 fn main() {
-  let e: HttpError = IoNotFound("x")
+  let e: http.HttpError = io.IoNotFound("x")
   println("unreachable")
 }

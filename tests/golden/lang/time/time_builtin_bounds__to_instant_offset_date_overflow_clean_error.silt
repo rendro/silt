@@ -16,10 +16,10 @@ fn main() {
           -- overflows chrono's valid range.
           time.to_instant(dt, -2147483647)
         }
-        Err(_) -> Instant { epoch_ns: 0 }
+        Err(_) -> time.Instant { epoch_ns: 0 }
       }
     }
-    Err(_) -> Instant { epoch_ns: 0 }
+    Err(_) -> time.Instant { epoch_ns: 0 }
   }
   println(inst.epoch_ns)
 }

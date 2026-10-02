@@ -1,10 +1,10 @@
 import int
-fn describe(e: ParseError) -> String {
+fn describe(e: int.ParseError) -> String {
   match e {
-    ParseEmpty -> "empty"
-    ParseInvalidDigit(off) -> "bad digit"
-    ParseOverflow -> "overflow"
-    ParseUnderflow -> "underflow"
+    int.ParseEmpty -> "empty"
+    int.ParseInvalidDigit(off) -> "bad digit"
+    int.ParseOverflow -> "overflow"
+    int.ParseUnderflow -> "underflow"
   }
 }
-fn main() { println(describe(ParseEmpty)) }
+fn main() { println(describe(int.ParseEmpty)) }

@@ -6,7 +6,7 @@ fn one_round(i) {
   let ch = channel.new(1)
   let a = task.spawn(fn() {
     match channel.receive(ch) {
-      Message(v) -> v
+      channel.Message(v) -> v
       _ -> 0 - 1
     }
   })

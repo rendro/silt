@@ -14,17 +14,17 @@ fn program() {
   channel.send(jobs, 30)
 
   let w1 = task.spawn({ ->
-    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    when let channel.Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })
 
   let w2 = task.spawn({ ->
-    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    when let channel.Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })
 
   let w3 = task.spawn({ ->
-    when let Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
+    when let channel.Message(n) = channel.receive(jobs) else { panic("pattern did not match") }
     channel.send(results, n * 2)
   })
 
@@ -32,9 +32,9 @@ fn program() {
   task.join(w2)
   task.join(w3)
 
-  when let Message(a) = channel.receive(results) else { panic("pattern did not match") }
-  when let Message(b) = channel.receive(results) else { panic("pattern did not match") }
-  when let Message(c) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(a) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(b) = channel.receive(results) else { panic("pattern did not match") }
+  when let channel.Message(c) = channel.receive(results) else { panic("pattern did not match") }
   a + b + c
 }
 

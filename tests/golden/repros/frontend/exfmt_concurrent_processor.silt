@@ -89,8 +89,8 @@ fn main() {
     match collected >= num_files {
       true -> (successes, failures)
       _ -> {
-        match channel.select([Recv(results_1), Recv(results_2)]) {
-          (_, Message(result)) -> {
+        match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
+          (_, channel.Message(result)) -> {
             let (worker_id, outcome) = result
             match outcome {
               Ok(info) -> {
@@ -106,7 +106,7 @@ fn main() {
               }
             }
           }
-          (_, Closed) -> {
+          (_, channel.Closed) -> {
             println("All result channels closed unexpectedly")
             (successes, failures)
           }

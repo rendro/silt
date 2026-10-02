@@ -1,9 +1,9 @@
 -- An alias exported by an imported module resolves in the importer.
 import a
 
-fn use_mass(x: ResolverShared_Mass) -> ResolverShared_Mass { x }
+fn use_mass(x: a.ResolverShared_Mass) -> a.ResolverShared_Mass { x }
 
 fn main() {
-  let m: ResolverShared_Mass = 1.5
+  let m: a.ResolverShared_Mass = 1.5
   println(use_mass(m))
 }
