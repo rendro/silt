@@ -1,0 +1,6 @@
+error[type]: undefined variable 'undefined_name'
+ --> stage5_doors__cut_line_label_would_run_past.silt:6:491
+   |
+ 6 | …+ 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + undefined_name
+   |                                                                                                                                                    ^^^^^^^^^^^^^^
+   |                                                                                                                                                    undefined variable 'undefined_name'

@@ -588,12 +588,19 @@ fn write_snippet(
         .get(col..span_end.min(visible).max(col))
         .unwrap_or_default();
     let marks = mark_width(covered.iter()).max(1);
+    // On a line the excerpt cut, the line of marks never runs past the
+    // text shown: when the span goes on past the cut, or the text after
+    // the marks would not fit, the text goes on the next line, under the
+    // start of the marks.
+    let text_below = cut
+        || ((excerpt.cut_before || excerpt.cut_after) && {
+            let start = mark_width(shown_chars[..col.min(shown_chars.len())].iter());
+            let text_chars: Vec<char> = text.chars().collect();
+            start + marks + 1 + mark_width(text_chars.iter()) > mark_width(shown_chars.iter())
+        });
     let marks = mark.to_string().repeat(marks);
     let gutter = format!("\n {}{:>width$} |{} {spacing}", c.cyan, "", c.reset);
-    if cut {
-        // The span goes on past the cut: the marks end the line, and
-        // the text goes under their start, so the line of marks ends
-        // where the excerpt does.
+    if text_below {
         let _ = write!(out, "{gutter}{mark_color}{}{marks}{}", c.bold, c.reset);
         let _ = write!(out, "{gutter}{mark_color}{}{text}{}", c.bold, c.reset);
     } else {
@@ -642,6 +649,9 @@ pub(crate) struct Excerpt {
     pub(crate) text: String,
     /// The caret's column in `text`, in chars.
     pub(crate) col: usize,
+    /// Whether text before the excerpt was left out (`text` starts with
+    /// the `…` that says so).
+    pub(crate) cut_before: bool,
     /// Whether text after the excerpt was left out (`text` ends with the
     /// `…` that says so).
     pub(crate) cut_after: bool,
@@ -659,6 +669,7 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
         return Excerpt {
             text: line.to_string(),
             col,
+            cut_before: false,
             cut_after: false,
         };
     }
@@ -669,7 +680,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
     let end = start + EXCERPT_CHARS;
     let mut text = String::new();
     let mut shown_col = col - start;
-    if start > 0 {
+    let cut_before = start > 0;
+    if cut_before {
         text.push('…');
         shown_col += 1;
     }
@@ -681,6 +693,7 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
     Excerpt {
         text,
         col: shown_col,
+        cut_before,
         cut_after,
     }
 }

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A short label on a span that runs past where a long line is cut: the
+-- marks stop under the last char shown, not under the `…`, and the label
+-- goes on the next line, under the start of the marks.
+fn main() {
+  let x: Int = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  println(x)
+}
