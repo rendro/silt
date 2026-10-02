@@ -256,12 +256,6 @@ impl Session {
         Ok(self.enter_text(path, name, &text))
     }
 
-    /// Enter the file at `path` with the text `text`, already read by the
-    /// caller.
-    pub fn open_text(&mut self, path: &Path, text: &str) -> FileId {
-        self.enter_text(path, SourceName::Path(path.to_path_buf()), text)
-    }
-
     /// Give the file at `path` an editor's text. The file's module and
     /// every module that imports it, directly or not, are checked again
     /// on the next [`Session::analyze`]; nothing else is.
