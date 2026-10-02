@@ -18,18 +18,7 @@ use std::sync::Arc;
 // ── Helpers (mirrors tests/heavy/integration.rs) ──────────────────────────
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn run_err(input: &str) -> String {

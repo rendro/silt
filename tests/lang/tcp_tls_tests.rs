@@ -9,23 +9,10 @@
 
 #![cfg(feature = "tcp-tls")]
 
-use std::sync::Arc;
-
 use silt::value::Value;
 
 fn run(input: &str) -> Value {
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = silt::compiler::Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = silt::vm::Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn pick_port() -> String {

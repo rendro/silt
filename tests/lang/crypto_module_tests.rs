@@ -10,20 +10,11 @@
 //! tests/golden/lang/stdlib/crypto_module__*.silt. The two tests left here
 //! cross-check the crate's registration tables and need its internal API.
 
-use silt::diagnostic::Severity;
-
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
-    errors
+    silt::session::testing::check_str(input)
         .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
+        .filter(|d| d.is_error())
+        .map(|d| d.message)
         .collect()
 }
 

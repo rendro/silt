@@ -19,23 +19,10 @@
 
 #![cfg(feature = "tcp")]
 
-use std::sync::Arc;
-
 use silt::value::Value;
 
 fn run(input: &str) -> Value {
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = silt::compiler::Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = silt::vm::Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Pick a port from the OS by binding then immediately rebinding from
@@ -56,7 +43,7 @@ import tcp
 fn main() {
   match tcp.listen("127.0.0.1:0") {
     Ok(_) -> "ok"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -99,18 +86,18 @@ fn main() {{
           let result = match tcp.read(conn, 1024) {{
             Ok(buf) -> match bytes.to_string(buf) {{
               Ok(s) -> s
-              Err(e) -> e
+              Err(e) -> e.message()
             }}
-            Err(e) -> e
+            Err(e) -> e.message()
           }}
           tcp.close(conn)
           task.join(server)
           result
         }}
-        Err(e) -> e
+        Err(e) -> e.message()
       }}
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#
@@ -150,18 +137,18 @@ fn main() {{
           let result = match tcp.read_exact(conn, 8) {{
             Ok(buf) -> match bytes.to_string(buf) {{
               Ok(s) -> s
-              Err(e) -> e
+              Err(e) -> e.message()
             }}
-            Err(e) -> e
+            Err(e) -> e.message()
           }}
           tcp.close(conn)
           task.join(server)
           result
         }}
-        Err(e) -> e
+        Err(e) -> e.message()
       }}
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#
@@ -200,10 +187,10 @@ fn main() {{
           task.join(server)
           result
         }}
-        Err(e) -> e
+        Err(e) -> e.message()
       }}
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#
@@ -247,10 +234,10 @@ fn main() {{
           task.join(server)
           result
         }}
-        Err(e) -> e
+        Err(e) -> e.message()
       }}
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#

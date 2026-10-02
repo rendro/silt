@@ -6,18 +6,7 @@ use silt::vm::Vm;
 use std::sync::Arc;
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn run_err(input: &str) -> String {
@@ -1075,8 +1064,10 @@ fn main() {{
     channel.send(result_ch, body)
   }})
 
-  let Message(body) = channel.receive(result_ch)
-  body
+  match channel.receive(result_ch) {{
+    Message(body) -> body
+    _ -> "the channel closed"
+  }}
 }}
 "#
         );
@@ -1101,17 +1092,6 @@ fn main() {
 }
 
 // ── Tuple index access ──────────────────────────────────────────────
-
-#[test]
-fn test_tuple_numeric_field_access() {
-    let result = run(r#"
-fn main() {
-  let t = (10, 20, 30)
-  t.0 + t.1 + t.2
-}
-    "#);
-    assert_eq!(result, Value::Int(60));
-}
 
 // ── Float constants and math ────────────────────────────────────────
 

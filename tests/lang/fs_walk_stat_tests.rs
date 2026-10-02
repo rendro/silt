@@ -10,14 +10,9 @@
 //! `tests/heavy/integration.rs` so the typechecker signature registrations
 //! (FileStat record, new function schemes) are exercised end-to-end.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::value::Value;
-use silt::vm::Vm;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -56,18 +51,7 @@ impl Drop for TempDir {
 }
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Expect an `Ok(inner)` variant; return `inner`.
