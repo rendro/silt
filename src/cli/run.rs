@@ -199,11 +199,12 @@ pub(crate) fn vm_run_file(path: &str) {
         Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
         _ => process::exit(1),
     };
-    let ast = session
+    // Where a `main` that returns `Err` is reported: at its name, or at
+    // the start of the entry file when no function is named `main`.
+    let main_span = session
         .module_analysis(session.module_of(file))
-        .expect("a compiled module is analysed")
-        .ast
-        .clone();
+        .and_then(|analysis| fn_name_span(&analysis.ast, "main"))
+        .unwrap_or(Span::point(file, 0));
     let sources = session.into_sources();
 
     let Some(script) = program.functions.into_iter().next() else {
@@ -237,10 +238,9 @@ pub(crate) fn vm_run_file(path: &str) {
     if let Ok(value) = &run_result
         && let Some(payload) = returned_err(value)
     {
-        let span = fn_name_span(&ast, "main").unwrap_or(Span::point(file, 0));
         let d = Diagnostic::error(
             Code::MainReturnedErr,
-            span,
+            main_span,
             format!("main returned Err: {payload}"),
         );
         eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));

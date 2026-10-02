@@ -79,9 +79,9 @@ pub(crate) fn dispatch(args: &[String]) {
 /// starts at `main` when the file binds one, otherwise its declarations.
 pub(crate) fn disasm_file(path: &str) {
     silt::intern::reset();
-    // Read-only command — never mutates `silt.lock`. If the lock is
-    // stale or missing we resolve in-memory and continue; the user
-    // can still get a useful disassembly without a lockfile write.
+    // Read-only command — never writes `silt.lock`. A lock that no
+    // longer matches the manifest is a package error ("silt.lock is out
+    // of date", exit 1); `silt update` rewrites it.
     let (mut session, file) = open_entry_or_exit(path, LockPolicy::ReadOnly);
     session.analyze(file);
     let binds_main = session
