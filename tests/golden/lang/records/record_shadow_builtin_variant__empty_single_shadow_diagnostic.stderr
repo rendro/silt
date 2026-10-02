@@ -1,5 +1,6 @@
-error[type]: type 'Empty' shadows variant of builtin enum 'ChannelResult'; choose a different name or fully-qualify the variant
+error[type]: type 'Empty' shadows variant of builtin enum 'ChannelResult'
  --> record_shadow_builtin_variant__empty_single_shadow_diagnostic.silt:4:6
    |
  4 | type Empty {}
-   |      ^^^^^ type 'Empty' shadows variant of builtin enum 'ChannelResult'; choose a different name or fully-qualify the variant
+   |      ^^^^^ type 'Empty' shadows variant of builtin enum 'ChannelResult'
+  = help: choose a different name or fully-qualify the variant

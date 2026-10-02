@@ -1,0 +1,10 @@
+error[parse]: 'double' is bound twice at the top level: by the import and by the import here
+ --> main.silt:9:12
+   |
+ 9 | import b.{ double }
+   |            ^^^^^^ 'double' is bound twice at the top level: by the import and by the import here
+ ::: main.silt:8:12
+   |
+ 8 | import a.{ double }
+   |            ------ first bound here, by the import
+  = note: a top-level name can be bound only once

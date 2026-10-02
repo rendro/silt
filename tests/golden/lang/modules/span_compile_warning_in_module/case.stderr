@@ -1,5 +1,6 @@
-warning[compile]: variable 'json' shadows the builtin 'json' module; use a different name to access 'json.*' functions
+warning[compile]: variable 'json' shadows the builtin 'json' module
  --> util.silt:3:7
    |
  3 |   let json = 1
-   |       ^^^^ variable 'json' shadows the builtin 'json' module; use a different name to access 'json.*' functions
+   |       ^^^^ variable 'json' shadows the builtin 'json' module
+  = help: use a different name to access 'json.*' functions
