@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import list
 import string
 type P { a: Int, b: Int }

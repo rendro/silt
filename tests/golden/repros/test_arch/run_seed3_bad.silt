@@ -1,2 +1,2 @@
--- verdict: known-divergent lsp
+-- verdict: same
 fn main( {
