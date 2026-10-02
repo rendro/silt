@@ -1,0 +1,16 @@
+-- cmd: repl
+-- stdin: import shapes\nshapes.area(shapes.Circle(2))\nimport shapes.{ Square }\nshapes.area(Square(3))\nimport geo\ngeo.double(21)\nshapes.boom()\nimport nowhere\n:quit\n
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-contains:  --> src/shapes.silt:14:3
+-- stderr-contains:   -> boom  at src/shapes.silt:14:3
+-- stderr-contains:   -> <repl:7>  at <repl:7>:1:1
+-- stderr-contains: cannot load module 'nowhere'
+-- stderr-contains:  --> <repl:8>:1:1
+-- The REPL started in a package sees the package: its own modules
+-- (`src/shapes.silt`) and its dependencies (`geo`). An input that imports
+-- a module keeps it for the later inputs. A runtime error in a module is
+-- shown in its file; an import of a module that does not exist is an
+-- error of that input alone.
+fn main() {
+  println("not run")
+}

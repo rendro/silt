@@ -1,18 +1,18 @@
 error[runtime]: division by zero
- --> <repl>:1:11
+ --> <repl:1>:1:11
    |
  1 | fn err1(){1/0}
    |           ^^^ division by zero
 
 call stack:
-  -> err1  at <declaration>
-  -> <repl>  at <declaration>
+  -> err1  at <repl:1>:1:11
+  -> <repl:3>  at <repl:3>:1:1
 error[runtime]: division by zero
- --> <repl>:1:11
+ --> <repl:2>:1:11
    |
  1 | fn err2(){1/0}
    |           ^^^ division by zero
 
 call stack:
-  -> err2  at <declaration>
-  -> <repl>  at <declaration>
+  -> err2  at <repl:2>:1:11
+  -> <repl:4>  at <repl:4>:1:1
