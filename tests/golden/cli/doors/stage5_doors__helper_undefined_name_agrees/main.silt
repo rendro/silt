@@ -1,0 +1,12 @@
+-- exit: 1
+-- verdict: same
+-- An undefined name passed to an imported function, and a function the
+-- module does not have: every door reports the same two errors.
+-- stderr-contains: undefined variable 'undefined_name'
+-- stderr-contains: thrice
+import helper
+
+fn main() {
+  println(helper.twice(undefined_name))
+  println(helper.thrice(1))
+}

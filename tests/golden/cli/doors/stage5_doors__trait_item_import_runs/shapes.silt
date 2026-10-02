@@ -1,0 +1,5 @@
+trait Describe {
+  fn describe(self) -> String
+}
+
+pub type Pair(a) = (a, a)

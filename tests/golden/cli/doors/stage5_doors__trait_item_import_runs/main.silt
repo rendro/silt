@@ -1,0 +1,20 @@
+-- verdict: same
+-- A trait and a parametric type alias imported by name have no value at
+-- run time: `run` used to fail with `undefined global: shapes.Describe`.
+import shapes.{ Describe, Pair }
+
+trait Describe for Int {
+  fn describe(self) -> String {
+    "the int {self}"
+  }
+}
+
+fn first(p: Pair(Int)) -> Int {
+  let (a, _) = p
+  a
+}
+
+fn main() {
+  println(5.describe())
+  println(first((1, 2)))
+}
