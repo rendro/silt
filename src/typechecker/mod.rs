@@ -26,6 +26,7 @@ pub(super) use crate::types::*;
 pub use crate::types::{Scheme, TyVar, Type};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
+use std::rc::Rc;
 
 /// Snapshot of a user type's resolved body, used only by the auto-
 /// derive synthesis pass (`synthesize_auto_derive_impls`). Captures the
@@ -83,7 +84,14 @@ pub(super) struct TypeEnv {
     /// Surfaced through LSP hover / completion / signature-help via
     /// `pub fn builtin_docs()`.
     pub(super) builtin_docs: HashMap<Symbol, String>,
-    parent: Option<Box<TypeEnv>>,
+    /// The enclosing scope. Shared, not copied: a child scope is made for
+    /// every block and lambda, and the outermost scope holds every
+    /// builtin name.
+    parent: Option<Rc<TypeEnv>>,
+    /// Whether no scheme of this scope or its parents has a free type
+    /// variable: true of the builtin scope, whose schemes are all
+    /// generalized, so `free_vars` need not walk it.
+    closed: bool,
 }
 
 impl TypeEnv {
@@ -92,15 +100,40 @@ impl TypeEnv {
             bindings: HashMap::new(),
             builtin_docs: HashMap::new(),
             parent: None,
+            closed: false,
         }
     }
 
     pub(super) fn child(&self) -> Self {
+        TypeEnv::child_of(Rc::new(self.clone()))
+    }
+
+    /// An empty scope inside `parent`.
+    fn child_of(parent: Rc<TypeEnv>) -> Self {
         TypeEnv {
             bindings: HashMap::new(),
             builtin_docs: HashMap::new(),
-            parent: Some(Box::new(self.clone())),
+            parent: Some(parent),
+            closed: false,
         }
+    }
+
+    /// Every binding in scope whose name starts with `prefix`, innermost
+    /// first; a name bound in two scopes is given once, as the inner one.
+    pub(super) fn bindings_with_prefix(&self, prefix: &str) -> Vec<(String, Scheme)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let mut scope = Some(self);
+        while let Some(env) = scope {
+            for (name, scheme) in &env.bindings {
+                let name = resolve(*name);
+                if name.starts_with(prefix) && seen.insert(name.clone()) {
+                    out.push((name, scheme.clone()));
+                }
+            }
+            scope = env.parent.as_deref();
+        }
+        out
     }
 
     pub(super) fn define(&mut self, name: Symbol, scheme: Scheme) {
@@ -149,6 +182,9 @@ impl TypeEnv {
     /// Collect all free type variables in the environment.
     pub(super) fn free_vars(&self, checker: &TypeChecker) -> Vec<TyVar> {
         let mut fvs = Vec::new();
+        if self.closed {
+            return fvs;
+        }
         for scheme in self.bindings.values() {
             let ty = checker.apply(&scheme.ty);
             let mut ty_fvs = free_vars_in(&ty);
@@ -495,6 +531,7 @@ impl ModuleExports {
 
 // ── The type checker ────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct TypeChecker {
     /// The substitution: maps type variables to their resolved types.
     pub(super) subst: Vec<Option<Type>>,
@@ -761,6 +798,11 @@ pub struct TypeChecker {
     /// can consult this map instead of emitting "unknown module"
     /// warnings. Empty for ad-hoc scripts and the REPL.
     pub(super) module_exports: HashMap<Symbol, ModuleExports>,
+    /// Import names of the modules that failed to load or parse. The
+    /// failure is reported once, at the import; an import of such a
+    /// module binds its names silently, and a use of them through it
+    /// (`m.x`, an imported item) is not checked, so nothing cascades.
+    pub(super) poisoned_modules: std::collections::HashSet<Symbol>,
     /// Round 64 item 6B (annotated polymorphic recursion): names of
     /// `fn` declarations whose signature is fully annotated (every
     /// parameter has an explicit type AND the return type is
@@ -862,6 +904,7 @@ impl TypeChecker {
             current_package: None,
             imported_modules: std::collections::HashSet::new(),
             module_exports: HashMap::new(),
+            poisoned_modules: std::collections::HashSet::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
@@ -3102,32 +3145,7 @@ impl TypeChecker {
     /// the caller (used by [`check_with_package_and_imports`] so it can
     /// snapshot the program's exports).
     pub(super) fn check_program_returning_env(&mut self, program: &mut Program) -> TypeEnv {
-        let mut env = TypeEnv::new();
-
-        // Built-in registration must run with `current_package = None`
-        // so every built-in trait/enum/record decl is stamped with the
-        // `__builtin__` sentinel via `defining_package()`. Without this
-        // RAII swap, calling
-        // `check_with_package_and_imports_options_resolver(prog, Some("myapp"), …)`
-        // (the production entrypoint; `check_with_package` is the
-        // test-only convenience wrapper) would stamp `Display` (and
-        // every other built-in) with `defined_in = "myapp"`, defeating
-        // the orphan rule's built-in counterparty arm: `trait Display
-        // for List(a)` in user code would then look "trait-local" and
-        // silently register. Round 63 item 5.
-        let saved_current_pkg = self.current_package.take();
-
-        // Register builtins in the type environment
-        self.register_builtins(&mut env);
-
-        // Register built-in traits and auto-derived impls (shared with
-        // `ReplTypeContext::new` so `silt check` and the REPL stay in
-        // sync on derive policy).
-        register_builtin_trait_impls(self);
-
-        // Restore the user-supplied package so subsequent decls in
-        // `program` are stamped against the real owning package.
-        self.current_package = saved_current_pkg;
+        let mut env = self.install_builtins();
 
         // Round 56 item 4: reset the import set so a fresh check_program
         // call doesn't inherit modules imported by a previous run.
@@ -3195,13 +3213,11 @@ impl TypeChecker {
                     let alias_str = resolve(*alias);
                     let prefix = format!("{module_str}.");
                     let to_alias: Vec<(Symbol, Scheme)> = env
-                        .bindings
-                        .iter()
-                        .filter_map(|(k, scheme)| {
-                            let k_str = resolve(*k);
-                            k_str.strip_prefix(&prefix).map(|suffix| {
-                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
-                            })
+                        .bindings_with_prefix(&prefix)
+                        .into_iter()
+                        .map(|(name, scheme)| {
+                            let suffix = &name[prefix.len()..];
+                            (intern(&format!("{alias_str}.{suffix}")), scheme)
                         })
                         .collect();
                     for (aliased, scheme) in to_alias {
@@ -8322,6 +8338,88 @@ pub fn check_with_package_and_imports_resolver(
     (checker.errors, exports, resolver)
 }
 
+// ── The builtin environment ─────────────────────────────────────────
+
+/// What every check starts from: the checker and the environment once
+/// the builtin functions, types, traits and derived impls are registered.
+/// Built once per thread and shared by every check made on it (see
+/// [`builtin_env`]).
+struct BuiltinEnv {
+    checker: TypeChecker,
+    /// The scope of the builtin names: the parent of every program's
+    /// top-level scope.
+    root: Rc<TypeEnv>,
+}
+
+impl BuiltinEnv {
+    fn build() -> Self {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnv::new();
+        // With no `current_package`, every builtin decl is stamped with
+        // the `__builtin__` sentinel by `defining_package()`, which the
+        // orphan rule relies on: `trait Display for List(a)` in user code
+        // must not look trait-local.
+        checker.register_builtins(&mut env);
+        register_builtin_trait_impls(&mut checker);
+        env.closed = env.free_vars(&checker).is_empty();
+        BuiltinEnv {
+            checker,
+            root: Rc::new(env),
+        }
+    }
+
+    /// A fresh checker and an empty top-level scope over the builtins.
+    fn start(&self) -> (TypeChecker, TypeEnv) {
+        (
+            self.checker.clone(),
+            TypeEnv::child_of(self.root.clone()),
+        )
+    }
+}
+
+thread_local! {
+    /// The builtin environment of this thread, with the interner
+    /// generation it was built in. Symbols are per thread, and
+    /// `intern::reset` invalidates them, so the cache is too.
+    static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The builtin environment, built on first use and after each
+/// `intern::reset`.
+fn builtin_env() -> Rc<BuiltinEnv> {
+    let generation = crate::intern::generation();
+    if let Some(env) = BUILTIN_ENV.with(|cell| match &*cell.borrow() {
+        Some((built_in, env)) if *built_in == generation => Some(env.clone()),
+        _ => None,
+    }) {
+        return env;
+    }
+    let env = Rc::new(BuiltinEnv::build());
+    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
+    env
+}
+
+impl TypeChecker {
+    /// Start a check from the builtin environment: the checker takes the
+    /// builtin tables and type variables, keeping what its caller set up
+    /// (the resolver, the owning package, the exports of the modules it
+    /// may import), and the returned environment holds the builtin names.
+    fn install_builtins(&mut self) -> TypeEnv {
+        let (checker, env) = builtin_env().start();
+        let resolver = std::mem::take(&mut self.resolver);
+        let package = self.current_package;
+        let module_exports = std::mem::take(&mut self.module_exports);
+        let poisoned_modules = std::mem::take(&mut self.poisoned_modules);
+        *self = checker;
+        self.resolver = resolver;
+        self.current_package = package;
+        self.module_exports = module_exports;
+        self.poisoned_modules = poisoned_modules;
+        env
+    }
+}
+
 // ── Persistent REPL type context ───────────────────────────────────
 
 /// Persistent type-checking context for the REPL.
@@ -8344,17 +8442,7 @@ impl ReplTypeContext {
     /// Create a new REPL type context with builtins and built-in traits
     /// already registered.
     pub fn new() -> Self {
-        let mut checker = TypeChecker::new();
-        let mut env = TypeEnv::new();
-
-        // Register builtins in the type environment
-        checker.register_builtins(&mut env);
-
-        // Register built-in traits and auto-derived impls. Shared with
-        // `check_program` so the REPL and `silt check` never drift on
-        // derive policy.
-        register_builtin_trait_impls(&mut checker);
-
+        let (checker, env) = builtin_env().start();
         Self { checker, env }
     }
 
@@ -8422,13 +8510,11 @@ impl ReplTypeContext {
                     let prefix = format!("{module_str}.");
                     let to_alias: Vec<(Symbol, Scheme)> = self
                         .env
-                        .bindings
-                        .iter()
-                        .filter_map(|(k, scheme)| {
-                            let k_str = resolve(*k);
-                            k_str.strip_prefix(&prefix).map(|suffix| {
-                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
-                            })
+                        .bindings_with_prefix(&prefix)
+                        .into_iter()
+                        .map(|(name, scheme)| {
+                            let suffix = &name[prefix.len()..];
+                            (intern(&format!("{alias_str}.{suffix}")), scheme)
                         })
                         .collect();
                     for (aliased, scheme) in to_alias {
