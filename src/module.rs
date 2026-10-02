@@ -156,6 +156,17 @@ pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static 
         .filter(move |name| builtin_type_module(name) == Some(module))
 }
 
+/// The builtin module whose enum declares the variant `name`, which is
+/// how the variant is reached qualified: `channel` for `Message` and for
+/// `Recv`, `time` for `Monday`. `None` for the prelude variants and for
+/// any other name.
+pub fn builtin_variant_module(name: &str) -> Option<&'static str> {
+    builtin_enum_variants()
+        .iter()
+        .find(|(_, variants)| variants.contains(&name))
+        .and_then(|(enum_name, _)| builtin_type_module(enum_name))
+}
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

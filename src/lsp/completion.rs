@@ -209,20 +209,14 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
-            // Gated enum constructors that belong to this module
-            // (e.g. `io.IoNotFound`, `http.GET`, `channel.Recv`,
-            // `time.Monday`, `postgres.PgConnect`). Emitted as
-            // CONSTRUCTOR entries so editors distinguish them from
+            // The variants of the module's enums (e.g. `io.IoNotFound`,
+            // `http.GET`, `channel.Recv`, `time.Monday`,
+            // `postgres.PgConnect`), reached as `module.Variant`. Emitted
+            // as CONSTRUCTOR entries so editors distinguish them from
             // module functions / constants.
-            //
-            // Silt does not expose gated constructors via `module.Name`
-            // at the runtime binding level — they bind as bare globals
-            // once the module is imported — but surfacing them after a
-            // `.` is the most intuitive discovery affordance for users
-            // exploring the API.
             for (_enum_name, variants) in module::builtin_enum_variants() {
                 for &variant in *variants {
-                    if module::gated_constructor_module(variant) == Some(prefix) {
+                    if module::builtin_variant_module(variant) == Some(prefix) {
                         items.push(CompletionItem {
                             label: variant.to_string(),
                             kind: Some(CompletionItemKind::CONSTRUCTOR),

@@ -40,6 +40,11 @@ fn main() {
     _ -> println("other")
   }
   println(channel.Message(3))
+  channel.send(ch, 6)
+  match channel.select([channel.Recv(ch), channel.ChannelOp.Recv(ch)]) {
+    (_, channel.Message(v)) -> println(v)
+    _ -> println("other")
+  }
   println(day_name(time.Monday))
   println(day_name(time.Weekday.Tuesday))
   println(day_name(t.Friday))

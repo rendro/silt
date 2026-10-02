@@ -1260,7 +1260,7 @@ impl Compiler {
                     // type has no value at run time.
                     for (item, _) in items {
                         let item_str = resolve(*item);
-                        if module::gated_constructor_module(&item_str) == Some(mod_str.as_str())
+                        if module::builtin_variant_module(&item_str) == Some(mod_str.as_str())
                             || module::builtin_type_module(&item_str) == Some(mod_str.as_str())
                         {
                             continue;
@@ -3017,7 +3017,7 @@ impl Compiler {
                 };
                 module
                     .filter(|module| self.imported_builtin_modules.contains(*module))
-                    .filter(|module| module::gated_constructor_module(&variant) == Some(module))
+                    .filter(|module| module::builtin_variant_module(&variant) == Some(module))
                     .map(|_| variant.clone())
             }
             ExprKind::FieldAccess(module, enum_name, _) => match &module.kind {
