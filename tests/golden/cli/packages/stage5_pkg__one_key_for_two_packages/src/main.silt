@@ -1,0 +1,8 @@
+-- Each package's dependency key is its own: the root's `util` is `u1`,
+-- and `a`'s `util` is `u2`.
+import util
+import a
+fn main() {
+  println(util.who())
+  println(a.who())
+}

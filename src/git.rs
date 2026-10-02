@@ -35,7 +35,9 @@ use sha2::{Digest, Sha256};
 /// produces a new lockfile SHA.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitRef {
-    /// A commit SHA (full or short, 7-64 hex chars). Locked verbatim.
+    /// A commit id, full or a prefix of at least 7 hex characters. A
+    /// prefix is resolved to the one commit it names (never to a tag or
+    /// a branch of the same name), and the lock stores the full id.
     Rev(String),
     /// A branch name. Re-fetches HEAD on `silt update`.
     Branch(String),
@@ -84,6 +86,12 @@ pub enum GitError {
     /// A URL or commit id was rejected before it could reach `git` or a
     /// cache path. Carries the rendered, printable reason.
     InvalidInput(String),
+    /// A short `rev` is the prefix of several commits.
+    AmbiguousRev { url: String, rev: String },
+    /// A checkout's `silt.toml` or `src/` holds a symbolic link, at
+    /// `path` (relative to the checkout). A dependency's files must be
+    /// its own.
+    Symlink { path: PathBuf },
 }
 
 /// What every line of git's own output starts with when silt shows it.
@@ -103,6 +111,8 @@ impl fmt::Display for GitError {
     //   - `RefNotFound`: `url` and `ref_spec` come from a manifest.
     //   - `InvalidInput`: the message quotes a URL from a manifest or a
     //     commit id from a lockfile.
+    //   - `AmbiguousRev`: both fields come from a manifest.
+    //   - `Symlink`: the path is a file name of the repository.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Shadows the formatter: nothing below can be written without
         // going through the display rule.
@@ -144,6 +154,17 @@ impl fmt::Display for GitError {
                 ref_spec.as_ref_string()
             ),
             GitError::InvalidInput(message) => write!(f, "{message}"),
+            GitError::AmbiguousRev { url, rev } => write!(
+                f,
+                "rev `{rev}` is the prefix of more than one commit in {url}; \
+                 write the full commit id"
+            ),
+            GitError::Symlink { path } => write!(
+                f,
+                "the repository holds a symbolic link, `{}`; a dependency may not \
+                 contain symbolic links",
+                path.display()
+            ),
         }
     }
 }
@@ -637,26 +658,26 @@ fn compute_cache_root() -> Result<PathBuf, GitError> {
     Ok(p)
 }
 
-/// Returns the per-(url, sha) cache directory.
+/// Returns the per-(url, commit) cache directory.
 ///
-/// Format: `<cache_dir>/<url-sha256-prefix>/<resolved_sha>/`. The
+/// Format: `<cache_dir>/<url-sha256-prefix>/<commit>/`. The
 /// directory is *not* created here — callers (specifically
 /// [`fetch_to_cache`]) handle creation/atomic rename.
 ///
-/// `resolved_sha` becomes a path component, so anything that is not a
-/// plain hexadecimal commit id is refused: a value such as
-/// `../../../../x` (from a hand-edited `silt.lock`) would otherwise
-/// point the cache path at an arbitrary directory.
-pub fn cache_for(url: &str, resolved_sha: &str) -> Result<PathBuf, GitError> {
-    if !is_valid_sha_shape(resolved_sha) {
+/// `commit` becomes a path component, and one commit must have one
+/// directory, so only a full commit id ([`is_full_commit_id`]) is
+/// accepted: a value such as `../../../../x` (from a hand-edited
+/// `silt.lock`) would otherwise point the cache path at an arbitrary
+/// directory, and a prefix would give one commit several.
+pub fn cache_for(url: &str, commit: &str) -> Result<PathBuf, GitError> {
+    if !is_full_commit_id(commit) {
         return Err(GitError::InvalidInput(format!(
-            "invalid resolved commit `{}`: expected 7 to 64 hexadecimal characters",
-            escape_for_display(resolved_sha)
+            "invalid commit id `{}`: expected 40 or 64 hexadecimal characters",
+            escape_for_display(commit)
         )));
     }
     let root = cache_dir()?;
-    let url_hash = url_hash(url);
-    Ok(root.join(url_hash).join(resolved_sha))
+    Ok(root.join(url_hash(url)).join(commit.to_lowercase()))
 }
 
 fn url_hash(url: &str) -> String {
@@ -672,12 +693,15 @@ fn url_hash(url: &str) -> String {
 
 // ── Ref resolution ─────────────────────────────────────────────────────
 
-/// Resolve a [`GitRef`] against the remote URL, returning the commit SHA.
+/// Resolve a [`GitRef`] against the remote URL, returning the full
+/// commit id.
 ///
-/// For `Rev(sha)` we validate the SHA shape (7-64 hex chars) and return
-/// it without contacting the network — the actual fetch will fail loudly
-/// later if the SHA doesn't exist remotely. For `Branch`/`Tag` we run
-/// `git ls-remote -- <url> <ref>` and parse the SHA out.
+/// A full `Rev` is returned without contacting the network — the fetch
+/// fails loudly later if the commit doesn't exist remotely. A short
+/// `Rev` is resolved in a clone of the repository to the one commit
+/// whose id it starts with; a tag or a branch of the same name is never
+/// taken for it (see [`fetch_rev`]). For `Branch`/`Tag` we run
+/// `git ls-remote -- <url> <ref>` and parse the id out.
 ///
 /// The URL must pass [`validate_git_url`]; the branch or tag name is
 /// only ever sent as `refs/heads/<name>` / `refs/tags/<name>`, which
@@ -685,15 +709,8 @@ fn url_hash(url: &str) -> String {
 pub fn resolve_ref(url: &str, ref_spec: &GitRef) -> Result<String, GitError> {
     check_url(url)?;
     match ref_spec {
-        GitRef::Rev(sha) => {
-            if !is_valid_sha_shape(sha) {
-                return Err(GitError::RefNotFound {
-                    url: url.to_string(),
-                    ref_spec: ref_spec.clone(),
-                });
-            }
-            Ok(sha.to_lowercase())
-        }
+        GitRef::Rev(rev) if is_full_commit_id(rev) => Ok(rev.to_lowercase()),
+        GitRef::Rev(rev) => fetch_rev(url, rev).map(|(commit, _)| commit),
         GitRef::Branch(name) => {
             let refspec = format!("refs/heads/{name}");
             ls_remote_resolve(url, &refspec).and_then(|maybe_sha| {
@@ -743,12 +760,9 @@ pub fn verify_reachable(url: &str) -> Result<(), GitError> {
 /// character hex string and nothing else. The upper bound is 64, not
 /// 40, because a commit of a SHA-256 repository has a 64-character id.
 ///
-/// This is the one rule for every commit id silt handles: a manifest
-/// `rev` (offline validation in `resolve_ref`), `silt add --git --rev`
-/// (shape-check before the network round-trip), the lockfile's `rev`
-/// field, and the id that names a cache directory in [`cache_for`].
-/// Being hexadecimal only, an accepted value can be neither a path nor
-/// an option.
+/// This is the shape of a `rev` a manifest or `silt add --rev` may
+/// give: a full id or a prefix of one. Being hexadecimal only, an
+/// accepted value can be neither a path nor an option.
 pub fn is_valid_sha_shape(s: &str) -> bool {
     let len = s.len();
     if !(7..=64).contains(&len) {
@@ -757,99 +771,162 @@ pub fn is_valid_sha_shape(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Returns true if `s` is a full commit id: 40 hexadecimal characters
+/// (SHA-1) or 64 (SHA-256). The one shape a lockfile `rev` and a cache
+/// directory name have.
+pub fn is_full_commit_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 // ── Fetch ──────────────────────────────────────────────────────────────
 
-/// Fetch the repo at `resolved_sha` into the cache and return the
-/// checkout directory.
-///
-/// Idempotent: if the cache dir already exists with a `silt.toml` we
-/// take that as a sign the cache is populated and skip the fetch.
-/// Otherwise we clone into a sibling `.tmp` dir and atomically rename
-/// on success — this avoids leaving a half-populated cache after an
-/// interrupted clone.
-///
-/// The caller is responsible for resolving Branch/Tag specs to a SHA
-/// first (via [`resolve_ref`]); this function only knows about SHAs.
-pub fn fetch_to_cache(url: &str, resolved_sha: &str) -> Result<PathBuf, GitError> {
+/// Fetch the repo at the full commit id `commit` into the cache and
+/// return the checkout directory. See [`fetch_rev`].
+pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     check_url(url)?;
-    // `cache_for` also vets `resolved_sha`, so by the time it reaches
-    // `git checkout` below it is known to be plain hexadecimal.
-    let dest = cache_for(url, resolved_sha)?;
-    if dest.join("silt.toml").is_file() {
-        return Ok(dest);
+    if !is_full_commit_id(commit) {
+        return Err(GitError::InvalidInput(format!(
+            "invalid commit id `{}`: expected 40 or 64 hexadecimal characters",
+            escape_for_display(commit)
+        )));
     }
+    fetch_rev(url, commit).map(|(_, dir)| dir)
+}
 
-    // Ensure parent (`<cache>/<url-hash>/`) exists; the per-SHA leaf
-    // directory itself is created by `git clone`.
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|e| GitError::Io {
-            context: format!("create cache parent {}", parent.display()),
-            error: e,
-        })?;
+/// Fetch the commit `rev` names into the cache: returns its full id and
+/// the checkout directory.
+///
+/// `rev` is a full commit id or a prefix of one (7 or more hexadecimal
+/// characters). A prefix is resolved in the clone with `git rev-parse
+/// --disambiguate`, which matches object ids only: a tag or a branch
+/// that happens to be named like the prefix is never taken for it, as
+/// `git checkout <prefix>` would. Exactly one commit must match.
+///
+/// Idempotent and safe to run in several processes at once: the clone
+/// is made in a temporary directory of this process's own and renamed
+/// into place, so the checkout directory only ever appears complete. If
+/// it is already there (from an earlier run, or another process won the
+/// race), that one is used. A checkout whose `silt.toml` or `src/` holds
+/// a symbolic link is rejected and not cached (the rule of
+/// `lockfile::checksum_path_source`).
+pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
+    check_url(url)?;
+    if !is_valid_sha_shape(rev) {
+        return Err(GitError::RefNotFound {
+            url: url.to_string(),
+            ref_spec: GitRef::Rev(rev.to_string()),
+        });
     }
-
-    // Atomic-ish: clone into <dest>.tmp, then rename to <dest>.
-    let tmp = with_tmp_suffix(&dest);
-    if tmp.exists() {
-        // Stale tmp from a previous interrupted clone.
-        fs::remove_dir_all(&tmp).map_err(|e| GitError::Io {
-            context: format!("remove stale tmp dir {}", tmp.display()),
-            error: e,
-        })?;
-    }
-
-    // Full clone (not shallow): the user picked a specific SHA and we
-    // don't know whether `--depth=1` would include it. `--` ends option
-    // parsing so neither the URL nor the path can be read as an option.
-    run_git(&[
-        "clone",
-        "--quiet",
-        "--",
-        url,
-        tmp.to_str().ok_or_else(|| GitError::Io {
-            context: "tmp path is not valid UTF-8".into(),
-            error: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF-8 cache path"),
-        })?,
-    ])?;
-    run_git(&[
-        "-C",
-        tmp.to_str().expect("checked above"),
-        "checkout",
-        "--quiet",
-        resolved_sha,
-    ])?;
-
-    if dest.exists() {
-        // Race: another process populated the cache between our existence
-        // check and the rename. Discard our tmp and return the existing
-        // dir if it has a silt.toml; otherwise propagate as an Io error.
-        if dest.join("silt.toml").is_file() {
-            let _ = fs::remove_dir_all(&tmp);
-            return Ok(dest);
+    let rev = rev.to_lowercase();
+    if is_full_commit_id(&rev) {
+        let dest = cache_for(url, &rev)?;
+        if dest.is_dir() {
+            return Ok((rev, dest));
         }
-        fs::remove_dir_all(&dest).map_err(|e| GitError::Io {
-            context: format!("remove pre-existing cache leaf {}", dest.display()),
-            error: e,
-        })?;
     }
 
-    fs::rename(&tmp, &dest).map_err(|e| GitError::Io {
-        context: format!("rename {} -> {}", tmp.display(), dest.display()),
+    // `<cache>/<url-hash>/`; the per-commit leaf directory itself is
+    // created by the rename below.
+    let url_dir = cache_dir()?.join(url_hash(url));
+    fs::create_dir_all(&url_dir).map_err(|e| GitError::Io {
+        context: format!("create cache parent {}", url_dir.display()),
         error: e,
     })?;
 
-    Ok(dest)
+    // A name no other process uses: this process's id and a counter.
+    static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = url_dir.join(format!("{rev}.{}.{n}.tmp", std::process::id()));
+    let tmp_str = tmp.to_str().ok_or_else(|| GitError::Io {
+        context: "tmp path is not valid UTF-8".into(),
+        error: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF-8 cache path"),
+    })?;
+
+    // Full clone (not shallow): the user picked a specific commit and
+    // we don't know whether `--depth=1` would include it. `--` ends
+    // option parsing so neither the URL nor the path can be read as an
+    // option.
+    let result = run_git(&["clone", "--quiet", "--", url, tmp_str])
+        .and_then(|_| finish_checkout(url, &rev, &tmp, tmp_str));
+    // Whatever happened, the temporary directory is this process's own:
+    // gone after a rename, removed otherwise.
+    let _ = fs::remove_dir_all(&tmp);
+    result
 }
 
-fn with_tmp_suffix(dest: &Path) -> PathBuf {
-    let mut name = dest
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_default();
-    name.push(".tmp");
-    let mut tmp = dest.to_path_buf();
-    tmp.set_file_name(name);
-    tmp
+/// The rest of [`fetch_rev`] once `tmp` holds a clone: resolve `rev`,
+/// check the commit out, refuse symbolic links, move it into place.
+fn finish_checkout(
+    url: &str,
+    rev: &str,
+    tmp: &Path,
+    tmp_str: &str,
+) -> Result<(String, PathBuf), GitError> {
+    let commit = if is_full_commit_id(rev) {
+        rev.to_string()
+    } else {
+        commit_with_prefix(url, rev, tmp_str)?
+    };
+    let dest = cache_for(url, &commit)?;
+    if dest.is_dir() {
+        return Ok((commit, dest));
+    }
+
+    // `commit` is a full id here, which git reads as an object id even
+    // if a ref of the same name exists.
+    run_git(&["-C", tmp_str, "checkout", "--quiet", "--detach", &commit])?;
+    match crate::lockfile::checksum_path_source(tmp) {
+        Ok(_) => {}
+        Err(crate::lockfile::ChecksumError::Symlink(path)) => {
+            return Err(GitError::Symlink { path });
+        }
+        Err(crate::lockfile::ChecksumError::Io(e)) => {
+            return Err(GitError::Io {
+                context: format!("read checkout {}", tmp.display()),
+                error: e,
+            });
+        }
+    }
+
+    // The rename is atomic. It fails if another process renamed its
+    // checkout of the same commit into place first: then that one is
+    // used.
+    match fs::rename(tmp, &dest) {
+        Ok(()) => Ok((commit, dest)),
+        Err(_) if dest.is_dir() => Ok((commit, dest)),
+        Err(e) => Err(GitError::Io {
+            context: format!("rename {} -> {}", tmp.display(), dest.display()),
+            error: e,
+        }),
+    }
+}
+
+/// The one commit of the clone at `repo` whose id starts with `prefix`.
+/// `git rev-parse --disambiguate` lists the objects of every type with
+/// that prefix and looks at no ref; the commits among them are kept.
+fn commit_with_prefix(url: &str, prefix: &str, repo: &str) -> Result<String, GitError> {
+    let listed = run_git(&["-C", repo, "rev-parse", &format!("--disambiguate={prefix}")])?;
+    let mut commits = Vec::new();
+    for object in listed.split_whitespace() {
+        if !is_full_commit_id(object) {
+            continue;
+        }
+        let kind = run_git(&["-C", repo, "cat-file", "-t", object])?;
+        if kind.trim() == "commit" {
+            commits.push(object.to_lowercase());
+        }
+    }
+    match commits.len() {
+        1 => Ok(commits.remove(0)),
+        0 => Err(GitError::RefNotFound {
+            url: url.to_string(),
+            ref_spec: GitRef::Rev(prefix.to_string()),
+        }),
+        _ => Err(GitError::AmbiguousRev {
+            url: url.to_string(),
+            rev: prefix.to_string(),
+        }),
+    }
 }
 
 // ── Subprocess plumbing ────────────────────────────────────────────────
@@ -1572,12 +1649,20 @@ mod tests {
     #[test]
     fn cache_for_refuses_a_path_shaped_commit() {
         // Rejected before the cache root is computed or created.
-        for sha in ["../../../../x", "..", "abc1234/x", "-abc1234", ""] {
+        // A prefix is refused too: one commit, one directory.
+        for sha in [
+            "../../../../x",
+            "..",
+            "abc1234/x",
+            "-abc1234",
+            "",
+            "abc1234",
+        ] {
             let err = cache_for("https://example.com/foo", sha)
                 .expect_err("path-shaped commit must be refused")
                 .to_string();
             assert!(
-                err.contains("invalid resolved commit"),
+                err.contains("invalid commit id"),
                 "unexpected error for {sha:?}: {err}"
             );
         }
@@ -1594,7 +1679,7 @@ mod tests {
             verify_reachable(url)
                 .expect_err("verify_reachable must refuse")
                 .to_string(),
-            fetch_to_cache(url, "abc1234")
+            fetch_to_cache(url, &"a".repeat(40))
                 .expect_err("fetch_to_cache must refuse")
                 .to_string(),
         ];

@@ -1,18 +1,16 @@
-//! Where the packages of a program are: the one place the session reads
-//! `silt.toml` and `silt.lock`.
-//!
-//! This is the package layer as it stands before the package graph
-//! (`resolve_packages` in `package_graph.rs`) exists: packages are known
-//! by name, and every package's source directory is found from the
-//! lockfile. The session calls [`resolve_packages`] once and builds the
-//! module graph on what it returns.
+//! The packages of a program, as the session sees them: the package
+//! graph of the project (`package_graph::resolve_packages`), or one
+//! unnamed package for a script outside any project.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern};
-use crate::lockfile::{Lockfile, LockfileError};
-use crate::manifest::{Manifest, ManifestError};
+use crate::manifest::Manifest;
+use crate::package_graph::{LockChange, PackageId, resolve_packages};
+use crate::source::{FileId, SourceMap, SourceName, Span};
+
+pub use crate::package_graph::LockPolicy;
 
 /// Where a session finds the project of the files it is given.
 #[derive(Debug, Clone)]
@@ -29,106 +27,147 @@ pub enum ProjectSetup {
     None,
 }
 
-/// What a session may do with `silt.lock`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LockPolicy {
-    /// Rewrite it when it is missing or does not match `silt.toml`
-    /// (`run`, `check`, `test`).
-    Update,
-    /// Never write it: a missing lock is resolved in memory (`disasm`,
-    /// `fmt`, the LSP).
-    ReadOnly,
+/// One package of a program.
+#[derive(Debug, Clone)]
+pub struct Package {
+    pub id: PackageId,
+    /// `[package].name`, unique in a graph; `__local__` for a script.
+    /// The typechecker's orphan rule tells packages apart by it.
+    pub name: Symbol,
+    /// The directory of its modules; `None` when there is no project.
+    pub src: Option<PathBuf>,
+    /// Its `silt.toml`; `None` for the unnamed package of a script.
+    pub manifest: Option<FileId>,
+    /// Each key of its `[dependencies]`, the package it names, and the
+    /// span of the key in its `silt.toml`.
+    pub deps: Vec<(Symbol, PackageId, Span)>,
 }
 
 /// The packages of a program.
 #[derive(Debug, Clone)]
 pub struct Packages {
-    /// The package the entry file belongs to.
-    pub local: Symbol,
-    /// The source directory (`<root>/src`, or the script's directory) of
-    /// every package, by name. Dependencies are known by their name.
-    pub roots: HashMap<Symbol, PathBuf>,
-    /// Whether `silt.lock` was rewritten because it did not match the
-    /// manifest.
-    pub lock_rewritten: bool,
+    /// Indexed by `PackageId`.
+    pub packages: Vec<Package>,
+    /// The package the entry files belong to.
+    pub root: PackageId,
+    /// What resolving did to `silt.lock`.
+    pub lock: LockChange,
 }
 
-/// Why the packages could not be resolved.
-#[derive(Debug)]
-pub enum PackageError {
-    Manifest(ManifestError),
-    Lockfile(LockfileError),
+impl Packages {
+    pub fn package(&self, id: PackageId) -> &Package {
+        &self.packages[id.0 as usize]
+    }
+
+    /// The package `key` names in `from`'s `[dependencies]`.
+    pub fn dependency(&self, from: PackageId, key: Symbol) -> Option<PackageId> {
+        self.package(from)
+            .deps
+            .iter()
+            .find(|(k, _, _)| *k == key)
+            .map(|(_, id, _)| *id)
+    }
+
+    /// One unnamed package whose modules are in `src`.
+    pub fn unnamed(src: Option<PathBuf>) -> Packages {
+        Packages {
+            packages: vec![Package {
+                id: PackageId(0),
+                name: intern(UNNAMED_PACKAGE),
+                src,
+                manifest: None,
+                deps: Vec::new(),
+            }],
+            root: PackageId(0),
+            lock: LockChange::Unchanged,
+        }
+    }
 }
 
-/// The name of the package of a file outside any package. Package names
+/// The name of the package of a file outside any project. Package names
 /// are validated against `[a-z][a-z0-9_-]*`, so it cannot collide.
 const UNNAMED_PACKAGE: &str = "__local__";
 
-/// Resolve the packages of `project`, reading `silt.toml` and
-/// `silt.lock` once, and rewriting the lock when `lock` allows it and it
-/// is stale.
-pub fn resolve_packages(
+/// The packages of `project`: its manifests and lockfile are read once
+/// (manifests and lockfile are registered in `sources`, where the
+/// diagnostics point), and the lockfile is rewritten when `lock` allows
+/// it and it no longer pins the graph.
+pub(super) fn project_packages(
     project: &ProjectSetup,
     lock: LockPolicy,
-) -> Result<Packages, PackageError> {
-    let unnamed = |dir: Option<&Path>| {
-        let local = intern(UNNAMED_PACKAGE);
-        let mut roots = HashMap::new();
-        if let Some(dir) = dir {
-            roots.insert(local, dir.to_path_buf());
-        }
-        Packages {
-            local,
-            roots,
-            lock_rewritten: false,
-        }
-    };
+    sources: &mut SourceMap,
+) -> Result<Packages, Vec<Diagnostic>> {
     let dir = match project {
         ProjectSetup::Discover(dir) => dir,
-        ProjectSetup::Script(dir) => return Ok(unnamed(Some(dir))),
-        ProjectSetup::None => return Ok(unnamed(None)),
+        ProjectSetup::Script(dir) => return Ok(Packages::unnamed(Some(dir.clone()))),
+        ProjectSetup::None => return Ok(Packages::unnamed(None)),
     };
     let Some(root) = Manifest::find(dir) else {
-        return Ok(unnamed(Some(dir)));
+        return Ok(Packages::unnamed(Some(dir.clone())));
     };
-    let manifest = Manifest::load(&root.join("silt.toml")).map_err(PackageError::Manifest)?;
-    let lockfile_path = root.join("silt.lock");
-    let (lockfile, lock_rewritten) = match lock {
-        LockPolicy::Update => fresh_lockfile(&manifest, &lockfile_path)?,
-        LockPolicy::ReadOnly => (existing_lockfile(&manifest, &lockfile_path)?, false),
-    };
+    let graph = resolve_packages(&root, lock, sources)?;
     Ok(Packages {
-        local: manifest.package.name,
-        roots: lockfile.package_roots(&manifest),
-        lock_rewritten,
+        packages: graph
+            .packages
+            .iter()
+            .map(|node| Package {
+                id: node.id,
+                name: node.name,
+                src: Some(node.src.clone()),
+                manifest: Some(node.manifest),
+                deps: node.deps.clone(),
+            })
+            .collect(),
+        root: graph.root,
+        lock: graph.lock,
     })
 }
 
-/// The lockfile, rewritten first when it is missing or does not match
-/// `manifest`. The flag says whether an existing lock was replaced.
-fn fresh_lockfile(manifest: &Manifest, path: &Path) -> Result<(Lockfile, bool), PackageError> {
-    let existing = match Lockfile::load(path) {
-        Ok(lock) => Some(lock),
-        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(PackageError::Lockfile(e)),
-    };
-    if let Some(lock) = existing.as_ref()
-        && lock.matches_manifest(manifest)
-    {
-        return Ok((existing.expect("checked above"), false));
-    }
-    let fresh = Lockfile::resolve(manifest).map_err(PackageError::Lockfile)?;
-    fresh.write(path).map_err(PackageError::Lockfile)?;
-    Ok((fresh, existing.is_some()))
-}
-
-/// The lockfile as it is, or resolved in memory when there is none.
-fn existing_lockfile(manifest: &Manifest, path: &Path) -> Result<Lockfile, PackageError> {
-    match Lockfile::load(path) {
-        Ok(lock) => Ok(lock),
-        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => {
-            Lockfile::resolve(manifest).map_err(PackageError::Lockfile)
+/// An error for each module file of a project package (one with a
+/// manifest) named like a builtin module: `import list` always means the
+/// builtin `list`, so `src/list.silt` could never be imported. The file
+/// is registered in `sources`, and the error is at its start.
+pub(super) fn modules_named_like_builtins(
+    packages: &Packages,
+    sources: &mut SourceMap,
+) -> Vec<Diagnostic> {
+    let mut errors = Vec::new();
+    for package in packages.packages.iter().filter(|p| p.manifest.is_some()) {
+        let Some(src) = &package.src else {
+            continue;
+        };
+        let Ok(entries) = std::fs::read_dir(src) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension().is_some_and(|ext| ext == "silt")
+                    && p.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .is_some_and(crate::module::is_builtin_module)
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let file = sources.add(SourceName::Path(path.clone()), text.into());
+            errors.push(
+                Diagnostic::error(
+                    Code::ModuleNamedLikeBuiltin,
+                    Span::point(file, 0),
+                    format!(
+                        "the module `{name}` cannot be imported: `import {name}` names the \
+                         builtin module `{name}`"
+                    ),
+                )
+                .with_help(format!("rename `{name}.silt`")),
+            );
         }
-        Err(e) => Err(PackageError::Lockfile(e)),
     }
+    errors
 }

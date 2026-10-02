@@ -302,6 +302,11 @@ pub struct ModuleUnit {
     /// The module's name in its package (`"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`).
     pub name: String,
+    /// The prefix of the globals the module's public declarations are
+    /// installed under (`<global>.<name>`): unique in the program, so two
+    /// modules imported by one name from two packages (an app's
+    /// `src/util.silt` and a dependency's own) do not share globals.
+    pub global: String,
     /// The module each `import` of this module names, by the name
     /// written after `import`. Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
@@ -1217,9 +1222,10 @@ impl Compiler {
                 // File-based selective import: compile the module, then alias
                 // "module.item" -> bare "item" for each selected name.
                 self.compile_file_module(&mod_str, span)?;
+                let global = self.module_global(&mod_str);
                 for (item, _) in items {
                     let item_str = resolve(*item);
-                    let qualified = format!("{mod_str}.{item_str}");
+                    let qualified = format!("{global}.{item_str}");
                     let qi = self.add_constant(Value::String(qualified), span)?;
                     self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
                     let bare_i = self.add_constant(Value::String(item_str), span)?;
@@ -1265,8 +1271,9 @@ impl Compiler {
                 // File module with alias: compile under original name, then
                 // re-register each public declaration under the alias prefix.
                 let public_names = self.compile_file_module(&mod_str, span)?;
+                let global = self.module_global(&mod_str);
                 for name in &public_names {
-                    let original = format!("{mod_str}.{name}");
+                    let original = format!("{global}.{name}");
                     let qi = self.add_constant(Value::String(original), span)?;
                     self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
                     let alias_name = format!("{alias_str}.{name}");
@@ -1277,6 +1284,20 @@ impl Compiler {
                 Ok(())
             }
         }
+    }
+
+    /// The prefix of the globals of the module the current module imports
+    /// as `written`: the module's unique global prefix, or `written`
+    /// itself for anything else (a builtin module, an alias, a foreign
+    /// module an embedder registered).
+    fn module_global(&self, written: &str) -> String {
+        let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        self.units
+            .modules
+            .get(importer)
+            .and_then(|unit| unit.imports.get(&intern(written)))
+            .map(|&target| self.units.modules[target].global.clone())
+            .unwrap_or_else(|| written.to_string())
     }
 
     /// Compile a file-based module's declarations into the current compilation
@@ -1323,8 +1344,9 @@ impl Compiler {
         }
 
         let program = self.units.modules[target].program.clone();
+        let global = self.units.modules[target].global.clone();
         self.unit_stack.push(target);
-        let result = self.compile_file_module_inner(module_name, &program, span);
+        let result = self.compile_file_module_inner(module_name, &global, &program, span);
         self.unit_stack.pop();
         if let Ok(names) = &result {
             self.compiled_modules.insert(target);
@@ -1334,10 +1356,12 @@ impl Compiler {
     }
 
     /// Inner implementation of file module compilation: the declarations
-    /// of `program`, the module imported as `module_name` at `span`.
+    /// of `program`, the module imported as `module_name` at `span`, whose
+    /// public declarations become the globals `<global>.<name>`.
     fn compile_file_module_inner(
         &mut self,
         module_name: &str,
+        global: &str,
         program: &Program,
         span: Span,
     ) -> Result<Vec<String>, Diagnostic> {
@@ -1378,7 +1402,7 @@ impl Compiler {
             .collect();
         self.module_public_fns
             .insert(module_name.to_string(), pub_set);
-        self.module_scope = Some((module_name.to_string(), all_fn_names));
+        self.module_scope = Some((global.to_string(), all_fn_names));
 
         // Wrap module top-level code in a synthetic `<module:name>` function
         // so runtime errors carry a frame that identifies the source file.
@@ -1445,7 +1469,7 @@ impl Compiler {
 
                     if public_fns.contains(&fn_decl.name) {
                         // Register as "module_name.fn_name"
-                        let qualified = format!("{module_name}.{}", fn_decl.name);
+                        let qualified = format!("{global}.{}", fn_decl.name);
                         let name_idx = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
@@ -1454,7 +1478,7 @@ impl Compiler {
                     } else {
                         // Internal function — still register so closures / calls work,
                         // but under a mangled private name.
-                        let private_name = format!("__{module_name}__{}", fn_decl.name);
+                        let private_name = format!("__{global}__{}", fn_decl.name);
                         let name_idx = self.add_constant(Value::String(private_name), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
@@ -1475,7 +1499,7 @@ impl Compiler {
                                     self.add_constant(Value::String(vname.clone()), span)?;
                                 self.current_chunk()
                                     .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                                let qual = format!("{module_name}.{vname}");
+                                let qual = format!("{global}.{vname}");
                                 let qual_idx = self.add_constant(Value::String(qual), span)?;
                                 self.current_chunk()
                                     .emit_op_u16(Op::SetGlobal, qual_idx, span);
@@ -1488,7 +1512,7 @@ impl Compiler {
                             let type_val_idx = self.add_constant(type_val, span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::Constant, type_val_idx, span);
-                            let qual_type = format!("{module_name}.{}", type_decl.name);
+                            let qual_type = format!("{global}.{}", type_decl.name);
                             let qual_type_idx =
                                 self.add_constant(Value::String(qual_type), span)?;
                             self.current_chunk()
@@ -1501,7 +1525,7 @@ impl Compiler {
                                 self.add_constant(Value::String(resolve(type_decl.name)), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                            let qual = format!("{module_name}.{}", type_decl.name);
+                            let qual = format!("{global}.{}", type_decl.name);
                             let qual_idx = self.add_constant(Value::String(qual), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::SetGlobal, qual_idx, span);
@@ -1989,7 +2013,7 @@ impl Compiler {
                                 return Err(module_not_imported(span, &module.to_string()));
                             }
                             // Module-qualified call on a global module name.
-                            let qualified = format!("{module}.{method}");
+                            let qualified = format!("{}.{method}", self.module_global(&mod_str));
                             let name_idx = self.add_constant(Value::String(qualified), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::GetGlobal, name_idx, span);
@@ -2082,7 +2106,7 @@ impl Compiler {
                         // found (the alias path registers `s.split` as a
                         // standalone global).
                         if !self.repl_mode || module::is_builtin_module(&name_str) {
-                            let qualified = format!("{name}.{field}");
+                            let qualified = format!("{}.{field}", self.module_global(&name_str));
                             let name_idx = self.add_constant(Value::String(qualified), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::GetGlobal, name_idx, span);

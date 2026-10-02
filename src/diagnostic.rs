@@ -194,6 +194,9 @@ codes! {
     ShadowsModule = "E0408", Compile;
     /// A defect in silt: the compiler lost track of its own state.
     CompilerBug = "E0409", Compile;
+    /// A module file named like a builtin module: `import` of the name
+    /// always means the builtin one.
+    ModuleNamedLikeBuiltin = "E0410", Compile;
     // ── entry point ──
     MissingMain = "E0501", Compile;
     MainSignature = "E0502", Compile;
@@ -201,6 +204,24 @@ codes! {
     TestSignature = "E0503", Compile;
     // ── package ──
     ManifestInvalid = "E0601", Package;
+    /// A path dependency whose directory is not there.
+    DependencyNotFound = "E0602", Package;
+    /// A dependency whose directory holds no `silt.toml`.
+    DependencyNotPackage = "E0603", Package;
+    /// Two different package sources with one `[package].name`.
+    DuplicatePackage = "E0604", Package;
+    /// A dependency key equal to a module of the same package.
+    DependencyKeyCollision = "E0605", Package;
+    /// A git dependency that cannot be resolved or fetched.
+    GitDependency = "E0606", Package;
+    LockfileInvalid = "E0607", Package;
+    /// A `silt.lock` entry that is not what the manifest resolves to,
+    /// where the lockfile may not be rewritten.
+    LockfileStale = "E0608", Package;
+    /// A symbolic link in a dependency's sources.
+    SymlinkInDependency = "E0609", Package;
+    /// A package file that cannot be read or written.
+    PackageIo = "E0610", Package;
     // ── runtime ──
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.

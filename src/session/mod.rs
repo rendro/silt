@@ -37,7 +37,7 @@ pub use entry::{
     test_kind,
 };
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering};
-pub use packages::{LockPolicy, PackageError, Packages, ProjectSetup};
+pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
 
 /// A module an embedder declares to the session (design decision D7).
 /// It has no values yet: host modules are declared in a later step, and
@@ -125,7 +125,7 @@ pub struct Session {
     sources: SourceMap,
     graph: ModuleGraph,
     /// The packages, resolved on first use. Until then `None`.
-    packages: Option<Result<Packages, PackageError>>,
+    packages: Option<Result<Packages, Vec<Diagnostic>>>,
     /// The packages the graph is built on: those resolved, or none when
     /// resolving them failed.
     fallback_packages: Packages,
@@ -144,6 +144,9 @@ pub struct Session {
     results: HashMap<ModuleId, Analysis>,
     /// The number of REPL cells added.
     cells: usize,
+    /// The module files of the project's packages named like builtin
+    /// modules, found when the packages are resolved.
+    module_name_problems: Vec<Diagnostic>,
 }
 
 impl Session {
@@ -153,11 +156,7 @@ impl Session {
             sources: SourceMap::new(),
             graph: ModuleGraph::default(),
             packages: None,
-            fallback_packages: Packages {
-                local: intern("__local__"),
-                roots: HashMap::new(),
-                lock_rewritten: false,
-            },
+            fallback_packages: Packages::unnamed(None),
             overlays: HashMap::new(),
             resolver: Resolver::new(),
             file_modules: HashMap::new(),
@@ -165,6 +164,7 @@ impl Session {
             analyses: HashMap::new(),
             results: HashMap::new(),
             cells: 0,
+            module_name_problems: Vec::new(),
         }
     }
 
@@ -178,36 +178,28 @@ impl Session {
         &self.graph
     }
 
-    /// The packages of the project: `silt.toml` and `silt.lock` are read
-    /// on the first call, and the lock rewritten when the policy allows
-    /// it and it is stale.
-    ///
-    /// The errors are the package layer's own types until it reports
-    /// diagnostics; a door renders them itself. When they fail, the
-    /// session goes on as if there were no project.
-    pub fn packages(&mut self) -> Result<&Packages, &PackageError> {
+    /// The packages of the project: its manifests and `silt.lock` are
+    /// read on the first call (and registered in the source map, where
+    /// their diagnostics point), and the lock is rewritten when the
+    /// policy allows it and it no longer pins the graph. When that
+    /// fails, the session goes on as if there were no project, and every
+    /// analysis reports the package diagnostics.
+    pub fn packages(&mut self) -> Result<&Packages, &[Diagnostic]> {
         if self.packages.is_none() {
-            self.packages = Some(packages::resolve_packages(
+            let resolved = packages::project_packages(
                 &self.config.project,
                 self.config.lock,
-            ));
+                &mut self.sources,
+            );
+            if let Ok(packages) = &resolved {
+                self.module_name_problems =
+                    packages::modules_named_like_builtins(packages, &mut self.sources);
+            }
+            self.packages = Some(resolved);
         }
-        self.packages.as_ref().expect("resolved above").as_ref()
-    }
-
-    /// Resolve the packages (see [`Session::packages`]) and take the
-    /// error if that failed, for a door that renders it and stops.
-    pub fn take_package_error(&mut self) -> Option<PackageError> {
-        let _ = self.packages();
-        match self.packages.take() {
-            Some(Err(e)) => {
-                self.packages = Some(Ok(self.fallback_packages.clone()));
-                Some(e)
-            }
-            other => {
-                self.packages = other;
-                None
-            }
+        match self.packages.as_ref().expect("resolved above") {
+            Ok(packages) => Ok(packages),
+            Err(diagnostics) => Err(diagnostics),
         }
     }
 
@@ -276,7 +268,9 @@ impl Session {
                 id
             }
             None => {
-                let package = self.graph_packages().local;
+                let packages = self.graph_packages();
+                let root = packages.package(packages.root);
+                let package = (root.id, root.name);
                 self.graph
                     .enter(path, name, text, package, &mut self.sources)
             }
@@ -373,7 +367,7 @@ impl Session {
         }
         let check = typechecker::check_module(
             &mut ast,
-            Some(module.package),
+            Some(module.package_name),
             imports,
             poisoned,
             &mut self.resolver,
@@ -396,6 +390,14 @@ impl Session {
                 out.push(d.clone());
             }
         };
+        if let Some(Err(diagnostics)) = &self.packages {
+            for d in diagnostics {
+                push(d, &mut out);
+            }
+        }
+        for d in &self.module_name_problems {
+            push(d, &mut out);
+        }
         let entry_module = self.graph.module(entry);
         for d in &entry_module.problems {
             push(d, &mut out);
@@ -474,6 +476,29 @@ impl Session {
         // the unit of the module it names.
         let index: HashMap<ModuleId, usize> =
             modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        // Each module's globals take the first name it is imported by; a
+        // module imported by a name another module took already (an app's
+        // `util` and a dependency's own `util`) is told apart by its
+        // package.
+        let mut globals: HashMap<ModuleId, String> = HashMap::new();
+        let mut taken: HashSet<String> = HashSet::new();
+        for m in &modules {
+            for import in &self.graph.module(*m).imports {
+                let ImportResolution::Module(target) = import.resolution else {
+                    continue;
+                };
+                if globals.contains_key(&target) {
+                    continue;
+                }
+                let mut global = resolve(import.name);
+                if !taken.insert(global.clone()) {
+                    let module = self.graph.module(target);
+                    global = format!("{}::{}", module.package_name, resolve(module.name));
+                    taken.insert(global.clone());
+                }
+                globals.insert(target, global);
+            }
+        }
         let units = ProgramUnits {
             modules: modules
                 .iter()
@@ -482,6 +507,10 @@ impl Session {
                     ModuleUnit {
                         program: self.analyses[m].ast.clone(),
                         name: resolve(module.name),
+                        global: globals
+                            .get(m)
+                            .cloned()
+                            .unwrap_or_else(|| resolve(module.name)),
                         imports: module
                             .imports
                             .iter()

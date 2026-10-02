@@ -85,11 +85,25 @@ fn session_diagnostics(source: &SourceFile, uri: &Uri) -> Vec<Diagnostic> {
     if let Err(errors) = session.compile(file, Entry::Tests { filter: None }) {
         diagnostics.extend(errors);
     }
+    // The document's file, however the session registered it: a file can
+    // be registered once as the document and once by a package check.
+    let in_document = |d: &crate::diagnostic::Diagnostic| {
+        d.span.file == file
+            || session
+                .sources()
+                .get(d.span.file)
+                .is_some_and(|f| match &f.path {
+                    SourceName::Path(p) | SourceName::Overlay(p) => *p == path,
+                    _ => false,
+                })
+    };
     diagnostics
         .iter()
-        .filter(|d| d.span.file == file)
+        .filter(|d| in_document(d))
         .map(|d| {
-            crate::diagnostic::to_lsp(session.sources(), d, &|f| (f == file).then(|| uri.clone()))
+            crate::diagnostic::to_lsp(session.sources(), d, &|f| {
+                (f == file || f == d.span.file).then(|| uri.clone())
+            })
         })
         .collect()
 }

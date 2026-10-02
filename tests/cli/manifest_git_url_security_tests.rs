@@ -438,14 +438,23 @@ fn hostile_ref_value_cannot_forge_a_line_of_output() {
             Some(1),
             "{key}: expected a clean error exit with code 1; stderr={stderr}"
         );
-        assert!(
-            stderr.contains("error: git dependency") && stderr.contains(url),
-            "{key}: expected a git dependency error naming the URL; stderr={stderr}"
-        );
-        assert!(
-            stderr.contains(&format!("{key} = `{escaped}`")),
-            "{key}: the value must be shown, escaped; stderr={stderr}"
-        );
+        if key == "rev" {
+            // A rev that is not a commit id is rejected by the manifest.
+            assert!(
+                stderr.contains("error[package]: invalid manifest")
+                    && stderr.contains(&format!("got `{escaped}`")),
+                "{key}: expected a manifest error showing the value, escaped; stderr={stderr}"
+            );
+        } else {
+            assert!(
+                stderr.contains("error[package]: git dependency `remote`") && stderr.contains(url),
+                "{key}: expected a git dependency error naming the URL; stderr={stderr}"
+            );
+            assert!(
+                stderr.contains(&format!("{key} = `{escaped}`")),
+                "{key}: the value must be shown, escaped; stderr={stderr}"
+            );
+        }
         assert!(
             !stderr.chars().any(is_unprintable),
             "{key}: stderr echoes a raw control or invisible character: {stderr:?}"
@@ -535,10 +544,10 @@ fn create_locallib_repository(ws: &Path, repo: &Path) -> String {
 /// Write the package `<ws>/app` with `locallib` declared as a git
 /// dependency on `url`, run `silt check` and `silt run` in it, and
 /// assert the dependency resolved: both succeed, the lockfile pins
-/// `head`, the checkout is in the workspace's own cache, and the
-/// dependency's code runs.
+/// `head` and records the URL as `locked_url`, the checkout is in the
+/// workspace's own cache, and the dependency's code runs.
 #[cfg(unix)]
-fn assert_git_dependency_resolves(ws: &Path, url: &str, head: &str) {
+fn assert_git_dependency_resolves(ws: &Path, url: &str, locked_url: &str, head: &str) {
     let app = ws.join("app");
     let dep = git_dep("locallib", url);
     let main_body = "import locallib\nfn main() { println(locallib.answer()) }\n";
@@ -559,8 +568,8 @@ fn assert_git_dependency_resolves(ws: &Path, url: &str, head: &str) {
         "the lockfile must pin the resolved commit `{head}`:\n{lock}"
     );
     assert!(
-        lock.contains(&format!("git = {}", toml_str(url))),
-        "the lockfile must record the dependency's URL {url:?}:\n{lock}"
+        lock.contains(&format!("git = {}", toml_str(locked_url))),
+        "the lockfile must record the dependency's URL as {locked_url:?}:\n{lock}"
     );
 
     // The checkout landed in the workspace's cache, under the commit.
@@ -610,7 +619,7 @@ fn file_url_git_dependency_still_resolves() {
     let head = create_locallib_repository(&ws, &repo);
 
     let url = format!("file://{}", repo.display());
-    assert_git_dependency_resolves(&ws, &url, &head);
+    assert_git_dependency_resolves(&ws, &url, &url, &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
@@ -629,7 +638,7 @@ fn file_url_with_a_space_git_dependency_resolves() {
 
     let url = format!("file://{}", repo.display());
     assert!(url.contains("/local lib repo"), "fixture lost its space");
-    assert_git_dependency_resolves(&ws, &url, &head);
+    assert_git_dependency_resolves(&ws, &url, &url, &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
@@ -647,7 +656,7 @@ fn absolute_path_git_dependency_resolves() {
 
     let url = repo.display().to_string();
     assert!(url.starts_with('/'), "fixture path is not absolute: {url}");
-    assert_git_dependency_resolves(&ws, &url, &head);
+    assert_git_dependency_resolves(&ws, &url, &url, &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
@@ -666,14 +675,15 @@ fn absolute_path_with_a_space_git_dependency_resolves() {
 
     let url = repo.display().to_string();
     assert!(url.ends_with("/remote repo"), "fixture lost its space");
-    assert_git_dependency_resolves(&ws, &url, &head);
+    assert_git_dependency_resolves(&ws, &url, &url, &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
 
 /// A repository given as a relative path resolves. There is no `file://`
-/// spelling of a relative path. git resolves it against the directory
-/// `silt` runs in, here the package root `<ws>/app`.
+/// spelling of a relative path. It is relative to the directory of the
+/// manifest, here the package root `<ws>/app`, and the lockfile records
+/// it made absolute.
 #[cfg(unix)]
 #[test]
 fn relative_path_git_dependency_resolves() {
@@ -681,9 +691,11 @@ fn relative_path_git_dependency_resolves() {
     if !can_build_a_repository(&ws) {
         return;
     }
-    let head = create_locallib_repository(&ws, &ws.join("remote"));
+    let repo = ws.join("remote");
+    let head = create_locallib_repository(&ws, &repo);
+    let locked = fs::canonicalize(&repo).unwrap().display().to_string();
 
-    assert_git_dependency_resolves(&ws, "../remote", &head);
+    assert_git_dependency_resolves(&ws, "../remote", &locked, &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
@@ -724,7 +736,8 @@ fn lockfile_rev_with_path_traversal_is_a_clean_error() {
             "silt {subcommand}: expected a clean error exit with code 1; stderr={stderr}"
         );
         assert!(
-            stderr.contains("error: invalid lockfile") && stderr.contains("silt.lock"),
+            stderr.contains("error[package]: invalid lockfile")
+                && stderr.contains("--> silt.lock:"),
             "silt {subcommand}: expected a lockfile error; stderr={stderr}"
         );
         assert!(

@@ -34,6 +34,7 @@ pub mod lockfile;
 pub mod lsp;
 pub mod manifest;
 pub mod module;
+pub mod package_graph;
 pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;

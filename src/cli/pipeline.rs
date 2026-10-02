@@ -12,13 +12,14 @@ use std::process;
 use silt::ast::Program;
 use silt::bytecode::Function;
 use silt::diagnostic::Diagnostic;
+use silt::package_graph::LockChange;
 use silt::session::{
-    Config, Entry, LockPolicy, PackageError, ProjectSetup, Session, looks_like_library_module,
+    Config, Entry, LockPolicy, ProjectSetup, Session, looks_like_library_module,
     looks_like_test_file,
 };
 use silt::source::{FileId, SourceMap};
 
-use crate::cli::package::{die_on_lockfile_error, die_on_manifest_error};
+use crate::cli::package::{PackageFailure, die_on_manifest_error};
 use crate::cli::paths::ProgramFiles;
 
 /// What the compile step compiles the entry file for.
@@ -83,16 +84,20 @@ fn session_for(path: &str, lock: LockPolicy) -> Session {
         lock,
         host: Vec::new(),
     });
-    match session.take_package_error() {
-        Some(PackageError::Manifest(e)) => die_on_manifest_error(e),
-        Some(PackageError::Lockfile(e)) => die_on_lockfile_error(e),
-        None => {}
-    }
-    if session
-        .packages()
-        .is_ok_and(|packages| packages.lock_rewritten)
-    {
-        eprintln!("Updating silt.lock for new dependencies in silt.toml");
+    let failure = match session.packages() {
+        Ok(packages) => {
+            if packages.lock == LockChange::Updated {
+                eprintln!("Updating silt.lock for new dependencies in silt.toml");
+            }
+            None
+        }
+        Err(diagnostics) => Some(diagnostics.to_vec()),
+    };
+    if let Some(diagnostics) = failure {
+        die_on_manifest_error(PackageFailure {
+            sources: session.into_sources(),
+            diagnostics,
+        });
     }
     session
 }

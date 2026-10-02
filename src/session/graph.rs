@@ -19,6 +19,8 @@ use crate::module;
 use crate::parser::Parser;
 use crate::source::{FileId, SourceMap, SourceName, Span};
 
+use crate::package_graph::PackageId;
+
 use super::packages::Packages;
 
 /// A module of the graph: an index into [`ModuleGraph::modules`].
@@ -34,9 +36,10 @@ impl ModuleId {
 /// One module: a `.silt` file of a package.
 pub struct Module {
     pub id: ModuleId,
-    /// The package the module belongs to. A dependency is known by the
-    /// name it is imported by.
-    pub package: Symbol,
+    /// The package the module belongs to.
+    pub package: PackageId,
+    /// That package's `[package].name` (`__local__` for a script).
+    pub package_name: Symbol,
     /// The module's name in its package: `"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`, the file's stem for an
     /// entry file.
@@ -148,7 +151,7 @@ impl ModuleGraph {
         path: &Path,
         name: SourceName,
         text: &str,
-        package: Symbol,
+        package: (PackageId, Symbol),
         sources: &mut SourceMap,
     ) -> ModuleId {
         let id = match self.module_at(path) {
@@ -160,7 +163,8 @@ impl ModuleGraph {
                     .unwrap_or_default();
                 self.push(Module {
                     id: ModuleId(0),
-                    package,
+                    package: package.0,
+                    package_name: package.1,
                     name: intern(&module_name),
                     path: path.to_path_buf(),
                     file: None,
@@ -264,12 +268,16 @@ impl ModuleGraph {
                 ImportResolution::Builtin
             } else {
                 match resolve_import(packages, package, name, span) {
-                    Ok(target) => ImportResolution::Module(self.module_for(
-                        target,
-                        (id, name, span),
-                        overlays,
-                        sources,
-                    )),
+                    Ok(target) => {
+                        let help = undeclared_dependency_help(packages, package, name);
+                        ImportResolution::Module(self.module_for(
+                            target,
+                            (id, name, span),
+                            help,
+                            overlays,
+                            sources,
+                        ))
+                    }
                     Err(d) => ImportResolution::Unresolved(d),
                 }
             };
@@ -289,6 +297,7 @@ impl ModuleGraph {
         &mut self,
         target: ImportedFile,
         import: (ModuleId, Symbol, Span),
+        help: Option<String>,
         overlays: &HashMap<PathBuf, String>,
         sources: &mut SourceMap,
     ) -> ModuleId {
@@ -298,6 +307,7 @@ impl ModuleGraph {
         let id = self.push(Module {
             id: ModuleId(0),
             package: target.package,
+            package_name: target.package_name,
             name: target.module,
             path: target.path.clone(),
             file: None,
@@ -327,13 +337,16 @@ impl ModuleGraph {
                     .collect();
             }
             Err(e) => {
-                let d = module::module_load_error(
+                let mut d = module::module_load_error(
                     &resolve(name),
                     &target.path,
                     &crate::git::escape_for_display(&module_path_for_display(&target.path)),
                     &e,
                     span,
                 );
+                if let Some(help) = help {
+                    d.help.insert(0, help);
+                }
                 self.modules[id.index()].problems.push(d);
             }
         }
@@ -434,7 +447,7 @@ impl ModuleGraph {
             if single_package {
                 resolve(module.name)
             } else {
-                format!("{}::{}", module.package, module.name)
+                format!("{}::{}", module.package_name, module.name)
             }
         };
         let mut names: Vec<String> = chain.iter().map(|m| name_of(*m)).collect();
@@ -504,26 +517,29 @@ fn import_decls(program: &ast::Program) -> impl Iterator<Item = (Symbol, Span)> 
 struct ImportedFile {
     path: PathBuf,
     /// The package of the imported module.
-    package: Symbol,
+    package: PackageId,
+    package_name: Symbol,
     /// The module's name in that package.
     module: Symbol,
 }
 
-/// Resolve `import name`, written in a module of `package`: a key of
-/// the package roots names a dependency, whose library is
-/// `<src>/lib.silt`, unless it is the importing package's own name;
-/// otherwise `<src of package>/name.silt`.
+/// Resolve `import name`, written in a module of `package`, in this
+/// order: a builtin module (handled by the caller); a key of the
+/// package's own `[dependencies]`, which names that package's
+/// `src/lib.silt`; a module `src/<name>.silt` of the package. A
+/// dependency of another package cannot be imported without declaring
+/// it, and `import lib` in a dependency is its own library.
 fn resolve_import(
     packages: &Packages,
-    package: Symbol,
+    package: PackageId,
     name: Symbol,
     span: Span,
 ) -> Result<ImportedFile, Diagnostic> {
     let module_name = resolve(name);
-    if let Some(root) = packages.roots.get(&name)
-        && package != name
-    {
-        let lib = root.join("lib.silt");
+    if let Some(dep) = packages.dependency(package, name) {
+        let dep = packages.package(dep);
+        let src = dep.src.clone().unwrap_or_default();
+        let lib = src.join("lib.silt");
         if !lib.exists() {
             return Err(Diagnostic::error(
                 Code::ModuleNotFound,
@@ -531,17 +547,19 @@ fn resolve_import(
                 format!(
                     "package '{module_name}' has no library entry point — \
                      expected `src/lib.silt` in the dep at {}",
-                    crate::git::escape_for_display(&root.display().to_string())
+                    crate::git::escape_for_display(&src.display().to_string())
                 ),
             ));
         }
         return Ok(ImportedFile {
             path: lib,
-            package: name,
+            package: dep.id,
+            package_name: dep.name,
             module: intern("lib"),
         });
     }
-    let Some(root) = packages.roots.get(&package) else {
+    let own = packages.package(package);
+    let Some(src) = &own.src else {
         return Err(Diagnostic::error(
             Code::ModuleNotFound,
             span,
@@ -549,10 +567,31 @@ fn resolve_import(
         ));
     };
     Ok(ImportedFile {
-        path: root.join(format!("{module_name}.silt")),
+        path: src.join(format!("{module_name}.silt")),
         package,
+        package_name: own.name,
         module: name,
     })
+}
+
+/// The help for an import of `name` that names no file in `package`,
+/// when another package of the program declares a dependency by that
+/// name: a dependency's dependencies are its own.
+pub(super) fn undeclared_dependency_help(
+    packages: &Packages,
+    package: PackageId,
+    name: Symbol,
+) -> Option<String> {
+    let owner = packages
+        .packages
+        .iter()
+        .find(|p| p.id != package && p.deps.iter().any(|(key, _, _)| *key == name))?;
+    Some(format!(
+        "`{}` is a dependency of the package `{}`, not of this one; declare it \
+         under `[dependencies]` in this package's silt.toml to import it",
+        resolve(name),
+        resolve(owner.name)
+    ))
 }
 
 /// The key a file is known by in the graph: its canonical path, or the

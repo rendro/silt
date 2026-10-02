@@ -122,10 +122,8 @@ What is compared, per door:
   `error[runtime]` header, and the program's stdout is never read. A
   diagnostic without a location is keyed at 1:1 of the entry file, where
   the LSP puts the same location-less diagnostic. A package error
-  in a dependency's manifest (`error: invalid manifest ...`, no kind; an
-  error in the package's own `silt.toml` is an `error[package]`
-  diagnostic like the others) counts when it is the first
-  line of stderr, stdout is empty and the exit status is 1. `run` and
+  is an `error[package]` diagnostic in a `silt.toml` or `silt.lock`,
+  a dependency's included, like the others. `run` and
   `test` get empty stdin and are stopped after 10 seconds of running;
   what they printed by then is their verdict. `check` must exit with 0 or
   1 within the case's timeout, or its verdict is a failure.

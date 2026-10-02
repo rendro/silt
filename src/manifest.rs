@@ -10,13 +10,14 @@
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::git::{EscapedDisplay, EscapingWriter, escape_for_display};
+use crate::diagnostic::{Code, Diagnostic};
+use crate::git::escape_for_display;
 use crate::intern::{self, Symbol};
 use crate::module::{BUILTIN_MODULES, is_builtin_module};
+use crate::source::{FileId, SourceMap, SourceName, Span};
 
 // Re-exported for callers that want to construct or pattern-match
 // `Dependency::Git { ref_spec, .. }` without reaching into `crate::git`.
@@ -26,96 +27,47 @@ pub use crate::git::GitRef;
 #[derive(Debug, Clone)]
 pub struct Manifest {
     pub package: PackageMeta,
-    pub dependencies: BTreeMap<Symbol, Dependency>,
+    /// Keyed by the dependency key: the name the importing package
+    /// knows the dependency by (`import <key>`).
+    pub dependencies: BTreeMap<Symbol, DependencyEntry>,
     /// Absolute path to the silt.toml file this manifest was loaded from.
     pub manifest_path: PathBuf,
+    /// The manifest's text in the source map it was loaded into.
+    pub file: FileId,
 }
 
 /// `[package]` table contents.
 #[derive(Debug, Clone)]
 pub struct PackageMeta {
     pub name: Symbol,
+    /// The value of `name` in the file.
+    pub name_span: Span,
     pub version: String,
     pub edition: Option<String>,
 }
 
-/// A single entry in `[dependencies]`.
+/// One `[dependencies]` entry and where it is written.
 #[derive(Debug, Clone)]
+pub struct DependencyEntry {
+    pub source: Dependency,
+    /// The key, `foo` in `foo = { path = "../foo" }`.
+    pub key: Span,
+    /// The value, `{ path = "../foo" }`.
+    pub value: Span,
+}
+
+/// Where a dependency comes from, as written in `[dependencies]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dependency {
     /// Path-style dep: `foo = { path = "../foo" }`. Path is stored exactly as
-    /// written in the manifest (relative to the manifest file). Resolve to
-    /// absolute via `manifest_path.parent().unwrap().join(path)`.
+    /// written in the manifest; it is relative to the manifest's directory.
     Path { path: PathBuf },
     /// Git-style dep: `foo = { git = "https://...", rev|branch|tag = "..." }`.
-    /// Resolution to a concrete commit SHA happens at lock time
-    /// (`Lockfile::resolve`), not at manifest load.
+    /// A local URL (`./x`, `../x`) is relative to the manifest's
+    /// directory. Resolution to a commit happens when the package graph
+    /// is built (`package_graph::resolve_packages`), not at manifest load.
     Git { url: String, ref_spec: GitRef },
     // Future variants: Registry { version }.
-}
-
-/// Errors produced when loading or validating a manifest.
-#[derive(Debug)]
-pub enum ManifestError {
-    /// The manifest file could not be read.
-    Io(std::io::Error, PathBuf),
-    /// TOML syntax error or schema mismatch from serde.
-    Parse {
-        /// The TOML parser's message, as [`toml_error_message`] returns
-        /// it: it is shown line by line, so a line break in it must be
-        /// the parser's own, never one from a key or a value.
-        message: String,
-        path: PathBuf,
-        /// Byte-offset span within the file, when the underlying parser
-        /// provided one. Used for inline diagnostic rendering.
-        span: Option<(usize, usize)>,
-    },
-    /// Manifest parsed structurally, but a validation rule failed.
-    Validation {
-        message: String,
-        path: PathBuf,
-        /// Byte-offset span within the file of the key or value that
-        /// broke the rule, when it can be found.
-        span: Option<(usize, usize)>,
-    },
-}
-
-impl fmt::Display for ManifestError {
-    // Untrusted text, per variant:
-    //   - `Io`: the path, when the manifest is a dependency's: it is
-    //     made from the `path` value of the manifest that names it.
-    //   - `Parse`: the path as above; the message is the TOML parser's
-    //     and quotes keys and values of the file. It is the one text
-    //     that is shown on several lines, see `toml_error_message`.
-    //   - `Validation`: the path as above; the message quotes names,
-    //     versions, keys and values of the file.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Shadows the formatter: nothing below can be written without
-        // going through the display rule.
-        let mut f = EscapingWriter::new(f);
-        match self {
-            ManifestError::Io(err, path) => {
-                write!(f, "failed to read manifest {}: {}", path.display(), err)
-            }
-            ManifestError::Parse { message, path, .. } => {
-                write!(f, "invalid manifest {}: ", path.display())?;
-                f.lines(message)
-            }
-            ManifestError::Validation { message, path, .. } => {
-                write!(f, "invalid manifest {}: {}", path.display(), message)
-            }
-        }
-    }
-}
-
-impl EscapedDisplay for ManifestError {}
-
-impl std::error::Error for ManifestError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ManifestError::Io(err, _) => Some(err),
-            _ => None,
-        }
-    }
 }
 
 // ── Raw deserialization layer ─────────────────────────────────────────
@@ -158,53 +110,99 @@ enum RawDependency {
 }
 
 impl Manifest {
-    /// Load and validate a manifest from a specific path.
+    /// Load and validate a manifest from a specific path, adding its
+    /// text to `sources` as a [`SourceName::Manifest`].
     ///
-    /// Returns a [`ManifestError`] tagged with the file path so callers can
-    /// produce diagnostics that point at the right location.
-    pub fn load(path: &Path) -> Result<Manifest, ManifestError> {
-        let path_buf = path.to_path_buf();
-        let absolute = absolutize(&path_buf);
-        let text = fs::read_to_string(path).map_err(|e| ManifestError::Io(e, absolute.clone()))?;
+    /// Every error is a diagnostic in that file, at the key or value
+    /// that broke a rule. Values of the file are shown by the display
+    /// rule ([`escape_for_display`]): the manifest can be a dependency's.
+    pub fn load(path: &Path, sources: &mut SourceMap) -> Result<Manifest, Diagnostic> {
+        let absolute = absolutize(path);
+        let shown = SourceName::Manifest(display_path(&absolute));
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                let file = sources.add(shown, "".into());
+                return Err(Diagnostic::error(
+                    Code::PackageIo,
+                    Span::point(file, 0),
+                    format!(
+                        "cannot read manifest: {}",
+                        escape_for_display(&e.to_string())
+                    ),
+                ));
+            }
+        };
+        let file = sources.add(shown, text.as_str().into());
+        let span_of = |range: (usize, usize)| Span {
+            file,
+            start: range.0 as u32,
+            end: range.1 as u32,
+        };
 
         let raw: RawManifest = toml::from_str(&text).map_err(|e| {
-            // toml 0.8 exposes a span() method giving byte offsets within
-            // the input; surface it for downstream diagnostic rendering.
-            let span = e.span().map(|r| (r.start, r.end));
-            ManifestError::Parse {
-                message: toml_error_message(e.message(), &text),
-                path: absolute.clone(),
+            // The parser's message is shown line by line, as
+            // `toml_error_message` prepares it: the first line is the
+            // message, the others are notes.
+            let message = toml_error_message(e.message(), &text);
+            let mut lines = message.lines().map(escape_for_display);
+            let head = lines.next().unwrap_or_default();
+            let span = e
+                .span()
+                .map(|r| span_of((r.start, r.end)))
+                .unwrap_or(Span::point(file, 0));
+            let mut d = Diagnostic::error(
+                Code::ManifestInvalid,
                 span,
-            }
+                format!("invalid manifest: {head}"),
+            );
+            d.notes.extend(lines);
+            d
         })?;
 
         // Validation phase ----------------------------------------------------
         // Each rule's error points at the key or value that broke it.
         let doc = toml_edit::ImDocument::parse(text.as_str()).ok();
-        let at = |keys: &[&str], key_itself: bool| manifest_span(doc.as_ref(), keys, key_itself);
-        validate_package_name_rules(&raw.package.name, &absolute)
-            .map_err(|e| e.at(at(&["package", "name"], false)))?;
-        validate_version(&raw.package.version, &absolute)
-            .map_err(|e| e.at(at(&["package", "version"], false)))?;
+        let at = |keys: &[&str], key_itself: bool| {
+            manifest_span(doc.as_ref(), keys, key_itself)
+                .map(span_of)
+                .unwrap_or(Span::point(file, 0))
+        };
+        let invalid = |span: Span, message: String| {
+            Diagnostic::error(
+                Code::ManifestInvalid,
+                span,
+                format!("invalid manifest: {}", escape_for_display(&message)),
+            )
+        };
+        validate_package_name_rules(&raw.package.name)
+            .map_err(|m| invalid(at(&["package", "name"], false), m))?;
+        validate_version(&raw.package.version)
+            .map_err(|m| invalid(at(&["package", "version"], false), m))?;
 
         let mut dependencies = BTreeMap::new();
         for (raw_name, raw_dep) in raw.dependencies {
             let keys = ["dependencies", raw_name.as_str()];
-            validate_dependency_name(&raw_name, &absolute).map_err(|e| e.at(at(&keys, true)))?;
-            let dep = convert_dependency(&raw_name, raw_dep, &absolute)
-                .map_err(|e| e.at(at(&keys, false)))?;
-            let sym = intern::intern(&raw_name);
-            dependencies.insert(sym, dep);
+            let key = at(&keys, true);
+            let value = at(&keys, false);
+            validate_dependency_name(&raw_name).map_err(|m| invalid(key, m))?;
+            let source = convert_dependency(&raw_name, raw_dep).map_err(|m| invalid(value, m))?;
+            dependencies.insert(
+                intern::intern(&raw_name),
+                DependencyEntry { source, key, value },
+            );
         }
 
         Ok(Manifest {
             package: PackageMeta {
                 name: intern::intern(&raw.package.name),
+                name_span: at(&["package", "name"], false),
                 version: raw.package.version,
                 edition: raw.package.edition,
             },
             dependencies,
             manifest_path: absolute,
+            file,
         })
     }
 
@@ -235,12 +233,48 @@ impl Manifest {
     /// Returns `Ok(None)` if no manifest is found between `start` and the
     /// filesystem root; returns `Err` only if a manifest was located but
     /// failed to load or validate.
-    pub fn discover(start: &Path) -> Result<Option<Manifest>, ManifestError> {
+    pub fn discover(start: &Path, sources: &mut SourceMap) -> Result<Option<Manifest>, Diagnostic> {
         match Self::find(start) {
-            Some(dir) => Self::load(&dir.join("silt.toml")).map(Some),
+            Some(dir) => Self::load(&dir.join("silt.toml"), sources).map(Some),
             None => Ok(None),
         }
     }
+}
+
+/// How a package file's path is shown: relative to the working
+/// directory, with `..` when the file is above it (`silt check main.silt`
+/// run in `src/` shows `../silt.toml`), else as it is. A path that does
+/// not exist (a missing dependency) is made relative lexically.
+pub fn display_path(path: &Path) -> PathBuf {
+    let (cwd, path) = match (
+        std::env::current_dir().and_then(std::fs::canonicalize),
+        std::fs::canonicalize(path),
+    ) {
+        (Ok(cwd), Ok(path)) => (cwd, path),
+        // The dependency's path is made from a canonical package root,
+        // so the working directory is made canonical too when it can be.
+        _ => {
+            match std::env::current_dir().and_then(|cwd| std::fs::canonicalize(&cwd).or(Ok(cwd))) {
+                Ok(cwd) => (cwd, absolutize(path)),
+                Err(_) => return path.to_path_buf(),
+            }
+        }
+    };
+    let common = cwd
+        .components()
+        .zip(path.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    // Only the root in common: the absolute path says more.
+    if common <= 1 {
+        return path;
+    }
+    let mut shown = PathBuf::new();
+    for _ in cwd.components().skip(common) {
+        shown.push("..");
+    }
+    shown.extend(path.components().skip(common));
+    shown
 }
 
 // ── The TOML parser's message ─────────────────────────────────────────
@@ -360,8 +394,8 @@ pub fn is_reserved_keyword(name: &str) -> bool {
 
 /// The rules a `[package].name` follows: an identifier, not a builtin
 /// module, not a keyword.
-fn validate_package_name_rules(name: &str, manifest_path: &Path) -> Result<(), ManifestError> {
-    validate_identifier(name, "package name", manifest_path)?;
+fn validate_package_name_rules(name: &str) -> Result<(), String> {
+    validate_identifier(name, "package name")?;
     // Builtin-collision check: a manifest whose `[package].name`
     // equals a stdlib module (`io`, `string`, …) is rejected for
     // the same reason `silt add` rejects builtin-colliding dep
@@ -369,55 +403,39 @@ fn validate_package_name_rules(name: &str, manifest_path: &Path) -> Result<(), M
     // through the same `is_builtin_module` predicate so init /
     // add / load all share one source of truth.
     if is_builtin_module(name) {
-        return Err(ManifestError::Validation {
-            message: format!(
-                "package name `{name}` collides with builtin module `{name}`; \
+        return Err(format!(
+            "package name `{name}` collides with builtin module `{name}`; \
                  pick a different name"
-            ),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        });
+        ));
     }
     // Reserved-keyword check: a package named after a keyword
     // (`loop`, `match`, …) lexes as that keyword, so `import loop`
     // can never parse. Same import-shadowing footgun as the builtin
     // collision above; share the predicate so init/add/load agree.
     if is_reserved_keyword(name) {
-        return Err(ManifestError::Validation {
-            message: format!(
-                "package name `{name}` is a reserved silt keyword; \
+        return Err(format!(
+            "package name `{name}` is a reserved silt keyword; \
                  pick a different name"
-            ),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        });
+        ));
     }
     Ok(())
 }
 
 /// The rules a dependency's name follows: an identifier, not a builtin
 /// module, not a keyword.
-fn validate_dependency_name(name: &str, manifest_path: &Path) -> Result<(), ManifestError> {
-    validate_identifier(name, "dependency name", manifest_path)?;
+fn validate_dependency_name(name: &str) -> Result<(), String> {
+    validate_identifier(name, "dependency name")?;
     if BUILTIN_MODULES.contains(&name) {
-        return Err(ManifestError::Validation {
-            message: format!(
-                "dependency name `{name}` collides with builtin module `{name}`; \
+        return Err(format!(
+            "dependency name `{name}` collides with builtin module `{name}`; \
                  pick a different name"
-            ),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        });
+        ));
     }
     if is_reserved_keyword(name) {
-        return Err(ManifestError::Validation {
-            message: format!(
-                "dependency name `{name}` is a reserved silt keyword; \
+        return Err(format!(
+            "dependency name `{name}` is a reserved silt keyword; \
                  pick a different name"
-            ),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        });
+        ));
     }
     Ok(())
 }
@@ -442,25 +460,7 @@ fn manifest_span(
     Some((range.start, range.end))
 }
 
-impl ManifestError {
-    /// The error with `span` as where it is, if it has none yet.
-    fn at(self, span: Option<(usize, usize)>) -> Self {
-        match self {
-            ManifestError::Validation {
-                message,
-                path,
-                span: None,
-            } => ManifestError::Validation {
-                message,
-                path,
-                span,
-            },
-            other => other,
-        }
-    }
-}
-
-fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(), ManifestError> {
+fn validate_identifier(name: &str, role: &str) -> Result<(), String> {
     if is_silt_identifier(name) {
         return Ok(());
     }
@@ -480,11 +480,7 @@ fn validate_identifier(name: &str, role: &str, manifest_path: &Path) -> Result<(
     } else {
         "must match the silt identifier rules `[a-z_][a-z0-9_]*`".to_string()
     };
-    Err(ManifestError::Validation {
-        message: format!("invalid {role} `{name}`: {detail}"),
-        path: manifest_path.to_path_buf(),
-        span: None,
-    })
+    Err(format!("invalid {role} `{name}`: {detail}"))
 }
 
 /// Lightweight semver shape check: `MAJOR.MINOR.PATCH` where each component
@@ -555,26 +551,18 @@ fn is_numeric_id(s: &str) -> bool {
     !(s.len() > 1 && s.starts_with('0'))
 }
 
-fn validate_version(version: &str, manifest_path: &Path) -> Result<(), ManifestError> {
+fn validate_version(version: &str) -> Result<(), String> {
     if is_valid_version(version) {
         return Ok(());
     }
-    Err(ManifestError::Validation {
-        message: format!(
-            "invalid package version `{version}`: must be a semver string of the form \
+    Err(format!(
+        "invalid package version `{version}`: must be a semver string of the form \
              `MAJOR.MINOR.PATCH` (e.g. `0.1.0`); a `-PRERELEASE` and a `+BUILD` part \
              may follow, each made of ASCII letters, digits, `-` and `.`"
-        ),
-        path: manifest_path.to_path_buf(),
-        span: None,
-    })
+    ))
 }
 
-fn convert_dependency(
-    name: &str,
-    raw: RawDependency,
-    manifest_path: &Path,
-) -> Result<Dependency, ManifestError> {
+fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, String> {
     match raw {
         RawDependency::Inline(table) => {
             let has_path = table.contains_key("path");
@@ -583,32 +571,24 @@ fn convert_dependency(
             // Registry deps are still future work; surface a forward-looking
             // diagnostic rather than silently treating `version` as garbage.
             if table.contains_key("version") || table.contains_key("registry") {
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency `{name}`: registry/version dependencies are not yet \
+                return Err(format!(
+                    "dependency `{name}`: registry/version dependencies are not yet \
                          supported; use `path` or `git` instead"
-                    ),
-                    path: manifest_path.to_path_buf(),
-                    span: None,
-                });
+                ));
             }
 
             if has_path && has_git {
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency `{name}`: cannot specify both `path` and `git`; pick one"
-                    ),
-                    path: manifest_path.to_path_buf(),
-                    span: None,
-                });
+                return Err(format!(
+                    "dependency `{name}`: cannot specify both `path` and `git`; pick one"
+                ));
             }
 
             if has_git {
-                return convert_git_dependency(name, &table, manifest_path);
+                return convert_git_dependency(name, &table);
             }
 
             // Default arm: path dependency.
-            convert_path_dependency(name, &table, manifest_path)
+            convert_path_dependency(name, &table)
         }
     }
 }
@@ -616,32 +596,19 @@ fn convert_dependency(
 fn convert_path_dependency(
     name: &str,
     table: &BTreeMap<String, toml::Value>,
-    manifest_path: &Path,
-) -> Result<Dependency, ManifestError> {
-    let path_value = table.get("path").ok_or_else(|| ManifestError::Validation {
-        message: format!(
-            "dependency `{name}`: missing required key `path` (or use `git` for a git dep)"
-        ),
-        path: manifest_path.to_path_buf(),
-        span: None,
+) -> Result<Dependency, String> {
+    let path_value = table.get("path").ok_or_else(|| {
+        format!("dependency `{name}`: missing required key `path` (or use `git` for a git dep)")
     })?;
     let path_str = path_value
         .as_str()
-        .ok_or_else(|| ManifestError::Validation {
-            message: format!("dependency `{name}`: `path` must be a string"),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        })?;
+        .ok_or_else(|| format!("dependency `{name}`: `path` must be a string"))?;
 
     for key in table.keys() {
         if key != "path" {
-            return Err(ManifestError::Validation {
-                message: format!(
-                    "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
-                ),
-                path: manifest_path.to_path_buf(),
-                span: None,
-            });
+            return Err(format!(
+                "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
+            ));
         }
     }
 
@@ -653,27 +620,18 @@ fn convert_path_dependency(
 fn convert_git_dependency(
     name: &str,
     table: &BTreeMap<String, toml::Value>,
-    manifest_path: &Path,
-) -> Result<Dependency, ManifestError> {
+) -> Result<Dependency, String> {
     let url = table
         .get("git")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| ManifestError::Validation {
-            message: format!("dependency `{name}`: `git` must be a string URL"),
-            path: manifest_path.to_path_buf(),
-            span: None,
-        })?
+        .ok_or_else(|| format!("dependency `{name}`: `git` must be a string URL"))?
         .to_string();
 
     // The URL is handed to `git` at lock time, and this manifest may be
     // a transitive dependency's, so it is untrusted input: an
     // option-shaped value such as `--upload-pack=<cmd>` would make git
     // run `<cmd>`. Every manifest goes through this one check.
-    crate::git::validate_git_url(&url).map_err(|e| ManifestError::Validation {
-        message: format!("dependency `{name}`: {e}"),
-        path: manifest_path.to_path_buf(),
-        span: None,
-    })?;
+    crate::git::validate_git_url(&url).map_err(|e| format!("dependency `{name}`: {e}"))?;
 
     // Tally which ref forms are present so we can give a tailored error
     // for the multiple-forms case rather than just "missing".
@@ -686,26 +644,26 @@ fn convert_git_dependency(
 
     let ref_spec = match ref_forms.len() {
         0 => {
-            return Err(ManifestError::Validation {
-                message: format!(
-                    "dependency `{name}`: git dependency requires exactly one of `rev`, \
+            return Err(format!(
+                "dependency `{name}`: git dependency requires exactly one of `rev`, \
                      `branch`, or `tag`"
-                ),
-                path: manifest_path.to_path_buf(),
-                span: None,
-            });
+            ));
         }
         1 => {
             let (key, value) = ref_forms[0];
             let s = value
                 .as_str()
-                .ok_or_else(|| ManifestError::Validation {
-                    message: format!("dependency `{name}`: `{key}` must be a string"),
-                    path: manifest_path.to_path_buf(),
-                    span: None,
-                })?
+                .ok_or_else(|| format!("dependency `{name}`: `{key}` must be a string"))?
                 .to_string();
             match key {
+                // A full commit id or a prefix of one; a prefix is
+                // resolved to the commit when the graph is built.
+                "rev" if !crate::git::is_valid_sha_shape(&s) => {
+                    return Err(format!(
+                        "dependency `{name}`: `rev` must be a commit id \
+                         (7 to 64 hexadecimal characters), got `{s}`"
+                    ));
+                }
                 "rev" => GitRef::Rev(s),
                 "branch" => GitRef::Branch(s),
                 "tag" => GitRef::Tag(s),
@@ -714,15 +672,11 @@ fn convert_git_dependency(
         }
         _ => {
             let mentioned: Vec<&str> = ref_forms.iter().map(|(k, _)| *k).collect();
-            return Err(ManifestError::Validation {
-                message: format!(
-                    "dependency `{name}`: git dependency must specify exactly one of `rev`, \
+            return Err(format!(
+                "dependency `{name}`: git dependency must specify exactly one of `rev`, \
                      `branch`, or `tag` (found: {})",
-                    mentioned.join(", ")
-                ),
-                path: manifest_path.to_path_buf(),
-                span: None,
-            });
+                mentioned.join(", ")
+            ));
         }
     };
 
@@ -734,14 +688,10 @@ fn convert_git_dependency(
         match key.as_str() {
             "git" | "rev" | "branch" | "tag" => {}
             other => {
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency `{name}`: unknown key `{other}` for a git dependency \
+                return Err(format!(
+                    "dependency `{name}`: unknown key `{other}` for a git dependency \
                          (allowed keys: `git`, `rev`, `branch`, `tag`)"
-                    ),
-                    path: manifest_path.to_path_buf(),
-                    span: None,
-                });
+                ));
             }
         }
     }
@@ -848,63 +798,71 @@ mod tests {
         }
     }
 
+    /// The diagnostic of loading `text` as a manifest, and the map it
+    /// points into.
+    fn load_error(tag: &str, text: &str) -> (SourceMap, Diagnostic) {
+        let dir =
+            std::env::temp_dir().join(format!("silt_manifest_unit_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("silt.toml");
+        fs::write(&path, text).unwrap();
+        let mut sources = SourceMap::new();
+        let d = Manifest::load(&path, &mut sources).expect_err("the manifest must be rejected");
+        let _ = fs::remove_dir_all(&dir);
+        (sources, d)
+    }
+
+    fn assert_printable(d: &Diagnostic) {
+        for line in std::iter::once(&d.message).chain(&d.notes) {
+            assert!(
+                !line.chars().any(crate::git::needs_escape),
+                "a line of the diagnostic is not printable: {line:?}"
+            );
+        }
+    }
+
     #[test]
     fn parse_error_shows_the_lines_of_the_parser_and_no_other() {
-        let path = PathBuf::from("/srv/app/silt.toml");
-        // A file without escape sequences: the parser's two lines.
-        let plain = ManifestError::Parse {
-            message: toml_error_message("invalid string\nexpected `\"`, `'`", "name = oops\n"),
-            path: path.clone(),
-            span: None,
-        };
-        assert_eq!(
-            plain.to_string(),
-            "invalid manifest /srv/app/silt.toml: invalid string\nexpected `\"`, `'`"
-        );
+        // A file without escape sequences: the parser's lines, the
+        // first as the message and the rest as notes.
+        let (_, plain) = load_error("plain", "[package]\nname = oops\n");
+        assert_eq!(plain.code, Code::ManifestInvalid);
+        assert!(plain.message.starts_with("invalid manifest: "), "{plain:?}");
+        assert!(!plain.notes.is_empty(), "{plain:?}");
+        assert_printable(&plain);
         // A file with a key that holds a line break: one line.
         let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
-        let quoted = ManifestError::Parse {
-            message: toml_error_message(&format!("unknown field `{HOSTILE}`"), source),
-            path,
-            span: None,
-        };
-        assert_eq!(
-            quoted.to_string(),
-            format!("invalid manifest /srv/app/silt.toml: unknown field `{HOSTILE_ESCAPED}`")
+        let (_, quoted) = load_error("quoted", source);
+        assert!(quoted.notes.is_empty(), "{quoted:?}");
+        assert!(quoted.message.contains(HOSTILE_ESCAPED), "{quoted:?}");
+        assert_printable(&quoted);
+    }
+
+    #[test]
+    fn validation_error_escapes_the_value_and_points_at_it() {
+        let text = "[package]\nname = \"app\"\nversion = \"x\\nerror: FORGED\\u001b[2K\\u202e\"\n";
+        let (sources, d) = load_error("version", text);
+        assert!(d.message.contains(HOSTILE_ESCAPED), "{d:?}");
+        assert_printable(&d);
+        let file = sources.file(d.span.file);
+        assert!(matches!(file.path, SourceName::Manifest(_)));
+        assert!(
+            file.text[d.span.start_offset()..d.span.end_offset()].starts_with("\"x"),
+            "{d:?}"
         );
     }
 
     #[test]
-    fn every_error_variant_escapes_its_whole_message() {
-        let path = PathBuf::from(format!("/srv/{HOSTILE}/silt.toml"));
-        // The file the parser's message is about: it holds the value
-        // as an escape sequence.
-        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
-        let errors = [
-            ManifestError::Io(
-                std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
-                path.clone(),
-            ),
-            ManifestError::Parse {
-                message: toml_error_message(&format!("unknown field `{HOSTILE}`"), source),
-                path: path.clone(),
-                span: None,
-            },
-            ManifestError::Validation {
-                message: format!("invalid package name `{HOSTILE}`"),
-                path,
-                span: None,
-            },
-        ];
-        for err in errors {
-            let rendered = err.to_string();
-            assert!(
-                !rendered.chars().any(crate::git::needs_escape),
-                "the message must be one printable line: {rendered:?}"
-            );
-            // Once in the path, once in the rest of the message.
-            assert_eq!(rendered.matches(HOSTILE_ESCAPED).count(), 2, "{rendered}");
-        }
+    fn unreadable_manifest_is_a_diagnostic_in_that_file() {
+        let mut sources = SourceMap::new();
+        let d = Manifest::load(Path::new("/nonexistent/silt_unit/silt.toml"), &mut sources)
+            .expect_err("a missing manifest cannot load");
+        assert_eq!(d.code, Code::PackageIo);
+        assert!(matches!(
+            sources.file(d.span.file).path,
+            SourceName::Manifest(_)
+        ));
     }
 
     #[test]

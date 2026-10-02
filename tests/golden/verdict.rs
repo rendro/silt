@@ -295,12 +295,7 @@ fn door_verdict_and_stderr(
             );
         }
     }
-    let v = Verdict::Diagnostics(static_diagnostics(
-        &out.stderr,
-        out.stdout_empty && out.code == Some(1),
-        entry,
-        &roots,
-    ));
+    let v = Verdict::Diagnostics(static_diagnostics(&out.stderr, entry, &roots));
     (v, Some(out.stderr))
 }
 
@@ -357,17 +352,10 @@ fn relative_file(path: &str, roots: &[String]) -> String {
 /// static diagnostics are printed before the program runs, and nothing
 /// after that point is static. Warnings are not part of the verdict. A
 /// diagnostic with no location is keyed at line 1, column 1 of the entry
-/// file, where the LSP puts the same location-less diagnostic. A package
-/// error (`error: invalid manifest ...`, no kind) is counted only as the
-/// first line of stderr of a run that printed nothing on stdout and
-/// exited with 1, so that a program's own `error: ...` on stderr is never
-/// taken for one.
-fn static_diagnostics(
-    stderr: &str,
-    may_be_package_error: bool,
-    entry: &str,
-    roots: &[String],
-) -> BTreeSet<Key> {
+/// file, where the LSP puts the same location-less diagnostic. Package
+/// errors are `error[package]` diagnostics in a `silt.toml` or
+/// `silt.lock` like any other.
+fn static_diagnostics(stderr: &str, entry: &str, roots: &[String]) -> BTreeSet<Key> {
     let mut keys = BTreeSet::new();
     // The current diagnostic: its message, and whether it is an error.
     let mut pending: Option<(String, bool)> = None;
@@ -381,7 +369,7 @@ fn static_diagnostics(
             });
         }
     };
-    for (i, line) in stderr.lines().enumerate() {
+    for line in stderr.lines() {
         if let Some((is_error, kind, message)) = header(line) {
             flush(&mut pending, &mut keys);
             if kind == "runtime" {
@@ -409,17 +397,6 @@ fn static_diagnostics(
             }
             continue;
         }
-        if i == 0
-            && may_be_package_error
-            && let Some(message) = line.strip_prefix("error: ")
-        {
-            keys.insert(Key {
-                file: String::new(),
-                line: 0,
-                col: 0,
-                message: normalise(message, roots),
-            });
-        }
     }
     flush(&mut pending, &mut keys);
     keys
@@ -443,7 +420,6 @@ pub fn header(line: &str) -> Option<(bool, &str, &str)> {
 struct CliOutput {
     code: Option<i32>,
     stderr: String,
-    stdout_empty: bool,
     timed_out: bool,
 }
 
@@ -464,17 +440,9 @@ fn run_cli(dir: &Path, cmd: &str, entry: &str, limit: Duration) -> CliOutput {
     let mut out_pipe = child.stdout.take().expect("stdout");
     let mut err_pipe = child.stderr.take().expect("stderr");
     let out_reader = std::thread::spawn(move || {
-        // Only whether there was any output matters; keep reading so the
-        // program never blocks on a full pipe.
-        let mut any = false;
-        let mut buf = [0u8; 4096];
-        while let Ok(n) = std::io::Read::read(&mut out_pipe, &mut buf) {
-            if n == 0 {
-                break;
-            }
-            any = true;
-        }
-        any
+        // The program's output is not part of a verdict; keep reading so
+        // the program never blocks on a full pipe.
+        let _ = std::io::copy(&mut out_pipe, &mut std::io::sink());
     });
     let err_reader = std::thread::spawn(move || {
         let mut s = Vec::new();
@@ -494,9 +462,9 @@ fn run_cli(dir: &Path, cmd: &str, entry: &str, limit: Duration) -> CliOutput {
             None => std::thread::sleep(Duration::from_millis(10)),
         }
     };
+    let _ = out_reader.join();
     CliOutput {
         code: status.code(),
-        stdout_empty: !out_reader.join().unwrap_or(true),
         stderr: String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned(),
         timed_out,
     }

@@ -70,8 +70,9 @@ fn test_init_creates_manifest_and_main() {
 
     // The manifest must round-trip through the production loader so we
     // catch any drift between init's output and the parser's schema.
-    let loaded = silt::manifest::Manifest::load(&manifest_path)
-        .unwrap_or_else(|e| panic!("Manifest::load failed: {e}"));
+    let loaded =
+        silt::manifest::Manifest::load(&manifest_path, &mut silt::source::SourceMap::new())
+            .unwrap_or_else(|e| panic!("Manifest::load failed: {e:?}"));
     assert_eq!(silt::intern::resolve(loaded.package.name), "hello_pkg");
     assert_eq!(loaded.package.version, "0.1.0");
 
