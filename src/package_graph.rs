@@ -687,7 +687,11 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
             escape_for_display(ref_spec.as_ref_string())
         ),
     );
-    d.notes.extend(lines.map(str::to_string));
+    // Each line of git's output is a note of its own; the renderer puts
+    // it after `= note:`, so the indent it has as a line of the message
+    // is dropped: `= note: git: fatal: ...`.
+    d.notes
+        .extend(lines.map(|line| line.trim_start().to_string()));
     d
 }
 
@@ -780,9 +784,9 @@ mod tests {
         assert_eq!(
             d.notes,
             [
-                "  git: fatal: no",
-                "  git: remote: x",
-                "  git: error: FORGED\\u{1b}[2K\\u{202e}",
+                "git: fatal: no",
+                "git: remote: x",
+                "git: error: FORGED\\u{1b}[2K\\u{202e}",
             ]
         );
     }
