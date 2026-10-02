@@ -1,0 +1,5 @@
+import nope
+
+pub fn b() -> Int {
+  2
+}

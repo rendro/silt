@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- verdict: same
+-- stdout-contains: a.silt:1:1 error cannot load module 'nope'
+-- stdout-contains: b.silt:1:1 error cannot load module 'nope'
+-- Two modules import one missing module: each import gets the error,
+-- at its own line (the error used to belong to the missing module and
+-- point at whichever import read it first).
+import a
+import b
+
+fn main() {
+  println("{a.a()} {b.b()}")
+}

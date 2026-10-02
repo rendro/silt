@@ -338,3 +338,50 @@ fn a_reported_deletion_republishes_the_importer() {
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Two open files that import one missing module: each gets the error at
+/// its own import, and fixing one import clears its error only.
+#[test]
+fn each_importer_of_a_missing_module_gets_its_own_error() {
+    let a = "import nope\n\nfn main() {\n  println(\"a\")\n}\n";
+    let b = "import nope\n\npub fn b() -> Int {\n  1\n}\n";
+    let dir = project("missing", &[("a.silt", a), ("b.silt", b)]);
+    let a_uri = uri(&dir.join("a.silt"));
+    let b_uri = uri(&dir.join("b.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    let missing = |publish: &Value| {
+        messages(publish)
+            .iter()
+            .filter(|m| m.contains("cannot load module 'nope'"))
+            .count()
+    };
+    let first = client.did_open_and_wait(&a_uri, a);
+    assert_eq!(missing(&first), 1, "{first}");
+    let second = client.did_open_and_wait(&b_uri, b);
+    assert_eq!(missing(&second), 1, "{second}");
+
+    let fixed = a.replace("import nope\n", "");
+    did_change(&mut client, &a_uri, 2, &fixed);
+    let after = client.wait_for_diagnostics(&a_uri);
+    assert_eq!(missing(&after), 0, "a.silt no longer imports nope: {after}");
+    let pull = client.request_result(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": b_uri } }),
+    );
+    let still = pull["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter(|d| {
+                    d["message"]
+                        .as_str()
+                        .is_some_and(|m| m.contains("cannot load module 'nope'"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(still, 1, "b.silt still imports nope: {pull}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
