@@ -12,7 +12,7 @@ use silt::vm::{Vm, VmError};
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
 use crate::cli::paths::ProgramFiles;
-use crate::cli::pipeline::{CompiledFile, compile_file};
+use crate::cli::pipeline::{CompiledFile, Emit, compile_file};
 use crate::cli::source_scan::fn_name_span;
 
 /// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
@@ -181,7 +181,7 @@ pub(crate) fn vm_run_file(path: &str) {
         sources,
         program,
         ..
-    } = compile_file(path, silt::session::LockPolicy::Update);
+    } = compile_file(path, Emit::Program, silt::session::LockPolicy::Update);
 
     let Some(script) = functions.into_iter().next() else {
         eprintln!("{path}: internal error: empty function list");

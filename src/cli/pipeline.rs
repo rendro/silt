@@ -35,6 +35,9 @@ pub(crate) enum Emit {
     /// for a library module or a test file, which have no `main` on
     /// purpose, the declarations.
     Check,
+    /// What `silt disasm` compiles: a program that starts at `main` when
+    /// the file binds one, otherwise its declarations.
+    Disassemble,
 }
 
 /// The entry file after it was read and parsed: the first stage. `silt
@@ -142,6 +145,14 @@ pub(crate) fn analyse_parsed_entry_file(
             }
             _ => Entry::Main,
         },
+        Emit::Disassemble => {
+            let binds_main = session.module_analysis(entry).is_some_and(|analysis| {
+                analysis
+                    .top_level
+                    .contains_key(&silt::intern::intern(silt::session::ENTRY_POINT))
+            });
+            if binds_main { Entry::Main } else { Entry::Cell }
+        }
     };
     let (functions, compile_errors, compile_warnings) = match session.compile(file, target) {
         Ok(compiled) => (Some(compiled.functions), Vec::new(), compiled.warnings),
@@ -210,11 +221,12 @@ pub(crate) struct CompiledFile {
     pub(crate) program: Program,
 }
 
-/// Compile the program that starts at `main` in the file `path`,
-/// printing the diagnostics and exiting on an error. `lock` says whether
-/// a stale lockfile may be rewritten (`silt disasm` passes `ReadOnly`).
-pub(crate) fn compile_file(path: &str, lock: LockPolicy) -> CompiledFile {
-    let result = run_compile_pipeline(path, Emit::Program, lock);
+/// Compile the file `path` for `emit` (`Program` for `silt run`,
+/// `Disassemble` for `silt disasm`), printing the diagnostics and exiting
+/// on an error. `lock` says whether a stale lockfile may be rewritten
+/// (`silt disasm` passes `ReadOnly`).
+pub(crate) fn compile_file(path: &str, emit: Emit, lock: LockPolicy) -> CompiledFile {
+    let result = run_compile_pipeline(path, emit, lock);
 
     // F14 (audit round 17): print diagnostics with a blank line between
     // consecutive errors so multi-error output doesn't form a solid wall

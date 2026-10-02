@@ -259,20 +259,16 @@ struct Local {
 
 // ── Compiler errors ─────────────────────────────────────────────────
 
-/// The compiler's error for a `loop(...)` with no enclosing loop in the
-/// same function. The typechecker reports every such call first (outside
-/// any loop, or inside a closure in a loop body), so the CLI pipeline
-/// drops this error when a type error stands at the same place.
-pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
-
-/// The error for a use of the builtin module `module` without an import.
-fn module_not_imported(span: Span, module: &str) -> Diagnostic {
+/// A defect in silt: the program reached the compiler with an error the
+/// typechecker reports (a builtin module used without an import, a
+/// `loop(...)` outside a loop or with the wrong number of arguments). The
+/// session compiles only programs whose analysis has no error.
+fn checker_missed(span: Span, what: &str) -> Diagnostic {
     Diagnostic::error(
-        Code::CompileModuleNotImported,
+        Code::CompilerBug,
         span,
-        format!("module '{module}' is not imported"),
+        format!("compiler bug: {what} reached the compiler; the typechecker reports it"),
     )
-    .with_help(format!("add `import {module}` at the top of the file"))
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's
@@ -311,7 +307,8 @@ pub struct ModuleUnit {
     /// `src/util.silt` and a dependency's own) do not share globals.
     pub global: String,
     /// The module each `import` of this module names, by the name
-    /// written after `import`. Builtin modules are not in it.
+    /// written after `import` and by the alias of `import m as n`.
+    /// Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
 }
 
@@ -339,14 +336,6 @@ pub struct Compiler {
     /// Modules already compiled in this compilation unit, so each is
     /// compiled once, where it is first imported.
     compiled_modules: HashSet<usize>,
-    /// Public export names of each compiled file module. Lets a later
-    /// `import foo as f` re-register alias globals even when `foo` was
-    /// already compiled by an earlier `import foo` / `import foo.{...}`
-    /// / `import foo as other` — previously the cached-hit path returned
-    /// an empty list and the alias arm silently registered nothing, so
-    /// `f.area` died at runtime with "undefined global" while `silt
-    /// check` passed (round 92 fix).
-    module_export_names: HashMap<usize, Vec<String>>,
     /// Warnings emitted during compilation.
     warnings: Vec<Diagnostic>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
@@ -502,7 +491,6 @@ impl Compiler {
             units,
             unit_stack: Vec::new(),
             compiled_modules: HashSet::new(),
-            module_export_names: HashMap::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             imported_builtin_module_aliases: HashMap::new(),
@@ -1282,19 +1270,11 @@ impl Compiler {
                     }
                     return Ok(());
                 }
-                // File module with alias: compile under original name, then
-                // re-register each public declaration under the alias prefix.
-                let public_names = self.compile_file_module(&mod_str, span)?;
-                let global = self.module_global(&mod_str);
-                for name in &public_names {
-                    let original = format!("{global}.{name}");
-                    let qi = self.add_constant(Value::String(original), span)?;
-                    self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                    let alias_name = format!("{alias_str}.{name}");
-                    let ai = self.add_constant(Value::String(alias_name), span)?;
-                    self.current_chunk().emit_op_u16(Op::SetGlobal, ai, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
-                }
+                // File module with an alias: the module is compiled under
+                // its own unique prefix, and `alias.name` resolves to it
+                // (see `module_global`); no globals are named after the
+                // alias, so an alias cannot claim another module's names.
+                self.compile_file_module(&mod_str, span)?;
                 Ok(())
             }
         }
@@ -1316,19 +1296,15 @@ impl Compiler {
 
     /// Compile a file-based module's declarations into the current compilation
     /// unit. Each public declaration is registered as a global named
-    /// `"module_name.decl_name"`. Returns the list of public names exported by
-    /// this module.
+    /// `"<global>.decl_name"`, where `<global>` is the module's unique
+    /// prefix.
     ///
     /// `module_name` is the import segment as it appears in user code
     /// (e.g. `import calc` → `module_name = "calc"`). Which module it
     /// names, the session decided when it built the module graph; the
     /// compiler looks it up among the imports of the module being
     /// compiled. A module is compiled once, where it is first imported.
-    fn compile_file_module(
-        &mut self,
-        module_name: &str,
-        span: Span,
-    ) -> Result<Vec<String>, Diagnostic> {
+    fn compile_file_module(&mut self, module_name: &str, span: Span) -> Result<(), Diagnostic> {
         let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         let target = self
             .units
@@ -1344,17 +1320,8 @@ impl Compiler {
                 )
             })?;
 
-        // Return the cached export list (not an empty Vec): the
-        // `ImportTarget::Alias` arm consumes these names to emit
-        // `alias.name` globals, and an alias import may legitimately
-        // follow another import of the same module (`import geometry`
-        // then `import geometry as g`, or two distinct aliases).
         if self.compiled_modules.contains(&target) {
-            return Ok(self
-                .module_export_names
-                .get(&target)
-                .cloned()
-                .unwrap_or_default());
+            return Ok(());
         }
 
         let program = self.units.modules[target].program.clone();
@@ -1362,9 +1329,8 @@ impl Compiler {
         self.unit_stack.push(target);
         let result = self.compile_file_module_inner(module_name, &global, &program, span);
         self.unit_stack.pop();
-        if let Ok(names) = &result {
+        if result.is_ok() {
             self.compiled_modules.insert(target);
-            self.module_export_names.insert(target, names.clone());
         }
         result
     }
@@ -1378,7 +1344,7 @@ impl Compiler {
         global: &str,
         program: &Program,
         span: Span,
-    ) -> Result<Vec<String>, Diagnostic> {
+    ) -> Result<(), Diagnostic> {
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();
         let mut public_types = HashSet::new();
@@ -1393,9 +1359,6 @@ impl Compiler {
                 _ => {}
             }
         }
-
-        // Track all exported names (functions + types + variants) for alias support.
-        let mut exported_names: Vec<String> = Vec::new();
 
         // Build module scope: all function names in this module.
         // Public functions are registered as "module.fn", private as "__module__fn".
@@ -1488,7 +1451,6 @@ impl Compiler {
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
-                        exported_names.push(resolve(fn_decl.name));
                     } else {
                         // Internal function — still register so closures / calls work,
                         // but under a mangled private name.
@@ -1503,7 +1465,6 @@ impl Compiler {
                     // Compile the type declaration — registers variants under bare names.
                     self.compile_decl(decl)?;
                     // Also register type name and variants under qualified names.
-                    exported_names.push(resolve(type_decl.name));
                     match &type_decl.body {
                         crate::ast::TypeBody::Enum(variants) => {
                             for variant in variants {
@@ -1518,7 +1479,6 @@ impl Compiler {
                                 self.current_chunk()
                                     .emit_op_u16(Op::SetGlobal, qual_idx, span);
                                 self.current_chunk().emit_op(Op::Pop, span);
-                                exported_names.push(vname);
                             }
                             // Register the type name itself as a qualified global
                             // (pointing to the type name string for use in `import mod.{ Type }`).
@@ -1593,7 +1553,7 @@ impl Compiler {
         self.current_chunk().emit_op(Op::Pop, span);
 
         self.module_scope = saved_scope;
-        Ok(exported_names)
+        Ok(())
     }
 
     // ── Statements ────────────────────────────────────────────────
@@ -2024,7 +1984,10 @@ impl Compiler {
                             if module::is_builtin_module(&mod_str)
                                 && !self.imported_builtin_modules.contains(&mod_str)
                             {
-                                return Err(module_not_imported(span, &module.to_string()));
+                                return Err(checker_missed(
+                                    span,
+                                    &format!("a use of the unimported module '{module}'"),
+                                ));
                             }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{}.{method}", self.module_global(&mod_str));
@@ -2102,7 +2065,10 @@ impl Compiler {
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
                         {
-                            return Err(module_not_imported(span, &name.to_string()));
+                            return Err(checker_missed(
+                                span,
+                                &format!("a use of the unimported module '{name}'"),
+                            ));
                         }
                         // B8: In REPL mode, a previously-bound value like `p`
                         // is a VM global (created via `eval_declaration`), not
@@ -2542,22 +2508,18 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
-                let loop_info = self.ctx().loop_stack.last().ok_or_else(|| {
-                    Diagnostic::error(Code::LoopCallOutsideLoop, span, LOOP_CALL_OUTSIDE_LOOP)
-                })?;
+                let loop_info = self
+                    .ctx()
+                    .loop_stack
+                    .last()
+                    .ok_or_else(|| checker_missed(span, "a `loop(...)` outside a loop"))?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
-                    let arg_word = if expected == 1 {
-                        "argument"
-                    } else {
-                        "arguments"
-                    };
-                    return Err(Diagnostic::error(
-                        Code::InvalidConstruct,
+                    return Err(checker_missed(
                         span,
-                        format!("loop() expects {expected} {arg_word}, got {}", args.len()),
+                        "a `loop(...)` with the wrong number of arguments",
                     ));
                 }
                 // Defence in depth: `binding_count` is already a u8 so
@@ -2900,7 +2862,10 @@ impl Compiler {
             {
                 if module::is_builtin_module(&mod_str) {
                     if !self.imported_builtin_modules.contains(&mod_str) {
-                        return Err(module_not_imported(callee.span, &module.to_string()));
+                        return Err(checker_missed(
+                            callee.span,
+                            &format!("a use of the unimported module '{module}'"),
+                        ));
                     }
                     return Ok(Some(format!("{module}.{field}")));
                 }
@@ -4230,7 +4195,8 @@ trait Display for Color {
 
     #[test]
     fn test_import_gating_error() {
-        // Using a module without importing should error
+        // The typechecker reports a module used without an import; the
+        // compiler, given such a program anyway, refuses it as a defect.
         let err = compile_err(
             r#"
 fn main() {
@@ -4238,11 +4204,7 @@ fn main() {
 }
 "#,
         );
-        assert!(
-            err.message.contains("not imported"),
-            "expected import error, got: {}",
-            err.message
-        );
+        assert_eq!(err.code, Code::CompilerBug, "{}", err.message);
     }
 
     #[test]
@@ -4464,11 +4426,9 @@ fn f(x) {
 
     #[test]
     fn test_compile_recur_outside_loop() {
+        // Reported by the typechecker; a defect if it reaches the compiler.
         let err = compile_err("fn f() { loop(1) }");
-        assert!(
-            err.message
-                .contains("`loop(...)` can only appear inside a `loop` body")
-        );
+        assert_eq!(err.code, Code::CompilerBug, "{}", err.message);
     }
 
     // ── Record field metadata ──────────────────────────────────────

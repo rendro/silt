@@ -26,7 +26,7 @@ use crate::ast;
 use crate::bytecode::Function;
 use crate::compiler::{Compiler, ModuleUnit, ProgramUnits};
 use crate::diagnostic::Diagnostic;
-use crate::intern::{intern, resolve};
+use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::{self, ModuleExports};
 use crate::types::Type;
@@ -69,10 +69,11 @@ pub enum Entry {
 /// The static diagnostics of an entry file and every module it reaches.
 #[derive(Debug, Clone)]
 pub struct Analysis {
-    /// The diagnostics of every module of the entry's graph: the entry's
-    /// parse errors and type diagnostics, then each other module's
-    /// problems and type errors, the imports that resolve to nothing and
-    /// the import cycles. Each diagnostic once.
+    /// The diagnostics of every module of the entry's graph: package
+    /// problems, the entry's parse errors, why an import failed (each
+    /// other module's load or parse problems, the imports that resolve to
+    /// nothing, the import cycles), the entry's type diagnostics, then
+    /// each other module's type errors. Each diagnostic once.
     pub diagnostics: Vec<Diagnostic>,
     /// The modules of the graph, each after the modules it imports; the
     /// entry is last.
@@ -121,6 +122,30 @@ pub enum EntryPoint {
     /// The selected tests, in source order.
     Tests(Vec<TestFn>),
     Cell,
+}
+
+/// What each import of `module` names, as the compiler looks it up: by
+/// the module name written after `import`, and by the alias of
+/// `import m as n`, mapped to the unit of the imported module.
+fn unit_imports(module: &Module, index: &HashMap<ModuleId, usize>) -> HashMap<Symbol, usize> {
+    let mut imports: HashMap<Symbol, usize> = module
+        .imports
+        .iter()
+        .filter_map(|import| match import.resolution {
+            ImportResolution::Module(target) => Some((import.name, index[&target])),
+            _ => None,
+        })
+        .collect();
+    if let Some(ast) = &module.ast {
+        for decl in &ast.decls {
+            if let ast::Decl::Import(ast::ImportTarget::Alias(name, alias, _), _) = decl
+                && let Some(&unit) = imports.get(name)
+            {
+                imports.insert(*alias, unit);
+            }
+        }
+    }
+    imports
 }
 
 /// A compilation session. See the module documentation.
@@ -401,23 +426,15 @@ impl Session {
         for d in &self.module_name_problems {
             push(d, &mut out);
         }
-        let entry_module = self.graph.module(entry);
-        for d in &entry_module.problems {
+        // The entry's own parse errors, then why an import failed (a
+        // module that cannot be read or parsed, a name that resolves to
+        // nothing, a cycle), then the type diagnostics.
+        for d in &self.graph.module(entry).problems {
             push(d, &mut out);
-        }
-        if let Some(analysis) = self.analyses.get(&entry) {
-            for d in &analysis.diagnostics {
-                push(d, &mut out);
-            }
         }
         for &id in ordering.modules.iter().filter(|&&id| id != entry) {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
-            }
-            if let Some(analysis) = self.analyses.get(&id) {
-                for d in analysis.diagnostics.iter().filter(|d| d.is_error()) {
-                    push(d, &mut out);
-                }
             }
         }
         for &id in &ordering.modules {
@@ -429,6 +446,18 @@ impl Session {
         }
         for d in &ordering.cycles {
             push(d, &mut out);
+        }
+        if let Some(analysis) = self.analyses.get(&entry) {
+            for d in &analysis.diagnostics {
+                push(d, &mut out);
+            }
+        }
+        for &id in ordering.modules.iter().filter(|&&id| id != entry) {
+            if let Some(analysis) = self.analyses.get(&id) {
+                for d in analysis.diagnostics.iter().filter(|d| d.is_error()) {
+                    push(d, &mut out);
+                }
+            }
         }
         out
     }
@@ -445,10 +474,14 @@ impl Session {
         let id = self.module_of(entry);
         let modules = self.results[&id].modules.clone();
         let analysis = &self.analyses[&id];
+        // The entry point is checked here and reported after the compile
+        // errors: a program the compiler rejects may lack a `main` only
+        // because of that (`let (main, y) = ...`).
+        let main = intern(ENTRY_POINT);
+        let mut entry_errors = Vec::new();
         let entry_point = match &target {
             Entry::Main => {
-                let main = intern(ENTRY_POINT);
-                let error = match analysis.top_level.get(&main) {
+                entry_errors.extend(match analysis.top_level.get(&main) {
                     None => Some(entry::missing_main(
                         &analysis.ast,
                         self.graph
@@ -458,18 +491,22 @@ impl Session {
                         self.entry_paths.get(&id).map_or("", String::as_str),
                     )),
                     Some(ty) => entry::check_main(&analysis.ast, ty),
-                };
-                if let Some(error) = error {
-                    return Err(vec![error]);
-                }
+                });
                 EntryPoint::Main
             }
             Entry::Tests { filter } => {
+                // A file run for its tests that is a program too (it binds
+                // `main` and is neither a library module nor a test file)
+                // must have a `main` that can start.
+                if let Some(ty) = analysis.top_level.get(&main)
+                    && !looks_like_library_module(&analysis.ast)
+                    && !looks_like_test_file(&analysis.ast)
+                {
+                    entry_errors.extend(entry::check_main(&analysis.ast, ty));
+                }
                 let (tests, errors) =
                     entry::select_tests(&analysis.ast, &analysis.top_level, filter.as_deref());
-                if !errors.is_empty() {
-                    return Err(errors);
-                }
+                entry_errors.extend(errors);
                 EntryPoint::Tests(tests)
             }
             Entry::Cell => EntryPoint::Cell,
@@ -515,16 +552,7 @@ impl Session {
                             .get(m)
                             .cloned()
                             .unwrap_or_else(|| resolve(module.name)),
-                        imports: module
-                            .imports
-                            .iter()
-                            .filter_map(|import| match import.resolution {
-                                ImportResolution::Module(target) => {
-                                    Some((import.name, index[&target]))
-                                }
-                                _ => None,
-                            })
-                            .collect(),
+                        imports: unit_imports(module, &index),
                     }
                 })
                 .collect(),
@@ -537,12 +565,17 @@ impl Session {
             Entry::Tests { .. } | Entry::Cell => compiler.compile_declarations(&program),
         };
         match compiled {
+            Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
             Ok(functions) => Ok(Program {
                 functions,
                 entry: entry_point,
                 warnings: compiler.warnings().to_vec(),
             }),
-            Err(e) => Err(vec![e]),
+            Err(e) => {
+                let mut errors = vec![e];
+                errors.extend(entry_errors);
+                Err(errors)
+            }
         }
     }
 
