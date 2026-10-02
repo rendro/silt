@@ -1,7 +1,7 @@
 //! `textDocument/diagnostic` — pull-model diagnostic handler.
 //!
-//! The push pipeline (`publishDiagnostics` fired from
-//! `update_document`) is still the primary path; this handler lets
+//! The push path (`publishDiagnostics` after each analysis) is still
+//! the primary one; this handler lets
 //! clients that speak the 3.17 pull protocol ask for the current
 //! diagnostics on demand.
 //!

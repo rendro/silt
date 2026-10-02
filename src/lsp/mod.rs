@@ -253,6 +253,11 @@ impl Server {
                     return;
                 };
                 let uri = params.text_document.uri;
+                // A change to a document the editor did not open is not
+                // one to keep.
+                if !self.documents.get(&uri).is_some_and(|doc| doc.open) {
+                    return;
+                }
                 // We use full sync, so the first content change is the full text.
                 if let Some(change) = params.content_changes.into_iter().next() {
                     self.update_document(uri, change.text);

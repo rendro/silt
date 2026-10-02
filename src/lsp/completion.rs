@@ -20,7 +20,7 @@ use super::ast_walk::find_ident_type_by_name;
 use super::conversions::position_to_offset;
 use super::fields::{RecordFields, record_fields_from_type};
 use super::locals::locals_at_offset;
-use super::modules::MemberKind;
+use super::modules::{MemberKind, ModuleView};
 use super::state::Document;
 
 impl Server {
@@ -114,6 +114,23 @@ impl Server {
                     documentation,
                     ..CompletionItem::default()
                 });
+            }
+
+            // The items of `import m.{ a, B }`, as their module has them.
+            if let Some(program) = &doc.program {
+                for decl in &program.decls {
+                    let Decl::Import(ImportTarget::Items(_, imported), _) = decl else {
+                        continue;
+                    };
+                    for (item, _) in imported {
+                        let Some(view) = self.item_module(doc, *item) else {
+                            continue;
+                        };
+                        if let Some((_, kind)) = view.members.iter().find(|(m, _)| m == item) {
+                            items.push(member_item(&view, *item, *kind));
+                        }
+                    }
+                }
             }
 
             // Local variables in scope at the cursor position
@@ -336,26 +353,7 @@ impl Server {
         let mut items: Vec<CompletionItem> = view
             .members
             .iter()
-            .map(|(member, kind)| {
-                let def = view.definitions.get(member);
-                CompletionItem {
-                    label: resolve(*member),
-                    kind: Some(match kind {
-                        MemberKind::Function => CompletionItemKind::FUNCTION,
-                        MemberKind::Value => CompletionItemKind::VARIABLE,
-                        MemberKind::Type => CompletionItemKind::CLASS,
-                        MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
-                    }),
-                    detail: def.and_then(|d| d.ty.as_ref()).map(|t| format!("{t}")),
-                    documentation: def.and_then(|d| d.doc.clone()).map(|d| {
-                        Documentation::MarkupContent(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: d,
-                        })
-                    }),
-                    ..CompletionItem::default()
-                }
-            })
+            .map(|(member, kind)| member_item(&view, *member, *kind))
             .collect();
         items.sort_by(|a, b| a.label.cmp(&b.label));
         items.dedup_by(|a, b| a.label == b.label);
@@ -441,6 +439,29 @@ impl Server {
             project.session.analyze(file);
         }
         checked
+    }
+}
+
+/// The completion item of the member `member` of the imported module
+/// `view`.
+fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> CompletionItem {
+    let def = view.definitions.get(&member);
+    CompletionItem {
+        label: resolve(member),
+        kind: Some(match kind {
+            MemberKind::Function => CompletionItemKind::FUNCTION,
+            MemberKind::Value => CompletionItemKind::VARIABLE,
+            MemberKind::Type => CompletionItemKind::CLASS,
+            MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
+        }),
+        detail: def.and_then(|d| d.ty.as_ref()).map(|t| format!("{t}")),
+        documentation: def.and_then(|d| d.doc.clone()).map(|d| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: d,
+            })
+        }),
+        ..CompletionItem::default()
     }
 }
 

@@ -590,3 +590,84 @@ fn a_path_dependency_outside_the_watched_folder_is_still_checked() {
     client.shutdown();
     let _ = fs::remove_dir_all(&base);
 }
+
+/// Hover on a module name before a dot shows the module; plain
+/// completion offers the items of `import m.{ ... }`.
+#[test]
+fn module_names_and_imported_items_in_hover_and_completion() {
+    let main = "import helper\nimport helper.{ twice }\n\nfn main() {\n  let a = helper.twice(1)\n  println(\"{a}\")\n  \n}\n";
+    let dir = project("names", &[("helper.silt", HELPER), ("main.silt", main)]);
+    let main_uri = uri(&dir.join("main.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open_and_wait(&main_uri, main);
+
+    let on_module = position_of(main, "helper.twice(1)", 1);
+    let hover = request_at(&mut client, "textDocument/hover", &main_uri, on_module);
+    let text = hover
+        .pointer("/contents/value")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(text.contains("module helper"), "{hover}");
+    assert!(!text.contains("-> Int"), "not the member's type: {hover}");
+
+    let blank = position_of(main, "  \n}", 2);
+    let completion = request_at(&mut client, "textDocument/completion", &main_uri, blank);
+    let item = completion
+        .as_array()
+        .and_then(|items| items.iter().find(|it| it["label"] == "twice"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(item["detail"], json!("Fn(Int) -> Int"), "{item}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A silt.toml opened in the editor is not analysed as silt, and a
+/// didChange for a document never opened is ignored.
+#[test]
+fn only_opened_silt_documents_are_analysed() {
+    let main = "fn main() {\n  println(\"hi\")\n}\n";
+    let dir = project(
+        "nonsilt",
+        &[
+            (
+                "silt.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+            ),
+            ("main.silt", main),
+        ],
+    );
+    let toml_uri = uri(&dir.join("silt.toml"));
+    let main_uri = uri(&dir.join("main.silt"));
+    let other_uri = uri(&dir.join("other.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open(
+        &toml_uri,
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    );
+    did_change(&mut client, &other_uri, 2, "fn broken( {\n");
+    let publish = client.did_open_and_wait(&main_uri, main);
+    assert_eq!(messages(&publish), Vec::<String>::new(), "{publish}");
+    let pull = |client: &mut LspClient, uri: &str| {
+        client.request_result(
+            "textDocument/diagnostic",
+            json!({ "textDocument": { "uri": uri } }),
+        )["items"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    assert_eq!(
+        pull(&mut client, &toml_uri),
+        0,
+        "silt.toml is not parsed as silt"
+    );
+    assert_eq!(
+        pull(&mut client, &other_uri),
+        0,
+        "a never-opened document is not kept"
+    );
+    let symbols = client.request_result("workspace/symbol", json!({ "query": "broken" }));
+    assert!(symbols.as_array().is_none_or(Vec::is_empty), "{symbols}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -160,31 +160,54 @@ impl Server {
 /// The `(module, member)` of the qualified access `module.member` whose
 /// member name holds `cursor`, when its receiver is a plain identifier.
 pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(Symbol, Symbol)> {
+    find_qualified_access(program, |_, member| member.contains(&cursor))
+}
+
+/// The receiver `module` of a qualified access `module.member` whose
+/// receiver holds `cursor`, when it is a plain identifier.
+pub(super) fn qualifier_at(program: &Program, cursor: usize) -> Option<Symbol> {
+    find_qualified_access(program, |receiver, _| receiver.contains(&cursor)).map(|(m, _)| m)
+}
+
+/// The `(receiver, member)` of the last qualified access `name.member`
+/// (a plain identifier before the dot) for which `hit` accepts the byte
+/// ranges of the receiver and of the member name.
+fn find_qualified_access(
+    program: &Program,
+    hit: impl Fn(std::ops::Range<usize>, std::ops::Range<usize>) -> bool,
+) -> Option<(Symbol, Symbol)> {
     use super::ast_walk::visit_expr_children;
     use crate::ast::{Expr, ExprKind};
 
-    fn walk(expr: &Expr, cursor: usize, found: &mut Option<(Symbol, Symbol)>) {
+    fn walk(
+        expr: &Expr,
+        hit: &dyn Fn(std::ops::Range<usize>, std::ops::Range<usize>) -> bool,
+        found: &mut Option<(Symbol, Symbol)>,
+    ) {
         if let ExprKind::FieldAccess(receiver, field, field_span) = &expr.kind
-            && (field_span.start as usize..field_span.end as usize).contains(&cursor)
             && let ExprKind::Ident(module) = &receiver.kind
+            && hit(
+                receiver.span.start as usize..receiver.span.end as usize,
+                field_span.start as usize..field_span.end as usize,
+            )
         {
             *found = Some((*module, *field));
         }
-        visit_expr_children(expr, |child| walk(child, cursor, found));
+        visit_expr_children(expr, |child| walk(child, hit, found));
     }
     let mut found = None;
     for decl in &program.decls {
         match decl {
-            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
-            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::Fn(f) => walk(&f.body, &hit, &mut found),
+            Decl::Let { value, .. } => walk(value, &hit, &mut found),
             Decl::Trait(t) => t
                 .methods
                 .iter()
-                .for_each(|m| walk(&m.body, cursor, &mut found)),
+                .for_each(|m| walk(&m.body, &hit, &mut found)),
             Decl::TraitImpl(ti) if !ti.is_auto_derived => ti
                 .methods
                 .iter()
-                .for_each(|m| walk(&m.body, cursor, &mut found)),
+                .for_each(|m| walk(&m.body, &hit, &mut found)),
             _ => {}
         }
     }

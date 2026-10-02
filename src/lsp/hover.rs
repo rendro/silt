@@ -9,7 +9,8 @@ use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
-use super::modules::qualified_access_at;
+use super::local_bindings::nearest_local_binding_for;
+use super::modules::{qualified_access_at, qualifier_at};
 
 impl Server {
     // ── Hover ──────────────────────────────────────────────────────
@@ -65,6 +66,29 @@ impl Server {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value,
+                }),
+                range: None,
+            });
+        }
+
+        // The name of an imported module before a dot (`geo` in
+        // `geo.mk`): the module, not the member's type.
+        if let Some(module) = qualifier_at(program, cursor)
+            && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
+            && let Some(view) = self.imported_module(doc, module)
+        {
+            let file = view
+                .uri
+                .path()
+                .as_str()
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```silt\nmodule {}\n```\n\n{file}", resolve(module)),
                 }),
                 range: None,
             });

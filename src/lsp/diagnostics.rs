@@ -98,8 +98,14 @@ pub(super) fn uri_to_path(uri: &Uri) -> PathBuf {
 impl Server {
     /// Store `text` as the text of the open document `uri` and schedule
     /// its analysis.
+    ///
+    /// Only silt files are analysed: a `silt.toml` the editor opens is
+    /// not a module. Each edit moves the analysis [`DEBOUNCE`] later.
     pub(super) fn update_document(&mut self, uri: Uri, text: String) {
         let path = uri_to_path(&uri);
+        if path.extension().is_none_or(|ext| ext != "silt") {
+            return;
+        }
         let source = SourceFile::new(SourceName::Overlay(path.clone()), text.into());
         let doc = self
             .documents
@@ -117,8 +123,7 @@ impl Server {
         doc.source = source;
         doc.open = true;
         self.pending.insert(uri);
-        self.deadline
-            .get_or_insert_with(|| Instant::now() + DEBOUNCE);
+        self.deadline = Some(Instant::now() + DEBOUNCE);
     }
 
     /// The editor closed `uri`: the file on disk is its text again. A
