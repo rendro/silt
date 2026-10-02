@@ -470,7 +470,7 @@ fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
 }
 
 /// The names `pattern` binds, with their spans.
-pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
+fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
     match &pattern.kind {
         PatternKind::Ident(name) => out.push((*name, pattern.span)),
         PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {

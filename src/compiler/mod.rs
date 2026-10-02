@@ -1407,18 +1407,35 @@ impl Compiler {
             }
         }
 
-        // Build module scope: all function names in this module.
-        // Public functions are registered as "module.fn", private as "__module__fn".
-        // This lets intra-module calls resolve bare names to the correct global.
+        // Build module scope: every top-level function and `let` of this
+        // module. Public ones are registered as "module.name", private ones
+        // as "__module__name", so no two modules share a global and the
+        // module's own code reads its names there.
         // Save the parent scope first — recursive module compilation (imports) will
         // overwrite it, so we need to restore ours after processing imports.
         let saved_scope = self.module_scope.take();
         let mut all_fn_names: HashMap<String, bool> = HashMap::new();
+        let mut let_names: HashSet<String> = HashSet::new();
         for decl in &program.decls {
-            if let Decl::Fn(f) = decl {
-                all_fn_names.insert(resolve(f.name), f.is_pub);
+            match decl {
+                Decl::Fn(f) => {
+                    all_fn_names.insert(resolve(f.name), f.is_pub);
+                }
+                Decl::Let {
+                    pattern, is_pub, ..
+                } => {
+                    if let PatternKind::Ident(name) = &pattern.kind {
+                        all_fn_names.insert(resolve(*name), *is_pub);
+                        let_names.insert(resolve(*name));
+                    }
+                }
+                _ => {}
             }
         }
+        // The module's lets are the value globals of the program being
+        // compiled now (see `top_level_value_globals`); the importer's are
+        // restored at the end.
+        let saved_value_globals = std::mem::replace(&mut self.top_level_value_globals, let_names);
         let pub_set: HashSet<String> = all_fn_names
             .iter()
             .filter(|(_, is_pub)| **is_pub)
@@ -1576,27 +1593,29 @@ impl Compiler {
                     // Skip.
                 }
                 Decl::Let {
-                    pattern, is_pub, ..
+                    pattern,
+                    value,
+                    is_pub,
+                    span: let_span,
+                    ..
                 } => {
-                    self.compile_decl(decl)?;
-                    if *is_pub {
-                        // A `pub let` is exported: each name it binds is
-                        // also registered as "module.name", which is what
-                        // `m.name` and `import m.{ name }` read.
-                        let mut names = Vec::new();
-                        crate::parser::pattern_binders(pattern, &mut names);
-                        for (name, _) in names {
-                            let bare = resolve(name);
-                            let bare_idx = self.add_constant(Value::String(bare.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                            let qual = format!("{global}.{bare}");
-                            let qual_idx = self.add_constant(Value::String(qual), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, qual_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                    }
+                    let PatternKind::Ident(name) = &pattern.kind else {
+                        return Err(Diagnostic::error(
+                            Code::InvalidConstruct,
+                            *let_span,
+                            "unsupported pattern in top-level let",
+                        ));
+                    };
+                    self.compile_expr(value)?;
+                    let global_name = if *is_pub {
+                        format!("{global}.{name}")
+                    } else {
+                        format!("__{global}__{name}")
+                    };
+                    let name_idx = self.add_constant(Value::String(global_name), *let_span)?;
+                    self.current_chunk()
+                        .emit_op_u16(Op::SetGlobal, name_idx, *let_span);
+                    self.current_chunk().emit_op(Op::Pop, *let_span);
                 }
             }
         }
@@ -1620,6 +1639,7 @@ impl Compiler {
         self.current_chunk().emit_op(Op::Pop, span);
 
         self.module_scope = saved_scope;
+        self.top_level_value_globals = saved_value_globals;
         Ok(())
     }
 
