@@ -1,0 +1,2 @@
+pub let println = 5
+pub let list = [1]

@@ -1,0 +1,4 @@
+let secret = 1
+pub fn a() -> Int {
+  secret
+}

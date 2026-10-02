@@ -1,0 +1,13 @@
+-- verdict: same
+-- Each module's private let secret is its own, and main's is main's (it
+-- printed 3 3 3: top-level lets were bare globals every module shared).
+import a
+import b
+
+let secret = 3
+
+fn main() {
+  println(a.a())
+  println(b.b())
+  println(secret)
+}
