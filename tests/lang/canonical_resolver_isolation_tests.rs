@@ -71,8 +71,10 @@ fn two_resolvers_do_not_share_aliases() {
 }
 
 fn parse(src: &str) -> silt::ast::Program {
-    let tokens = Lexer::new(src).tokenize().expect("lex");
-    Parser::new(tokens).parse_program().expect("parse")
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lex");
+    Parser::new(tokens, src).parse_program().expect("parse")
 }
 
 // ── 3. LSP-style isolation: fresh resolver per pull ────────────────

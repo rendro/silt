@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::intern::{self, Symbol};
+use crate::source::{FileId, Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -155,48 +156,6 @@ impl fmt::Display for Token {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Span {
-    pub line: usize,
-    pub col: usize,
-    pub offset: usize,
-}
-
-impl Span {
-    pub fn new(line: usize, col: usize) -> Self {
-        Self {
-            line,
-            col,
-            offset: 0,
-        }
-    }
-
-    pub fn with_offset(line: usize, col: usize, offset: usize) -> Self {
-        Self { line, col, offset }
-    }
-
-    /// Synthetic span for compiler-generated AST nodes that don't
-    /// correspond to any user-written source. Used by exhaustiveness
-    /// checking (witness patterns), auto-derive (synthesized impls),
-    /// and similar internal call sites. The 0-byte position signals
-    /// "compiler-synthesized" to the diagnostic renderer, which
-    /// suppresses the source-line-with-caret display.
-    ///
-    /// Single-source-of-truth for the synthetic-span shape; collapses
-    /// the previously-duplicated `synth_span` helpers in
-    /// `typechecker::exhaustiveness` and `typechecker::auto_derive`.
-    /// Lock: tests/meta/round72_bloat_cleanup_lock_tests.rs.
-    pub fn synthetic() -> Self {
-        Self::new(0, 0)
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.col)
-    }
-}
-
 pub type SpannedToken = (Token, Span);
 
 /// A comment the lexer skipped, as recorded by
@@ -209,7 +168,7 @@ pub struct SourceComment {
     /// The comment exactly as written, delimiters included: `-- ...` up to
     /// (not including) the line break, or `{- ... -}` with any nesting.
     pub text: String,
-    /// Position of the comment's first character.
+    /// The comment's extent, delimiters included.
     pub span: Span,
 }
 
@@ -217,12 +176,6 @@ pub struct SourceComment {
 pub struct LexError {
     pub message: String,
     pub span: Span,
-}
-
-impl fmt::Display for LexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.span, self.message)
-    }
 }
 
 /// Authoritative keyword list. Reserved words a user cannot bind as an
@@ -252,10 +205,9 @@ pub const KEYWORDS: &[&str] = &[
 pub const KEYWORD_LITERALS: &[&str] = &["true", "false"];
 
 pub struct Lexer {
+    file: FileId,
     source: Vec<char>,
     pos: usize,
-    line: usize,
-    col: usize,
     byte_offset: usize,
     /// Stack of brace depths at which string interpolations began.
     /// When we encounter `}` and brace_depth matches the top of this stack,
@@ -268,12 +220,12 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(source: &str) -> Self {
+    /// A lexer for `source`, the text of the file `file`.
+    pub fn new(file: FileId, source: &str) -> Self {
         let mut lexer = Self {
+            file,
             source: source.chars().collect(),
             pos: 0,
-            line: 1,
-            col: 1,
             byte_offset: 0,
             interp_stack: Vec::new(),
             brace_depth: 0,
@@ -282,9 +234,9 @@ impl Lexer {
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
         // and rustc likewise accepts it. We *skip* rather than strip so
-        // byte offsets and line/col stay relative to the original
-        // source string; the BOM counts as the first column of line 1,
-        // just like any other skipped character. A BOM anywhere else
+        // byte offsets stay relative to the original source string; the
+        // BOM counts as the first column of line 1, just like any other
+        // skipped character. A BOM anywhere else
         // in the file is still an error (reported by name, since the
         // character itself is zero-width and invisible).
         if lexer.peek() == Some('\u{FEFF}') {
@@ -296,9 +248,15 @@ impl Lexer {
     pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, LexError> {
         let mut tokens = Vec::new();
         loop {
-            let tok = self.next_token()?;
-            let is_eof = tok.0 == Token::Eof;
-            tokens.push(tok);
+            let (tok, start) = self.next_token()?;
+            // Every scan stops right after its token, so the token ends
+            // where the lexer stands now.
+            let span = Span {
+                end: self.byte_offset as u32,
+                ..start
+            };
+            let is_eof = tok == Token::Eof;
+            tokens.push((tok, span));
             if is_eof {
                 break;
             }
@@ -324,12 +282,17 @@ impl Lexer {
     fn record_comment(&mut self, start_pos: usize, span: Span) {
         if let Some(comments) = self.comments.as_mut() {
             let text: String = self.source[start_pos..self.pos].iter().collect();
+            let span = Span {
+                end: self.byte_offset as u32,
+                ..span
+            };
             comments.push(SourceComment { text, span });
         }
     }
 
+    /// The empty span at the current position.
     fn span(&self) -> Span {
-        Span::with_offset(self.line, self.col, self.byte_offset)
+        Span::point(self.file, self.byte_offset as u32)
     }
 
     fn peek(&self) -> Option<char> {
@@ -344,12 +307,6 @@ impl Lexer {
         let ch = self.source.get(self.pos).copied()?;
         self.pos += 1;
         self.byte_offset += ch.len_utf8();
-        if ch == '\n' {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += 1;
-        }
         Some(ch)
     }
 
@@ -1057,7 +1014,7 @@ mod tests {
     use super::*;
 
     fn lex(input: &str) -> Vec<Token> {
-        Lexer::new(input)
+        Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap()
             .into_iter()
@@ -1346,25 +1303,25 @@ mod tests {
     #[test]
     fn test_scientific_rejects_overflow() {
         // 1e999 is not finite — must be rejected
-        let result = Lexer::new("1e999").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e999").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_hex_empty_digits_error() {
-        let result = Lexer::new("0x").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0x").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_binary_empty_digits_error() {
-        let result = Lexer::new("0b").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0b").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_scientific_no_digit_after_e_error() {
-        let result = Lexer::new("1e").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e").tokenize();
         assert!(result.is_err());
     }
 }

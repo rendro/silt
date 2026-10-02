@@ -42,10 +42,10 @@ use silt::repl::{builtin_names, collect_decl_completion_names, completion_candid
 /// here means the test fixture itself is broken, not the completion
 /// helper — we report it as a panic so the test author notices.
 fn parse_program(src: &str) -> Program {
-    let tokens = Lexer::new(src)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("test fixture failed to lex: {}", e.message));
-    Parser::new(tokens)
+    Parser::new(tokens, src)
         .parse_program()
         .unwrap_or_else(|e| panic!("test fixture failed to parse: {}", e.message))
 }

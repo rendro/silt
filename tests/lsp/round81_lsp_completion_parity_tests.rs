@@ -45,8 +45,12 @@ const TRAIT_METHODS: &[(&str, &str)] = &[
 fn typechecks(expr: &str, call: &str) -> bool {
     let src =
         format!("fn main() {{\n  let v = {expr}\n  let r = {call}\n  println(\"{{r}}\")\n}}\n");
-    let tokens = Lexer::new(&src).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), &src)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, &src)
+        .parse_program()
+        .expect("parse error");
     typechecker::check(&mut program)
         .iter()
         .all(|e| e.severity != Severity::Error)

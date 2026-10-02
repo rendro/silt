@@ -20,10 +20,10 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 
 fn parse_program(src: &str) -> Program {
-    let tokens = Lexer::new(src)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex failed: {e:?}\nsrc:\n{src}"));
-    Parser::new(tokens)
+    Parser::new(tokens, src)
         .parse_program()
         .unwrap_or_else(|e| panic!("parse failed: {e:?}\nsrc:\n{src}"))
 }
@@ -184,10 +184,10 @@ fn test_round35_f1_block_comment_interp_round_trip() {
     let fmt2 = format(&fmt1).unwrap();
     assert_eq!(fmt1, fmt2, "formatter must be idempotent");
     // The formatted output must still lex+parse.
-    let tokens = Lexer::new(&fmt1)
+    let tokens = Lexer::new(silt::source::FileId::default(), &fmt1)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex failed: {e:?}\nfmt:\n{fmt1}"));
-    Parser::new(tokens)
+    Parser::new(tokens, &fmt1)
         .parse_program()
         .unwrap_or_else(|e| panic!("parse failed: {e:?}\nfmt:\n{fmt1}"));
     assert!(fmt1.contains("{- note -}"));

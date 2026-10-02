@@ -19,7 +19,7 @@ pub(super) fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar
     let mut locals = Vec::new();
     for decl in &program.decls {
         if let Decl::Fn(f) = decl {
-            let fn_start = f.span.offset;
+            let fn_start = f.span.start as usize;
             // Rough check: cursor must be after the fn starts
             if cursor >= fn_start {
                 // Add function parameters
@@ -57,7 +57,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             }
         }
         PatternKind::Record { fields, .. } => {
-            for (name, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
                 } else {
@@ -73,7 +73,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             // also binds shorthand fields. Round-101: the named rest
             // binder (`{ x, ...rest }`) binds too — mirror the
             // typechecker's `collect_pattern_vars`.
-            for (name, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
                 } else {
@@ -83,7 +83,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                     });
                 }
             }
-            if let Some(r) = rest {
+            if let Some((r, _)) = rest {
                 locals.push(LocalVar {
                     name: r.to_string(),
                     ty: None,
@@ -124,7 +124,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
                         // The binding is only visible if defined before cursor
-                        if value.span.offset <= cursor {
+                        if (value.span.start as usize) <= cursor {
                             collect_pattern_names_typed(pattern, value.ty.as_ref(), locals);
                         }
                         collect_locals_in_expr(value, cursor, locals);
@@ -136,7 +136,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                         ..
                     } => {
                         // The pattern binding is visible after the when statement
-                        if expr.span.offset <= cursor {
+                        if (expr.span.start as usize) <= cursor {
                             collect_pattern_names(pattern, locals);
                             // Try to resolve types from the expression
                             // For `when let Ok(x) = expr`, if expr has type Result(T, E),
@@ -164,7 +164,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                 collect_locals_in_expr(e, cursor, locals);
             }
             for arm in arms {
-                if arm.body.span.offset <= cursor {
+                if (arm.body.span.start as usize) <= cursor {
                     collect_pattern_names(&arm.pattern, locals);
                 }
                 collect_locals_in_expr(&arm.body, cursor, locals);
@@ -177,8 +177,8 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             collect_locals_in_expr(body, cursor, locals);
         }
         ExprKind::Loop { bindings, body } => {
-            for (name, init) in bindings {
-                if init.span.offset <= cursor {
+            for (name, _, init) in bindings {
+                if (init.span.start as usize) <= cursor {
                     locals.push(LocalVar {
                         name: name.to_string(),
                         ty: init.ty.clone(),
@@ -248,8 +248,11 @@ mod tests {
     use super::*;
 
     fn parse_and_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         program
     }

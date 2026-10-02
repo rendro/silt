@@ -28,11 +28,12 @@
 //! repro is the golden case
 //! `tests/golden/cli/repl/repl_wrapper_frame_leak_tests__wrapper_name_never_shown`.
 
-use silt::lexer::Span;
 use silt::repl::repl_call_stack_lines;
+use silt::source::Span;
 
-fn span(line: usize, col: usize) -> Span {
-    Span::new(line, col)
+/// A span at byte `at` of an input.
+fn span(at: u32) -> Span {
+    Span::point(silt::source::FileId::default(), at)
 }
 
 /// The exact shape from the bug report: a user frame plus the synthetic
@@ -41,8 +42,8 @@ fn span(line: usize, col: usize) -> Span {
 #[test]
 fn wrapper_frame_is_relabelled_repl_not_leaked() {
     let stack = vec![
-        ("boom".to_string(), span(1, 13)),
-        ("__repl_eval_3".to_string(), span(1, 1)),
+        ("boom".to_string(), span(23)),
+        ("__repl_eval_3".to_string(), span(11)),
     ];
     let lines = repl_call_stack_lines(&stack);
     let rendered = lines.join("\n");
@@ -69,8 +70,8 @@ fn wrapper_frame_is_relabelled_repl_not_leaked() {
 #[test]
 fn relabelled_stack_keeps_two_frames() {
     let stack = vec![
-        ("boom".to_string(), span(2, 1)),
-        ("__repl_eval_0".to_string(), span(1, 1)),
+        ("boom".to_string(), span(21)),
+        ("__repl_eval_0".to_string(), span(11)),
     ];
     let lines = repl_call_stack_lines(&stack);
     assert_eq!(
@@ -88,8 +89,8 @@ fn relabelled_stack_keeps_two_frames() {
 #[test]
 fn non_numeric_suffix_is_not_relabelled() {
     let stack = vec![
-        ("__repl_eval_helper".to_string(), span(1, 1)),
-        ("caller".to_string(), span(2, 1)),
+        ("__repl_eval_helper".to_string(), span(11)),
+        ("caller".to_string(), span(21)),
     ];
     let lines = repl_call_stack_lines(&stack);
     let rendered = lines.join("\n");

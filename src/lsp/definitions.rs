@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::Span;
+use crate::source::Span;
 use crate::types::Type;
 
 use super::ast_walk::visit_expr_children;
@@ -90,7 +90,6 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
             }
             Decl::Let {
                 pattern,
-                span,
                 name_span,
                 value,
                 doc,
@@ -100,11 +99,9 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 // (`let (a, b) = ...`, `let P { x, y } = ...`, etc.) also
                 // registers each leaf identifier as a definition. Each leaf
                 // of a compound pattern uses its own ident span; a bare
-                // `let x = ...` preserves the old behaviour of using the
-                // enclosing decl span so goto-def still lands on `let`.
+                // `let x = ...` uses its name span.
                 collect_let_pattern_defs(
                     pattern,
-                    *span,
                     *name_span,
                     value.ty.as_ref(),
                     doc.as_deref(),
@@ -124,13 +121,12 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
 /// destructured top-level bindings (e.g. `let (a, b) = (1, 2)`) show up in
 /// goto-def just like bare `let x = ...`.
 ///
-/// `decl_span` is the enclosing decl's span (used as the goto-def target
-/// for the bare `let x = ...` case). `value_ty` is the value expression's
+/// `name_span` is the bare `let x = ...` binding's name span. `value_ty`
+/// is the value expression's
 /// type; when it matches the pattern's shape we propagate component types
 /// to leaves so hover can render `Int` for `a` in `let (a, b) = (1, 2)`.
 fn collect_let_pattern_defs(
     pattern: &Pattern,
-    decl_span: Span,
     name_span: Option<Span>,
     value_ty: Option<&Type>,
     doc: Option<&str>,
@@ -179,12 +175,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, decl_span, None, inner, None, false, defs);
+                collect_let_pattern_defs(p, None, inner, None, false, defs);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, None, value_ty, None, false, defs);
+                collect_let_pattern_defs(p, None, value_ty, None, false, defs);
             }
         }
         PatternKind::Constructor {
@@ -199,7 +195,7 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, decl_span, None, inner_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, inner_ty.as_ref(), None, false, defs);
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -212,17 +208,17 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, sub) in fields {
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            // No dedicated Pattern node for the shorthand
-                            // field binding; fall back to the decl span.
-                            span: decl_span,
+                            // The shorthand field binding is at the field
+                            // name.
+                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -244,15 +240,15 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, sub) in fields {
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            span: decl_span,
+                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -262,15 +258,13 @@ fn collect_let_pattern_defs(
             }
             // Round-101: the named rest binder (`{ x, ...rest }`) binds
             // `rest` — mirror the typechecker's `collect_pattern_vars`.
-            // Like a shorthand field, it has no dedicated Pattern node,
-            // so fall back to the decl span.
-            if let Some(r) = rest
+            if let Some((r, r_span)) = rest
                 && resolve(*r) != "_"
             {
                 defs.insert(
                     *r,
                     DefInfo {
-                        span: decl_span,
+                        span: *r_span,
                         ty: None,
                         params: vec![],
                         doc: None,
@@ -282,7 +276,7 @@ fn collect_let_pattern_defs(
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                collect_let_pattern_defs(p, decl_span, None, None, None, false, defs);
+                collect_let_pattern_defs(p, None, None, None, false, defs);
             }
         }
         PatternKind::List(pats, rest) => {
@@ -291,10 +285,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, None, elem_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, elem_ty.as_ref(), None, false, defs);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, decl_span, None, list_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(r, None, list_ty.as_ref(), None, false, defs);
             }
         }
         _ => {}
@@ -394,8 +388,11 @@ mod tests {
     fn test_build_definitions_from_program() {
         let source =
             "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
@@ -425,8 +422,10 @@ mod tests {
     #[test]
     fn test_build_definitions_fn_has_params() {
         let source = "fn greet(name, times) { name }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (program, _) = crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let defs = build_definitions(&program);
 
         let def = defs.get(&intern("greet")).unwrap();
@@ -438,8 +437,11 @@ mod tests {
     #[test]
     fn test_build_definitions_trait() {
         let source = "trait Printable {\n  fn show(self) -> String\n}\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
@@ -452,8 +454,11 @@ mod tests {
     #[test]
     fn test_build_definitions_let_type() {
         let source = "let x = 42\nfn main() { x }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
@@ -466,8 +471,11 @@ mod tests {
     #[test]
     fn test_build_definitions_enum_variants() {
         let source = "type Shape {\n  Circle(Float),\n  Rect(Float, Float),\n}\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
@@ -479,8 +487,11 @@ mod tests {
     #[test]
     fn test_build_definitions_multiple_functions() {
         let source = "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
@@ -497,8 +508,11 @@ mod tests {
     #[test]
     fn test_build_fn_type_simple() {
         let source = "fn double(n) { n * 2 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut program, _) =
+            crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);
 
         if let Decl::Fn(f) = &program.decls[0] {
@@ -512,8 +526,10 @@ mod tests {
     #[test]
     fn test_fn_param_names() {
         let source = "fn add(x, y) { x + y }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (program, _) = crate::parser::Parser::new(tokens, source).parse_program_recovering();
 
         if let Decl::Fn(f) = &program.decls[0] {
             let names = fn_param_names(f);

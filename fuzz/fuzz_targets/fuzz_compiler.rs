@@ -40,13 +40,13 @@ fuzz_target!(|data: &[u8]| {
 
     // 2. Lex — skip inputs that don't lex; lexer panic-freedom is
     //    fuzz_lexer's subject.
-    let Ok(tokens) = Lexer::new(s).tokenize() else {
+    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
         return;
     };
 
     // 3. Parse — compiler entry point requires a `Program`; parser
     //    panic-freedom is fuzz_parser's subject.
-    let Ok(mut program) = Parser::new(tokens).parse_program() else {
+    let Ok(mut program) = Parser::new(tokens, s).parse_program() else {
         return;
     };
 
@@ -55,10 +55,7 @@ fuzz_target!(|data: &[u8]| {
     //    result as a gate. Run before compile (same order as
     //    production — the checker annotates the AST in place).
     let type_errors = typechecker::check(&mut program);
-    if type_errors
-        .iter()
-        .any(|e| e.severity == Severity::Error)
-    {
+    if type_errors.iter().any(|e| e.severity == Severity::Error) {
         return;
     }
 

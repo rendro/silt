@@ -90,7 +90,7 @@ fn test_formatter_roundtrip_parses_on_all_examples() {
         };
 
         // Verify the formatted code still lexes
-        let tokens = match Lexer::new(&formatted).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &formatted).tokenize() {
             Ok(t) => t,
             Err(e) => {
                 failures.push(format!(
@@ -102,7 +102,7 @@ fn test_formatter_roundtrip_parses_on_all_examples() {
         };
 
         // Verify it still parses
-        if let Err(e) = Parser::new(tokens).parse_program() {
+        if let Err(e) = Parser::new(tokens, &formatted).parse_program() {
             failures.push(format!(
                 "{name}: formatted code fails to parse: {}",
                 e.message

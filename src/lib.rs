@@ -39,6 +39,7 @@ pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod scheduler;
+pub mod source;
 pub mod typechecker;
 pub mod types;
 // The self-updater shells out to curl/tar and replaces the running binary in

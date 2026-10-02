@@ -34,7 +34,7 @@ impl Server {
 
         // Detect dot-completion context: extract the identifier before the `.`
         if let Some(doc) = doc
-            && let Some(prefix) = extract_dot_prefix(&doc.source, &pos)
+            && let Some(prefix) = extract_dot_prefix(&doc.source.text, &pos)
         {
             let cursor = position_to_offset(&doc.source, &pos);
             // Round 81: the cached `doc.program` was parsed from the
@@ -358,10 +358,10 @@ impl Server {
         // the dot-completion context was extracted from a different
         // configuration (e.g. `xs.first().` chained-call walk reached
         // back through a `)`) and the fix-up isn't needed.
-        if cursor == 0 || !doc.source.is_char_boundary(cursor) {
+        if cursor == 0 || !doc.source.text.is_char_boundary(cursor) {
             return None;
         }
-        let bytes = doc.source.as_bytes();
+        let bytes = doc.source.text.as_bytes();
         if bytes.get(cursor.checked_sub(1)?) != Some(&b'.') {
             return None;
         }
@@ -370,20 +370,21 @@ impl Server {
         // placeholder is intentionally long-and-prefixed so it can't
         // accidentally collide with a real user method name.
         const PLACEHOLDER: &str = "silt_lsp_completion_placeholder";
-        let mut fixed = String::with_capacity(doc.source.len() + PLACEHOLDER.len());
-        fixed.push_str(&doc.source[..cursor]);
+        let mut fixed = String::with_capacity(doc.source.text.len() + PLACEHOLDER.len());
+        fixed.push_str(&doc.source.text[..cursor]);
         fixed.push_str(PLACEHOLDER);
-        fixed.push_str(&doc.source[cursor..]);
+        fixed.push_str(&doc.source.text[cursor..]);
 
         // Lex / parse / typecheck the fix-up source. We discard parse
         // and typecheck errors — the goal is "AST that locates the
         // receiver's binding," not "clean diagnostics."
-        let tokens = match crate::lexer::Lexer::new(&fixed).tokenize() {
-            Ok(t) => t,
-            Err(_) => return None,
-        };
+        let tokens =
+            match crate::lexer::Lexer::new(crate::source::FileId::default(), &fixed).tokenize() {
+                Ok(t) => t,
+                Err(_) => return None,
+            };
         let (mut program, _parse_errs) =
-            crate::parser::Parser::new(tokens).parse_program_recovering();
+            crate::parser::Parser::new(tokens, &fixed).parse_program_recovering();
         let _type_errs = crate::typechecker::check(&mut program);
         Some(program)
     }
@@ -713,8 +714,10 @@ mod tests {
     use super::*;
 
     fn parse_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut prog, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .unwrap();
+        let (mut prog, _) = crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let _ = crate::typechecker::check(&mut prog);
         prog
     }

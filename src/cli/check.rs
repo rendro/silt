@@ -155,7 +155,7 @@ pub(crate) fn check_file(path: &str, format: OutputFormat) {
                 && !looks_like_library_module(program)
                 && !looks_like_test_file(program) =>
         {
-            Some(missing_main_error(program, &result.source, path, false))
+            Some(missing_main_error(program, &result.sources, path, false))
         }
         _ => None,
     };
@@ -251,8 +251,8 @@ fn print_json_errors(errors: &[&SourceError]) {
             let hints_clean: Vec<String> = hints.iter().map(|h| strip_ansi(h)).collect();
             serde_json::json!({
                 "file": e.file.as_deref().unwrap_or("<unknown>"),
-                "line": e.span.line,
-                "col": e.span.col,
+                "line": e.line,
+                "col": e.col,
                 "message": head_clean,
                 "hints": hints_clean,
                 "severity": if e.is_warning { "warning" } else { "error" },

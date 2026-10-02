@@ -19,8 +19,12 @@ const ITERATIONS: u32 = 100;
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn compile(source: &str) -> Arc<silt::bytecode::Function> {
-    let tokens = Lexer::new(source).tokenize().expect("lex error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), source)
+        .tokenize()
+        .expect("lex error");
+    let mut program = Parser::new(tokens, source)
+        .parse_program()
+        .expect("parse error");
     let _ = typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");

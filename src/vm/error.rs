@@ -1,6 +1,6 @@
 //! VM error type.
 
-use crate::lexer::Span;
+use crate::source::Span;
 
 #[derive(Debug, Clone)]
 pub struct VmError {
@@ -36,18 +36,19 @@ impl VmError {
 /// The canonical "frame location" formatter used by `VmError::Display`.
 ///
 /// Production CLIs (`silt run`, `silt test`, REPL) supply their own
-/// `format_frame` closure to `render_call_stack` so they can use absolute
-/// file paths.  `VmError::Display` has no access to such paths (it's a
-/// fallback formatter that may be invoked from arbitrary sinks), so it
-/// uses a path-free `"line N, column M"` shape — but it MUST go through
+/// `format_frame` closure to `render_call_stack` so they can use file
+/// paths, lines and columns from the source map.  `VmError::Display` has
+/// no source map (it's a fallback formatter that may be invoked from
+/// arbitrary sinks), so it uses a path-free `"byte N"` shape — the
+/// offset the span holds — but it MUST go through
 /// the same `render_call_stack` helper as the production paths, applying
 /// the same `<module:...>`-keep filter and the same `"  -> name  at …"`
 /// line layout.  Any drift between this helper and `render_call_stack`
 /// would re-introduce the round-74 GAP (Display dropping module frames
 /// silently, plus a one-vs-two-space `at` separator divergence).
 pub fn vm_error_display_frame(_name: &str, span: &Span) -> String {
-    if span.line > 0 {
-        format!("line {}, column {}", span.line, span.col)
+    if span.is_in_source() {
+        format!("byte {}", span.start)
     } else {
         "<unknown location>".to_string()
     }
@@ -65,8 +66,9 @@ impl std::fmt::Display for VmError {
         // produces a correctly-formed diagnostic instead of a second
         // dialect. (Audit LATENT L3.)
         //
-        // No span → no `-->` locator line; no source snippet (we don't
-        // hold the source here). Call-stack rendering delegates to the
+        // No span → no `-->` locator line. With one, the locator names
+        // the byte offset: without the source map there is no line, no
+        // column and no source snippet. Call-stack rendering delegates to the
         // shared `render_call_stack` helper so the filter + line shape
         // can never drift from `silt run` / `silt test` / REPL output.
         // Round-74 GAP: previously this method had its own filter
@@ -82,9 +84,9 @@ impl std::fmt::Display for VmError {
         // lowest-common-denominator for a fallback.
         write!(f, "error[runtime]: {}", self.message)?;
         if let Some(span) = self.span
-            && span.line > 0
+            && span.is_in_source()
         {
-            write!(f, "\n --> <input>:{}:{}", span.line, span.col)?;
+            write!(f, "\n --> <input> byte {}", span.start)?;
         }
         let stack_lines = render_call_stack(&self.call_stack, vm_error_display_frame);
         if !stack_lines.is_empty() {
@@ -128,7 +130,7 @@ where
             !name.starts_with('<') || name.starts_with("<module:") || name == "<repl>"
         })
         .collect();
-    let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
+    let any_real_span = meaningful.iter().any(|(_, s)| s.is_in_source());
     if meaningful.len() < 2 || !any_real_span {
         return Vec::new();
     }

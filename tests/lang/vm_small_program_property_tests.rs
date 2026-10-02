@@ -93,11 +93,11 @@ fn compile_and_run_capped(source: &str) -> Result<RunOutcome, TestCaseError> {
 
     // Pipeline front-half: lex / parse / typecheck / compile.  All errors
     // here are bucketed as generator rejects.
-    let tokens = match Lexer::new(source).tokenize() {
+    let tokens = match Lexer::new(silt::source::FileId::default(), source).tokenize() {
         Ok(t) => t,
         Err(e) => return Ok(RunOutcome::GeneratorReject(format!("lex: {e:?}"))),
     };
-    let mut program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens, source).parse_program() {
         Ok(p) => p,
         Err(e) => return Ok(RunOutcome::GeneratorReject(format!("parse: {e:?}"))),
     };

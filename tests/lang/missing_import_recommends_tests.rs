@@ -13,8 +13,10 @@ use silt::typechecker;
 use silt::types::Severity;
 
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer");
+    let mut program = Parser::new(tokens, input).parse_program().expect("parse");
     typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)

@@ -34,10 +34,12 @@ fn into_value_f64_non_finite_fails() {
 
 #[test]
 fn foreign_function_returning_nan_raises() {
-    let tokens = Lexer::new("fn main() { get_nan() }")
+    let tokens = Lexer::new(silt::source::FileId::default(), "fn main() { get_nan() }")
         .tokenize()
         .expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
+    let program = Parser::new(tokens, "fn main() { get_nan() }")
+        .parse_program()
+        .expect("parse error");
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());

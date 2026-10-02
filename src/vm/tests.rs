@@ -1,8 +1,9 @@
 use super::*;
 use crate::bytecode::{Chunk, Function, Op};
 use crate::compiler::Compiler;
-use crate::lexer::{Lexer, Span};
+use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::source::Span;
 
 /// Helper: build a Function from raw bytecode construction.
 fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
@@ -12,13 +13,15 @@ fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
 }
 
 fn span() -> Span {
-    Span::new(0, 0)
+    Span::BUILTIN
 }
 
 /// Helper: compile and run a silt program through the VM pipeline.
 fn run_vm(source: &str) -> Value {
-    let tokens = Lexer::new(source).tokenize().unwrap();
-    let program = Parser::new(tokens).parse_program().unwrap();
+    let tokens = Lexer::new(crate::source::FileId::default(), source)
+        .tokenize()
+        .unwrap();
+    let program = Parser::new(tokens, source).parse_program().unwrap();
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).unwrap();
     let script = Arc::new(functions.into_iter().next().unwrap());
@@ -2310,8 +2313,10 @@ fn test_spawn_join_multiple_completed() {
 
 /// Helper: compile and run silt code on a pre-configured VM (for FFI tests).
 fn run_vm_with(vm: &mut Vm, source: &str) -> Value {
-    let tokens = Lexer::new(source).tokenize().unwrap();
-    let program = Parser::new(tokens).parse_program().unwrap();
+    let tokens = Lexer::new(crate::source::FileId::default(), source)
+        .tokenize()
+        .unwrap();
+    let program = Parser::new(tokens, source).parse_program().unwrap();
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).unwrap();
     let script = Arc::new(functions.into_iter().next().unwrap());
@@ -2438,10 +2443,15 @@ fn test_foreign_fn_type_error() {
     let mut vm = Vm::new();
     vm.register_fn1("double", |x: i64| -> i64 { x * 2 })
         .unwrap();
-    let tokens = Lexer::new(r#"fn main() { double("hello") }"#)
-        .tokenize()
+    let tokens = Lexer::new(
+        crate::source::FileId::default(),
+        r#"fn main() { double("hello") }"#,
+    )
+    .tokenize()
+    .unwrap();
+    let program = Parser::new(tokens, r#"fn main() { double("hello") }"#)
+        .parse_program()
         .unwrap();
-    let program = Parser::new(tokens).parse_program().unwrap();
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).unwrap();
     let script = Arc::new(functions.into_iter().next().unwrap());
@@ -2519,6 +2529,7 @@ fn test_scheduler_channel_communication() {
 fn test_scheduler_deadlock_detection() {
     // Deadlock: task.join propagates as a VmError
     let tokens = Lexer::new(
+        crate::source::FileId::default(),
         r#"
             import task
             import channel
@@ -2531,7 +2542,20 @@ fn test_scheduler_deadlock_detection() {
     )
     .tokenize()
     .unwrap();
-    let program = Parser::new(tokens).parse_program().unwrap();
+    let program = Parser::new(
+        tokens,
+        r#"
+            import task
+            import channel
+            fn main() {
+                let ch = channel.new()
+                let t = task.spawn({ -> channel.receive(ch) })
+                task.join(t)
+            }
+            "#,
+    )
+    .parse_program()
+    .unwrap();
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).unwrap();
     let script = Arc::new(functions.into_iter().next().unwrap());
@@ -2548,6 +2572,7 @@ fn test_scheduler_deadlock_detection() {
 fn test_scheduler_task_failure_propagates() {
     // task.join on a failed task propagates as a VmError
     let tokens = Lexer::new(
+        crate::source::FileId::default(),
         r#"
             import task
             fn main() {
@@ -2558,7 +2583,18 @@ fn test_scheduler_task_failure_propagates() {
     )
     .tokenize()
     .unwrap();
-    let program = Parser::new(tokens).parse_program().unwrap();
+    let program = Parser::new(
+        tokens,
+        r#"
+            import task
+            fn main() {
+                let t = task.spawn({ -> 1 / 0 })
+                task.join(t)
+            }
+            "#,
+    )
+    .parse_program()
+    .unwrap();
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).unwrap();
     let script = Arc::new(functions.into_iter().next().unwrap());

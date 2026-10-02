@@ -801,10 +801,11 @@ impl TypeChecker {
         // No explicit "note:" prefix — the renderer (errors.rs) already
         // emits continuation lines as `= note: ...`.
         if let Some(err) = self.errors.last_mut() {
-            err.message.push_str(&format!(
-                "\nthe ? on line {} requires this function to return {ret_resolved}",
-                qspan.line
-            ));
+            err.line_note = Some(crate::types::LineNote {
+                span: qspan,
+                before: "the ? on line ",
+                after: format!(" requires this function to return {ret_resolved}"),
+            });
         }
     }
 
@@ -1388,17 +1389,15 @@ impl TypeChecker {
     /// second occurrence.
     pub(super) fn check_record_pattern_duplicate_fields(
         &mut self,
-        fields: &[(Symbol, Option<Pattern>)],
+        fields: &[(Symbol, Span, Option<Pattern>)],
         outer_span: Span,
     ) {
         let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        for (field_name, sub_pat) in fields.iter() {
+        for (field_name, _, sub_pat) in fields.iter() {
             if !seen.insert(*field_name) {
-                // Best-effort span: the field-name span isn't preserved
-                // in the AST (`fields: Vec<(Symbol, Option<Pattern>)>`),
-                // so point at the sub-pattern's span when present —
-                // that's adjacent to the offending field name. Fall back
-                // to the outer record-pattern span otherwise.
+                // Point at the sub-pattern's span when present — that's
+                // adjacent to the offending field name. Fall back to the
+                // outer record-pattern span otherwise.
                 let dup_span = sub_pat.as_ref().map(|p| p.span).unwrap_or(outer_span);
                 self.error(
                     format!(
@@ -1454,7 +1453,7 @@ impl TypeChecker {
                 }
             }
             PatternKind::Record { fields, .. } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(sp) => {
                             Self::collect_pattern_binders_into(sp, seen, on_dup);
@@ -1500,7 +1499,7 @@ impl TypeChecker {
                 }
             }
             PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(sp) => {
                             Self::collect_pattern_binders_into(sp, seen, on_dup);
@@ -1514,7 +1513,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                if let Some(rest_name) = rest {
+                if let Some((rest_name, _)) = rest {
                     if seen.contains_key(rest_name) {
                         on_dup(*rest_name, pattern.span);
                     } else {
@@ -2132,7 +2131,7 @@ impl TypeChecker {
                     };
 
                 if let Type::Record(rec_name, field_types) = &resolved {
-                    for (field_name, sub_pat) in fields {
+                    for (field_name, _, sub_pat) in fields {
                         if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {
                                 self.bind_pattern(sp, ft, env, span);
@@ -2158,7 +2157,7 @@ impl TypeChecker {
                         }
                     }
                 } else if let Some((rec_name, field_types)) = generic_record_fields {
-                    for (field_name, sub_pat) in fields {
+                    for (field_name, _, sub_pat) in fields {
                         if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {
                                 self.bind_pattern(sp, ft, env, span);
@@ -2183,7 +2182,7 @@ impl TypeChecker {
                         }
                     }
                 } else if matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                    for (field_name, sub_pat) in fields {
+                    for (field_name, _, sub_pat) in fields {
                         if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
                             self.bind_pattern(sp, &tv, env, span);
@@ -2199,7 +2198,7 @@ impl TypeChecker {
                         ),
                         span,
                     );
-                    for (field_name, sub_pat) in fields {
+                    for (field_name, _, sub_pat) in fields {
                         if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
                             self.bind_pattern(sp, &tv, env, span);
@@ -2349,7 +2348,7 @@ impl TypeChecker {
                 // a `type Person { ... }` value too.
                 use std::collections::BTreeMap;
                 let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
-                for (fname, _) in fields.iter() {
+                for (fname, _, _) in fields.iter() {
                     field_tys.insert(*fname, self.fresh_var());
                 }
                 // The row tail is open (a fresh row variable) regardless
@@ -2369,7 +2368,7 @@ impl TypeChecker {
                     } else {
                         field_tys.clone()
                     };
-                for (fname, sub) in fields.iter() {
+                for (fname, _, sub) in fields.iter() {
                     let ft = resolved_fields
                         .get(fname)
                         .cloned()
@@ -2383,7 +2382,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                if let Some(rest_name) = rest {
+                if let Some((rest_name, _)) = rest {
                     // Bind rest to a record carrying just the row var —
                     // unification will plug it in to the leftover row.
                     let rest_ty = Type::AnonRecord {
@@ -2413,7 +2412,7 @@ impl TypeChecker {
     /// field access on the binding, not a module-qualified call, so the
     /// qualified `module.fn` scheme must not be consulted.
     fn callee_module_is_in_scope(&self, callee: &Expr, env: &TypeEnv) -> bool {
-        let ExprKind::FieldAccess(obj, _) = &callee.kind else {
+        let ExprKind::FieldAccess(obj, _, _) = &callee.kind else {
             return false;
         };
         let ExprKind::Ident(mod_name) = &obj.kind else {
@@ -2440,7 +2439,7 @@ impl TypeChecker {
     fn callee_declares_optional_last_param(&self, callee: &Expr, env: &TypeEnv) -> bool {
         let name = match &callee.kind {
             ExprKind::Ident(name) => *name,
-            ExprKind::FieldAccess(obj, field) => {
+            ExprKind::FieldAccess(obj, field, _) => {
                 let ExprKind::Ident(module) = &obj.kind else {
                     return false;
                 };
@@ -2680,7 +2679,7 @@ impl TypeChecker {
                 }
             }
 
-            ExprKind::FieldAccess(obj, field) => {
+            ExprKind::FieldAccess(obj, field, _) => {
                 self.last_field_access_was_method = false;
                 let field = *field;
                 // Capture module name before mutable borrow for inference
@@ -3836,7 +3835,8 @@ impl TypeChecker {
                 // imported fn's `where` constraints, so the obligation
                 // never reaches `verify_trait_obligation` at the call
                 // site.
-                let qualified_call_name = if let ExprKind::FieldAccess(obj, field) = &callee.kind {
+                let qualified_call_name = if let ExprKind::FieldAccess(obj, field, _) = &callee.kind
+                {
                     if let ExprKind::Ident(mod_name) = &obj.kind {
                         Some(intern(&format!("{}.{field}", resolve(*mod_name))))
                     } else {
@@ -4564,9 +4564,8 @@ impl TypeChecker {
                         // distinct per-arm errors still each report.
                         let mut seen_arm_diags: std::collections::HashSet<(
                             std::string::String,
-                            usize,
-                            usize,
-                            usize,
+                            crate::source::FileId,
+                            u32,
                             bool,
                         )> = std::collections::HashSet::new();
                         let mut any_pattern_mismatch = false;
@@ -4599,9 +4598,8 @@ impl TypeChecker {
                                     }
                                     let key = (
                                         d.message.clone(),
-                                        d.span.line,
-                                        d.span.col,
-                                        d.span.offset,
+                                        d.span.file,
+                                        d.span.start,
                                         matches!(d.severity, Severity::Error),
                                     );
                                     if seen_arm_diags.insert(key) {
@@ -4735,7 +4733,7 @@ impl TypeChecker {
             ExprKind::Loop { bindings, body } => {
                 let mut loop_env = env.child();
                 let mut binding_types = Vec::new();
-                for (name, value) in bindings.iter_mut() {
+                for (name, _, value) in bindings.iter_mut() {
                     let ty = self.infer_expr(value, env);
                     binding_types.push(ty.clone());
                     loop_env.define(*name, Scheme::mono(ty));
@@ -4827,7 +4825,7 @@ impl TypeChecker {
                 }
             }
             ExprKind::Loop { bindings, .. } => {
-                for (_, value) in bindings {
+                for (_, _, value) in bindings {
                     self.check_recur_tail_positions(value, inner);
                 }
             }
@@ -4905,7 +4903,7 @@ impl TypeChecker {
                     self.check_recur_tail_positions(e, inner);
                 }
             }
-            ExprKind::FieldAccess(e, _)
+            ExprKind::FieldAccess(e, _, _)
             | ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Ascription(e, _)
@@ -5260,7 +5258,7 @@ impl TypeChecker {
                         let rec_ty = Type::Record(*rec_name, instantiated_fields.clone());
                         self.unify(expected, &rec_ty, span);
 
-                        for (field_name, sub_pat) in fields {
+                        for (field_name, _, sub_pat) in fields {
                             if let Some((_, ft)) =
                                 instantiated_fields.iter().find(|(n, _)| n == field_name)
                             {
@@ -5301,7 +5299,7 @@ impl TypeChecker {
                                 span,
                             );
                         }
-                        for (_, sub_pat) in fields {
+                        for (_, _, sub_pat) in fields {
                             if let Some(sp) = sub_pat {
                                 let tv = self.fresh_var();
                                 self.check_pattern(sp, &tv, env, span);
@@ -5309,7 +5307,7 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    for (field_name, sub_pat) in fields {
+                    for (field_name, _, sub_pat) in fields {
                         let tv = self.fresh_var();
                         if let Some(sp) = sub_pat {
                             self.check_pattern(sp, &tv, env, span);
@@ -5441,7 +5439,7 @@ impl TypeChecker {
             PatternKind::AnonRecord { fields, rest } => {
                 use std::collections::BTreeMap;
                 let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
-                for (fname, _) in fields.iter() {
+                for (fname, _, _) in fields.iter() {
                     field_tys.insert(*fname, self.fresh_var());
                 }
                 let row_var = self.fresh_tyvar_id();
@@ -5457,7 +5455,7 @@ impl TypeChecker {
                     } else {
                         field_tys.clone()
                     };
-                for (fname, sub) in fields.iter() {
+                for (fname, _, sub) in fields.iter() {
                     let ft = resolved_fields
                         .get(fname)
                         .cloned()
@@ -5470,7 +5468,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                if let Some(rest_name) = rest {
+                if let Some((rest_name, _)) = rest {
                     let rest_ty = Type::AnonRecord {
                         fields: BTreeMap::new(),
                         tail: RowTail::Var(row_var),

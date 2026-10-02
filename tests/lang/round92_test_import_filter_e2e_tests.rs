@@ -67,10 +67,11 @@ fn test_answer() {
 /// test makes that drift loud instead.
 #[test]
 fn ghost_module_scenario_produces_round91_cascade_shape() {
-    let tokens = silt::lexer::Lexer::new(GHOST_TEST_SRC)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), GHOST_TEST_SRC)
         .tokenize()
         .expect("test source must lex");
-    let (mut program, parse_errors) = silt::parser::Parser::new(tokens).parse_program_recovering();
+    let (mut program, parse_errors) =
+        silt::parser::Parser::new(tokens, GHOST_TEST_SRC).parse_program_recovering();
     assert!(
         parse_errors.is_empty(),
         "test source must parse cleanly, got: {parse_errors:?}"

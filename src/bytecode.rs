@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::lexer::Span;
+use crate::source::Span;
 use crate::value::Value;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
@@ -455,14 +455,15 @@ impl Chunk {
         Ok(())
     }
 
-    /// Get the source span for a bytecode offset.
+    /// Get the source span for a bytecode offset: `Span::BUILTIN` before
+    /// the first recorded span.
     pub fn span_at(&self, offset: usize) -> Span {
         // Linear scan for the last span entry <= offset. The spans table is
         // appended in strictly ascending offset order during emission, so a
         // forward scan that breaks on the first entry past `offset` is
         // correct; it's deliberately linear to keep the common (near-end)
         // case fast and to avoid binary-search bookkeeping overhead.
-        let mut result = Span::new(0, 0);
+        let mut result = Span::BUILTIN;
         for &(off, span) in &self.spans {
             if off <= offset {
                 result = span;
@@ -513,9 +514,10 @@ impl Function {
 // ── VmClosure ──────────────────────────────────────────────────────
 
 /// Build a tiny script that calls a named global function with no arguments
-/// and returns the result.  Useful for the test runner and REPL.
+/// and returns the result.  Useful for the test runner and REPL. The call
+/// is silt's own, so its code has `Span::BUILTIN`.
 pub fn call_global_script(name: &str) -> Function {
-    let span = Span::new(0, 0);
+    let span = Span::BUILTIN;
     let mut func = Function::new(format!("<call:{name}>"), 0);
     let idx = func
         .chunk

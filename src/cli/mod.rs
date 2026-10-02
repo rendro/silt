@@ -8,7 +8,6 @@
 //! Shared plumbing lives in the non-subcommand modules:
 //!   - `pipeline` — the compile pipeline (`silt run|check|fmt|disasm|test`).
 //!   - `package` — manifest/lockfile discovery.
-//!   - `module_sources` — imported-module source lookup for error rendering.
 //!   - `source_scan` — light text scans (`program_has_main`, etc.).
 //!   - `paths` — filesystem path helpers.
 //!   - `help` — usage banners and the top-level `--help` text.
@@ -23,7 +22,6 @@ pub(crate) mod fmt;
 pub(crate) mod help;
 pub(crate) mod init;
 pub(crate) mod lsp;
-pub(crate) mod module_sources;
 pub(crate) mod package;
 pub(crate) mod paths;
 pub(crate) mod pipeline;

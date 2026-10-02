@@ -37,8 +37,12 @@ use silt::types::Severity;
 
 /// Typecheck and return warning messages only.
 fn type_warnings(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Warning)
@@ -48,8 +52,12 @@ fn type_warnings(input: &str) -> Vec<String> {
 
 /// Typecheck and return hard-error messages only.
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)

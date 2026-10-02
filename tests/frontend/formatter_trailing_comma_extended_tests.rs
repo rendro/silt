@@ -253,13 +253,13 @@ fn match_arms_preserve_separator_commas() {
     // count (see `significant_token_count` in
     // `src/fuzz_invariants.rs`).
     use silt::lexer::{Lexer, Token};
-    let src_commas = Lexer::new(src)
+    let src_commas = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap()
         .iter()
         .filter(|(t, _)| matches!(t, Token::Comma))
         .count();
-    let out_commas = Lexer::new(&out)
+    let out_commas = Lexer::new(silt::source::FileId::default(), &out)
         .tokenize()
         .unwrap()
         .iter()

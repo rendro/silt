@@ -17,19 +17,20 @@
 //! side-effect-free so it stays safe to call from `no_main` fuzz drivers.
 
 use crate::ast::{Decl, Program};
-use crate::lexer::{Lexer, Span, SpannedToken, Token};
+use crate::lexer::{Lexer, SpannedToken, Token};
 use crate::parser::Parser;
+use crate::source::Span;
 
 /// Verify structural invariants on a successful `Lexer::tokenize` result.
 ///
 /// Current checks:
 ///
-/// 1. Every span's byte offset is `<= source.len()` (tokens cannot point
-///    past the end of the input).
-/// 2. Span byte-offsets are monotonically non-decreasing across the
-///    token stream (the lexer never rewinds).
-/// 3. Line numbers are also non-decreasing — within a line, column may
-///    only increase between successive non-newline tokens.
+/// 1. Every span ends no earlier than it starts and no later than
+///    `source.len()` (tokens cannot point past the end of the input).
+/// 2. Span starts are monotonically non-decreasing across the token
+///    stream (the lexer never rewinds).
+/// 3. A token does not start before the previous token ends: tokens do
+///    not overlap.
 /// 4. Exactly one `Eof` token is emitted, and it is the final token.
 /// 5. The final `Eof` span offset equals the source length in bytes
 ///    (the lexer consumed everything).
@@ -47,34 +48,34 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
             return Err(format!("token {tok:?} at index {idx} emitted after Eof"));
         }
 
-        if span.offset > src_len {
+        if span.end < span.start || span.end as usize > src_len {
             return Err(format!(
-                "token {tok:?} at index {idx} has offset {} beyond source length {}",
-                span.offset, src_len
+                "token {tok:?} at index {idx} has span {}..{} beyond source length {}",
+                span.start, span.end, src_len
             ));
         }
 
         if let Some(p) = prev {
-            if span.offset < p.offset {
+            if span.start < p.start {
                 return Err(format!(
                     "token {tok:?} at index {idx} has non-monotonic offset {} < {}",
-                    span.offset, p.offset
+                    span.start, p.start
                 ));
             }
-            if span.line < p.line {
+            if span.start < p.end {
                 return Err(format!(
-                    "token {tok:?} at index {idx} has non-monotonic line {} < {}",
-                    span.line, p.line
+                    "token {tok:?} at index {idx} starts at {} inside the previous token (ends at {})",
+                    span.start, p.end
                 ));
             }
         }
 
         if matches!(tok, Token::Eof) {
             seen_eof = true;
-            if span.offset != src_len {
+            if span.start as usize != src_len {
                 return Err(format!(
                     "Eof span offset {} != source length {}",
-                    span.offset, src_len
+                    span.start, src_len
                 ));
             }
         }
@@ -277,12 +278,12 @@ fn comment_marker_count(source: &str) -> (usize, usize) {
 ///    too. A formatter is allowed to reject un-parseable input, but it
 ///    must never turn a valid program into an invalid one.
 pub fn check_formatter_invariants(original: &str, formatted: &str) -> Result<(), String> {
-    let orig_tokens = Lexer::new(original)
+    let orig_tokens = Lexer::new(crate::source::FileId::default(), original)
         .tokenize()
-        .map_err(|e| format!("original failed to lex: {e}"))?;
-    let fmt_tokens = Lexer::new(formatted)
+        .map_err(|e| format!("original failed to lex: {}", e.message))?;
+    let fmt_tokens = Lexer::new(crate::source::FileId::default(), formatted)
         .tokenize()
-        .map_err(|e| format!("formatted output failed to lex: {e}"))?;
+        .map_err(|e| format!("formatted output failed to lex: {}", e.message))?;
 
     let orig_sig = significant_token_count(&orig_tokens);
     let fmt_sig = significant_token_count(&fmt_tokens);
@@ -309,8 +310,8 @@ pub fn check_formatter_invariants(original: &str, formatted: &str) -> Result<(),
     }
 
     // Parse-preservation: if the original parses, the formatted output must.
-    if Parser::new(orig_tokens).parse_program().is_ok()
-        && Parser::new(fmt_tokens).parse_program().is_err()
+    if Parser::new(orig_tokens, original).parse_program().is_ok()
+        && Parser::new(fmt_tokens, formatted).parse_program().is_err()
     {
         return Err("original parsed but formatted output did not".into());
     }
@@ -334,11 +335,11 @@ fn decl_span(decl: &Decl) -> Span {
 
 /// Verify structural invariants on a successful `Parser::parse_program`
 /// result. The caller must have already lexed `source` into `tokens`
-/// and produced `program` by calling `Parser::new(tokens).parse_program()`.
+/// and produced `program` by calling `Parser::new(tokens, source).parse_program()`.
 ///
 /// Current checks:
 ///
-/// 1. Every top-level `Decl`'s span offset is `<= source.len()`. A
+/// 1. Every top-level `Decl`'s span ends at or before `source.len()`. A
 ///    formatter or parser that silently corrupts spans would otherwise
 ///    slip past the other invariants — the fuzzer can't see AST fields
 ///    directly, but it can see a panic on this assertion.
@@ -358,10 +359,10 @@ pub fn check_parser_invariants(
     let src_len = source.len();
     for (idx, decl) in program.decls.iter().enumerate() {
         let span = decl_span(decl);
-        if span.offset > src_len {
+        if span.end as usize > src_len {
             return Err(format!(
-                "decl at index {idx} has span offset {} beyond source length {}",
-                span.offset, src_len
+                "decl at index {idx} has span end {} beyond source length {}",
+                span.end, src_len
             ));
         }
     }
@@ -426,7 +427,9 @@ mod tests {
     #[test]
     fn lexer_invariants_accept_well_formed_source() {
         let src = "let x = 1\nlet y = 2\n";
-        let tokens = Lexer::new(src).tokenize().unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), src)
+            .tokenize()
+            .unwrap();
         check_lexer_invariants(src, &tokens).unwrap();
     }
 

@@ -395,11 +395,11 @@ pub fn disassemble_function(func: &Function) -> String {
 mod tests {
     use super::*;
     use crate::bytecode::{Chunk, Function, Op};
-    use crate::lexer::Span;
+    use crate::source::Span;
     use crate::value::Value;
 
     fn dummy_span() -> Span {
-        Span::new(0, 0)
+        Span::BUILTIN
     }
 
     #[test]

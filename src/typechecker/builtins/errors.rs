@@ -189,7 +189,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // `err.message()` / `err.display()` and pass the error value to
     // fns with `where e: Error` constraints. The runtime counterpart
     // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
-    let dummy_span = crate::lexer::Span::new(0, 0);
+    let dummy_span = crate::source::Span::BUILTIN;
     // Round-64 GAP fix: `PgError`/`TcpError` only appear in this list
     // when their cargo features are enabled — the trait-impl set must
     // not advertise traits for an enum the typechecker doesn't know

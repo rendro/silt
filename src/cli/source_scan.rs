@@ -11,7 +11,7 @@
 use silt::ast::{Decl, ExprKind, ImportTarget, PatternKind, Program};
 use silt::errors::SourceError;
 use silt::intern::resolve;
-use silt::lexer::Span;
+use silt::source::SourceMap;
 
 /// Name of the global that a compiled program calls as its entry point
 /// (see `Compiler::compile_program`).
@@ -69,7 +69,7 @@ pub(crate) fn program_has_main(program: &Program) -> bool {
             matches!(&pattern.kind, PatternKind::Ident(name) if resolve(*name) == ENTRY_POINT)
         }
         Decl::Import(ImportTarget::Items(_, items), _) => {
-            items.iter().any(|item| resolve(*item) == ENTRY_POINT)
+            items.iter().any(|(item, _)| resolve(*item) == ENTRY_POINT)
         }
         _ => false,
     })
@@ -109,7 +109,7 @@ pub(crate) fn looks_like_library_module(program: &Program) -> bool {
 /// They are exempt here as they are from the missing-`main` error.
 pub(crate) fn main_signature_error(
     program: &Program,
-    source: &str,
+    sources: &SourceMap,
     path: &str,
 ) -> Option<SourceError> {
     if looks_like_library_module(program) || looks_like_test_file(program) {
@@ -140,8 +140,8 @@ pub(crate) fn main_signature_error(
             "the entry point 'main' must take no parameters, but it declares {these}\n\
              help: remove {them}; the command-line arguments are available from io.args()"
         ),
-        span,
-        source,
+        Some(span),
+        sources,
         path,
     ))
 }
@@ -151,7 +151,7 @@ pub(crate) fn main_signature_error(
 /// of the advice to add a `main`.
 pub(crate) fn missing_main_error(
     program: &Program,
-    source: &str,
+    sources: &SourceMap,
     path: &str,
     suggest_silt_test: bool,
 ) -> SourceError {
@@ -162,9 +162,9 @@ pub(crate) fn missing_main_error(
     } else {
         "program has no main() function\nadd one as the entry point".to_string()
     };
-    // There is no source location for "the file has no main": with a zero
+    // There is no source location for "the file has no main": without a
     // span the renderer prints the header and the note, and no locator.
-    SourceError::compile_error_at(message, Span::new(0, 0), source, path)
+    SourceError::compile_error_at(message, None, sources, path)
 }
 
 #[cfg(test)]
@@ -172,10 +172,20 @@ mod tests {
     use super::*;
     use silt::lexer::Lexer;
     use silt::parser::Parser;
+    use silt::source::SourceName;
+
+    /// A map holding `source` as its only file.
+    fn sources(source: &str) -> SourceMap {
+        let mut map = SourceMap::new();
+        map.add(SourceName::Path("main.silt".into()), source.into());
+        map
+    }
 
     fn parse(source: &str) -> Program {
-        let tokens = Lexer::new(source).tokenize().expect("the text must lex");
-        let (program, errors) = Parser::new(tokens).parse_program_recovering();
+        let tokens = Lexer::new(silt::source::FileId::default(), source)
+            .tokenize()
+            .expect("the text must lex");
+        let (program, errors) = Parser::new(tokens, source).parse_program_recovering();
         assert!(errors.is_empty(), "the text must parse");
         program
     }
@@ -245,17 +255,17 @@ mod tests {
     #[test]
     fn main_with_parameters_is_an_error() {
         let source = "fn main(x: Int) { x }";
-        let error = main_signature_error(&parse(source), source, "main.silt")
+        let error = main_signature_error(&parse(source), &sources(source), "main.silt")
             .expect("a main with a parameter is an error");
         assert!(
             error.message.contains("declares 1 parameter\n"),
             "{}",
             error.message
         );
-        assert_eq!((error.span.line, error.span.col), (1, 9));
+        assert_eq!((error.line, error.col), (1, 9));
 
         let source = "let main = { a, b -> a + b }";
-        let error = main_signature_error(&parse(source), source, "main.silt")
+        let error = main_signature_error(&parse(source), &sources(source), "main.silt")
             .expect("a closure main with parameters is an error");
         assert!(
             error.message.contains("declares 2 parameters\n"),
@@ -264,7 +274,7 @@ mod tests {
         );
 
         for source in ["fn main() { 1 }", "fn helper(x) { x }", "let main = 3", ""] {
-            assert!(main_signature_error(&parse(source), source, "main.silt").is_none());
+            assert!(main_signature_error(&parse(source), &sources(source), "main.silt").is_none());
         }
 
         // Library modules and test files are not entry points.
@@ -273,7 +283,7 @@ mod tests {
             "fn main(args: List(String)) { () }\nfn test_a() { 1 }",
             "import test\nfn main(x: Int) { x }",
         ] {
-            assert!(main_signature_error(&parse(source), source, "lib.silt").is_none());
+            assert!(main_signature_error(&parse(source), &sources(source), "lib.silt").is_none());
         }
     }
 }

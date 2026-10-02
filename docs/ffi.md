@@ -17,6 +17,7 @@ use silt::{Vm, Value};
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
+use silt::source::FileId;
 
 let mut vm = Vm::new();
 
@@ -24,8 +25,10 @@ let mut vm = Vm::new();
 vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
 
 // Compile and run silt code
-let tokens = Lexer::new("fn main() { double(21) }").tokenize().unwrap();
-let program = Parser::new(tokens).parse_program().unwrap();
+// The program is the only file, so it gets the first file id.
+let source = "fn main() { double(21) }";
+let tokens = Lexer::new(FileId::default(), source).tokenize().unwrap();
+let program = Parser::new(tokens, source).parse_program().unwrap();
 let mut compiler = Compiler::new();
 let functions = compiler.compile_program(&program).unwrap();
 let script = std::sync::Arc::new(functions.into_iter().next().unwrap());

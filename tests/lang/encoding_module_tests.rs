@@ -6,10 +6,10 @@
 use silt::types::Severity;
 
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = silt::lexer::Lexer::new(input)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
         .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let mut program = silt::parser::Parser::new(tokens, input)
         .parse_program()
         .expect("parse error");
     let errors = silt::typechecker::check(&mut program);

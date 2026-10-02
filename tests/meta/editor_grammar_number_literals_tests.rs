@@ -106,7 +106,9 @@ enum Kind {
 /// Lex `src`; return `Some(kind)` iff it produces exactly one
 /// significant token and that token is a number literal.
 fn lex_single_number(src: &str) -> Option<Kind> {
-    let tokens = Lexer::new(src).tokenize().ok()?;
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .ok()?;
     let significant: Vec<Token> = tokens
         .into_iter()
         .map(|(tok, _span)| tok)

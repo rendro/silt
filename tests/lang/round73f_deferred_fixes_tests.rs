@@ -37,8 +37,12 @@ fn fix3_runtime_emits_canonical_kind_named_form() {
 import int
 fn main() { int.abs("not-an-int") }
 "#;
-    let tokens = Lexer::new(src).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, src)
+        .parse_program()
+        .expect("parse error");
     // Discard typechecker diagnostics; the runtime is what we want to
     // exercise. The compiler still consumes the AST and produces
     // bytecode that the VM runs.

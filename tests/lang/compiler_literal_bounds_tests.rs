@@ -28,8 +28,12 @@ use silt::parser::Parser;
 /// succeeded, or the `CompileError.message` string on failure. Parse /
 /// lex errors panic — we only care about the compiler stage here.
 fn try_compile(source: &str) -> Result<(), String> {
-    let tokens = Lexer::new(source).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), source)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, source)
+        .parse_program()
+        .expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     match compiler.compile_program(&program) {

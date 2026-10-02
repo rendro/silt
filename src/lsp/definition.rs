@@ -4,8 +4,16 @@ use lsp_types::{GotoDefinitionResponse, Location};
 
 use super::Server;
 use super::ast_walk::find_ident_at_offset_with_source;
-use super::conversions::{binding_range, position_to_offset, span_to_range};
+use super::conversions::{offsets_to_range, position_to_offset, span_to_range};
 use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
+use super::state::LocalBinding;
+use crate::source::SourceFile;
+
+/// The range of a local binding's identifier.
+fn binding_location(source: &SourceFile, binding: &LocalBinding) -> lsp_types::Range {
+    let start = binding.binding_offset;
+    offsets_to_range(source, start, start + binding.binding_len)
+}
 
 impl Server {
     // ── Go to definition ───────────────────────────────────────────
@@ -23,25 +31,22 @@ impl Server {
 
         // If the cursor is already ON a binding site, jump to itself. This
         // gives editors a sensible answer and keeps goto-def idempotent.
-        if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor)
-            && let Some(range) =
-                binding_range(&doc.source, binding.binding_offset, binding.binding_len)
-        {
+        if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor) {
             return Some(GotoDefinitionResponse::Scalar(Location::new(
                 uri.clone(),
-                range,
+                binding_location(&doc.source, binding),
             )));
         }
 
         // Source-aware so cursor on `fn`/`type` decl names resolves
         // (round-63 B2 — match rename/hover behaviour).
-        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))?;
 
         // Prefer local bindings in scope at the cursor position.
         if let Some(binding) = nearest_local_binding_for(&doc.locals, name, cursor) {
             return Some(GotoDefinitionResponse::Scalar(Location::new(
                 uri.clone(),
-                binding_range(&doc.source, binding.binding_offset, binding.binding_len)?,
+                binding_location(&doc.source, binding),
             )));
         }
 
@@ -64,7 +69,7 @@ impl Server {
         let locations: Vec<Location> = hits
             .into_iter()
             .filter_map(|(hit_uri, span)| {
-                let src = self.documents.get(&hit_uri).map(|d| d.source.as_str())?;
+                let src = &self.documents.get(&hit_uri)?.source;
                 Some(Location::new(hit_uri, span_to_range(&span, src)))
             })
             .collect();

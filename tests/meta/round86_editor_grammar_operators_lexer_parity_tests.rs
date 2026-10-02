@@ -106,7 +106,7 @@ fn lexer_multi_char_operators() -> BTreeSet<String> {
         if cand == "#{" || cand == "#[" {
             continue;
         }
-        let Ok(tokens) = Lexer::new(&cand).tokenize() else {
+        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &cand).tokenize() else {
             continue;
         };
         let significant: Vec<Token> = tokens

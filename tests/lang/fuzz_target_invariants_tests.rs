@@ -14,8 +14,9 @@ use silt::fuzz_invariants::{
     check_format_idempotent, check_formatter_invariants, check_lexer_invariants,
     check_parser_invariants,
 };
-use silt::lexer::{Lexer, Span, Token};
+use silt::lexer::{Lexer, Token};
 use silt::parser::Parser;
+use silt::source::Span;
 
 // --------------------------------------------------------------------
 // Lexer invariants
@@ -24,7 +25,9 @@ use silt::parser::Parser;
 #[test]
 fn lexer_invariants_accept_real_tokenization() {
     let src = "let x = 1 + 2\nfn main() { x }\n";
-    let tokens = Lexer::new(src).tokenize().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
     check_lexer_invariants(src, &tokens).expect("real source must satisfy invariants");
 }
 
@@ -34,7 +37,10 @@ fn lexer_invariants_reject_missing_eof() {
     // fuzz target never looked at the tokens at all; the new one
     // demands Eof as the last element.
     let src = "x";
-    let tokens = vec![(Token::Ident(silt::intern::intern("x")), Span::new(1, 1))];
+    let tokens = vec![(
+        Token::Ident(silt::intern::intern("x")),
+        Span::point(silt::source::FileId::default(), 0),
+    )];
     let err = check_lexer_invariants(src, &tokens).unwrap_err();
     assert!(err.contains("Eof"), "unexpected error: {err}");
 }
@@ -45,11 +51,11 @@ fn lexer_invariants_reject_offset_past_source() {
     let tokens = vec![
         (
             Token::Ident(silt::intern::intern("x")),
-            Span::with_offset(1, 1, 0),
+            Span::point(silt::source::FileId::default(), 0),
         ),
         // Eof claiming an offset past the end of source — would be a
         // silent bug in a real lexer; the old fuzz driver never noticed.
-        (Token::Eof, Span::with_offset(1, 99, 99)),
+        (Token::Eof, Span::point(silt::source::FileId::default(), 99)),
     ];
     let err = check_lexer_invariants(src, &tokens).unwrap_err();
     assert!(
@@ -64,15 +70,15 @@ fn lexer_invariants_reject_non_monotonic_offsets() {
     let tokens = vec![
         (
             Token::Ident(silt::intern::intern("a")),
-            Span::with_offset(1, 1, 1),
+            Span::point(silt::source::FileId::default(), 1),
         ),
         (
             Token::Ident(silt::intern::intern("b")),
             // Rewound offset — a real lexer bug would look like this if
             // it accidentally reset position state between tokens.
-            Span::with_offset(1, 2, 0),
+            Span::point(silt::source::FileId::default(), 0),
         ),
-        (Token::Eof, Span::with_offset(1, 3, 2)),
+        (Token::Eof, Span::point(silt::source::FileId::default(), 2)),
     ];
     let err = check_lexer_invariants(src, &tokens).unwrap_err();
     assert!(err.contains("non-monotonic"), "unexpected error: {err}");
@@ -84,11 +90,11 @@ fn lexer_invariants_reject_token_after_eof() {
     let tokens = vec![
         (
             Token::Ident(silt::intern::intern("x")),
-            Span::with_offset(1, 1, 0),
+            Span::point(silt::source::FileId::default(), 0),
         ),
-        (Token::Eof, Span::with_offset(1, 2, 1)),
+        (Token::Eof, Span::point(silt::source::FileId::default(), 1)),
         // Bogus extra token after Eof.
-        (Token::Plus, Span::with_offset(1, 3, 1)),
+        (Token::Plus, Span::point(silt::source::FileId::default(), 1)),
     ];
     let err = check_lexer_invariants(src, &tokens).unwrap_err();
     assert!(err.contains("after Eof"), "unexpected error: {err}");
@@ -252,8 +258,10 @@ fn formatter_invariants_allow_disambiguation_parens() {
 #[test]
 fn parser_invariants_accept_real_parse() {
     let src = "let x = 1\nfn main() { x }\n";
-    let tokens = Lexer::new(src).tokenize().unwrap();
-    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
+    let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program)
         .expect("real parsed program must satisfy invariants");
 }
@@ -262,16 +270,20 @@ fn parser_invariants_accept_real_parse() {
 fn parser_invariants_accept_empty_source() {
     // Empty source has no significant tokens and must yield zero decls.
     let src = "";
-    let tokens = Lexer::new(src).tokenize().unwrap();
-    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
+    let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program).expect("empty source must satisfy invariants");
 }
 
 #[test]
 fn parser_invariants_accept_whitespace_only_source() {
     let src = "\n\n   \n";
-    let tokens = Lexer::new(src).tokenize().unwrap();
-    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
+    let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program)
         .expect("whitespace-only source must satisfy invariants");
 }
@@ -282,11 +294,13 @@ fn parser_invariants_reject_decl_span_past_source() {
     // of the source buffer would have slipped through the old
     // panic-only fuzz driver. The new invariant catches it.
     let src = "import foo\n";
-    let tokens = Lexer::new(src).tokenize().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
     let bogus_program = Program {
         decls: vec![Decl::Import(
             ImportTarget::Module(silt::intern::intern("foo")),
-            Span::with_offset(1, 1, 9999),
+            Span::point(silt::source::FileId::default(), 9999),
         )],
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
@@ -302,7 +316,9 @@ fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
     // otherwise produce an empty-but-Ok program. The invariant fires
     // because the source has significant tokens but zero decls.
     let src = "let x = 1\n";
-    let tokens = Lexer::new(src).tokenize().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
     let empty_program = Program { decls: vec![] };
     let err = check_parser_invariants(src, &tokens, &empty_program).unwrap_err();
     assert!(err.contains("zero decls"), "unexpected error: {err}");
@@ -312,11 +328,13 @@ fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
 fn parser_invariants_reject_decls_from_empty_source() {
     // The symmetric bug: parser fabricates a decl from empty input.
     let src = "";
-    let tokens = Lexer::new(src).tokenize().unwrap();
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .unwrap();
     let bogus_program = Program {
         decls: vec![Decl::Import(
             ImportTarget::Module(silt::intern::intern("ghost")),
-            Span::with_offset(1, 1, 0),
+            Span::point(silt::source::FileId::default(), 0),
         )],
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();

@@ -20,7 +20,7 @@ pub(super) use std::collections::{BTreeSet, HashMap};
 
 pub(super) use crate::ast::*;
 pub(super) use crate::intern::{Symbol, intern, resolve};
-pub(super) use crate::lexer::Span;
+pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
 pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
@@ -550,7 +550,7 @@ pub struct TypeChecker {
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
-    /// block's real source location instead of `Span::new(0, 0)`.
+    /// block's real source location.
     pub(super) trait_impl_spans: HashMap<(Symbol, Symbol), Span>,
     /// Maps `(trait_name, target_head)` → impl-level where-clause
     /// obligations expressed as `(target_arg_index, required_trait,
@@ -651,6 +651,9 @@ pub struct TypeChecker {
     /// event without threading a result type through every recursive call.
     /// Reset at the start of each `check_exhaustiveness` invocation.
     pub(super) exhaustiveness_depth_exceeded: std::cell::Cell<bool>,
+    /// The span of the match (or the pattern) the usefulness search is
+    /// working on: the patterns the search makes up take it.
+    pub(super) exhaustiveness_span: std::cell::Cell<Span>,
     /// Names of function declarations that were synthesized by parser
     /// error recovery (Option B). Populated in register_fn_decl when the
     /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
@@ -833,6 +836,7 @@ impl TypeChecker {
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
+            exhaustiveness_span: std::cell::Cell::new(Span::BUILTIN),
             recovery_stub_names: std::collections::HashSet::new(),
             type_aliases: std::collections::HashSet::new(),
             type_alias_arity: HashMap::new(),
@@ -2461,6 +2465,7 @@ impl TypeChecker {
             message,
             span,
             severity: Severity::Error,
+            line_note: None,
         });
     }
 
@@ -2469,6 +2474,7 @@ impl TypeChecker {
             message,
             span,
             severity: Severity::Warning,
+            line_note: None,
         });
     }
 
@@ -3044,7 +3050,7 @@ impl TypeChecker {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.imported_modules.insert(*module);
-                    for item in items {
+                    for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = env.lookup(qualified).cloned() {
                             env.define(*item, scheme);
@@ -3058,7 +3064,7 @@ impl TypeChecker {
                     // under `module.name`. Also alias each requested
                     // selective `item` to the bare name in env.
                     self.imported_modules.insert(*module);
-                    for item in items {
+                    for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = env.lookup(qualified).cloned() {
                             env.define(*item, scheme);
@@ -3399,7 +3405,7 @@ impl TypeChecker {
                                 Decl::Fn(fd) if fd.name == *name => Some(fd.span),
                                 _ => None,
                             })
-                            .unwrap_or_else(|| Span::new(0, 0));
+                            .unwrap_or(Span::BUILTIN);
                         annotated_signature_mismatches.push((*name, fn_span));
                         continue;
                     }
@@ -3589,9 +3595,10 @@ impl TypeChecker {
         let impl_pairs: Vec<(Symbol, Symbol)> = self.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
             // GAP-2: Prefer the impl block's real span (stored at
-            // registration time) over a method span or the sentinel
-            // `Span::new(0, 0)`. Fall back to the method table only for
-            // auto-derived impls that have no user-visible source site.
+            // registration time) over a method span. Fall back to the
+            // method table only for auto-derived impls that have no
+            // user-visible source site, and to `Span::BUILTIN` for the
+            // impls silt declares itself.
             let diag_span = self
                 .trait_impl_spans
                 .get(&(*trait_name, *type_name))
@@ -3602,7 +3609,7 @@ impl TypeChecker {
                         .find(|((t, _), _)| t == type_name)
                         .map(|(_, e)| e.span)
                 })
-                .unwrap_or_else(|| Span::new(0, 0));
+                .unwrap_or(Span::BUILTIN);
 
             // Check that the trait exists first.
             let Some(trait_info) = self.traits.get(trait_name).cloned() else {
@@ -4219,11 +4226,7 @@ impl TypeChecker {
         // present), and the duplicate-impl coherence check sees
         // `is_auto_derived: true` from the prior method_table entry
         // and allows the synthesized impl to overwrite it.
-        let dummy_span = Span {
-            line: 0,
-            col: 0,
-            offset: 0,
-        };
+        let dummy_span = td.span;
         for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES {
             self.trait_impl_set.insert((intern(trait_name), td.name));
         }
@@ -4701,11 +4704,7 @@ impl TypeChecker {
                         Type::Generic(intern("TcpStream"), vec![])
                     }
                     "Bytes" | "TcpListener" | "TcpStream" => {
-                        let err_span = self.current_type_anno_span.unwrap_or(Span {
-                            line: 0,
-                            col: 0,
-                            offset: 0,
-                        });
+                        let err_span = self.current_type_anno_span.unwrap_or(te.span);
                         self.error(
                             format!(
                                 "type argument count mismatch for builtin type '{}': expected 0, got {}",
@@ -4765,11 +4764,7 @@ impl TypeChecker {
                             } else {
                                 "enum"
                             };
-                            let err_span = self.current_type_anno_span.unwrap_or(Span {
-                                line: 0,
-                                col: 0,
-                                offset: 0,
-                            });
+                            let err_span = self.current_type_anno_span.unwrap_or(te.span);
                             self.error(
                                 format!(
                                     "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
@@ -5420,7 +5415,9 @@ impl TypeChecker {
         // where-clause `where p: <Trait>` for each `p` in `td.params`,
         // so generic-param fields trivially satisfy the trait being
         // synthesized.
-        let mut tasks: Vec<(Symbol, Vec<Symbol>, TypeBodyKind)> = Vec::new();
+        // Each task carries the span its synthesized nodes take: the type
+        // declaration's, or `Span::BUILTIN` for a builtin type.
+        let mut tasks: Vec<(Symbol, Vec<Symbol>, TypeBodyKind, Span)> = Vec::new();
         // Track which type names came from a user `Decl::Type` so the
         // built-in walk below skips entries the user shadows. The set
         // is keyed on the unresolved name (not canonicalized) because
@@ -5439,6 +5436,7 @@ impl TypeChecker {
                                 td.name,
                                 td.params.clone(),
                                 TypeBodyKind::Enum(info.variants.clone()),
+                                td.span,
                             ));
                         }
                     }
@@ -5449,6 +5447,7 @@ impl TypeChecker {
                                 td.name,
                                 td.params.clone(),
                                 TypeBodyKind::Record(info.fields.clone()),
+                                td.span,
                             ));
                         }
                     }
@@ -5535,6 +5534,7 @@ impl TypeChecker {
                     type_name,
                     info.params.clone(),
                     TypeBodyKind::Enum(info.variants.clone()),
+                    Span::BUILTIN,
                 ));
             }
         }
@@ -5569,12 +5569,18 @@ impl TypeChecker {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                tasks.push((type_name, params, TypeBodyKind::Record(info.fields.clone())));
+                tasks.push((
+                    type_name,
+                    params,
+                    TypeBodyKind::Record(info.fields.clone()),
+                    Span::BUILTIN,
+                ));
             }
         }
 
         let mut synthesized: Vec<Decl> = Vec::new();
-        for (type_name, type_params, body) in tasks {
+        for (type_name, type_params, body, decl_span) in tasks {
+            let derive = auto_derive::Derive { span: decl_span };
             // Helper closures to scope the synthesis decisions per-trait.
             let key = canonicalize_type_name(&self.resolver, type_name);
 
@@ -5679,12 +5685,12 @@ impl TypeChecker {
                     // Only .name and .fields.len() matter — the synthesis
                     // just emits .compare() / .hash() / .display() /
                     // .equal() calls on positionally-named bound vars, so
-                    // name_span and the field TypeExprs are placeholders.
+                    // the field TypeExprs are placeholders.
                     let ast_variants: Vec<EnumVariant> = variants
                         .iter()
                         .map(|v| EnumVariant {
                             name: v.name,
-                            name_span: Span::synthetic(),
+                            name_span: decl_span,
                             // Synthesize `Wildcard` placeholder TypeExprs;
                             // the auto_derive helpers only count them.
                             fields: v
@@ -5693,11 +5699,7 @@ impl TypeChecker {
                                 .map(|_| {
                                     TypeExpr::new(
                                         TypeExprKind::Named(intern("__synth_placeholder__")),
-                                        Span {
-                                            line: 0,
-                                            col: 0,
-                                            offset: 0,
-                                        },
+                                        decl_span,
                                     )
                                 })
                                 .collect(),
@@ -5707,32 +5709,28 @@ impl TypeChecker {
                         && policy_allows(display_sym)
                         && !user_display_impls.contains(&key)
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_display_impl_for_enum(
+                            type_name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
                     if compare_ok && policy_allows(compare_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_compare_impl_for_enum(
+                            type_name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
                     if equal_ok && policy_allows(equal_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_equal_impl_for_enum(
+                        synthesized.push(Decl::TraitImpl(derive.synth_equal_impl_for_enum(
                             type_name,
                             &type_params,
                             &ast_variants,
                         )));
                     }
                     if hash_ok && policy_allows(hash_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_enum(
+                        synthesized.push(Decl::TraitImpl(derive.synth_hash_impl_for_enum(
                             type_name,
                             &type_params,
                             &ast_variants,
@@ -5744,13 +5742,10 @@ impl TypeChecker {
                         .iter()
                         .map(|(name, _)| RecordField {
                             name: *name,
+                            name_span: decl_span,
                             ty: TypeExpr::new(
                                 TypeExprKind::Named(intern("__synth_placeholder__")),
-                                Span {
-                                    line: 0,
-                                    col: 0,
-                                    offset: 0,
-                                },
+                                decl_span,
                             ),
                         })
                         .collect();
@@ -5758,34 +5753,28 @@ impl TypeChecker {
                         && policy_allows(display_sym)
                         && !user_display_impls.contains(&key)
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_display_impl_for_record(
+                            type_name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if compare_ok && policy_allows(compare_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_compare_impl_for_record(
+                            type_name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if equal_ok && policy_allows(equal_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_equal_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_equal_impl_for_record(
+                            type_name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if hash_ok && policy_allows(hash_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_record(
+                        synthesized.push(Decl::TraitImpl(derive.synth_hash_impl_for_record(
                             type_name,
                             &type_params,
                             &ast_fields,
@@ -7584,7 +7573,7 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
         }
         PatternKind::Record { fields, .. } => {
             let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, sub_pat) in fields {
+            for (field_name, _, sub_pat) in fields {
                 if let Some(p) = sub_pat {
                     vars.extend(collect_pattern_vars(p));
                 } else {
@@ -7596,14 +7585,14 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
         }
         PatternKind::AnonRecord { fields, rest } => {
             let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, sub_pat) in fields {
+            for (field_name, _, sub_pat) in fields {
                 if let Some(p) = sub_pat {
                     vars.extend(collect_pattern_vars(p));
                 } else {
                     vars.push(*field_name);
                 }
             }
-            if let Some(r) = rest {
+            if let Some((r, _)) = rest {
                 vars.push(*r);
             }
             vars
@@ -7678,7 +7667,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
 ///   Carries a real default body so `synthesize_default_methods` can
 ///   clone `self.display()` into impls that omit `message`.
 fn builtin_trait_decls() -> Vec<TraitDecl> {
-    let dummy_span = Span::new(0, 0);
+    let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
     let other_sym = intern("other");
 
@@ -7726,7 +7715,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
     let error_default_body = {
         let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
         let field_access = Expr::new(
-            ExprKind::FieldAccess(Box::new(self_ident), intern("display")),
+            ExprKind::FieldAccess(Box::new(self_ident), intern("display"), dummy_span),
             dummy_span,
         );
         Expr::new(
@@ -8000,11 +7989,7 @@ pub(super) fn register_auto_derived_impls_for(
     type_names: &[&str],
     trait_names: &[&str],
 ) {
-    let dummy_span = Span {
-        line: 0,
-        col: 0,
-        offset: 0,
-    };
+    let dummy_span = Span::BUILTIN;
     let has_display = trait_names.contains(&"Display");
     let has_equal = trait_names.contains(&"Equal");
     let has_compare = trait_names.contains(&"Compare");
@@ -8191,7 +8176,7 @@ impl ReplTypeContext {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.checker.imported_modules.insert(*module);
-                    for item in items {
+                    for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = self.env.lookup(qualified).cloned() {
                             self.env.define(*item, scheme);
@@ -8210,7 +8195,7 @@ impl ReplTypeContext {
                     // bare-prefix env lookup, missing schemes registered
                     // exclusively in `module_exports`.
                     self.checker.imported_modules.insert(*module);
-                    for item in items {
+                    for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = self.env.lookup(qualified).cloned() {
                             self.env.define(*item, scheme);
@@ -8852,10 +8837,10 @@ pub(super) mod test_helpers {
     use super::*;
 
     pub(super) fn check_errors(input: &str) -> Vec<TypeError> {
-        let tokens = crate::lexer::Lexer::new(input)
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens)
+        let mut program = crate::parser::Parser::new(tokens, input)
             .parse_program()
             .expect("parse error");
         check(&mut program)
@@ -8871,7 +8856,7 @@ pub(super) mod test_helpers {
             hard.is_empty(),
             "expected no type errors, got:\n{}",
             hard.iter()
-                .map(|e| format!("  {e}"))
+                .map(|e| format!("  {}", e.message))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
@@ -8928,10 +8913,11 @@ mod size_locks {
     #[test]
     fn trait_info_size_locked() {
         // Round 63 item 5 added `defined_in: Symbol` to track the
-        // owning package for the trait-orphan rule.
+        // owning package for the trait-orphan rule; stage 5 shrank its
+        // spans from 24 to 12 bytes.
         assert_eq!(
             std::mem::size_of::<TraitInfo>(),
-            248,
+            232,
             "TraitInfo size changed — see module doc"
         );
     }
@@ -11080,7 +11066,7 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let var = tc.fresh_var(); // Type::Var(0)
         let list_of_var = Type::List(Box::new(var.clone()));
-        tc.unify(&var, &list_of_var, Span::new(0, 0));
+        tc.unify(&var, &list_of_var, Span::BUILTIN);
         assert!(
             !tc.errors.is_empty(),
             "occurs check should produce an error"
@@ -11098,7 +11084,7 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let fn1 = Type::Fun(vec![Type::Int], Box::new(Type::Int));
         let fn2 = Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int));
-        tc.unify(&fn1, &fn2, Span::new(0, 0));
+        tc.unify(&fn1, &fn2, Span::BUILTIN);
         assert!(
             !tc.errors.is_empty(),
             "function arity mismatch should produce an error"
@@ -11115,7 +11101,7 @@ fn main() -> Result {
         // Unifying Var(0) with Int should map Var(0) -> Int
         let mut tc = TypeChecker::new();
         let var = tc.fresh_var(); // Type::Var(0)
-        tc.unify(&var, &Type::Int, Span::new(0, 0));
+        tc.unify(&var, &Type::Int, Span::BUILTIN);
         assert!(tc.errors.is_empty(), "basic unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
@@ -11128,8 +11114,8 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let var0 = tc.fresh_var(); // Type::Var(0)
         let var1 = tc.fresh_var(); // Type::Var(1)
-        tc.unify(&var0, &var1, Span::new(0, 0));
-        tc.unify(&var1, &Type::String, Span::new(0, 0));
+        tc.unify(&var0, &var1, Span::BUILTIN);
+        tc.unify(&var1, &Type::String, Span::BUILTIN);
         assert!(
             tc.errors.is_empty(),
             "transitive unification should not error"
@@ -11149,7 +11135,7 @@ fn main() -> Result {
         let var = tc.fresh_var(); // Type::Var(0)
         let list_var = Type::List(Box::new(var.clone()));
         let list_int = Type::List(Box::new(Type::Int));
-        tc.unify(&list_var, &list_int, Span::new(0, 0));
+        tc.unify(&list_var, &list_int, Span::BUILTIN);
         assert!(tc.errors.is_empty(), "list unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");

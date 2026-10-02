@@ -29,7 +29,7 @@
 //! `use_color()`, and no other test exercises that path concurrently.
 
 use silt::errors::{ErrorKind, SourceError};
-use silt::lexer::Span;
+use silt::source::Span;
 
 /// Build a minimal `SourceError` whose `Display` output exercises every
 /// color hook (header label, locator arrow, gutter, caret). The exact
@@ -38,7 +38,9 @@ fn make_error() -> SourceError {
     SourceError {
         kind: ErrorKind::Compile,
         message: "round83 probe".to_string(),
-        span: Span::new(1, 1),
+        span: Some(Span::point(silt::source::FileId::default(), 0)),
+        line: 1,
+        col: 1,
         source_line: Some("x".to_string()),
         file: Some("<round83>".to_string()),
         is_warning: false,

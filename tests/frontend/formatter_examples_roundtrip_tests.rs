@@ -58,11 +58,11 @@ fn hard_typecheck_errors(source: &str) -> Vec<String> {
     // another's diagnostics. The companion walkers do the same.
     silt::intern::reset();
 
-    let tokens = match Lexer::new(source).tokenize() {
+    let tokens = match Lexer::new(silt::source::FileId::default(), source).tokenize() {
         Ok(t) => t,
         Err(e) => return vec![format!("lex error: {:?}", e)],
     };
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+    let (mut program, parse_errors) = Parser::new(tokens, source).parse_program_recovering();
     if !parse_errors.is_empty() {
         return parse_errors
             .iter()

@@ -25,8 +25,10 @@ fn main() {
     let _ = PgError.PgConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lex");
+    let mut program = silt::parser::Parser::new(tokens, src)
         .parse_program()
         .expect("parse");
     let errors = silt::typechecker::check(&mut program);

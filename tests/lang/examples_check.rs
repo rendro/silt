@@ -441,7 +441,7 @@ fn all_doc_fn_main_blocks_compile() {
             // Drive the pipeline: lex → parse → typecheck → compile.
             // We deliberately stop after compile (no VM run) so
             // interactive / networked / long-running examples are safe.
-            let tokens = match Lexer::new(&src).tokenize() {
+            let tokens = match Lexer::new(silt::source::FileId::default(), &src).tokenize() {
                 Ok(t) => t,
                 Err(e) => {
                     failures.push(format!(
@@ -454,7 +454,7 @@ fn all_doc_fn_main_blocks_compile() {
                 }
             };
 
-            let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+            let (mut program, parse_errors) = Parser::new(tokens, &src).parse_program_recovering();
             if !parse_errors.is_empty() {
                 failures.push(format!(
                     "{}:{} (```silt fence): parse errors: {:?}",

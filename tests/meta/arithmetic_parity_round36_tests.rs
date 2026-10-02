@@ -18,8 +18,12 @@ fn int_float_disc_differ_rejects_mixed_eq() {
     // We use the typechecker-permissive `run` (which ignores type
     // errors) and expect a VM runtime error, caught via expect_err.
     let input = r#"fn main() { 1 == 1.0 }"#;
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     // Compile may fail with a type error — that's also acceptable; we

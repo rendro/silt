@@ -4,7 +4,7 @@ use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use super::Server;
 use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars};
-use super::conversions::position_to_offset;
+use super::conversions::char_offset_at;
 use super::fields::find_field_type_at_offset;
 use super::local_bindings::find_local_binding_at_offset;
 
@@ -17,13 +17,13 @@ impl Server {
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
 
-        let cursor = position_to_offset(&doc.source, &pos);
+        // A position after the end of its line, or past the last line, is
+        // on no character, so there is nothing to describe.
+        let cursor = char_offset_at(&doc.source, &pos)?;
 
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
-        if let Some((field_name, field_ty)) =
-            find_field_type_at_offset(program, &doc.source, cursor)
-        {
+        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, cursor) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -70,7 +70,8 @@ impl Server {
         // type so hover on `fn foo` shows `foo`'s signature. Otherwise use
         // the expression-walk result, falling back to the definition type
         // when the expression type still has unresolved variables.
-        let ident_at_cursor = find_ident_at_offset_with_source(program, cursor, Some(&doc.source));
+        let ident_at_cursor =
+            find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text));
         let def_entry = ident_at_cursor.and_then(|name| doc.definitions.get(&name));
 
         let ty = {
@@ -133,7 +134,7 @@ impl Server {
                     if let Some(d) = self.builtin_docs.get(&bare) {
                         return Some(d.clone());
                     }
-                    if let Some(qualified) = qualified_name_at(&doc.source, cursor, &bare)
+                    if let Some(qualified) = qualified_name_at(&doc.source.text, cursor, &bare)
                         && let Some(d) = self.builtin_docs.get(&qualified)
                     {
                         return Some(d.clone());
@@ -143,7 +144,7 @@ impl Server {
                 // sitting at the cursor and look it up. Handles the
                 // FieldAccess-on-builtin-module case (`math.cos`) where
                 // the AST walker bails because `cos` isn't an Ident expr.
-                qualified_token_at(&doc.source, cursor)
+                qualified_token_at(&doc.source.text, cursor)
                     .and_then(|tok| self.builtin_docs.get(&tok).cloned())
             });
 

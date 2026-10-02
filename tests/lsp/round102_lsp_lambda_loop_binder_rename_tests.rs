@@ -84,10 +84,11 @@ fn pos_of(text: &str, needle: &str, occurrence: usize) -> (u64, u64) {
 /// application yielded undefined-variable / unknown-type errors, i.e.
 /// this function returning an Err.
 fn front_end_errors(source: &str) -> Result<(), String> {
-    let tokens = silt::lexer::Lexer::new(source)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), source)
         .tokenize()
         .map_err(|e| format!("lex error: {e:?}"))?;
-    let (mut program, parse_errors) = silt::parser::Parser::new(tokens).parse_program_recovering();
+    let (mut program, parse_errors) =
+        silt::parser::Parser::new(tokens, source).parse_program_recovering();
     if !parse_errors.is_empty() {
         return Err(format!("parse errors: {parse_errors:?}"));
     }

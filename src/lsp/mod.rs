@@ -751,7 +751,7 @@ mod tests {
         let uri = open_document(&mut server, source);
 
         let doc = server.documents.get(&uri).expect("document should exist");
-        assert_eq!(doc.source, source);
+        assert_eq!(&*doc.source.text, source);
         assert!(doc.program.is_some());
         assert!(doc.definitions.contains_key(&intern("main")));
     }
@@ -862,7 +862,7 @@ mod tests {
             .documents
             .get(&test_uri())
             .expect("the document must be stored");
-        assert_eq!(doc.source, "fn main() { 42 }");
+        assert_eq!(&*doc.source.text, "fn main() { 42 }");
     }
 
     #[test]

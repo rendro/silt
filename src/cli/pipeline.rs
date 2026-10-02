@@ -19,6 +19,7 @@ use silt::intern::{Symbol, resolve};
 use silt::lexer::Lexer;
 use silt::module;
 use silt::parser::Parser;
+use silt::source::{FileId, SourceMap, SourceName};
 use silt::typechecker;
 
 use crate::cli::package::package_setup_for_file;
@@ -43,6 +44,9 @@ pub(crate) enum Emit {
 pub(crate) struct ParsedEntryFile {
     /// The original source text.
     pub(crate) source: String,
+    /// The source map holding the entry file; the module files the
+    /// compiler reads are added to it.
+    pub(crate) sources: SourceMap,
     /// The declarations, as far as the parser could recover them. `None`
     /// when the text does not lex.
     pub(crate) program: Option<Program>,
@@ -54,6 +58,8 @@ pub(crate) struct ParsedEntryFile {
 pub(crate) struct CompilePipelineResult {
     /// The original source text.
     pub(crate) source: String,
+    /// The text of the entry file and of every module file read.
+    pub(crate) sources: SourceMap,
     /// The parsed entry file, as far as the parser could recover it.
     /// `None` when the text does not lex. Questions about the file's
     /// declarations (does it define `main`, which functions are tests)
@@ -113,28 +119,32 @@ pub(crate) fn run_compile_pipeline_with_options(
 /// First stage of the pipeline: lex and parse (recovering) the text of the
 /// entry file `path`. Touches nothing but its arguments.
 pub(crate) fn parse_entry_file(path: &str, source: String) -> ParsedEntryFile {
-    let tokens = match Lexer::new(&source).tokenize() {
+    let mut sources = SourceMap::new();
+    let file: FileId = sources.add(SourceName::Path(path.into()), source.as_str().into());
+    let tokens = match Lexer::new(file, &source).tokenize() {
         Ok(t) => t,
         Err(e) => {
             // Lex errors are fatal for all callers. Return a result with the error
             // so that `check_file` can format it as JSON when needed.
-            let source_err = SourceError::from_lex_error(&e, &source, path);
+            let source_err = SourceError::from_lex_error(&e, &sources, path);
             return ParsedEntryFile {
                 source,
+                sources,
                 program: None,
                 parse_errors: vec![source_err],
             };
         }
     };
 
-    let (program, raw_parse_errors) = Parser::new(tokens).parse_program_recovering();
+    let (program, raw_parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
 
     let parse_errors: Vec<SourceError> = raw_parse_errors
         .iter()
-        .map(|e| SourceError::from_parse_error(e, &source, path))
+        .map(|e| SourceError::from_parse_error(e, &sources, path))
         .collect();
     ParsedEntryFile {
         source,
+        sources,
         program: Some(program),
         parse_errors,
     }
@@ -153,12 +163,14 @@ pub(crate) fn analyse_parsed_entry_file(
 ) -> CompilePipelineResult {
     let ParsedEntryFile {
         source,
+        sources,
         program,
         parse_errors,
     } = parsed;
     let Some(mut program) = program else {
         return CompilePipelineResult {
             source,
+            sources,
             program: None,
             parse_errors,
             type_errors: Vec::new(),
@@ -197,6 +209,7 @@ pub(crate) fn analyse_parsed_entry_file(
     // compile pass — the latter reuses already-loaded module
     // typechecks via `compiled_modules` / `module_exports`.
     let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
+    compiler.set_sources(sources);
     if !has_parse_errors {
         compiler.pre_typecheck_imports(&program);
     }
@@ -236,7 +249,7 @@ pub(crate) fn analyse_parsed_entry_file(
         compiler.put_resolver(resolver);
         raw_type_errors
             .iter()
-            .map(|e| SourceError::from_type_error(e, &source, path))
+            .map(|e| SourceError::from_type_error(e, compiler.sources(), path))
             .collect()
     } else {
         Vec::new()
@@ -258,6 +271,7 @@ pub(crate) fn analyse_parsed_entry_file(
         type_errors.extend(compiler.take_module_type_errors());
         return CompilePipelineResult {
             source,
+            sources: compiler.take_sources(),
             program: Some(program),
             parse_errors,
             type_errors,
@@ -281,13 +295,16 @@ pub(crate) fn analyse_parsed_entry_file(
     // start: the entry point is called without arguments. Reported here,
     // with the compile errors, so that every front door rejects it
     // before anything runs.
-    let entry_point_error = main_signature_error(&program, &source, path);
+    let entry_point_error = main_signature_error(&program, compiler.sources(), path);
     match compile_result {
         Ok(functions) => {
             let compile_warnings: Vec<SourceError> = compiler
                 .warnings()
                 .iter()
-                .map(|w| SourceError::compile_warning(&w.message, w.span, &source, path))
+                .map(|w| {
+                    let file = file_label(compiler.sources(), w.span, path);
+                    SourceError::compile_warning(&w.message, w.span, compiler.sources(), file)
+                })
                 .collect();
             // An Ok compile can still have accumulated module parse
             // errors if a future refactor teaches the compiler to keep
@@ -298,11 +315,12 @@ pub(crate) fn analyse_parsed_entry_file(
             let mut compile_errors: Vec<SourceError> = compiler
                 .module_parse_errors()
                 .iter()
-                .map(|e| SourceError::from_compile_error(e, &source, path))
+                .map(|e| compile_error(e, compiler.sources(), path))
                 .collect();
             compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
+                sources: compiler.take_sources(),
                 program: Some(program),
                 parse_errors,
                 type_errors,
@@ -320,20 +338,21 @@ pub(crate) fn analyse_parsed_entry_file(
             let already_reported = e.message == silt::compiler::LOOP_CALL_OUTSIDE_LOOP
                 && type_errors
                     .iter()
-                    .any(|t| !t.is_warning && t.span.offset == e.span.offset);
+                    .any(|t| !t.is_warning && t.span.is_some_and(|s| s.start == e.span.start));
             let mut compile_errors = Vec::new();
             if !already_reported {
-                compile_errors.push(SourceError::from_compile_error(&e, &source, path));
+                compile_errors.push(compile_error(&e, compiler.sources(), path));
             }
             compile_errors.extend(
                 compiler
                     .module_parse_errors()
                     .iter()
-                    .map(|extra| SourceError::from_compile_error(extra, &source, path)),
+                    .map(|extra| compile_error(extra, compiler.sources(), path)),
             );
             compile_errors.extend(entry_point_error);
             CompilePipelineResult {
                 source,
+                sources: compiler.take_sources(),
                 program: Some(program),
                 parse_errors,
                 type_errors,
@@ -343,6 +362,24 @@ pub(crate) fn analyse_parsed_entry_file(
             }
         }
     }
+}
+
+/// How the file of `span` is named in a diagnostic of the program at
+/// `path`: the entry file as the user typed it, another file (a module
+/// that imports a broken module, say) by its path relative to the
+/// working directory.
+fn file_label(sources: &SourceMap, span: silt::source::Span, path: &str) -> String {
+    match sources.get(span.file).map(|file| &file.path) {
+        Some(SourceName::Path(p)) if p != std::path::Path::new(path) => {
+            silt::compiler::module_path_for_display(p)
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// A compile error, in the file its span is in.
+fn compile_error(e: &silt::compiler::CompileError, sources: &SourceMap, path: &str) -> SourceError {
+    SourceError::from_compile_error(e, sources, file_label(sources, e.span, path))
 }
 
 /// Round 93: make declared package dependencies statically visible to
@@ -424,13 +461,18 @@ pub(crate) fn register_dep_import_exports(
         let Ok(dep_source) = fs::read_to_string(&lib_path) else {
             continue;
         };
-        let Ok(tokens) = Lexer::new(&dep_source).tokenize() else {
+        let file = compiler.sources_mut().add(
+            SourceName::Path(lib_path.clone()),
+            dep_source.as_str().into(),
+        );
+        let Ok(tokens) = Lexer::new(file, &dep_source).tokenize() else {
             continue;
         };
         // Recovery parse, like the compiler's pre-pass: a dep with
         // parse errors still yields a partial export surface; the
         // compile pass owns reporting the parse errors themselves.
-        let (mut dep_program, _dep_parse_errors) = Parser::new(tokens).parse_program_recovering();
+        let (mut dep_program, _dep_parse_errors) =
+            Parser::new(tokens, &dep_source).parse_program_recovering();
         let resolver = compiler.take_resolver();
         let (_dep_errors, dep_exports, resolver) =
             typechecker::check_with_package_and_imports_resolver(
@@ -640,6 +682,9 @@ pub(crate) struct CompiledFile {
     pub(crate) functions: Vec<Function>,
     /// The original source text.
     pub(crate) source: String,
+    /// The text of the file and of every module file it imports: the
+    /// spans of the compiled code point into it.
+    pub(crate) sources: SourceMap,
     /// The parsed declarations of the file.
     pub(crate) program: Program,
 }
@@ -683,6 +728,7 @@ pub(crate) fn compile_file(path: &str, auto_update_lock: bool) -> CompiledFile {
     CompiledFile {
         functions,
         source: result.source,
+        sources: result.sources,
         program,
     }
 }
@@ -691,13 +737,15 @@ pub(crate) fn compile_file(path: &str, auto_update_lock: bool) -> CompiledFile {
 mod tests {
     use super::*;
     use silt::errors::ErrorKind;
-    use silt::lexer::Span;
+    use silt::source::Span;
 
     fn diag(kind: ErrorKind, message: &str, is_warning: bool) -> SourceError {
         SourceError {
             kind,
             message: message.to_string(),
-            span: Span::new(1, 1),
+            span: Some(Span::point(FileId::default(), 0)),
+            line: 1,
+            col: 1,
             source_line: None,
             file: Some("main.silt".to_string()),
             is_warning,
@@ -709,6 +757,7 @@ mod tests {
     fn clean_ok_result() -> CompilePipelineResult {
         CompilePipelineResult {
             source: String::new(),
+            sources: SourceMap::new(),
             program: Some(Program { decls: Vec::new() }),
             parse_errors: Vec::new(),
             type_errors: Vec::new(),

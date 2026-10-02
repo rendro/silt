@@ -13,8 +13,9 @@ use lsp_types::{Diagnostic, DiagnosticSeverity, Position, PublishDiagnosticsPara
 
 use crate::ast::Program;
 use crate::intern::Symbol;
-use crate::lexer::{Lexer, Span};
+use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::source::{FileId, SourceFile, SourceName, Span};
 use crate::typechecker;
 
 use super::Server;
@@ -30,7 +31,7 @@ pub(super) fn make_diagnostic(
     message: &str,
     span: &Span,
     severity: DiagnosticSeverity,
-    source: &str,
+    source: &SourceFile,
 ) -> Diagnostic {
     Diagnostic {
         range: span_to_range(span, source),
@@ -78,10 +79,10 @@ fn analysis_failed_diagnostic() -> Diagnostic {
 }
 
 /// Lex, parse and typecheck `source`. Reads nothing but its arguments.
-fn analyse(source: &str) -> Analysis {
+fn analyse(source: &SourceFile) -> Analysis {
     let mut diagnostics = Vec::new();
 
-    let tokens = match Lexer::new(source).tokenize() {
+    let tokens = match Lexer::new(FileId::default(), &source.text).tokenize() {
         Ok(t) => t,
         Err(e) => {
             diagnostics.push(make_diagnostic(
@@ -94,8 +95,9 @@ fn analyse(source: &str) -> Analysis {
         }
     };
 
-    let (mut program, parse_errors) =
-        Parser::new_with_source(tokens, source).parse_program_recovering();
+    let (mut program, parse_errors) = Parser::new(tokens, &source.text)
+        .with_docs()
+        .parse_program_recovering();
 
     for e in &parse_errors {
         diagnostics.push(make_diagnostic(
@@ -127,11 +129,12 @@ fn analyse(source: &str) -> Analysis {
             typechecker::Severity::Error => DiagnosticSeverity::ERROR,
             typechecker::Severity::Warning => DiagnosticSeverity::WARNING,
         };
-        diagnostics.push(make_diagnostic(&e.message, &e.span, severity, source));
+        let message = e.full_message(|span| source.line_col(span.start).0);
+        diagnostics.push(make_diagnostic(&message, &e.span, severity, source));
     }
 
     let definitions = build_definitions(&program);
-    let locals = collect_local_bindings(&program, source);
+    let locals = collect_local_bindings(&program, &source.text);
 
     Analysis {
         program: Some(program),
@@ -155,7 +158,16 @@ impl Server {
     /// the previous text would hand it positions and edits for a document
     /// it no longer has. `analyse` reads nothing but its arguments, so the
     /// panic cannot leave the server half-updated.
-    fn update_document_with(&mut self, uri: Uri, source: String, analyse: fn(&str) -> Analysis) {
+    fn update_document_with(
+        &mut self,
+        uri: Uri,
+        source: String,
+        analyse: fn(&SourceFile) -> Analysis,
+    ) {
+        let source = SourceFile::new(
+            SourceName::Overlay(uri.path().as_str().into()),
+            source.into(),
+        );
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source)));
         let analysis = outcome.unwrap_or_else(|payload| {
             eprintln!(
@@ -248,7 +260,7 @@ mod tests {
         server.update_document(uri.clone(), source.to_string());
 
         let doc = server.documents.get(&uri).expect("document is stored");
-        assert_eq!(doc.source, source);
+        assert_eq!(&*doc.source.text, source);
         assert!(doc.program.is_none());
         let published = published_diagnostics(&client);
         assert_eq!(published.len(), 1);
@@ -272,7 +284,7 @@ mod tests {
         });
 
         let doc = server.documents.get(&uri).expect("document is stored");
-        assert_eq!(doc.source, "fn main() { 2 }");
+        assert_eq!(&*doc.source.text, "fn main() { 2 }");
         assert!(doc.program.is_none());
         let cached = server
             .diagnostics_cache
@@ -287,7 +299,7 @@ mod tests {
 
         server.update_document(uri.clone(), "fn main() { 3 }".to_string());
         let doc = server.documents.get(&uri).expect("document is stored");
-        assert_eq!(doc.source, "fn main() { 3 }");
+        assert_eq!(&*doc.source.text, "fn main() { 3 }");
         assert!(doc.program.is_some());
     }
 }

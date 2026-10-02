@@ -1,81 +1,51 @@
 //! Round 77 lock tests for a LATENT finding in `src/errors.rs`.
 //!
-//! ERR-L1: `clamp_span_to_source` previously copied `span.offset` through
-//! verbatim when the line/col were clamped onto the last real line, which
-//! left the byte offset pointing past EOF. Downstream consumers (e.g. the
-//! LSP layer's UTF-16 column conversion) assume `offset <= source.len()`,
-//! so an out-of-range offset can cause panics or incorrect column math.
+//! ERR-L1: a diagnostic whose position lies past the end of the source
+//! (an unexpected-EOF parse error, or a bogus offset) must still be shown
+//! on a real line of the file, with that line's text, and must never
+//! index past the source.
 
 use silt::errors::SourceError;
-use silt::lexer::{LexError, Span};
+use silt::lexer::LexError;
+use silt::source::{FileId, SourceMap, SourceName, Span};
 
-/// ERR-L1: Span with offset past EOF and line past last line should be
-/// clamped — both line/col AND offset must be brought back into range.
+fn sources(text: &str) -> SourceMap {
+    let mut map = SourceMap::new();
+    map.add(SourceName::Path("test.silt".into()), text.into());
+    map
+}
+
+fn lex_error_at(start: u32) -> LexError {
+    LexError {
+        message: "synthetic lex error for round77 lock".to_string(),
+        span: Span::point(FileId::default(), start),
+    }
+}
+
+/// A position way past EOF is shown on the last real line, just after
+/// its last character.
 #[test]
-fn clamp_span_offset_clamped_when_past_eof() {
+fn a_position_past_eof_is_shown_on_the_last_line() {
     let source = "let x = 1\n";
-    let src_len = source.len();
-    // Construct an out-of-range span: offset way past EOF, line past last.
-    let bogus_span = Span::with_offset(99, 50, src_len + 9999);
-    let lex_err = LexError {
-        message: "synthetic past-EOF lex error for round77 lock".to_string(),
-        span: bogus_span,
-    };
-
-    // Drive through the public surface. `from_lex_error` calls
-    // `clamp_span_to_source` internally and stores the result in `.span`.
-    let se = SourceError::from_lex_error(&lex_err, source, "test.silt");
-
-    assert!(
-        se.span.offset <= src_len,
-        "clamp_span_to_source must clamp offset onto source: got offset={}, source.len()={}",
-        se.span.offset,
-        src_len,
-    );
-    // Sanity: line should also be clamped onto a real line.
-    let line_count = source.lines().count();
-    assert!(
-        se.span.line <= line_count,
-        "clamp_span_to_source must clamp line onto last real line: got line={}, line_count={}",
-        se.span.line,
-        line_count,
-    );
+    let se = SourceError::from_lex_error(&lex_error_at(9999), &sources(source), "test.silt");
+    assert_eq!((se.line, se.col), (1, 10));
+    assert_eq!(se.source_line.as_deref(), Some("let x = 1"));
 }
 
-/// ERR-L1 corollary: when the span is already in-range, clamping must
-/// leave the offset alone — the fix must not regress the happy path.
+/// The happy path: an in-range position is shown where it is.
 #[test]
-fn clamp_span_offset_preserved_when_in_range() {
+fn an_in_range_position_is_shown_where_it_is() {
     let source = "let x = 1\nlet y = 2\n";
-    // Pick an offset/line that actually points inside `source`.
-    let in_range_span = Span::with_offset(1, 5, 4);
-    let lex_err = LexError {
-        message: "in-range synthetic lex error".to_string(),
-        span: in_range_span,
-    };
-    let se = SourceError::from_lex_error(&lex_err, source, "test.silt");
-    assert_eq!(
-        se.span.offset, 4,
-        "in-range span must pass through unchanged: got offset={}",
-        se.span.offset,
-    );
-    assert_eq!(se.span.line, 1);
-    assert_eq!(se.span.col, 5);
+    let se = SourceError::from_lex_error(&lex_error_at(4), &sources(source), "test.silt");
+    assert_eq!((se.line, se.col), (1, 5));
+    assert_eq!(se.source_line.as_deref(), Some("let x = 1"));
 }
 
-/// ERR-L1 corollary: empty source is a valid (degenerate) input — the
-/// early-return path for `line_count == 0` must still produce an offset
-/// that's in-bounds (i.e. `<= source.len() == 0`). Note the function
-/// returns the span unchanged in this case, so we construct one whose
-/// offset is already 0.
+/// Empty source is a valid (degenerate) input: line 1, column 1, and no
+/// source line to show.
 #[test]
-fn clamp_span_offset_empty_source_zero_offset() {
-    let source = "";
-    let span = Span::with_offset(1, 1, 0);
-    let lex_err = LexError {
-        message: "empty-source synthetic".to_string(),
-        span,
-    };
-    let se = SourceError::from_lex_error(&lex_err, source, "test.silt");
-    assert!(se.span.offset <= source.len());
+fn an_empty_source_has_no_line_to_show() {
+    let se = SourceError::from_lex_error(&lex_error_at(0), &sources(""), "test.silt");
+    assert_eq!((se.line, se.col), (1, 1));
+    assert_eq!(se.source_line, None);
 }

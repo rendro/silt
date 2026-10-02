@@ -1,24 +1,24 @@
 //! `silt test [--filter <pat>] [path]` — discover, compile, and run
 //! `test_*` functions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process;
 use std::sync::Arc;
 
 use silt::errors::{ErrorKind, SourceError};
 use silt::scheduler::UnjoinedFailures;
+use silt::source::SourceMap;
 use silt::vm::Vm;
 
 use crate::cli::help::test_usage_banner;
-use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::paths::find_silt_files;
 use crate::cli::pipeline::{
     CompilePipelineResult, Emit, analyse_parsed_entry_file, parse_entry_file,
     pipeline_has_real_hard_errors, reportable_diagnostics,
 };
-use crate::cli::run::{render_runtime_error, returned_err};
+use crate::cli::run::{RuntimeFiles, render_runtime_error, returned_err};
 use crate::cli::source_scan::{TestKind, test_functions};
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
@@ -215,8 +215,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let result =
             analyse_parsed_entry_file(path.as_str(), parsed, Emit::Declarations, true, true);
         let failed_to_compile = report_diagnostics(path.as_str(), &result);
-        let (source, functions) = match (failed_to_compile, result.functions) {
-            (false, Some(functions)) => (result.source, functions),
+        let (sources, functions) = match (failed_to_compile, result.functions) {
+            (false, Some(functions)) => (result.sources, functions),
             _ => {
                 counts.file_errors += 1;
                 continue;
@@ -229,33 +229,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             counts.file_errors += 1;
             continue;
         };
-        // Build module_sources BEFORE running the script so setup errors
-        // from imported modules can render against the correct source file.
-        let module_sources = collect_module_function_sources(path, &source);
-
-        // G2 (audit round 21): normalize frame and error-header paths
-        // for both setup errors and per-test errors.  Moved above the
-        // vm.run() call so setup-error rendering can also benefit.
-        //
-        // Lock: tests/cli/cli_test_rendering_tests.rs
-        // `test_test_setup_error_paths_normalized`.
-        //
-        // Round-101: the normalization body lives in the shared
-        // `crate::cli::paths::display_path_for` helper — `silt run`
-        // (src/cli/run.rs) builds the same closure from it, so the two
-        // subcommands can never drift. Lock:
-        // tests/meta/round101_display_path_helper_lock_tests.rs.
-        let user_path_is_absolute = Path::new(path.as_str()).is_absolute();
-        let cwd = std::env::current_dir().ok();
-        let normalize_path = |candidate: &Path| -> String {
-            crate::cli::paths::display_path_for(user_path_is_absolute, cwd.as_deref(), candidate)
-        };
-
         // Tasks that the file's top-level code spawns are the file's.
         let file_index = owners.add_file(TestFile {
             path: path.clone(),
-            source: source.clone(),
-            module_sources: module_sources.clone(),
+            sources,
         });
         let setup_owner = owners.add_owner(file_index, None);
         silt::scheduler::set_task_owner(setup_owner);
@@ -264,35 +241,18 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
             owners.mark_failed(setup_owner);
-            if let Some(span) = e.span {
-                // Find the innermost frame that identifies a source file:
-                // either a user function or a <module:X> init frame.
-                let innermost_fn_name: Option<&str> = e
-                    .call_stack
-                    .iter()
-                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
-                    .map(|(n, _)| n.as_str());
-                let (err_source, err_path): (&str, String) =
-                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                        Some((module_path, module_source)) => {
-                            (module_source.as_str(), normalize_path(module_path))
-                        }
-                        None => (source.as_str(), normalize_path(Path::new(path))),
-                    };
-                let source_err = SourceError::runtime_at(&e.message, span, err_source, &err_path);
-                eprintln!("{path}: setup error:");
-                eprintln!("{source_err}");
+            // G2 (audit round 21): frame and error-header paths follow
+            // the style of the path the user typed, as under `silt run`.
+            //
+            // Lock: tests/cli/cli_test_rendering_tests.rs
+            // `test_test_setup_error_paths_normalized`.
+            let files = RuntimeFiles::new(path, &owners.files[file_index].sources);
+            eprintln!("{path}: setup error:");
+            if e.span.is_some() {
+                eprintln!("{}", files.error(&e, false));
                 let stack_lines =
-                    silt::vm::error::render_call_stack(&e.call_stack, |frame_name, frame_span| {
-                        let frame_path: String = match module_sources.get(frame_name) {
-                            Some((p, _)) => normalize_path(p),
-                            None => normalize_path(Path::new(path)),
-                        };
-                        if frame_span.line > 0 {
-                            format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
-                        } else {
-                            format!("{frame_path}:<unknown location>")
-                        }
+                    silt::vm::error::render_call_stack(&e.call_stack, |_name, frame_span| {
+                        files.frame(*frame_span, false)
                     });
                 if !stack_lines.is_empty() {
                     eprintln!("\ncall stack:");
@@ -301,22 +261,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     }
                 }
             } else {
-                // Span-less runtime error: funnel through
-                // `SourceError::runtime_at` with a zero span so the
-                // output carries the file path and color gating that a
-                // bare `VmError` Display (plain text, no file) cannot
-                // provide. The legacy internal Display prefix this once
-                // guarded against is gone — `VmError::Display` now emits
-                // the canonical `error[runtime]:` header itself (see
-                // src/vm/error.rs).
-                let source_err = SourceError::runtime_at(
-                    &e.message,
-                    silt::lexer::Span::new(0, 0),
-                    &source,
-                    path.as_str(),
-                );
-                eprintln!("{path}: setup error:");
-                eprintln!("{source_err}");
+                // Span-less runtime error: rendered through `SourceError`
+                // so the output carries the file path and color gating
+                // that a bare `VmError` Display (plain text, no file)
+                // cannot provide.
+                eprintln!("{}", files.error(&e, true));
             }
             counts.file_errors += 1;
             continue;
@@ -358,13 +307,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     // the assertions after that point never ran. Same
                     // rule as for `main` under `silt run`. There is no
                     // single source location for "the result was Err",
-                    // hence the zero span.
+                    // hence no span.
                     Some(payload) => {
                         eprintln!("  FAIL {path}::{name}");
                         let source_err = SourceError::runtime_at(
                             format!("{name} returned Err: {payload}"),
-                            silt::lexer::Span::new(0, 0),
-                            &source,
+                            None,
+                            &owners.files[file_index].sources,
                             path.as_str(),
                         );
                         let formatted = format!("{source_err}");
@@ -376,77 +325,33 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 },
                 Err(e) => {
                     eprintln!("  FAIL {path}::{name}");
-                    if let Some(span) = e.span {
-                        // Determine which source text & file path
-                        // to render against, mirroring `silt run`.
-                        let innermost_fn_name: Option<&str> = e
-                            .call_stack
-                            .iter()
-                            .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
-                            .map(|(n, _)| n.as_str());
-                        let (err_source, err_path): (&str, String) =
-                            match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                                Some((module_path, module_source)) => {
-                                    (module_source.as_str(), normalize_path(module_path))
-                                }
-                                None => (source.as_str(), path.to_string()),
-                            };
-                        let source_err =
-                            SourceError::runtime_at(&e.message, span, err_source, &err_path);
-                        // Indent every line of the formatted error
-                        // so multi-line SourceErrors stay aligned
-                        // with the FAIL header.
-                        let formatted = format!("{source_err}");
-                        for line in formatted.lines() {
-                            eprintln!("    {line}");
-                        }
-                        // Mirror `silt run`: render a call stack
-                        // when the error crosses ≥2 meaningful
-                        // frames. Without this, a test that fails
-                        // deep inside a helper chain only prints
-                        // the innermost site, leaving the user
-                        // without any trail back to the test
+                    // The location is in the file the error's span
+                    // names, mirroring `silt run`; the test file itself
+                    // is named as typed.
+                    let files = RuntimeFiles::new(path, &owners.files[file_index].sources);
+                    // Indent every line of the formatted error so
+                    // multi-line SourceErrors stay aligned with the FAIL
+                    // header.
+                    let formatted = format!("{}", files.error(&e, true));
+                    for line in formatted.lines() {
+                        eprintln!("    {line}");
+                    }
+                    if e.span.is_some() {
+                        // Mirror `silt run`: render a call stack when the
+                        // error crosses ≥2 meaningful frames. Without
+                        // this, a test that fails deep inside a helper
+                        // chain only prints the innermost site, leaving
+                        // the user without any trail back to the test
                         // function that invoked it.
                         let stack_lines = silt::vm::error::render_call_stack(
                             &e.call_stack,
-                            |frame_name, frame_span| {
-                                // Use module path if the frame
-                                // belongs to an imported module,
-                                // then normalize to match user's
-                                // path style (relative/absolute).
-                                let frame_path: String = match module_sources.get(frame_name) {
-                                    Some((p, _)) => normalize_path(p),
-                                    None => path.to_string(),
-                                };
-                                if frame_span.line > 0 {
-                                    format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
-                                } else {
-                                    format!("{frame_path}:<unknown location>")
-                                }
-                            },
+                            |_name, frame_span| files.frame(*frame_span, true),
                         );
                         if !stack_lines.is_empty() {
                             eprintln!("\n    call stack:");
                             for line in stack_lines {
                                 eprintln!("    {line}");
                             }
-                        }
-                    } else {
-                        // Span-less runtime error: render via
-                        // `SourceError::runtime_at` with a zero
-                        // span (adding the file path and color
-                        // gating a bare `VmError` Display lacks)
-                        // and indent to match the FAIL header's
-                        // alignment.
-                        let source_err = SourceError::runtime_at(
-                            &e.message,
-                            silt::lexer::Span::new(0, 0),
-                            &source,
-                            path.as_str(),
-                        );
-                        let formatted = format!("{source_err}");
-                        for line in formatted.lines() {
-                            eprintln!("    {line}");
                         }
                     }
                     true
@@ -518,8 +423,8 @@ struct Counts {
 /// tasks that its tests spawned.
 struct TestFile {
     path: String,
-    source: String,
-    module_sources: HashMap<String, (PathBuf, String)>,
+    /// The text of the file and of every module file it imports.
+    sources: SourceMap,
 }
 
 /// What spawned a task: a test, or the top-level code of a file.
@@ -586,9 +491,7 @@ impl TaskOwners {
         for failure in &taken.failures {
             let error = failure.report_error();
             let rendered = match self.file_of(failure.owner) {
-                Some(file) => {
-                    render_runtime_error(&error, &file.path, &file.source, &file.module_sources)
-                }
+                Some(file) => render_runtime_error(&error, &file.path, &file.sources),
                 None => error.to_string(),
             };
             reports.entry(failure.owner).or_default().push(rendered);
@@ -596,8 +499,8 @@ impl TaskOwners {
         for &(owner, count) in &taken.not_kept {
             let message = SourceError::runtime_at(
                 UnjoinedFailures::not_kept_message(count),
-                silt::lexer::Span::new(0, 0),
-                "",
+                None,
+                &SourceMap::new(),
                 "",
             );
             reports.entry(owner).or_default().push(message.to_string());

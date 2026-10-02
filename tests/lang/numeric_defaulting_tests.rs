@@ -63,8 +63,10 @@ use silt::parser::Parser;
 use silt::typechecker::{self, Severity};
 
 fn typecheck(source: &str) -> Vec<typechecker::TypeError> {
-    let tokens = Lexer::new(source).tokenize().expect("lex");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
+    let tokens = Lexer::new(silt::source::FileId::default(), source)
+        .tokenize()
+        .expect("lex");
+    let mut program = Parser::new(tokens, source).parse_program().expect("parse");
     typechecker::check(&mut program)
 }
 

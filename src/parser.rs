@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::intern::{self, Symbol};
-use crate::lexer::{Span, SpannedToken, Token};
-use std::fmt;
+use crate::lexer::{SpannedToken, Token};
+use crate::source::{SourceFile, SourceName, Span};
 
 // ── Error type ───────────────────────────────────────────────────────
 
@@ -9,12 +9,6 @@ use std::fmt;
 pub struct ParseError {
     pub message: String,
     pub span: Span,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.span, self.message)
-    }
 }
 
 type Result<T> = std::result::Result<T, ParseError>;
@@ -28,8 +22,8 @@ type Result<T> = std::result::Result<T, ParseError>;
 // Approach: scan the raw source once (independent of the lexer) and
 // produce a per-source-line map `line -> doc_text`. For every line L
 // that starts a decl (after lexer-delivered newline handling, we just
-// use the Span::line of the decl's first token as the "decl start
-// line"), we look up the doc block whose last-comment-line is `L - 1`
+// use the line of the decl's first token as the "decl start line"), we
+// look up the doc block whose last-comment-line is `L - 1`
 // with no blank line between the comment block and the decl.
 //
 // A doc comment is one or more contiguous comments — `--` lines and/or
@@ -465,9 +459,10 @@ fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
         Decl::TraitImpl(_) => Vec::new(),
         Decl::Import(target, span) => match target {
             ImportTarget::Module(m) => vec![(*m, *span, "import")],
-            ImportTarget::Items(_, items) => {
-                items.iter().map(|item| (*item, *span, "import")).collect()
-            }
+            ImportTarget::Items(_, items) => items
+                .iter()
+                .map(|(item, _)| (*item, *span, "import"))
+                .collect(),
             ImportTarget::Alias(_, alias) => vec![(*alias, *span, "import")],
         },
         Decl::Let { pattern, .. } => {
@@ -491,14 +486,15 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
             }
         }
         PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
-            for (field, sub) in fields {
+            for (field, _, sub) in fields {
                 match sub {
                     Some(sub) => pattern_binders(sub, out),
                     None => out.push((*field, pattern.span)),
                 }
             }
             if let PatternKind::AnonRecord {
-                rest: Some(rest), ..
+                rest: Some((rest, _)),
+                ..
             } = &pattern.kind
             {
                 out.push((*rest, pattern.span));
@@ -539,7 +535,7 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
 /// declaration, or two declarations may not share it, so which one a use
 /// refers to never depends on their order. (Shadowing inside a function
 /// body is unaffected.)
-fn top_level_name_errors(decls: &[Decl]) -> Vec<ParseError> {
+fn top_level_name_errors(decls: &[Decl], source: &SourceFile) -> Vec<ParseError> {
     let mut first: std::collections::HashMap<Symbol, (Span, &'static str)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
@@ -553,7 +549,7 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<ParseError> {
                     message: format!(
                         "'{name}' is bound twice at the top level: by the {first_kind} at line {} \
                          and by the {kind} here — a top-level name can be bound only once",
-                        first_span.line
+                        source.line_col(first_span.start).0
                     ),
                     span,
                 }),
@@ -627,6 +623,9 @@ struct BlockHeader {
 
 pub struct Parser {
     tokens: Vec<SpannedToken>,
+    /// The text the tokens came from, for the line numbers some messages
+    /// name and for doc comments.
+    source: SourceFile,
     /// For each token, the number of delimiters that are open before it:
     /// `(`, `[`, `{`, `#{`, `#[` and the start of a string interpolation
     /// open one, their closers close one. A closer has the depth of the
@@ -657,12 +656,11 @@ pub struct Parser {
     /// stub and call ourselves again. Incremented on entry to the recovery
     /// path, checked on re-entry.
     in_fn_recovery: bool,
-    /// Optional doc-comment index. When `Some`, the parser attaches
-    /// preceding doc comments to each top-level decl and each trait /
-    /// impl method. When `None`, all `doc` fields are left as `None`
-    /// (no source → no docs). The LSP pipeline and the `repl` / `cli`
-    /// paths build the index eagerly; the bytecode VM paths that only
-    /// see tokens don't bother.
+    /// Optional doc-comment index. When `Some` (see `with_docs`), the
+    /// parser attaches preceding doc comments to each top-level decl and
+    /// each trait / impl method. When `None`, all `doc` fields are left
+    /// as `None`. The LSP builds the index; the paths that only compile
+    /// don't bother.
     doc_index: Option<DocIndex>,
     /// Name of the trait whose body the parser is currently inside.
     /// Used by `Self::Item` projection sugar to fill in the implicit
@@ -703,11 +701,13 @@ fn delimiter_depths(tokens: &[SpannedToken]) -> Vec<i32> {
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<SpannedToken>) -> Self {
+    /// A parser for `tokens`, the tokens of `source`.
+    pub fn new(tokens: Vec<SpannedToken>, source: &str) -> Self {
         let delim_depth = delimiter_depths(&tokens);
         Self {
             tokens,
             delim_depth,
+            source: SourceFile::new(SourceName::Builtin, source.into()),
             pos: 0,
             header: None,
             expr_height: 0,
@@ -720,25 +720,12 @@ impl Parser {
         }
     }
 
-    /// Construct a parser that also carries a doc-comment index built
-    /// from the original source. When this variant is used, top-level
-    /// decls (and trait / impl methods) will have their `doc` field
-    /// populated from adjacent `--` / `{- -}` comments.
-    pub fn new_with_source(tokens: Vec<SpannedToken>, source: &str) -> Self {
-        let delim_depth = delimiter_depths(&tokens);
-        Self {
-            tokens,
-            delim_depth,
-            pos: 0,
-            header: None,
-            expr_height: 0,
-            errors: Vec::new(),
-            depth: 0,
-            in_fn_recovery: false,
-            doc_index: Some(DocIndex::from_source(source)),
-            current_trait_name: None,
-            top_level_item: "declaration",
-        }
+    /// Also attach doc comments: top-level decls (and trait / impl
+    /// methods) get their `doc` field from the adjacent `--` / `{- -}`
+    /// comments of the source.
+    pub fn with_docs(mut self) -> Self {
+        self.doc_index = Some(DocIndex::from_source(&self.source.text));
+        self
     }
 
     /// A parser for a REPL entry: its top-level items are statements, so
@@ -806,16 +793,50 @@ impl Parser {
     fn doc_for_span(&self, span: Span) -> Option<String> {
         self.doc_index
             .as_ref()
-            .and_then(|idx| idx.doc_for_decl_at_line(span.line))
+            .and_then(|idx| idx.doc_for_decl_at_line(self.line_of(span) as usize))
     }
 
     // ── helpers ──────────────────────────────────────────────────────
 
     fn span(&self) -> Span {
-        self.tokens
-            .get(self.pos)
-            .map(|(_, s)| *s)
-            .unwrap_or(Span::new(0, 0))
+        self.tokens[self.pos].1
+    }
+
+    /// The 1-based line `span` starts on, for messages that name a line.
+    fn line_of(&self, span: Span) -> u32 {
+        self.source.line_col(span.start).0
+    }
+
+    /// End of the last token consumed: the token before `pos`, newlines
+    /// skipped (a newline token sits where the next line's first token
+    /// starts, so it says nothing about where the previous one ended).
+    fn prev_end(&self) -> u32 {
+        self.tokens[..self.pos]
+            .iter()
+            .rev()
+            .find(|(tok, _)| !matches!(tok, Token::Newline))
+            .map_or(0, |(_, span)| span.end)
+    }
+
+    /// The extent of a construct that starts at `start` and whose last
+    /// token is the one just consumed.
+    fn close(&self, start: Span) -> Span {
+        Span {
+            end: self.prev_end().max(start.end),
+            ..start
+        }
+    }
+
+    fn mk_expr(&mut self, kind: ExprKind, start: Span) -> Expr {
+        Expr::new(kind, self.close(start))
+    }
+
+    fn mk_pattern(&mut self, kind: PatternKind, start: Span) -> Pattern {
+        Pattern::new(kind, self.close(start))
+    }
+
+    fn mk_type(&mut self, kind: TypeExprKind, start: Span) -> TypeExpr {
+        TypeExpr::new(kind, self.close(start))
     }
 
     fn peek(&self) -> &Token {
@@ -878,7 +899,7 @@ impl Parser {
         let Some((Token::Slash, cur)) = self.tokens.get(self.pos) else {
             return false;
         };
-        let adjacent = |a: &Span, b: &Span| a.line == b.line && b.offset == a.offset + 1;
+        let adjacent = |a: &Span, b: &Span| b.start == a.start + 1;
         if matches!(
             self.tokens.get(self.pos + 1),
             Some((Token::Slash, next)) if adjacent(cur, next)
@@ -940,7 +961,7 @@ impl Parser {
         ParseError {
             message: format!(
                 "expected '{closer}' or ',' to continue {construct} starting at line {}, found {}",
-                opener_span.line,
+                self.line_of(opener_span),
                 self.peek()
             ),
             span: self.span(),
@@ -958,7 +979,7 @@ impl Parser {
         ParseError {
             message: format!(
                 "expected '{closer}' to close {construct} starting at line {}, found {}",
-                opener_span.line,
+                self.line_of(opener_span),
                 self.peek()
             ),
             span: self.span(),
@@ -1069,7 +1090,10 @@ impl Parser {
             }
             self.skip_nl();
         }
-        if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
+        if let Some(err) = top_level_name_errors(&decls, &self.source)
+            .into_iter()
+            .next()
+        {
             return Err(err);
         }
         Ok(Program { decls })
@@ -1121,7 +1145,7 @@ impl Parser {
                     match self.parse_fn_decl_recovering() {
                         Ok((mut decl, None)) => {
                             decl.is_pub = true;
-                            decl.span = pub_span;
+                            decl.span = pub_span.to(decl.span);
                             if pub_doc.is_some() {
                                 decl.doc = pub_doc;
                             }
@@ -1130,7 +1154,7 @@ impl Parser {
                         }
                         Ok((mut stub, Some(err))) => {
                             stub.is_pub = true;
-                            stub.span = pub_span;
+                            stub.span = pub_span.to(stub.span);
                             if pub_doc.is_some() {
                                 stub.doc = pub_doc;
                             }
@@ -1162,7 +1186,8 @@ impl Parser {
             }
             self.skip_nl();
         }
-        self.errors.extend(top_level_name_errors(&decls));
+        self.errors
+            .extend(top_level_name_errors(&decls, &self.source));
         (Program { decls }, std::mem::take(&mut self.errors))
     }
 
@@ -1226,7 +1251,7 @@ impl Parser {
                     Token::Fn => {
                         let mut f = self.parse_fn_decl()?;
                         f.is_pub = true;
-                        f.span = span;
+                        f.span = span.to(f.span);
                         // If pub's line carries a doc, that takes
                         // precedence over a doc found adjacent to `fn`
                         // (which won't happen in practice — pub and fn
@@ -1239,7 +1264,7 @@ impl Parser {
                     Token::Type => {
                         let mut t = self.parse_type_decl()?;
                         t.is_pub = true;
-                        t.span = span;
+                        t.span = span.to(t.span);
                         if pub_doc.is_some() {
                             t.doc = pub_doc;
                         }
@@ -1260,7 +1285,7 @@ impl Parser {
                                 ty,
                                 value,
                                 is_pub: true,
-                                span,
+                                span: self.close(span),
                                 name_span,
                                 doc: pub_doc.or(doc),
                             }),
@@ -1317,7 +1342,7 @@ impl Parser {
             // Abstract method — no body (e.g. trait method declarations).
             // The Unit placeholder keeps the AST shape uniform; the
             // is_signature_only flag is the authoritative signal.
-            (Expr::new(ExprKind::Unit, span), true)
+            (self.mk_expr(ExprKind::Unit, span), true)
         };
 
         Ok(FnDecl {
@@ -1327,7 +1352,7 @@ impl Parser {
             where_clauses,
             body,
             is_pub: false,
-            span,
+            span: self.close(span),
             name_span,
             is_recovery_stub: false,
             is_signature_only,
@@ -1500,7 +1525,7 @@ impl Parser {
         } else {
             self.unskip_nl();
             // Abstract method — no body.
-            (Expr::new(ExprKind::Unit, span), true)
+            (self.mk_expr(ExprKind::Unit, span), true)
         };
 
         Ok(FnDecl {
@@ -1510,7 +1535,7 @@ impl Parser {
             where_clauses,
             body,
             is_pub: false,
-            span,
+            span: self.close(span),
             name_span,
             is_recovery_stub: false,
             is_signature_only,
@@ -1535,9 +1560,9 @@ impl Parser {
             params,
             return_type,
             where_clauses: Vec::new(),
-            body: Expr::new(ExprKind::Block(Vec::new()), span),
+            body: Expr::new(ExprKind::Block(Vec::new()), self.close(span)),
             is_pub: false,
-            span,
+            span: self.close(span),
             name_span,
             is_recovery_stub: true,
             is_signature_only: false,
@@ -1628,7 +1653,7 @@ impl Parser {
         match self.peek().clone() {
             Token::Ident(name) => {
                 self.advance();
-                Ok(Pattern::new(PatternKind::Ident(name), start))
+                Ok(self.mk_pattern(PatternKind::Ident(name), start))
             }
             _ => Err(ParseError {
                 message: format!("expected parameter name, found {}", self.peek()),
@@ -1675,7 +1700,7 @@ impl Parser {
                 params,
                 body,
                 is_pub: false,
-                span,
+                span: self.close(span),
                 name_span,
                 doc,
             });
@@ -1701,7 +1726,7 @@ impl Parser {
             params,
             body,
             is_pub: false,
-            span,
+            span: self.close(span),
             name_span,
             doc,
         })
@@ -1747,7 +1772,11 @@ impl Parser {
             }
             self.expect(&Token::Colon)?;
             let ty = self.parse_type_expr()?;
-            fields.push(RecordField { name, ty });
+            fields.push(RecordField {
+                name,
+                name_span,
+                ty,
+            });
             self.expect_list_sep("record type fields", '}', &Token::RBrace)?;
         }
         Ok(TypeBody::Record(fields))
@@ -1979,7 +2008,7 @@ impl Parser {
                 param_where_clauses,
                 methods,
                 assoc_types,
-                span,
+                span: self.close(span),
                 doc,
             }))
         } else {
@@ -2097,7 +2126,7 @@ impl Parser {
                 where_clauses,
                 methods,
                 assoc_type_bindings,
-                span,
+                span: self.close(span),
                 is_auto_derived: false,
             }))
         }
@@ -2120,18 +2149,26 @@ impl Parser {
             let mut items = Vec::new();
             self.skip_nl();
             while !self.at(&Token::RBrace) {
-                let (item, _) = self.expect_ident()?;
-                items.push(item);
+                items.push(self.expect_ident()?);
                 self.expect_list_sep("selective import list", '}', &Token::RBrace)?;
             }
             self.expect(&Token::RBrace)?;
-            Ok(Decl::Import(ImportTarget::Items(name, items), import_span))
+            Ok(Decl::Import(
+                ImportTarget::Items(name, items),
+                self.close(import_span),
+            ))
         } else if self.at(&Token::As) {
             self.advance();
             let (alias, _) = self.expect_ident()?;
-            Ok(Decl::Import(ImportTarget::Alias(name, alias), import_span))
+            Ok(Decl::Import(
+                ImportTarget::Alias(name, alias),
+                self.close(import_span),
+            ))
         } else {
-            Ok(Decl::Import(ImportTarget::Module(name), import_span))
+            Ok(Decl::Import(
+                ImportTarget::Module(name),
+                self.close(import_span),
+            ))
         }
     }
 
@@ -2168,7 +2205,11 @@ impl Parser {
                 span,
             });
         }
-        Ok(crate::ast::AssocTypeDecl { name, bounds, span })
+        Ok(crate::ast::AssocTypeDecl {
+            name,
+            bounds,
+            span: self.close(span),
+        })
     }
 
     /// Parse an associated-type binding inside a trait impl body.
@@ -2179,7 +2220,11 @@ impl Parser {
         let (name, _) = self.expect_ident()?;
         self.expect(&Token::Eq)?;
         let ty = self.parse_type_expr()?;
-        Ok(crate::ast::AssocTypeBinding { name, ty, span })
+        Ok(crate::ast::AssocTypeBinding {
+            name,
+            ty,
+            span: self.close(span),
+        })
     }
 
     // ── Type expressions ─────────────────────────────────────────────
@@ -2214,10 +2259,7 @@ impl Parser {
         self.expect(&Token::RParen)?;
         self.expect(&Token::Arrow)?;
         let ret = self.parse_type_expr()?;
-        Ok(TypeExpr::new(
-            TypeExprKind::Function(params, Box::new(ret)),
-            start,
-        ))
+        Ok(self.mk_type(TypeExprKind::Function(params, Box::new(ret)), start))
     }
 
     fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
@@ -2242,7 +2284,7 @@ impl Parser {
             self.expect(&Token::Gt)?;
             self.expect(&Token::ColonColon)?;
             let (assoc_name, _) = self.expect_ident()?;
-            return Ok(TypeExpr::new(
+            return Ok(self.mk_type(
                 TypeExprKind::AssocProj {
                     receiver: Box::new(receiver),
                     trait_name,
@@ -2296,7 +2338,7 @@ impl Parser {
                 self.expect_list_sep("tuple type", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
-            return Ok(TypeExpr::new(TypeExprKind::Tuple(elems), start));
+            return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
         }
         // Anonymous record type: `{name: Type, age: Type}` or open
         // `{name: Type, ...r}`.
@@ -2330,10 +2372,7 @@ impl Parser {
                 self.expect_list_sep("anon record type fields", '}', &Token::RBrace)?;
             }
             self.expect(&Token::RBrace)?;
-            return Ok(TypeExpr::new(
-                TypeExprKind::AnonRecord { fields, tail },
-                start,
-            ));
+            return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
         let (name, _) = self.expect_ident()?;
         // `Self::Item` — sugar for `<Self as <enclosing_trait>>::Item`.
@@ -2354,7 +2393,7 @@ impl Parser {
                     intern::intern("__no_enclosing_trait__")
                 });
                 let recv = TypeExpr::new(TypeExprKind::SelfType, start);
-                return Ok(TypeExpr::new(
+                return Ok(self.mk_type(
                     TypeExprKind::AssocProj {
                         receiver: Box::new(recv),
                         trait_name,
@@ -2363,7 +2402,7 @@ impl Parser {
                     start,
                 ));
             }
-            return Ok(TypeExpr::new(TypeExprKind::SelfType, start));
+            return Ok(self.mk_type(TypeExprKind::SelfType, start));
         }
         if self.peek() == &Token::LParen {
             self.advance();
@@ -2374,9 +2413,9 @@ impl Parser {
                 self.expect_list_sep("generic type argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
-            Ok(TypeExpr::new(TypeExprKind::Generic(name, args), start))
+            Ok(self.mk_type(TypeExprKind::Generic(name, args), start))
         } else {
-            Ok(TypeExpr::new(TypeExprKind::Named(name), start))
+            Ok(self.mk_type(TypeExprKind::Named(name), start))
         }
     }
 
@@ -2392,7 +2431,7 @@ impl Parser {
             return Err(self.delim_unclosed_err_no_comma("block", '}', opener));
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::new(ExprKind::Block(stmts), span))
+        Ok(self.mk_expr(ExprKind::Block(stmts), span))
     }
 
     fn parse_stmt_list(&mut self, terminator: &Token) -> Result<Vec<Stmt>> {
@@ -2643,7 +2682,7 @@ impl Parser {
             ty,
             value,
             is_pub: false,
-            span,
+            span: self.close(span),
             name_span,
             doc,
         })
@@ -2793,7 +2832,7 @@ impl Parser {
                         }
                         let span = left.span;
                         self.advance();
-                        left = Expr::new(ExprKind::QuestionMark(Box::new(left)), span);
+                        left = self.mk_expr(ExprKind::QuestionMark(Box::new(left)), span);
                         continue;
                     }
                     Token::LParen => {
@@ -2847,7 +2886,7 @@ impl Parser {
                         self.advance(); // {
                         let fields = self.parse_record_fields()?;
                         self.expect(&Token::RBrace)?;
-                        left = Expr::new(
+                        left = self.mk_expr(
                             ExprKind::RecordUpdate {
                                 expr: Box::new(left),
                                 fields,
@@ -2857,9 +2896,12 @@ impl Parser {
                     } else if let Token::Int(n) = self.peek() {
                         // Tuple index access: expr.0, expr.1, etc.
                         let field = intern::intern(&n.to_string());
-                        self.advance();
+                        let (_, field_span) = self.advance();
                         let span = left.span;
-                        left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
+                        left = self.mk_expr(
+                            ExprKind::FieldAccess(Box::new(left), field, field_span),
+                            span,
+                        );
                     } else {
                         let (field, field_span) = self.expect_ident()?;
                         // Round 94: qualified record construction —
@@ -2896,7 +2938,7 @@ impl Parser {
                                 let fields = self.parse_record_fields()?;
                                 self.expect(&Token::RBrace)?;
                                 let span = left.span;
-                                left = Expr::new(
+                                left = self.mk_expr(
                                     ExprKind::RecordCreate {
                                         module: Some(module),
                                         name: field,
@@ -2935,7 +2977,10 @@ impl Parser {
                             }
                         }
                         let span = left.span;
-                        left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
+                        left = self.mk_expr(
+                            ExprKind::FieldAccess(Box::new(left), field, field_span),
+                            span,
+                        );
                     }
                     continue;
                 }
@@ -2958,7 +3003,7 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Pipe(Box::new(left), Box::new(right)), span);
+                    left = self.mk_expr(ExprKind::Pipe(Box::new(left), Box::new(right)), span);
                     continue;
                 }
 
@@ -2968,7 +3013,7 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Range(Box::new(left), Box::new(right)), span);
+                    left = self.mk_expr(ExprKind::Range(Box::new(left), Box::new(right)), span);
                     continue;
                 }
 
@@ -2978,7 +3023,7 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(
+                    left = self.mk_expr(
                         ExprKind::Binary(Box::new(left), BinOp::Or, Box::new(right)),
                         span,
                     );
@@ -2989,7 +3034,7 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(
+                    left = self.mk_expr(
                         ExprKind::Binary(Box::new(left), BinOp::And, Box::new(right)),
                         span,
                     );
@@ -3005,7 +3050,8 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                    left =
+                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Lt | Token::Gt | Token::LtEq | Token::GtEq => {
@@ -3022,7 +3068,8 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                    left =
+                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Plus | Token::Minus if !had_newline => {
@@ -3038,7 +3085,8 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                    left =
+                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Star | Token::Slash | Token::Percent => {
@@ -3054,7 +3102,8 @@ impl Parser {
                         break;
                     };
                     let span = left.span;
-                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                    left =
+                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
 
@@ -3069,7 +3118,7 @@ impl Parser {
                     self.skip_nl();
                     let type_expr = self.parse_type_expr()?;
                     let span = left.span;
-                    left = Expr::new(ExprKind::Ascription(Box::new(left), type_expr), span);
+                    left = self.mk_expr(ExprKind::Ascription(Box::new(left), type_expr), span);
                     continue;
                 }
 
@@ -3090,19 +3139,13 @@ impl Parser {
                 let span = self.span();
                 self.advance();
                 let expr = self.parse_expr_bp(90)?;
-                Ok(Expr::new(
-                    ExprKind::Unary(UnaryOp::Neg, Box::new(expr)),
-                    span,
-                ))
+                Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Neg, Box::new(expr)), span))
             }
             Token::Not => {
                 let span = self.span();
                 self.advance();
                 let expr = self.parse_expr_bp(90)?;
-                Ok(Expr::new(
-                    ExprKind::Unary(UnaryOp::Not, Box::new(expr)),
-                    span,
-                ))
+                Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Not, Box::new(expr)), span))
             }
             _ => self.parse_atom(),
         }
@@ -3115,19 +3158,19 @@ impl Parser {
         match self.peek().clone() {
             Token::Int(n) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::Int(n), span))
+                Ok(self.mk_expr(ExprKind::Int(n), span))
             }
             Token::Float(n) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::Float(n), span))
+                Ok(self.mk_expr(ExprKind::Float(n), span))
             }
             Token::Bool(b) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::Bool(b), span))
+                Ok(self.mk_expr(ExprKind::Bool(b), span))
             }
             Token::StringLit(s, triple) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::StringLit(s, triple), span))
+                Ok(self.mk_expr(ExprKind::StringLit(s, triple), span))
             }
             Token::StringStart(s) => {
                 self.advance();
@@ -3138,11 +3181,9 @@ impl Parser {
                 self.advance();
                 // Could be: Constructor, Constructor(args), or RecordCreate { fields }
                 if !self.has_newline_before() && self.at(&Token::LParen) {
+                    let callee = self.mk_expr(ExprKind::Ident(name), span);
                     let args = self.parse_call_args()?;
-                    Ok(Expr::new(
-                        ExprKind::Call(Box::new(Expr::new(ExprKind::Ident(name), span)), args),
-                        span,
-                    ))
+                    Ok(self.mk_expr(ExprKind::Call(Box::new(callee), args), span))
                 } else if !self.has_newline_before()
                     && self.at(&Token::LBrace)
                     && (!self.lbrace_may_be_header_block()
@@ -3153,7 +3194,7 @@ impl Parser {
                     self.advance(); // {
                     let fields = self.parse_record_fields()?;
                     self.expect(&Token::RBrace)?;
-                    Ok(Expr::new(
+                    Ok(self.mk_expr(
                         ExprKind::RecordCreate {
                             module: None,
                             name,
@@ -3162,12 +3203,12 @@ impl Parser {
                         span,
                     ))
                 } else {
-                    Ok(Expr::new(ExprKind::Ident(name), span))
+                    Ok(self.mk_expr(ExprKind::Ident(name), span))
                 }
             }
             Token::Ident(name) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::Ident(name), span))
+                Ok(self.mk_expr(ExprKind::Ident(name), span))
             }
             Token::LParen => {
                 let opener = self.span();
@@ -3176,7 +3217,7 @@ impl Parser {
                 // Unit: ()
                 if self.at(&Token::RParen) {
                     self.advance();
-                    return Ok(Expr::new(ExprKind::Unit, span));
+                    return Ok(self.mk_expr(ExprKind::Unit, span));
                 }
                 // Parse first expression
                 let first = self.parse_expr_in_delim(
@@ -3209,7 +3250,7 @@ impl Parser {
                         )?;
                     }
                     self.expect(&Token::RParen)?;
-                    Ok(Expr::new(ExprKind::Tuple(elems), span))
+                    Ok(self.mk_expr(ExprKind::Tuple(elems), span))
                 } else if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
                     Err(self.delim_unclosed_err_no_comma("parenthesized expression", ')', opener))
                 } else {
@@ -3251,7 +3292,7 @@ impl Parser {
                     )?;
                 }
                 self.expect(&Token::RBracket)?;
-                Ok(Expr::new(ExprKind::List(elems), span))
+                Ok(self.mk_expr(ExprKind::List(elems), span))
             }
             Token::HashBrace => {
                 let opener = self.span();
@@ -3277,7 +3318,7 @@ impl Parser {
                     )?;
                 }
                 self.expect(&Token::RBrace)?;
-                Ok(Expr::new(ExprKind::Map(pairs), span))
+                Ok(self.mk_expr(ExprKind::Map(pairs), span))
             }
             Token::HashBracket => {
                 let opener = self.span();
@@ -3302,7 +3343,7 @@ impl Parser {
                     )?;
                 }
                 self.expect(&Token::RBracket)?;
-                Ok(Expr::new(ExprKind::SetLit(elems), span))
+                Ok(self.mk_expr(ExprKind::SetLit(elems), span))
             }
             Token::LBrace => {
                 // Could be a trailing closure, an anonymous record
@@ -3324,10 +3365,10 @@ impl Parser {
                 self.advance();
                 // Return may or may not have a value
                 if self.has_newline_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
-                    Ok(Expr::new(ExprKind::Return(None), span))
+                    Ok(self.mk_expr(ExprKind::Return(None), span))
                 } else {
                     let val = self.parse_expr()?;
-                    Ok(Expr::new(ExprKind::Return(Some(Box::new(val))), span))
+                    Ok(self.mk_expr(ExprKind::Return(Some(Box::new(val))), span))
                 }
             }
             // select is no longer a keyword; use channel.select([...])
@@ -3385,7 +3426,7 @@ impl Parser {
             }
         }
 
-        Ok(Expr::new(ExprKind::StringInterp(parts), span))
+        Ok(self.mk_expr(ExprKind::StringInterp(parts), span))
     }
 
     // ── Function calls ───────────────────────────────────────────────
@@ -3395,7 +3436,7 @@ impl Parser {
         let args = self.parse_call_args()?;
         // Trailing closures are handled by the postfix loop in parse_expr_bp,
         // which respects min_bp and correctly suppresses them in match scrutinees.
-        Ok(Expr::new(ExprKind::Call(Box::new(callee), args), span))
+        Ok(self.mk_expr(ExprKind::Call(Box::new(callee), args), span))
     }
 
     fn parse_call_args(&mut self) -> Result<Vec<Expr>> {
@@ -3627,7 +3668,7 @@ impl Parser {
     fn dotted_path_text(expr: &Expr) -> Option<String> {
         match &expr.kind {
             ExprKind::Ident(name) => Some(intern::resolve(*name)),
-            ExprKind::FieldAccess(base, field) => Some(format!(
+            ExprKind::FieldAccess(base, field, _) => Some(format!(
                 "{}.{}",
                 Self::dotted_path_text(base)?,
                 intern::resolve(*field)
@@ -3656,13 +3697,13 @@ impl Parser {
             if let Stmt::Expr(e) = &stmts[0] {
                 e.clone()
             } else {
-                Expr::new(ExprKind::Block(stmts), span)
+                self.mk_expr(ExprKind::Block(stmts), span)
             }
         } else {
-            Expr::new(ExprKind::Block(stmts), span)
+            self.mk_expr(ExprKind::Block(stmts), span)
         };
 
-        Ok(Expr::new(
+        Ok(self.mk_expr(
             ExprKind::Lambda {
                 params,
                 body: Box::new(body),
@@ -3729,11 +3770,11 @@ impl Parser {
         match callee.kind {
             ExprKind::Call(f, mut args) => {
                 args.push(closure);
-                Expr::new(ExprKind::Call(f, args), span)
+                self.mk_expr(ExprKind::Call(f, args), span)
             }
             _ => {
                 // Wrap as a call: `f { x -> body }` → f(closure)
-                Expr::new(ExprKind::Call(Box::new(callee), vec![closure]), span)
+                self.mk_expr(ExprKind::Call(Box::new(callee), vec![closure]), span)
             }
         }
     }
@@ -3771,7 +3812,7 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
 
-        Ok(Expr::new(
+        Ok(self.mk_expr(
             ExprKind::Match {
                 expr: scrutinee,
                 arms,
@@ -3804,7 +3845,7 @@ impl Parser {
             self.skip_nl();
             let body = self.parse_expr()?;
             return Ok(MatchArm {
-                pattern: Pattern::new(PatternKind::Wildcard, arm_start),
+                pattern: Pattern::new(PatternKind::Wildcard, condition.span),
                 guard: Some(Box::new(condition)),
                 body,
             });
@@ -3842,7 +3883,7 @@ impl Parser {
         // Check for recur: `loop(args)` — LParen immediately (no newline)
         if !self.has_newline_before() && self.at(&Token::LParen) {
             let args = self.parse_call_args()?;
-            return Ok(Expr::new(ExprKind::Recur(args), span));
+            return Ok(self.mk_expr(ExprKind::Recur(args), span));
         }
 
         self.skip_nl();
@@ -3850,7 +3891,7 @@ impl Parser {
         // Zero-binding variant: `loop { body }`
         if self.at(&Token::LBrace) {
             let body = self.parse_block()?;
-            return Ok(Expr::new(
+            return Ok(self.mk_expr(
                 ExprKind::Loop {
                     bindings: Vec::new(),
                     body: Box::new(body),
@@ -3863,14 +3904,14 @@ impl Parser {
         let mut bindings = Vec::new();
         loop {
             self.skip_nl();
-            let (name, _) = self.expect_ident()?;
+            let (name, name_span) = self.expect_ident()?;
             self.expect(&Token::Eq)?;
             self.skip_nl();
             // An initialiser is a header expression (see `BlockHeader`):
             // in `loop i = n, acc = Nil { ... }` the `{` opens the loop
             // body, it does not make `Nil { ... }` a record literal.
             let init = self.parse_header_expr(HeaderKind::LoopInit)?;
-            bindings.push((name, init));
+            bindings.push((name, name_span, init));
             self.skip_nl();
             if self.at(&Token::Comma) {
                 self.advance();
@@ -3882,7 +3923,7 @@ impl Parser {
         self.skip_nl();
         let body = self.parse_block()?;
 
-        Ok(Expr::new(
+        Ok(self.mk_expr(
             ExprKind::Loop {
                 bindings,
                 body: Box::new(body),
@@ -3977,7 +4018,7 @@ impl Parser {
             self.expect_list_sep("anon record literal fields", '}', &Token::RBrace)?;
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::new(ExprKind::AnonRecord { spread, fields }, span))
+        Ok(self.mk_expr(ExprKind::AnonRecord { spread, fields }, span))
     }
 
     fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
@@ -4026,7 +4067,7 @@ impl Parser {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
-            Ok(Pattern::new(PatternKind::Or(alts), or_span))
+            Ok(self.mk_pattern(PatternKind::Or(alts), or_span))
         } else {
             Ok(first)
         }
@@ -4139,6 +4180,19 @@ impl Parser {
         name: Symbol,
         start: Span,
     ) -> Result<Pattern> {
+        let mut pattern = self.parse_constructor_pattern_tail_open(module, name, start)?;
+        pattern.span = self.close(pattern.span);
+        Ok(pattern)
+    }
+
+    /// `parse_constructor_pattern_tail`, with the pattern's span not yet
+    /// closed.
+    fn parse_constructor_pattern_tail_open(
+        &mut self,
+        module: Option<Symbol>,
+        name: Symbol,
+        start: Span,
+    ) -> Result<Pattern> {
         let mk = |kind: PatternKind| Pattern::new(kind, start);
         // Constructor pattern: Some(x), Ok(value), Rect(w, h)
         if self.at(&Token::LParen) {
@@ -4169,7 +4223,7 @@ impl Parser {
                     self.skip_nl();
                     break;
                 }
-                let (field_name, _) = self.expect_ident()?;
+                let (field_name, field_span) = self.expect_ident()?;
                 // Optional sub-pattern: `name: pat`
                 let sub = if self.peek_skip_nl() == &Token::Colon {
                     self.advance();
@@ -4177,7 +4231,7 @@ impl Parser {
                 } else {
                     None
                 };
-                fields.push((field_name, sub));
+                fields.push((field_name, field_span, sub));
                 self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
             }
             self.expect(&Token::RBrace)?;
@@ -4197,6 +4251,13 @@ impl Parser {
     }
 
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
+        let mut pattern = self.parse_primary_pattern_open()?;
+        pattern.span = self.close(pattern.span);
+        Ok(pattern)
+    }
+
+    /// `parse_primary_pattern`, with the pattern's span not yet closed.
+    fn parse_primary_pattern_open(&mut self) -> Result<Pattern> {
         self.skip_nl();
         let start = self.span();
         let mk = |kind: PatternKind| Pattern::new(kind, start);
@@ -4323,26 +4384,25 @@ impl Parser {
                 // contexts.
                 self.advance();
                 self.skip_nl();
-                let mut fields: Vec<(Symbol, Option<Pattern>)> = Vec::new();
-                let mut rest: Option<Symbol> = None;
+                let mut fields: Vec<(Symbol, Span, Option<Pattern>)> = Vec::new();
+                let mut rest: Option<(Symbol, Span)> = None;
                 while !self.at(&Token::RBrace) {
                     self.skip_nl();
                     if self.at(&Token::DotDotDot) {
                         self.advance();
                         // Named rest binding required (B6: no unnamed rest).
-                        let (rname, _) = self.expect_ident()?;
-                        rest = Some(rname);
+                        rest = Some(self.expect_ident()?);
                         self.skip_nl();
                         break;
                     }
-                    let (field_name, _) = self.expect_ident()?;
+                    let (field_name, field_span) = self.expect_ident()?;
                     let sub = if self.peek_skip_nl() == &Token::Colon {
                         self.advance();
                         Some(self.parse_pattern()?)
                     } else {
                         None
                     };
-                    fields.push((field_name, sub));
+                    fields.push((field_name, field_span, sub));
                     self.expect_list_sep("anon record pattern fields", '}', &Token::RBrace)?;
                 }
                 self.expect(&Token::RBrace)?;
@@ -4541,8 +4601,10 @@ mod tests {
     use crate::lexer::Lexer;
 
     fn parse(input: &str) -> Program {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        Parser::new(tokens).parse_program().unwrap()
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        Parser::new(tokens, input).parse_program().unwrap()
     }
 
     // ── Test helpers ────────────────────────────────────────────────
@@ -5016,13 +5078,17 @@ fn main() {
     // ── Error-recovery helpers ──────────────────────────────────────
 
     fn parse_err(input: &str) -> ParseError {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        Parser::new(tokens).parse_program().unwrap_err()
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        Parser::new(tokens, input).parse_program().unwrap_err()
     }
 
     fn parse_recovering(input: &str) -> (Program, Vec<ParseError>) {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        Parser::new(tokens).parse_program_recovering()
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        Parser::new(tokens, input).parse_program_recovering()
     }
 
     // ── 1. Error recovery ───────────────────────────────────────────
@@ -5055,7 +5121,8 @@ fn main() {
                 .message
                 .contains("by the import at line 1 and by the function here")
         );
-        assert_eq!(errs[1].span.line, 3);
+        // The second `x` is the function's name, on line 3.
+        assert_eq!(errs[1].span.start, 33);
     }
 
     #[test]
@@ -5264,9 +5331,9 @@ fn main() {
             assert_eq!(*name, Some(intern::intern("User")));
             assert_eq!(fields.len(), 2);
             assert_eq!(fields[0].0, intern::intern("name"));
-            assert!(fields[0].1.is_none()); // shorthand
+            assert!(fields[0].2.is_none()); // shorthand
             assert_eq!(fields[1].0, intern::intern("age"));
-            assert!(fields[1].1.is_none());
+            assert!(fields[1].2.is_none());
             assert!(!has_rest);
         } else {
             panic!("expected record pattern");
@@ -5957,9 +6024,9 @@ fn main() {
             ExprKind::Loop { bindings, .. } => {
                 assert_eq!(bindings.len(), 2);
                 assert!(
-                    matches!(&bindings[1].1.kind, ExprKind::Ident(_)),
+                    matches!(&bindings[1].2.kind, ExprKind::Ident(_)),
                     "expected the constructor name, got {:?}",
-                    bindings[1].1.kind
+                    bindings[1].2.kind
                 );
             }
             other => panic!("expected loop, got {:?}", other),
@@ -5981,9 +6048,9 @@ fn main() {
             ExprKind::Loop { bindings, .. } => {
                 assert_eq!(bindings.len(), 2);
                 assert!(
-                    matches!(&bindings[1].1.kind, ExprKind::RecordCreate { .. }),
+                    matches!(&bindings[1].2.kind, ExprKind::RecordCreate { .. }),
                     "expected a record literal, got {:?}",
-                    bindings[1].1.kind
+                    bindings[1].2.kind
                 );
             }
             other => panic!("expected loop, got {:?}", other),

@@ -1,5 +1,5 @@
 use crate::intern::Symbol;
-use crate::lexer::Span;
+use crate::source::Span;
 use crate::types::Type;
 
 // ── Expressions ──────────────────────────────────────────────────────
@@ -39,7 +39,8 @@ pub enum ExprKind {
 
     // Variables & access
     Ident(Symbol),
-    FieldAccess(Box<Expr>, Symbol),
+    /// `expr.field`, with the span of the field name.
+    FieldAccess(Box<Expr>, Symbol, Span),
 
     // Operations
     Binary(Box<Expr>, BinOp, Box<Expr>),
@@ -95,9 +96,10 @@ pub enum ExprKind {
     Block(Vec<Stmt>),
 
     // Loop
-    /// Loop expression: `loop x = init, y = init { body }`
+    /// Loop expression: `loop x = init, y = init { body }`; each binding
+    /// is its name, the span of the name, and its initialiser.
     Loop {
-        bindings: Vec<(Symbol, Expr)>,
+        bindings: Vec<(Symbol, Span, Expr)>,
         body: Box<Expr>,
     },
     /// Recur: `loop(args)` inside a loop body
@@ -223,7 +225,9 @@ pub enum PatternKind {
         /// the typechecker, invisible to exhaustiveness and codegen.
         module: Option<Symbol>,
         name: Option<Symbol>,
-        fields: Vec<(Symbol, Option<Pattern>)>,
+        /// Each field's name, the span of the name, and its sub-pattern;
+        /// `None` for the shorthand `{ x }`, which binds `x`.
+        fields: Vec<(Symbol, Span, Option<Pattern>)>,
         has_rest: bool,
     },
     /// Anonymous record pattern with optional named rest binding:
@@ -232,8 +236,10 @@ pub enum PatternKind {
     /// allowed). v1 forbids unnamed rest (`{x, ...}`); use `{x, ...rest}`
     /// or omit the pattern entirely.
     AnonRecord {
-        fields: Vec<(Symbol, Option<Pattern>)>,
-        rest: Option<Symbol>,
+        /// As in [`PatternKind::Record::fields`].
+        fields: Vec<(Symbol, Span, Option<Pattern>)>,
+        /// The rest binder and the span of its name.
+        rest: Option<(Symbol, Span)>,
     },
     /// Match a list: [a, b, c] or [head, ...tail] or []
     List(Vec<Pattern>, Option<Box<Pattern>>),
@@ -355,8 +361,8 @@ pub enum Stmt {
 ///
 /// `trait_name_span` points at the trait-name identifier in source so
 /// LSP rename / references / goto-def can land precisely on the trait
-/// reference (round-75 DX-4 fix). For synthesized clauses (auto-derive)
-/// it falls back to a sentinel `Span::synthetic()`.
+/// reference (round-75 DX-4 fix). A synthesized clause (auto-derive) has
+/// the span of the type declaration that caused it.
 #[derive(Debug, Clone)]
 pub struct WhereClause {
     pub type_param: Symbol,
@@ -466,8 +472,9 @@ pub struct EnumVariant {
     /// (round-63 B1): LSP rename / references / goto-def need the name
     /// token's range, not the enclosing decl's `type`-keyword span —
     /// without it, renaming a variant from a usage site rewrote the
-    /// `type` keyword. `Span::synthetic()` for variants synthesized
-    /// outside the parser (auto-derive's VariantInfo round-trip).
+    /// `type` keyword. A variant synthesized outside the parser
+    /// (auto-derive's VariantInfo round-trip) has the span of its type's
+    /// declaration.
     pub name_span: Span,
     pub fields: Vec<TypeExpr>,
 }
@@ -475,6 +482,8 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct RecordField {
     pub name: Symbol,
+    /// Span of the field-name identifier.
+    pub name_span: Span,
     pub ty: TypeExpr,
 }
 
@@ -606,7 +615,8 @@ pub struct TraitImpl {
 #[derive(Debug, Clone)]
 pub enum ImportTarget {
     Module(Symbol),
-    Items(Symbol, Vec<Symbol>),
+    /// `import m.{ a, b }`: the module and each item with its own span.
+    Items(Symbol, Vec<(Symbol, Span)>),
     Alias(Symbol, Symbol),
 }
 

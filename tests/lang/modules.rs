@@ -36,8 +36,12 @@ fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
         fs::write(&path, content).expect("failed to write module file");
     }
 
-    let tokens = Lexer::new(main_source).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), main_source)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, main_source)
+        .parse_program()
+        .expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = compiler_for_root(dir.clone());
     match compiler.compile_program(&program) {

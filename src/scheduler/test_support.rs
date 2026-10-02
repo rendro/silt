@@ -309,7 +309,7 @@ impl InProcessRunner {
 /// the latter approach; see `scheduler_deadlock_detector_tests.rs`.
 fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) {
     let stdout = String::new();
-    let tokens = match Lexer::new(source).tokenize() {
+    let tokens = match Lexer::new(crate::source::FileId::default(), source).tokenize() {
         Ok(t) => t,
         Err(e) => {
             return (
@@ -318,7 +318,7 @@ fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) 
             );
         }
     };
-    let mut program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens, source).parse_program() {
         Ok(p) => p,
         Err(e) => {
             return (

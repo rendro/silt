@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::Symbol;
-use crate::lexer::Span;
+use crate::source::{SourceFile, Span};
 use crate::types::Type;
 
 // ── Document state ─────────────────────────────────────────────────
@@ -41,7 +41,9 @@ pub(super) struct LocalBinding {
 }
 
 pub(super) struct Document {
-    pub(super) source: String,
+    /// The document's text and its lines. Its spans are byte ranges in
+    /// it (the document is lexed as the only file of its own).
+    pub(super) source: SourceFile,
     pub(super) program: Option<Program>,
     /// Definition map: name → definition info (built from top-level declarations).
     pub(super) definitions: HashMap<Symbol, DefInfo>,

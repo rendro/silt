@@ -19,10 +19,10 @@ use std::sync::Arc;
 use silt::Value;
 use silt::Vm;
 use silt::bytecode::{Chunk, Function, Op};
-use silt::lexer::Span;
+use silt::source::Span;
 
 fn span() -> Span {
-    Span::new(0, 0)
+    Span::BUILTIN
 }
 
 fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {

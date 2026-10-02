@@ -110,10 +110,13 @@ fn apply_all_edits(source: &str, edits: &[Value]) -> String {
 /// the renamed document is the authoritative "no keyword was
 /// clobbered" assertion.
 fn parses_ok(source: &str) -> bool {
-    let Ok(tokens) = silt::lexer::Lexer::new(source).tokenize() else {
+    let Ok(tokens) = silt::lexer::Lexer::new(silt::source::FileId::default(), source).tokenize()
+    else {
         return false;
     };
-    silt::parser::Parser::new(tokens).parse_program().is_ok()
+    silt::parser::Parser::new(tokens, source)
+        .parse_program()
+        .is_ok()
 }
 
 /// Shared fixture. 0-based layout used by the tests:

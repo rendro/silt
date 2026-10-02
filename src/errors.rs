@@ -1,8 +1,9 @@
 use std::fmt;
 
 use crate::compiler::CompileError;
-use crate::lexer::{LexError, Span};
+use crate::lexer::LexError;
 use crate::parser::ParseError;
+use crate::source::{SourceFile, SourceMap, Span};
 use crate::typechecker::TypeError;
 
 // ── Error kind ──────────────────────────────────────────────────────
@@ -33,164 +34,160 @@ impl fmt::Display for ErrorKind {
 pub struct SourceError {
     pub kind: ErrorKind,
     pub message: String,
-    pub span: Span,
+    /// Where the error is. `None` for an error about the whole program
+    /// (no `main`, `main` returned `Err`, ...), which prints no location.
+    pub span: Option<Span>,
+    /// 1-based line and column of the start of `span`, from the
+    /// `SourceMap`; 0 and 0 without a span.
+    pub line: usize,
+    pub col: usize,
     pub source_line: Option<String>,
     pub file: Option<String>,
     pub is_warning: bool,
 }
 
 impl SourceError {
-    pub fn from_lex_error(err: &LexError, source: &str, file: impl Into<String>) -> Self {
-        let span = clamp_span_to_source(err.span, source);
-        let source_line = get_source_line(source, span.line);
+    /// The error `message` of phase `kind` at `span`, a span of a file of
+    /// `sources`. `file` is the file's name as it is shown.
+    pub fn new(
+        kind: ErrorKind,
+        message: impl Into<String>,
+        span: Option<Span>,
+        sources: &SourceMap,
+        file: impl Into<String>,
+        is_warning: bool,
+    ) -> Self {
+        // A span in no file of `sources` (`Span::BUILTIN`) has no
+        // location to show.
+        let (line, col, source_line) = match span.and_then(|s| Some((s, sources.get(s.file)?))) {
+            Some((span, file)) => locate(file, span.start),
+            None => (0, 0, None),
+        };
         Self {
-            kind: ErrorKind::Lex,
-            message: err.message.clone(),
+            kind,
+            message: message.into(),
             span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: false,
-        }
-    }
-
-    pub fn from_parse_error(err: &ParseError, source: &str, file: impl Into<String>) -> Self {
-        let span = clamp_span_to_source(err.span, source);
-        let source_line = get_source_line(source, span.line);
-        Self {
-            kind: ErrorKind::Parse,
-            message: err.message.clone(),
-            span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: false,
-        }
-    }
-
-    pub fn from_type_error(err: &TypeError, source: &str, file: impl Into<String>) -> Self {
-        use crate::typechecker::Severity;
-        let span = clamp_span_to_source(err.span, source);
-        let source_line = get_source_line(source, span.line);
-        let is_warning = err.severity == Severity::Warning;
-        Self {
-            kind: ErrorKind::Type,
-            message: err.message.clone(),
-            span,
+            line,
+            col,
             source_line,
             file: Some(file.into()),
             is_warning,
         }
     }
 
-    pub fn from_compile_error(err: &CompileError, source: &str, file: impl Into<String>) -> Self {
-        let span = clamp_span_to_source(err.span, source);
-        let source_line = get_source_line(source, span.line);
-        Self {
-            kind: ErrorKind::Compile,
-            message: err.message.clone(),
-            span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: false,
-        }
+    pub fn from_lex_error(err: &LexError, sources: &SourceMap, file: impl Into<String>) -> Self {
+        Self::new(
+            ErrorKind::Lex,
+            err.message.clone(),
+            Some(err.span),
+            sources,
+            file,
+            false,
+        )
+    }
+
+    pub fn from_parse_error(
+        err: &ParseError,
+        sources: &SourceMap,
+        file: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            ErrorKind::Parse,
+            err.message.clone(),
+            Some(err.span),
+            sources,
+            file,
+            false,
+        )
+    }
+
+    pub fn from_type_error(err: &TypeError, sources: &SourceMap, file: impl Into<String>) -> Self {
+        use crate::typechecker::Severity;
+        Self::new(
+            ErrorKind::Type,
+            err.full_message(|span| sources.line_col((span.file, span.start)).0),
+            Some(err.span),
+            sources,
+            file,
+            err.severity == Severity::Warning,
+        )
+    }
+
+    pub fn from_compile_error(
+        err: &CompileError,
+        sources: &SourceMap,
+        file: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            ErrorKind::Compile,
+            err.message.clone(),
+            Some(err.span),
+            sources,
+            file,
+            false,
+        )
     }
 
     pub fn compile_warning(
         message: impl Into<String>,
         span: Span,
-        source: &str,
+        sources: &SourceMap,
         file: impl Into<String>,
     ) -> Self {
-        let span = clamp_span_to_source(span, source);
-        let source_line = get_source_line(source, span.line);
-        Self {
-            kind: ErrorKind::Compile,
-            message: message.into(),
-            span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: true,
-        }
+        Self::new(ErrorKind::Compile, message, Some(span), sources, file, true)
     }
 
+    /// A runtime error at `span`, or about the whole run without one.
     pub fn runtime_at(
         message: impl Into<String>,
-        span: Span,
-        source: &str,
+        span: Option<Span>,
+        sources: &SourceMap,
         file: impl Into<String>,
     ) -> Self {
-        let span = clamp_span_to_source(span, source);
-        let source_line = get_source_line(source, span.line);
-        Self {
-            kind: ErrorKind::Runtime,
-            message: message.into(),
-            span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: false,
-        }
+        Self::new(ErrorKind::Runtime, message, span, sources, file, false)
     }
 
-    /// Construct a compile-kind diagnostic directly from a message + span.
-    /// Used for file-level issues (e.g. missing `main`) that don't have an
-    /// underlying `CompileError` struct to lift from. Callers that have
-    /// no real span should pass `Span::new(0, 0)` — the Display impl will
-    /// omit the `-->` locator when `span.line == 0`, but still renders
-    /// the canonical `error[compile]:` header for consistency with every
-    /// other compile-phase diagnostic.
+    /// A compile-kind diagnostic straight from a message: for file-level
+    /// issues (e.g. missing `main`) that have no `CompileError` to lift
+    /// from. Without a span the header renders alone, still as the
+    /// canonical `error[compile]:` of every other compile-phase error.
     pub fn compile_error_at(
         message: impl Into<String>,
-        span: Span,
-        source: &str,
+        span: Option<Span>,
+        sources: &SourceMap,
         file: impl Into<String>,
     ) -> Self {
-        let span = clamp_span_to_source(span, source);
-        let source_line = get_source_line(source, span.line);
-        Self {
-            kind: ErrorKind::Compile,
-            message: message.into(),
-            span,
-            source_line,
-            file: Some(file.into()),
-            is_warning: false,
-        }
+        Self::new(ErrorKind::Compile, message, span, sources, file, false)
     }
 }
 
-/// Extract the source line for the given 1-based line number.
-fn get_source_line(source: &str, line: usize) -> Option<String> {
-    if line == 0 {
-        return None;
+/// The 1-based line and column of byte `at` of `file`, and the text of
+/// that line.
+///
+/// A position past the last line break (where a parse error at an
+/// unexpected end of file points) is moved back onto the last real line,
+/// just after its last character, so the caret lands at the visual end
+/// of the file instead of on a line that has no text to show.
+pub(crate) fn locate(file: &SourceFile, at: u32) -> (usize, usize, Option<String>) {
+    let (line, col) = file.line_col(at);
+    let (mut line, mut col) = (line as usize, col as usize);
+    // Lines as `str::lines` counts them: a final line break ends the
+    // last line rather than starting an empty one, and a `\r` before a
+    // line break is not part of the line.
+    let mut lines = file.text.lines();
+    let line_count = lines.clone().count();
+    if line_count > 0 && line > line_count {
+        line = line_count;
+        col = lines
+            .clone()
+            .last()
+            .unwrap_or("")
+            .chars()
+            .count()
+            .saturating_add(1);
     }
-    source.lines().nth(line - 1).map(|s| s.to_string())
-}
-
-/// Clamp a span that points past the end of `source` back onto the last
-/// real line. Parse/lex errors on unexpected EOF typically produce a span
-/// pointing at the line *after* the final newline (or one column past the
-/// last char), which renders with the `-->` locator but no source snippet
-/// since `line - 1` is out of bounds. When that happens, we return a new
-/// span pointing at the end of the last real line so the caret lands at
-/// the visual "end of file" instead of disappearing. Mirrors the
-/// adjustment done by `repl.rs::adjust_span` for the REPL path.
-pub(crate) fn clamp_span_to_source(span: Span, source: &str) -> Span {
-    if span.line == 0 {
-        return span;
-    }
-    let line_count = source.lines().count();
-    if line_count == 0 {
-        return span;
-    }
-    if span.line <= line_count {
-        return span;
-    }
-    // Past EOF — clamp onto the last real line, caret just after its last char.
-    // Also clamp the byte offset so it doesn't dangle past the end of `source`;
-    // downstream consumers (e.g. LSP byte-offset → UTF-16 column conversion)
-    // assume `offset <= source.len()`. Lock: tests/lang/round77_errors_clamp_offset_tests.rs.
-    let last_line = source.lines().last().unwrap_or("");
-    let last_col = last_line.chars().count().saturating_add(1);
-    let clamped_offset = span.offset.min(source.len());
-    Span::with_offset(line_count, last_col, clamped_offset)
+    let source_line = lines.nth(line - 1).map(str::to_string);
+    (line, col, source_line)
 }
 
 /// Check whether stderr should receive ANSI color escapes.
@@ -298,7 +295,7 @@ impl fmt::Display for SourceError {
         )?;
 
         // Location line: --> file:line:col
-        if self.span.line > 0 {
+        if self.line > 0 {
             // The file can sit in a dependency's directory, named by a
             // manifest: it is shown by the display rule, so the locator
             // stays one line.
@@ -309,17 +306,17 @@ impl fmt::Display for SourceError {
                 cyan = c.cyan,
                 reset = c.reset,
                 file = file,
-                line = self.span.line,
-                col = self.span.col,
+                line = self.line,
+                col = self.col,
             )?;
         }
 
         // Source snippet with caret
         if let Some(ref full_line) = self.source_line {
-            let full_col = self.span.col.saturating_sub(1);
+            let full_col = self.col.saturating_sub(1);
             let (src_line, col) = excerpt_around(full_line, full_col);
             let src_line = src_line.as_str();
-            let line_num = self.span.line;
+            let line_num = self.line;
             let gutter_width = line_num_width(line_num);
 
             // Empty gutter line
@@ -499,6 +496,39 @@ pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{FileId, SourceName};
+
+    /// A map holding `text` as its only file.
+    fn sources(text: &str) -> SourceMap {
+        let mut map = SourceMap::new();
+        map.add(SourceName::Path("test.silt".into()), text.into());
+        map
+    }
+
+    fn at(start: u32) -> Span {
+        Span::point(FileId::default(), start)
+    }
+
+    /// An error located at `line`:`col` showing `source_line`.
+    fn err_at(
+        kind: ErrorKind,
+        message: &str,
+        line: usize,
+        col: usize,
+        source_line: &str,
+        is_warning: bool,
+    ) -> SourceError {
+        SourceError {
+            kind,
+            message: message.to_string(),
+            span: Some(at(0)),
+            line,
+            col,
+            source_line: Some(source_line.to_string()),
+            file: Some("test.silt".to_string()),
+            is_warning,
+        }
+    }
 
     #[test]
     fn a_long_line_is_cut_to_a_window_around_the_caret() {
@@ -518,13 +548,18 @@ mod tests {
     }
 
     #[test]
-    fn test_get_source_line() {
-        let src = "line one\nline two\nline three";
-        assert_eq!(get_source_line(src, 1), Some("line one".to_string()));
-        assert_eq!(get_source_line(src, 2), Some("line two".to_string()));
-        assert_eq!(get_source_line(src, 3), Some("line three".to_string()));
-        assert_eq!(get_source_line(src, 4), None);
-        assert_eq!(get_source_line(src, 0), None);
+    fn test_locate() {
+        let map = sources("line one\nline two\r\nline three\n");
+        let file = map.file(FileId::default());
+        assert_eq!(locate(file, 0), (1, 1, Some("line one".to_string())));
+        assert_eq!(locate(file, 14), (2, 6, Some("line two".to_string())));
+        assert_eq!(locate(file, 19), (3, 1, Some("line three".to_string())));
+        // The end of the file, after the final line break, is the end of
+        // the last line.
+        assert_eq!(locate(file, 30), (3, 11, Some("line three".to_string())));
+        assert_eq!(locate(file, 99), (3, 11, Some("line three".to_string())));
+        let empty = sources("");
+        assert_eq!(locate(empty.file(FileId::default()), 0), (1, 1, None));
     }
 
     #[test]
@@ -539,14 +574,14 @@ mod tests {
     #[test]
     fn test_source_error_display_no_color() {
         // Test the structure of the output (without ANSI codes, since we're not on a tty)
-        let err = SourceError {
-            kind: ErrorKind::Parse,
-            message: "expected expression".to_string(),
-            span: Span::with_offset(5, 12, 0),
-            source_line: Some("    Err(e) -> println(\"error\")".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: false,
-        };
+        let err = err_at(
+            ErrorKind::Parse,
+            "expected expression",
+            5,
+            12,
+            "    Err(e) -> println(\"error\")",
+            false,
+        );
         let output = format!("{err}");
         assert!(output.contains("error[parse]"));
         assert!(output.contains("expected expression"));
@@ -557,14 +592,14 @@ mod tests {
 
     #[test]
     fn test_source_error_type_warning() {
-        let err = SourceError {
-            kind: ErrorKind::Type,
-            message: "type mismatch".to_string(),
-            span: Span::with_offset(3, 5, 0),
-            source_line: Some("let x = true + 1".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: true,
-        };
+        let err = err_at(
+            ErrorKind::Type,
+            "type mismatch",
+            3,
+            5,
+            "let x = true + 1",
+            true,
+        );
         let output = format!("{err}");
         assert!(output.contains("warning[type]"));
         assert!(output.contains("type mismatch"));
@@ -572,14 +607,14 @@ mod tests {
 
     #[test]
     fn test_source_error_type_error() {
-        let err = SourceError {
-            kind: ErrorKind::Type,
-            message: "type mismatch".to_string(),
-            span: Span::with_offset(3, 5, 0),
-            source_line: Some("let x = true + 1".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: false,
-        };
+        let err = err_at(
+            ErrorKind::Type,
+            "type mismatch",
+            3,
+            5,
+            "let x = true + 1",
+            false,
+        );
         let output = format!("{err}");
         assert!(output.contains("error[type]"));
         assert!(output.contains("type mismatch"));
@@ -594,13 +629,8 @@ mod tests {
     // compile until they thread a span through the error path.
     #[test]
     fn test_runtime_at_is_the_sole_runtime_constructor() {
-        let source = "fn main() { 42 }";
-        let err = SourceError::runtime_at(
-            "division by zero",
-            Span::with_offset(1, 1, 0),
-            source,
-            "test.silt",
-        );
+        let map = sources("fn main() { 42 }");
+        let err = SourceError::runtime_at("division by zero", Some(at(0)), &map, "test.silt");
         let output = format!("{err}");
         assert!(output.contains("error[runtime]"));
         assert!(output.contains("division by zero"));
@@ -617,8 +647,8 @@ mod tests {
     fn test_compile_error_at_renders_canonical_shape() {
         let err = SourceError::compile_error_at(
             "program has no main() function",
-            Span::new(0, 0),
-            "",
+            None,
+            &sources(""),
             "empty.silt",
         );
         let output = format!("{err}");
@@ -633,10 +663,9 @@ mod tests {
     fn test_from_lex_error() {
         let lex_err = LexError {
             message: "unexpected character: '@'".to_string(),
-            span: Span::with_offset(1, 5, 4),
+            span: at(4),
         };
-        let source = "let @x = 42";
-        let err = SourceError::from_lex_error(&lex_err, source, "test.silt");
+        let err = SourceError::from_lex_error(&lex_err, &sources("let @x = 42"), "test.silt");
         assert_eq!(err.kind, ErrorKind::Lex);
         assert_eq!(err.source_line, Some("let @x = 42".to_string()));
         assert_eq!(err.file, Some("test.silt".to_string()));
@@ -646,10 +675,10 @@ mod tests {
     fn test_from_parse_error() {
         let parse_err = ParseError {
             message: "expected identifier, found +".to_string(),
-            span: Span::with_offset(2, 7, 15),
+            span: at(15),
         };
-        let source = "let x = 42\nlet + = 1";
-        let err = SourceError::from_parse_error(&parse_err, source, "test.silt");
+        let map = sources("let x = 42\nlet + = 1");
+        let err = SourceError::from_parse_error(&parse_err, &map, "test.silt");
         assert_eq!(err.kind, ErrorKind::Parse);
         assert_eq!(err.source_line, Some("let + = 1".to_string()));
     }
@@ -659,14 +688,7 @@ mod tests {
     fn test_gutter_width_line_9_single_column() {
         // Line 9 should get a 1-column gutter (line_num_width(9) == 1),
         // not a 2-column gutter from the old `line_num_width(line_num + 1)`.
-        let err = SourceError {
-            kind: ErrorKind::Parse,
-            message: "oops".to_string(),
-            span: Span::with_offset(9, 1, 0),
-            source_line: Some("x".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: false,
-        };
+        let err = err_at(ErrorKind::Parse, "oops", 9, 1, "x", false);
         let output = format!("{err}");
         // The source line should render as " 9 | x" with a 1-wide gutter,
         // not " 9 | x" with a 2-wide gutter.
@@ -684,14 +706,7 @@ mod tests {
     #[test]
     fn test_gutter_width_line_10_two_columns() {
         // Line 10 legitimately needs a 2-column gutter.
-        let err = SourceError {
-            kind: ErrorKind::Parse,
-            message: "oops".to_string(),
-            span: Span::with_offset(10, 1, 0),
-            source_line: Some("y".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: false,
-        };
+        let err = err_at(ErrorKind::Parse, "oops", 10, 1, "y", false);
         let output = format!("{err}");
         assert!(
             output.contains(" 10 | y"),
@@ -704,14 +719,14 @@ mod tests {
     fn test_note_continuation_alignment() {
         // A multi-line message should align continuation lines with
         // the first `= note:` content.
-        let err = SourceError {
-            kind: ErrorKind::Parse,
-            message: "first line\nsecond line\nthird line".to_string(),
-            span: Span::with_offset(1, 1, 0),
-            source_line: Some("x".to_string()),
-            file: Some("test.silt".to_string()),
-            is_warning: false,
-        };
+        let err = err_at(
+            ErrorKind::Parse,
+            "first line\nsecond line\nthird line",
+            1,
+            1,
+            "x",
+            false,
+        );
         let output = format!("{err}");
         // Find the column where `= note:` content starts.
         let note_line = output.lines().find(|l| l.contains("= note:")).unwrap();
@@ -727,25 +742,22 @@ mod tests {
         );
     }
 
-    // ── L6: from_type_error / from_compile_error clamp spans ──────
+    // ── L6: every constructor moves a position past EOF onto the last line
     #[test]
     fn test_from_type_error_clamps_eof_span() {
         use crate::typechecker::Severity;
-        // Source has 2 lines but the type error span points at line 5
-        // (past EOF). After clamping, the error should have a source
-        // snippet from the last line.
-        let source = "let a = 1\nlet b = 2";
+        // The span points past the end of a two-line source. The error
+        // shows the last real line.
+        let map = sources("let a = 1\nlet b = 2");
         let type_err = TypeError {
             message: "some type error".to_string(),
-            span: Span::with_offset(5, 1, 99),
+            span: at(99),
             severity: Severity::Error,
+            line_note: None,
         };
-        let err = SourceError::from_type_error(&type_err, source, "test.silt");
-        // Span should be clamped to line 2
-        assert_eq!(err.span.line, 2);
-        // Source line should be present (the last real line)
+        let err = SourceError::from_type_error(&type_err, &map, "test.silt");
+        assert_eq!(err.line, 2);
         assert_eq!(err.source_line, Some("let b = 2".to_string()));
-        // The rendered output should contain the source snippet
         let output = format!("{err}");
         assert!(
             output.contains("let b = 2"),
@@ -755,37 +767,23 @@ mod tests {
 
     #[test]
     fn test_from_compile_error_clamps_eof_span() {
-        // Same idea as above but for CompileError.
-        let source = "fn main() { 42 }";
+        let map = sources("fn main() { 42 }\n");
         let compile_err = CompileError {
             message: "some compile error".to_string(),
-            span: Span::with_offset(10, 1, 99),
+            span: at(17),
         };
-        let err = SourceError::from_compile_error(&compile_err, source, "test.silt");
-        // Span should be clamped to line 1 (only line)
-        assert_eq!(err.span.line, 1);
+        let err = SourceError::from_compile_error(&compile_err, &map, "test.silt");
+        assert_eq!((err.line, err.col), (1, 17));
         assert_eq!(err.source_line, Some("fn main() { 42 }".to_string()));
     }
 
     #[test]
     fn test_compile_warning_clamps_eof_span() {
-        // Source has 2 lines but the warning span points at line 5
-        // (past EOF). After clamping, the warning should have a source
-        // snippet from the last line.
-        let source = "let a = 1\nlet b = 2";
-        let err = SourceError::compile_warning(
-            "unused variable",
-            Span::with_offset(5, 1, 99),
-            source,
-            "test.silt",
-        );
-        // Span should be clamped to line 2
-        assert_eq!(err.span.line, 2);
-        // Source line should be present (the last real line)
+        let map = sources("let a = 1\nlet b = 2\n");
+        let err = SourceError::compile_warning("unused variable", at(20), &map, "test.silt");
+        assert_eq!(err.line, 2);
         assert_eq!(err.source_line, Some("let b = 2".to_string()));
-        // Should be a warning
         assert!(err.is_warning);
-        // The rendered output should contain the source snippet
         let output = format!("{err}");
         assert!(
             output.contains("let b = 2"),
@@ -794,25 +792,11 @@ mod tests {
     }
 
     #[test]
-    fn test_runtime_at_clamps_eof_span() {
-        // Source has 1 line but the runtime error span points at line 5
-        // (past EOF). After clamping, the error should have a source
-        // snippet from the last line.
-        let source = "fn main() { 42 }";
-        let err = SourceError::runtime_at(
-            "division by zero",
-            Span::with_offset(5, 1, 99),
-            source,
-            "test.silt",
-        );
-        // Span should be clamped to line 1 (only line)
-        assert_eq!(err.span.line, 1);
-        assert_eq!(err.source_line, Some("fn main() { 42 }".to_string()));
-        // The rendered output should contain the source snippet
+    fn test_runtime_at_without_span_has_no_location() {
+        let map = sources("fn main() { 42 }");
+        let err = SourceError::runtime_at("main returned Err: 1", None, &map, "test.silt");
+        assert_eq!((err.line, err.col, err.source_line.clone()), (0, 0, None));
         let output = format!("{err}");
-        assert!(
-            output.contains("fn main() { 42 }"),
-            "expected clamped source snippet in output:\n{output}"
-        );
+        assert!(!output.contains("-->"), "{output}");
     }
 }

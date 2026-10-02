@@ -9,7 +9,7 @@ pub mod canonical;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::intern::Symbol;
-use crate::lexer::Span;
+use crate::source::Span;
 
 // ── Type representation ─────────────────────────────────────────────
 
@@ -258,15 +258,35 @@ pub struct TypeError {
     pub message: std::string::String,
     pub span: Span,
     pub severity: Severity,
+    /// A last line of the message that names the line of another span.
+    pub line_note: Option<LineNote>,
 }
 
-impl std::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self.severity {
-            Severity::Error => "type error",
-            Severity::Warning => "type warning",
-        };
-        write!(f, "[{}] {}: {}", self.span, label, self.message)
+/// A line of a type error's message that names the line another span
+/// starts on (`the ? on line 8 requires ...`). The checker has no source
+/// text, so it keeps the span, and whoever prints the error, holding the
+/// source, writes the line number in: `{before}{line}{after}`.
+#[derive(Debug, Clone)]
+pub struct LineNote {
+    pub span: Span,
+    pub before: &'static str,
+    pub after: std::string::String,
+}
+
+impl TypeError {
+    /// The whole message, the line note included, with `line_of` giving
+    /// the 1-based line a span starts on.
+    pub fn full_message(&self, line_of: impl Fn(Span) -> u32) -> std::string::String {
+        match &self.line_note {
+            None => self.message.clone(),
+            Some(note) => format!(
+                "{}\n{}{}{}",
+                self.message,
+                note.before,
+                line_of(note.span),
+                note.after
+            ),
+        }
     }
 }
 

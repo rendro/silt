@@ -36,8 +36,10 @@ fn main() {
     let _ = PgError.PgConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lex error");
+    let mut program = silt::parser::Parser::new(tokens, src)
         .parse_program()
         .expect("parse error");
     let errors = silt::typechecker::check(&mut program);
@@ -68,8 +70,10 @@ fn main() {
     let _ = TcpError.TcpConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lex error");
+    let mut program = silt::parser::Parser::new(tokens, src)
         .parse_program()
         .expect("parse error");
     let errors = silt::typechecker::check(&mut program);
@@ -163,8 +167,10 @@ fn typechecker_error_enums_match_arity_registry() {
     }
     src.push_str("fn main() { () }\n");
 
-    let tokens = silt::lexer::Lexer::new(&src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
+        .tokenize()
+        .expect("lex error");
+    let mut program = silt::parser::Parser::new(tokens, &src)
         .parse_program()
         .expect("parse error");
     let errors: Vec<String> = silt::typechecker::check(&mut program)

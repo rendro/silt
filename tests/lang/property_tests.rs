@@ -152,14 +152,14 @@ proptest! {
     #[test]
     fn lexer_never_panics(input in "\\PC{0,200}") {
         // We only care that it doesn't panic — errors are fine.
-        let _ = Lexer::new(&input).tokenize();
+        let _ = Lexer::new(silt::source::FileId::default(), &input).tokenize();
     }
 
     /// The parser must never panic on arbitrary strings.
     #[test]
     fn parser_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(&input).tokenize() {
-            let mut parser = Parser::new(tokens);
+        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+            let mut parser = Parser::new(tokens, &input);
             let _ = parser.parse_program();
         }
     }
@@ -167,8 +167,8 @@ proptest! {
     /// The parser's error-recovering mode must never panic.
     #[test]
     fn parser_recovery_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(&input).tokenize() {
-            let mut parser = Parser::new(tokens);
+        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+            let mut parser = Parser::new(tokens, &input);
             let _ = parser.parse_program_recovering();
         }
     }
@@ -200,18 +200,18 @@ proptest! {
     /// if s parses, then format(s) also parses.
     #[test]
     fn formatter_preserves_parseability(source in arb_formattable_program()) {
-        let tokens = Lexer::new(&source).tokenize();
+        let tokens = Lexer::new(silt::source::FileId::default(), &source).tokenize();
         if tokens.is_err() { return Ok(()); }
         let tokens = tokens.unwrap();
-        let result = Parser::new(tokens).parse_program();
+        let result = Parser::new(tokens, &source).parse_program();
         if result.is_err() { return Ok(()); }
 
         // Source parses — formatted version must also parse.
         if let Ok(formatted) = formatter::format(&source) {
-            let tokens2 = Lexer::new(&formatted).tokenize()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {e}").into()))?;
-            Parser::new(tokens2).parse_program()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {e}").into()))?;
+            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize()
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
+            Parser::new(tokens2, &formatted).parse_program()
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message).into()))?;
         }
     }
 }
@@ -225,11 +225,11 @@ proptest! {
     /// parses without errors. Type errors are fine, panics are not.
     #[test]
     fn typechecker_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(&input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens).parse_program() {
+        let mut program = match Parser::new(tokens, &input).parse_program() {
             Ok(p) => p,
             Err(_) => return Ok(()),
         };
@@ -241,11 +241,11 @@ proptest! {
     /// and typechecks without errors. Compile errors are fine, panics are not.
     #[test]
     fn compiler_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(&input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens).parse_program() {
+        let mut program = match Parser::new(tokens, &input).parse_program() {
             Ok(p) => p,
             Err(_) => return Ok(()),
         };
@@ -276,11 +276,11 @@ proptest! {
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
         let source = format!("{a} {op} {b}");
-        let tokens = match Lexer::new(&source).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &source).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens).parse_program() {
+        let mut program = match Parser::new(tokens, &source).parse_program() {
             Ok(p) => p,
             Err(_) => return Ok(()),
         };

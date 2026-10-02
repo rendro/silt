@@ -14,10 +14,10 @@ use std::sync::Arc;
 use silt::value::Value;
 
 fn run(input: &str) -> Value {
-    let tokens = silt::lexer::Lexer::new(input)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
         .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let mut program = silt::parser::Parser::new(tokens, input)
         .parse_program()
         .expect("parse error");
     let _ = silt::typechecker::check(&mut program);
@@ -175,8 +175,10 @@ fn main() {
   }
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lex");
+    let mut program = silt::parser::Parser::new(tokens, src)
         .parse_program()
         .expect("parse");
     let errors = silt::typechecker::check(&mut program);

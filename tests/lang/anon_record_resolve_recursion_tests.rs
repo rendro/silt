@@ -33,8 +33,12 @@ use silt::typechecker;
 use silt::types::{RowTail, Severity, Type};
 
 fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::types::TypeError>) {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     let errors = typechecker::check(&mut program);
     (program, errors)
 }

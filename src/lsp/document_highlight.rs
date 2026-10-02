@@ -19,7 +19,7 @@ impl Server {
         let cursor = position_to_offset(&doc.source, &pos);
         // Source-aware so cursor on `fn`/`type` decl names resolves
         // (round-63 B2 — match rename/hover behaviour).
-        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))?;
 
         // Reuse the workspace references walker but filter to current
         // document. Kind: TEXT — we don't distinguish read vs write.

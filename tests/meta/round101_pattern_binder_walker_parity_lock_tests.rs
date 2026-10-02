@@ -15,10 +15,10 @@ use silt::parser::Parser;
 use silt::repl::collect_decl_completion_names;
 
 fn completion_names(src: &str) -> Vec<String> {
-    let tokens = Lexer::new(src)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("fixture failed to lex: {}", e.message));
-    let program = Parser::new(tokens)
+    let program = Parser::new(tokens, src)
         .parse_program()
         .unwrap_or_else(|e| panic!("fixture failed to parse: {}", e.message));
     collect_decl_completion_names(&program.decls)

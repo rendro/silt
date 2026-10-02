@@ -46,11 +46,12 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
 use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
-use crate::compiler::{CompileError, Compiler};
-use crate::errors::{SourceError, active_colors};
+use crate::compiler::Compiler;
+use crate::errors::{ErrorKind, SourceError, active_colors};
 use crate::intern;
-use crate::lexer::{LexError, Lexer, Span};
-use crate::parser::{ParseError, Parser};
+use crate::lexer::Lexer;
+use crate::parser::Parser;
+use crate::source::{FileId, SourceMap, SourceName, Span};
 use crate::typechecker;
 use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
@@ -199,6 +200,9 @@ pub fn run_repl() {
     crate::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
     let mut type_ctx = ReplTypeContext::new();
+    // The text of every input of the session: the code an input defines
+    // keeps pointing into it after later inputs.
+    let mut sources = SourceMap::new();
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
 
@@ -251,7 +255,7 @@ pub fn run_repl() {
 
                 let _ = rl.add_history_entry(&input);
 
-                eval_input(&mut vm, &mut type_ctx, &input, &names);
+                eval_input(&mut vm, &mut type_ctx, &mut sources, &input, &names);
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -535,35 +539,152 @@ fn starts_with_fn_keyword(s: &str) -> bool {
 fn eval_input(
     vm: &mut Vm,
     type_ctx: &mut ReplTypeContext,
+    sources: &mut SourceMap,
     input: &str,
     names: &Rc<RefCell<Vec<String>>>,
 ) {
     if is_declaration(input) {
-        eval_declaration(vm, type_ctx, input, names);
+        eval_declaration(vm, type_ctx, sources, input, names);
     } else {
-        eval_expression(vm, type_ctx, input);
+        eval_expression(vm, type_ctx, sources, input);
+    }
+}
+
+/// One REPL input as it was compiled, in the session's source map, and
+/// how a position in it is shown: in the coordinates of what the user
+/// typed. A declaration is compiled as typed; an expression is compiled
+/// wrapped in a function, whose header line comes before the input.
+struct ReplEntry<'a> {
+    /// The compiled text: the input, or the input wrapped.
+    file: FileId,
+    /// What the user typed.
+    input: &'a str,
+    /// Whether `file` holds the input wrapped in a function.
+    wrapped: bool,
+}
+
+impl ReplEntry<'_> {
+    /// Add the compiled `text` of `input` to `sources`.
+    fn add<'a>(
+        sources: &mut SourceMap,
+        input: &'a str,
+        text: &str,
+        wrapped: bool,
+    ) -> ReplEntry<'a> {
+        let file = sources.add(SourceName::Repl(sources.file_count() + 1), text.into());
+        ReplEntry {
+            file,
+            input,
+            wrapped,
+        }
+    }
+
+    /// The 1-based line and column in the input of byte `at` of the
+    /// compiled text. For a wrapped input the lines are one lower, and a
+    /// position on the wrapper's closing `}` (past the input's last line)
+    /// moves to the last column of the input's last line, so the caret
+    /// stays inside the user's text.
+    fn position(&self, sources: &SourceMap, at: u32) -> (usize, usize) {
+        let (line, col) = sources.line_col((self.file, at));
+        let (line, col) = (line as usize, col as usize);
+        if !self.wrapped {
+            return (line, col);
+        }
+        let input_lines = self.input.lines().count().max(1);
+        let raw_line = line.saturating_sub(1);
+        if raw_line == 0 {
+            (1, col)
+        } else if raw_line > input_lines {
+            let last_line_cols = self.input.lines().last().map_or(0, |l| l.chars().count());
+            (input_lines, last_line_cols.max(1))
+        } else {
+            (raw_line, col)
+        }
+    }
+
+    /// Whether `(line, col)` is a position in the input: a line it has,
+    /// and a column inside that line or just past its end (where a caret
+    /// for an expected token goes).
+    fn fits(&self, (line, col): (usize, usize)) -> bool {
+        let Some(line_text) = line.checked_sub(1).and_then(|i| self.input.lines().nth(i)) else {
+            return false;
+        };
+        col >= 1 && col <= line_text.chars().count() + 1
+    }
+
+    /// A diagnostic at `span` of the compiled text, shown against the
+    /// input. A position past the input's last line moves onto the end
+    /// of that line, as for every other diagnostic.
+    fn error(
+        &self,
+        sources: &SourceMap,
+        kind: ErrorKind,
+        message: String,
+        span: Span,
+        is_warning: bool,
+    ) -> SourceError {
+        let (mut line, mut col) = self.position(sources, span.start);
+        let line_count = self.input.lines().count();
+        if line_count > 0 && line > line_count {
+            line = line_count;
+            col = self.input.lines().last().map_or(0, |l| l.chars().count()) + 1;
+        }
+        SourceError {
+            kind,
+            message,
+            span: Some(span),
+            line,
+            col,
+            source_line: self.input.lines().nth(line - 1).map(str::to_string),
+            file: Some("<repl>".to_string()),
+            is_warning,
+        }
+    }
+
+    fn lex_error(&self, sources: &SourceMap, e: &crate::lexer::LexError) -> SourceError {
+        self.error(sources, ErrorKind::Lex, e.message.clone(), e.span, false)
+    }
+
+    fn parse_error(&self, sources: &SourceMap, e: &crate::parser::ParseError) -> SourceError {
+        self.error(sources, ErrorKind::Parse, e.message.clone(), e.span, false)
+    }
+
+    fn type_error(&self, sources: &SourceMap, e: &typechecker::TypeError) -> SourceError {
+        let message = e.full_message(|span| self.position(sources, span.start).0 as u32);
+        let is_warning = e.severity == typechecker::Severity::Warning;
+        self.error(sources, ErrorKind::Type, message, e.span, is_warning)
+    }
+
+    fn compile_error(&self, sources: &SourceMap, e: &crate::compiler::CompileError) -> SourceError {
+        self.error(
+            sources,
+            ErrorKind::Compile,
+            e.message.clone(),
+            e.span,
+            false,
+        )
     }
 }
 
 fn eval_declaration(
     vm: &mut Vm,
     type_ctx: &mut ReplTypeContext,
+    sources: &mut SourceMap,
     input: &str,
     names: &Rc<RefCell<Vec<String>>>,
 ) {
-    let tokens = match Lexer::new(input).tokenize() {
+    let entry = ReplEntry::add(sources, input, input, false);
+    let tokens = match Lexer::new(entry.file, input).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            let source_err = SourceError::from_lex_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.lex_error(sources, &e));
             return;
         }
     };
-    let mut program = match Parser::new(tokens).for_repl().parse_program() {
+    let mut program = match Parser::new(tokens, input).for_repl().parse_program() {
         Ok(p) => p,
         Err(e) => {
-            let source_err = SourceError::from_parse_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.parse_error(sources, &e));
             return;
         }
     };
@@ -572,8 +693,7 @@ fn eval_declaration(
     // defined names are visible to this input.
     let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
-        let source_err = SourceError::from_type_error(te, input, "<repl>");
-        eprintln!("{source_err}");
+        eprintln!("{}", entry.type_error(sources, te));
     }
     if type_errors
         .iter()
@@ -592,8 +712,7 @@ fn eval_declaration(
     let functions = match compiler.compile_declarations(&program) {
         Ok(f) => f,
         Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.compile_error(sources, &e));
             return;
         }
     };
@@ -602,11 +721,9 @@ fn eval_declaration(
         return;
     };
     if let Err(e) = vm.run(script) {
-        // Declarations are compiled un-wrapped, so spans are already in
-        // `input` coordinates — pass `None` for the adjust tuple. The
-        // shared helper handles the in-range / out-of-range / span-less
-        // branches plus call-stack rendering.
-        render_repl_vm_error(&e, input, None);
+        // The shared helper handles the in-range / out-of-range /
+        // span-less branches plus call-stack rendering.
+        render_repl_vm_error(&e, sources, &entry);
         return;
     }
 
@@ -689,7 +806,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
             }
         }
         PatternKind::Record { fields, .. } => {
-            for (field_name, sub) in fields {
+            for (field_name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, names);
                 } else {
@@ -704,7 +821,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
             // the nominal record case. Round-101: the named rest binder
             // (`{ x, ...rest }`) binds too — mirror the typechecker's
             // `collect_pattern_vars`.
-            for (field_name, sub) in fields {
+            for (field_name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, names);
                 } else {
@@ -712,7 +829,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                     names.push(intern::resolve(*field_name));
                 }
             }
-            if let Some(r) = rest {
+            if let Some((r, _)) = rest {
                 names.push(intern::resolve(*r));
             }
         }
@@ -744,37 +861,26 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
 
 /// Render a runtime `VmError` to stderr in the REPL's canonical shape.
 ///
-/// Shared between `eval_declaration` (un-wrapped input — pass `adjust = None`)
-/// and `eval_expression` (input wrapped in `fn main() { … }` — pass
-/// `adjust = Some((wrapper_prefix_len, input_line_count, input_byte_len,
-/// last_line_cols))` so spans are translated back into the user's
-/// coordinates via `adjust_span`).
+/// Shared between `eval_declaration` and `eval_expression`; `entry` is the
+/// input being run.
 ///
-/// Output exactly mirrors what the previous inline blocks emitted:
-///
-///   * If `e.span` is `Some` and the (adjusted) span fits `input`, render
-///     `SourceError::runtime_at(...)` for a caret-aligned diagnostic.
-///   * If `e.span` is `Some` but out of range (i.e. the chunk was compiled
-///     in a previous REPL entry), call
-///     `render_runtime_error_without_source(msg, true)` to get the
-///     `--> <declaration>` locator shape.
+///   * If `e.span` is in `entry` and its position fits the input, render
+///     a caret-aligned `error[runtime]` diagnostic.
+///   * If `e.span` is in another input (the code was compiled in a
+///     previous REPL entry, e.g. a `fn` called from a later expression),
+///     or does not fit, call `render_runtime_error_without_source(msg,
+///     true)` to get the `--> <declaration>` locator shape.
 ///   * Then iterate `repl_call_stack_lines(...)` printing every frame at
-///     `<declaration>` (line numbers from earlier-entry coordinates aren't
-///     meaningful against the current entry's text), with synthetic
-///     `__repl_eval_<n>` wrapper frames relabelled `<repl>`.
+///     `<declaration>`, with synthetic `__repl_eval_<n>` wrapper frames
+///     relabelled `<repl>`.
 ///   * If `e.span` is `None`, call
 ///     `render_runtime_error_without_source(msg, false)` — a plain
 ///     `error[runtime]:` header with no locator.
-fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, usize, usize)>) {
+fn render_repl_vm_error(e: &VmError, sources: &SourceMap, entry: &ReplEntry<'_>) {
     if let Some(span) = e.span {
-        let resolved = match adjust {
-            Some((prefix_len, input_lines, input_bytes, last_line_cols)) => {
-                adjust_span(span, prefix_len, input_lines, input_bytes, last_line_cols)
-            }
-            None => span,
-        };
-        if span_fits_input(resolved, input) {
-            let source_err = SourceError::runtime_at(&e.message, resolved, input, "<repl>");
+        if span.file == entry.file && entry.fits(entry.position(sources, span.start)) {
+            let source_err =
+                entry.error(sources, ErrorKind::Runtime, e.message.clone(), span, false);
             eprintln!("{source_err}");
         } else {
             // Out-of-range span (prior-entry chunk): render with the
@@ -783,12 +889,10 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
             // `SourceError::Display` shape. Round-59 GAP #5.
             eprintln!("{}", render_runtime_error_without_source(&e.message, true));
         }
-        // Print the call stack for the non-synthetic frames. Frame line
-        // numbers come from the original REPL input buffer (or the wrapped
-        // input for `eval_expression`) and don't carry usable positions
-        // here, so we label every frame `<declaration>`. The synthetic
-        // `__repl_eval_<n>` expression wrapper is relabelled `<repl>` so
-        // the internal name never reaches the user.
+        // Print the call stack for the non-synthetic frames, every frame
+        // labelled `<declaration>`. The synthetic `__repl_eval_<n>`
+        // expression wrapper is relabelled `<repl>` so the internal name
+        // never reaches the user.
         for line in repl_call_stack_lines(&e.call_stack) {
             eprintln!("{line}");
         }
@@ -813,9 +917,8 @@ fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, 
 /// meaningful frames). `render_call_stack` keeps the `<repl>` label
 /// explicitly (src/vm/error.rs).
 ///
-/// Every frame's location is `<declaration>`: frame line numbers come
-/// from the original REPL input buffer (or the wrapped input for
-/// `eval_expression`) and don't carry usable positions here.
+/// Every frame's location is `<declaration>`: a frame's code can come
+/// from any input of the session.
 ///
 /// `pub` so the regression lock (tests/cli/repl_wrapper_frame_leak_tests.rs)
 /// can exercise the exact production rendering path.
@@ -877,10 +980,10 @@ fn eval_expression_value(
     let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
     let wrapper_prefix = wrapper_prefix_owned.as_str();
     let wrapped = format!("{wrapper_prefix}{input}\n}}");
-    let tokens = Lexer::new(&wrapped)
+    let tokens = Lexer::new(crate::source::FileId::default(), &wrapped)
         .tokenize()
         .map_err(|e| format!("lex error: {}", e.message))?;
-    let mut program = Parser::new(tokens)
+    let mut program = Parser::new(tokens, &wrapped)
         .parse_program()
         .map_err(|e| format!("parse error: {}", e.message))?;
     let type_errors = type_ctx.check(&mut program);
@@ -920,10 +1023,10 @@ fn eval_declaration_value(
     type_ctx: &mut ReplTypeContext,
     input: &str,
 ) -> Result<(), String> {
-    let tokens = Lexer::new(input)
+    let tokens = Lexer::new(crate::source::FileId::default(), input)
         .tokenize()
         .map_err(|e| format!("lex error: {}", e.message))?;
-    let mut program = Parser::new(tokens)
+    let mut program = Parser::new(tokens, input)
         .parse_program()
         .map_err(|e| format!("parse error: {}", e.message))?;
     let type_errors = type_ctx.check(&mut program);
@@ -946,7 +1049,12 @@ fn eval_declaration_value(
     Ok(())
 }
 
-fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
+fn eval_expression(
+    vm: &mut Vm,
+    type_ctx: &mut ReplTypeContext,
+    sources: &mut SourceMap,
+    input: &str,
+) {
     // Wrap the expression in a synthetic top-level function so the
     // compiler can handle it. Round-74 BROKEN fix: this used to be
     // `fn main()`, which silently shadowed any user-defined `fn main()`
@@ -954,44 +1062,19 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // was `main()`. We now use a unique per-eval name that user code
     // cannot realistically collide with.
     let wrapper_name = next_repl_wrapper_name();
-    let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
-    let wrapper_prefix = wrapper_prefix_owned.as_str();
-    let wrapped = format!("{wrapper_prefix}{input}\n}}");
-    // Total lines in the user's real input (minimum 1), used to clamp errors
-    // that land on synthetic tokens past the user's text.
-    let input_line_count = input.lines().count().max(1);
-    let input_byte_len = input.len();
-    // Length (in columns) of the final user-input line, used when clamping
-    // past-end errors so the caret points at the end of the last real line
-    // instead of column 1 of a synthetic `}`.
-    let last_line_cols = input.lines().last().map(|l| l.chars().count()).unwrap_or(0);
-    let tokens = match Lexer::new(&wrapped).tokenize() {
+    let wrapped = format!("fn {wrapper_name}() {{\n{input}\n}}");
+    let entry = ReplEntry::add(sources, input, &wrapped, true);
+    let tokens = match Lexer::new(entry.file, &wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            let adjusted = adjust_error_span_lex(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_lex_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.lex_error(sources, &e));
             return;
         }
     };
-    let mut program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens, &wrapped).parse_program() {
         Ok(p) => p,
         Err(e) => {
-            let adjusted = adjust_error_span_parse(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_parse_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.parse_error(sources, &e));
             return;
         }
     };
@@ -1000,15 +1083,7 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // defined names are visible to this input.
     let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
-        let adjusted = adjust_error_span_type(
-            te,
-            wrapper_prefix.len(),
-            input_line_count,
-            input_byte_len,
-            last_line_cols,
-        );
-        let source_err = SourceError::from_type_error(&adjusted, input, "<repl>");
-        eprintln!("{source_err}");
+        eprintln!("{}", entry.type_error(sources, te));
     }
     if type_errors
         .iter()
@@ -1031,15 +1106,7 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     let functions = match compiler.compile_program_with_entry(&program, &wrapper_name) {
         Ok(f) => f,
         Err(e) => {
-            let adjusted = adjust_error_span_compile(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_compile_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
+            eprintln!("{}", entry.compile_error(sources, &e));
             return;
         }
     };
@@ -1053,48 +1120,11 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                 println!("{val}");
             }
         }
-        Err(e) => {
-            // Expressions are compiled wrapped in `fn main() { … }`, so spans
-            // need to be translated back into the user's coordinates. Pass
-            // the wrapper metadata so the shared helper can call
-            // `adjust_span`. Branching for in-range / out-of-range spans and
-            // span-less errors lives inside `render_repl_vm_error`.
-            render_repl_vm_error(
-                &e,
-                input,
-                Some((
-                    wrapper_prefix.len(),
-                    input_line_count,
-                    input_byte_len,
-                    last_line_cols,
-                )),
-            );
-        }
+        // Positions are translated back into the user's coordinates by
+        // the entry; branching for in-range / out-of-range spans and
+        // span-less errors lives inside `render_repl_vm_error`.
+        Err(e) => render_repl_vm_error(&e, sources, &entry),
     }
-}
-
-/// Test whether `span` points at a real (line, column) position inside
-/// `input`. Used to detect runtime-error spans that came from a chunk
-/// compiled in a *previous* REPL entry: such spans will have line/col
-/// pairs that don't correspond to any character of the current entry's
-/// source, because each REPL entry is lexed in its own coordinate space
-/// starting from line 1 column 1.
-///
-/// A span "fits" when:
-///   - its line is 1-based and exists in `input`, AND
-///   - its column is 1-based and lies within (or one past the end of)
-///     that line's character count — one past end is valid because it
-///     corresponds to the position right after the last character, e.g.
-///     a trailing expected-token caret.
-fn span_fits_input(span: Span, input: &str) -> bool {
-    if span.line == 0 || span.col == 0 {
-        return false;
-    }
-    let Some(line_text) = input.lines().nth(span.line - 1) else {
-        return false;
-    };
-    let line_chars = line_text.chars().count();
-    span.col <= line_chars + 1
 }
 
 /// Render a runtime-error diagnostic for the REPL when no usable source
@@ -1119,7 +1149,7 @@ fn span_fits_input(span: Span, input: &str) -> bool {
 /// `show_declaration_locator` controls which shape is emitted:
 ///   * `true`  → include ` --> <declaration>` below the header.
 ///   * `false` → omit the locator entirely (`SourceError::Display` does
-///     the same when `span.line == 0`).
+///     the same for an error without a span).
 ///
 /// Multi-line messages are split on the first `\n`: the first line goes
 /// into the `error[runtime]:` header, and subsequent lines render AFTER
@@ -1224,90 +1254,6 @@ pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| n.starts_with(prefix))
         .collect()
-}
-
-/// Adjust a span from `wrapped` coordinates to `input` coordinates.
-///
-/// The wrapper adds one line (`fn __repl_eval_<n>() {\n`, formerly
-/// `fn main() {\n`) before the user input, so line numbers are off by 1
-/// and byte offsets are off by `prefix_len`. When an error lands on the
-/// synthetic closing `}` — i.e. past the last line of the user's real
-/// input — we clamp it to the last line (and end-of-line column) so the
-/// error pointer stays inside the user's text rather than printing a
-/// phantom line.
-fn adjust_span(
-    span: Span,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> Span {
-    let raw_line = span.line.saturating_sub(1);
-    let (line, col) = if raw_line == 0 {
-        (1, span.col)
-    } else if raw_line > input_lines {
-        // Error lands past the user's input (typically on the synthetic `}`).
-        // Clamp to the end of the last real line.
-        (input_lines, last_line_cols.max(1))
-    } else {
-        (raw_line, span.col)
-    };
-    let raw_offset = span.offset.saturating_sub(prefix_len);
-    let offset = raw_offset.min(input_bytes);
-    Span::with_offset(line, col, offset)
-}
-
-fn adjust_error_span_lex(
-    e: &LexError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> LexError {
-    LexError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_parse(
-    e: &ParseError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> ParseError {
-    ParseError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_compile(
-    e: &CompileError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> CompileError {
-    CompileError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_type(
-    e: &typechecker::TypeError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> typechecker::TypeError {
-    typechecker::TypeError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-        severity: e.severity,
-    }
 }
 
 #[cfg(test)]
@@ -1743,51 +1689,39 @@ mod tests {
         assert_eq!(format!("{value}"), "7");
     }
 
-    // ── adjust_span clamping ──────────────────────────────────────
+    // ── ReplEntry positions ───────────────────────────────────────
     //
     // When a parse error lands past the user's input (on the synthetic
-    // closing `}` the REPL appends), `adjust_span` clamps the span back
-    // to the last column of the last real line — not one past it.
+    // closing `}` the REPL appends), the entry moves it back to the last
+    // column of the last real line — not one past it.
 
     #[test]
-    fn adjust_span_clamps_synthetic_brace_to_last_real_column() {
-        // Simulate input `42 +` (4 cols on line 1 of user input), wrapped
-        // as `fn main() {\n42 +\n}`. A parse error on the synthetic `}`
-        // arrives as line 3 in wrapped coordinates. After adjustment it
-        // should sit on the last real column (4, the `+`), not column 5.
-        let prefix_len = "fn main() {\n".len();
+    fn a_position_on_the_synthetic_brace_moves_to_the_last_real_column() {
+        // Input `42 +` (4 cols on line 1 of user input), wrapped as
+        // `fn main() {\n42 +\n}`. A parse error on the synthetic `}` is
+        // on line 3 of the wrapped text; it shows on the last real
+        // column (4, the `+`), not column 5.
+        let mut sources = SourceMap::new();
         let input = "42 +";
-        let input_bytes = input.len();
-        let last_line_cols = 4; // `+` is column 4
-        let wrapped_span = Span::with_offset(3, 1, prefix_len + input_bytes + 1);
-
-        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input_bytes, last_line_cols);
-
-        assert_eq!(adjusted.line, 1, "line should clamp to last real line");
-        assert_eq!(
-            adjusted.col, 4,
-            "col should sit on the last real column (the `+`), not one past it"
-        );
-        assert_eq!(
-            adjusted.offset, input_bytes,
-            "offset should clamp to end of real input"
-        );
+        let wrapped = format!("fn main() {{\n{input}\n}}");
+        let entry = ReplEntry::add(&mut sources, input, &wrapped, true);
+        let brace = (wrapped.len() - 1) as u32;
+        assert_eq!(entry.position(&sources, brace), (1, 4));
     }
 
     #[test]
-    fn adjust_span_preserves_in_range_spans() {
-        // An error on line 1 col 3 of wrapped input maps back to line 1
-        // col 3 of user input (line is offset by 1 in wrapped form, but
-        // raw_line == 0 falls through to the first arm unchanged).
-        let prefix_len = "fn main() {\n".len();
+    fn a_position_in_the_input_keeps_its_column() {
+        // Line 2 col 3 of the wrapped text is line 1 col 3 of the input.
+        let mut sources = SourceMap::new();
         let input = "foo";
-        let wrapped_span = Span::with_offset(2, 3, prefix_len + 2);
-
-        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input.len(), 3);
-
-        assert_eq!(adjusted.line, 1);
-        assert_eq!(adjusted.col, 3);
-        assert_eq!(adjusted.offset, 2);
+        let wrapped = format!("fn main() {{\n{input}\n}}");
+        let entry = ReplEntry::add(&mut sources, input, &wrapped, true);
+        let at = ("fn main() {\n".len() + 2) as u32;
+        assert_eq!(entry.position(&sources, at), (1, 3));
+        assert!(entry.fits((1, 3)));
+        assert!(entry.fits((1, 4)));
+        assert!(!entry.fits((1, 5)));
+        assert!(!entry.fits((2, 1)));
     }
 
     // ── DX2: completion filters on module prefix ──────────────────

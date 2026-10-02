@@ -25,7 +25,7 @@ impl Server {
 
         // Walk backwards from cursor to find the function name before `(`.
         let cursor = position_to_offset(&doc.source, &pos);
-        let before = &doc.source[..cursor];
+        let before = &doc.source.text[..cursor];
 
         // Forward-scan `before` to find the active call site: the last `(`
         // at nesting depth 0, and count commas at depth 1 from there.
@@ -307,18 +307,14 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Span;
+    use crate::source::Span;
 
     // ── build_signature_from_def ─────────────────────────────────
 
     #[test]
     fn test_build_signature_simple() {
         let def = DefInfo {
-            span: Span {
-                line: 1,
-                col: 1,
-                offset: 0,
-            },
+            span: Span::point(crate::source::FileId::default(), 0),
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
@@ -332,11 +328,7 @@ mod tests {
     #[test]
     fn test_build_signature_no_type() {
         let def = DefInfo {
-            span: Span {
-                line: 1,
-                col: 1,
-                offset: 0,
-            },
+            span: Span::point(crate::source::FileId::default(), 0),
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,

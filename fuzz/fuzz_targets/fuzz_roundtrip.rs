@@ -8,20 +8,20 @@ use silt::parser::Parser;
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
         // If the source lexes and parses successfully...
-        let tokens = match Lexer::new(s).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), s).tokenize() {
             Ok(t) => t,
             Err(_) => return,
         };
-        if Parser::new(tokens).parse_program().is_err() {
+        if Parser::new(tokens, s).parse_program().is_err() {
             return;
         }
 
         // ...then formatting must succeed and the result must still parse.
         if let Ok(formatted) = formatter::format(s) {
-            let tokens2 = Lexer::new(&formatted)
+            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted)
                 .tokenize()
                 .expect("Formatted code must lex");
-            Parser::new(tokens2)
+            Parser::new(tokens2, &formatted)
                 .parse_program()
                 .expect("Formatted code must parse");
 

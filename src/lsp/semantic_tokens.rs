@@ -14,12 +14,11 @@ use lsp_types::{
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
+use crate::source::{SourceFile, Span};
 
 use super::Server;
 use super::ast_walk::visit_expr_children;
-use super::conversions::offset_to_position;
 use super::state::Document;
-use super::text_utils::find_ident_in_range;
 
 // ── Token legend ───────────────────────────────────────────────────
 
@@ -169,19 +168,9 @@ fn collect_tokens(server: &Server, doc: &Document, program: &Program, out: &mut 
     }
 }
 
-fn emit_fn_decl_tokens(f: &FnDecl, source: &str, out: &mut Vec<RawToken>) {
-    // Emit FUNCTION on the fn name ident. `f.span` sits at the `fn`
-    // keyword — we need to scan past it to reach the identifier. The
-    // params list opens with `(`, so any `name` match in the range
-    // [f.span.offset, first-`(`] is the fn name.
-    let name_str = resolve(f.name);
-    if let Some(paren) = source[f.span.offset.min(source.len())..]
-        .find('(')
-        .map(|p| f.span.offset + p)
-        && let Some(off) = find_ident_in_range(source, f.span.offset, paren, &name_str)
-    {
-        push_token_at_offset(source, off, &name_str, TT_FUNCTION, out);
-    }
+fn emit_fn_decl_tokens(f: &FnDecl, source: &SourceFile, out: &mut Vec<RawToken>) {
+    // Emit FUNCTION on the fn name ident.
+    emit_binding_token(source, &f.name_span, f.name, TT_FUNCTION, out);
 
     // Fn parameters: PARAMETER on a plain name (its pattern span is at
     // the ident); the binders of a destructuring pattern are VARIABLEs,
@@ -200,19 +189,7 @@ fn emit_fn_decl_tokens(f: &FnDecl, source: &str, out: &mut Vec<RawToken>) {
     // reach it via the same path with full `doc`/`server` context.
 }
 
-fn emit_type_decl_tokens(t: &TypeDecl, source: &str, out: &mut Vec<RawToken>) {
-    let name_str = resolve(t.name);
-    // Scan from `type` keyword forward for the first occurrence of the
-    // name; use the opening brace or paren (whichever comes first) as
-    // an upper bound.
-    let start = t.span.offset.min(source.len());
-    let bound_brace = source[start..].find('{').map(|p| start + p);
-    let bound_paren = source[start..].find('(').map(|p| start + p);
-    let end = match (bound_brace, bound_paren) {
-        (Some(a), Some(b)) => a.min(b),
-        (Some(a), None) | (None, Some(a)) => a,
-        (None, None) => source.len(),
-    };
+fn emit_type_decl_tokens(t: &TypeDecl, source: &SourceFile, out: &mut Vec<RawToken>) {
     let token_type = match &t.body {
         TypeBody::Enum(_) => TT_ENUM,
         TypeBody::Record(_) => TT_TYPE,
@@ -221,40 +198,18 @@ fn emit_type_decl_tokens(t: &TypeDecl, source: &str, out: &mut Vec<RawToken>) {
         // dedicated category.
         TypeBody::Alias(_) => TT_TYPE,
     };
-    if let Some(off) = find_ident_in_range(source, start, end, &name_str) {
-        push_token_at_offset(source, off, &name_str, token_type, out);
-    }
+    emit_binding_token(source, &t.name_span, t.name, token_type, out);
 
     match &t.body {
         TypeBody::Enum(variants) => {
-            // Variants: search for each variant name within the body
-            // region following the `{`.
-            if let Some(brace) = bound_brace {
-                let body_end = source[brace..]
-                    .rfind('}')
-                    .map(|p| brace + p + 1)
-                    .unwrap_or(source.len());
-                for v in variants {
-                    let vname = resolve(v.name);
-                    if let Some(off) = find_ident_in_range(source, brace, body_end, &vname) {
-                        push_token_at_offset(source, off, &vname, TT_ENUM_MEMBER, out);
-                    }
-                }
+            for v in variants {
+                emit_binding_token(source, &v.name_span, v.name, TT_ENUM_MEMBER, out);
             }
         }
         TypeBody::Record(fields) => {
             // Record field names: emit PROPERTY for each declared field.
-            if let Some(brace) = bound_brace {
-                let body_end = source[brace..]
-                    .rfind('}')
-                    .map(|p| brace + p + 1)
-                    .unwrap_or(source.len());
-                for field in fields {
-                    let fname = resolve(field.name);
-                    if let Some(off) = find_ident_in_range(source, brace, body_end, &fname) {
-                        push_token_at_offset(source, off, &fname, TT_PROPERTY, out);
-                    }
-                }
+            for field in fields {
+                emit_binding_token(source, &field.name_span, field.name, TT_PROPERTY, out);
             }
         }
         TypeBody::Alias(_) => {
@@ -266,16 +221,8 @@ fn emit_type_decl_tokens(t: &TypeDecl, source: &str, out: &mut Vec<RawToken>) {
     }
 }
 
-fn emit_trait_decl_tokens(t: &TraitDecl, source: &str, out: &mut Vec<RawToken>) {
-    let name_str = resolve(t.name);
-    let start = t.span.offset.min(source.len());
-    let end = source[start..]
-        .find('{')
-        .map(|p| start + p)
-        .unwrap_or(source.len());
-    if let Some(off) = find_ident_in_range(source, start, end, &name_str) {
-        push_token_at_offset(source, off, &name_str, TT_INTERFACE, out);
-    }
+fn emit_trait_decl_tokens(t: &TraitDecl, source: &SourceFile, out: &mut Vec<RawToken>) {
+    emit_binding_token(source, &t.name_span, t.name, TT_INTERFACE, out);
 
     // Trait method signatures behave like fn decls.
     for method in &t.methods {
@@ -286,8 +233,8 @@ fn emit_trait_decl_tokens(t: &TraitDecl, source: &str, out: &mut Vec<RawToken>) 
 /// Emit a single token at a precomputed pattern/decl span for a bound
 /// identifier — no scanning needed, the span already points at the ident.
 fn emit_binding_token(
-    source: &str,
-    span: &crate::lexer::Span,
+    source: &SourceFile,
+    span: &crate::source::Span,
     name: Symbol,
     token_type: u32,
     out: &mut Vec<RawToken>,
@@ -296,24 +243,22 @@ fn emit_binding_token(
         return;
     }
     let name_str = resolve(name);
-    push_token_at_offset(source, span.offset, &name_str, token_type, out);
+    push_token_at_offset(source, span.start as usize, &name_str, token_type, out);
 }
 
 /// Convert a (byte-offset, ident-string) pair into a RawToken using
 /// UTF-16-correct line/column math.
 fn push_token_at_offset(
-    source: &str,
+    source: &SourceFile,
     offset: usize,
     name: &str,
     token_type: u32,
     out: &mut Vec<RawToken>,
 ) {
-    if offset > source.len() {
+    if offset > source.text.len() {
         return;
     }
-    // Delegate UTF-16 line/column math to the canonical helper in
-    // `conversions` rather than re-implementing it here.
-    let pos = offset_to_position(source, offset);
+    let pos = source.lsp_position(offset as u32);
     let length_utf16 = name.encode_utf16().count() as u32;
     out.push(RawToken {
         line: pos.line,
@@ -327,16 +272,16 @@ fn push_token_at_offset(
 
 fn emit_expr_tokens(
     expr: &Expr,
-    source: &str,
+    source: &SourceFile,
     doc: &Document,
     server: &Server,
     out: &mut Vec<RawToken>,
 ) {
     match &expr.kind {
         ExprKind::Ident(name) => {
-            if let Some(tt) = classify_ident(*name, expr.span.offset, doc, server) {
+            if let Some(tt) = classify_ident(*name, expr.span.start as usize, doc, server) {
                 let name_str = resolve(*name);
-                push_token_at_offset(source, expr.span.offset, &name_str, tt, out);
+                push_token_at_offset(source, expr.span.start as usize, &name_str, tt, out);
             }
         }
         ExprKind::RecordCreate {
@@ -347,11 +292,11 @@ fn emit_expr_tokens(
             // Record constructor: the name is a TYPE. For the qualified
             // form (`util.Pt { ... }`) the expr span points at the module
             // ident, not the type name, so emitting the type token at
-            // `span.offset` would mislabel the module segment — skip the
+            // `(span.start as usize)` would mislabel the module segment — skip the
             // head token there (the fields still get their tokens).
             if module.is_none() {
                 let name_str = resolve(*name);
-                push_token_at_offset(source, expr.span.offset, &name_str, TT_TYPE, out);
+                push_token_at_offset(source, expr.span.start as usize, &name_str, TT_TYPE, out);
             }
             for (_, v) in fields {
                 emit_expr_tokens(v, source, doc, server, out);
@@ -386,7 +331,7 @@ fn emit_expr_tokens(
 
 fn emit_stmt_tokens(
     stmt: &Stmt,
-    source: &str,
+    source: &SourceFile,
     doc: &Document,
     server: &Server,
     out: &mut Vec<RawToken>,
@@ -419,7 +364,7 @@ fn emit_stmt_tokens(
 }
 
 /// Emit VARIABLE tokens for every ident introduced by a `let` pattern.
-fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<RawToken>) {
+fn emit_pattern_binding_tokens(pattern: &Pattern, source: &SourceFile, out: &mut Vec<RawToken>) {
     match &pattern.kind {
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             emit_binding_token(source, &pattern.span, *name, TT_VARIABLE, out);
@@ -445,15 +390,13 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
             }
         }
         PatternKind::Record { fields, .. } => {
-            emit_shorthand_field_tokens(pattern, fields, source, out);
+            emit_shorthand_field_tokens(fields, source, out);
         }
         PatternKind::AnonRecord { fields, rest } => {
-            emit_shorthand_field_tokens(pattern, fields, source, out);
-            // `{x, ...rest}` binds `rest` to the unmatched fields. Like
-            // shorthand fields it has no sub-pattern node, so recover
-            // its real offset by source scan.
-            if let Some(rname) = rest {
-                emit_shorthand_binder_token(pattern, *rname, source, out);
+            emit_shorthand_field_tokens(fields, source, out);
+            // `{x, ...rest}` binds `rest` to the unmatched fields.
+            if let Some((rname, rspan)) = rest {
+                emit_binding_token(source, rspan, *rname, TT_VARIABLE, out);
             }
         }
         PatternKind::Map(entries) => {
@@ -471,44 +414,16 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
 /// anon-record pattern (`{ x, y }` binds `x` and `y` as locals), recursing
 /// into explicit sub-patterns (`{ x: sub }`).
 fn emit_shorthand_field_tokens(
-    pattern: &Pattern,
-    fields: &[(Symbol, Option<Pattern>)],
-    source: &str,
+    fields: &[(Symbol, Span, Option<Pattern>)],
+    source: &SourceFile,
     out: &mut Vec<RawToken>,
 ) {
-    for (fname, sub) in fields {
+    for (fname, fspan, sub) in fields {
         if let Some(p) = sub {
             emit_pattern_binding_tokens(p, source, out);
         } else {
-            emit_shorthand_binder_token(pattern, *fname, source, out);
+            emit_binding_token(source, fspan, *fname, TT_VARIABLE, out);
         }
-    }
-}
-
-/// Emit a VARIABLE token for a shorthand field / rest binder at its REAL
-/// source position. Round-62 B8 + B9 anchored these tokens at the
-/// enclosing pattern span — the record HEAD (the constructor name for a
-/// nominal record, the opening `{` for an anon record), NOT the binder
-/// ident, so `let {x, ...rest} = p` highlighted the `{` instead of `x`
-/// and `rest`. The AST carries no sub-span for shorthand binders, so
-/// recover the offset by source scan (same strategy as
-/// `workspace::shorthand_binder_span`); when the scan fails, emit
-/// nothing — a head-anchored token mislabels the `{` / constructor name,
-/// which is worse than no token (round-102 BROKEN fix).
-fn emit_shorthand_binder_token(
-    pattern: &Pattern,
-    name: Symbol,
-    source: &str,
-    out: &mut Vec<RawToken>,
-) {
-    let name_str = resolve(name);
-    if name_str == "_" {
-        return;
-    }
-    if let Some(off) =
-        super::text_utils::find_shorthand_binder(source, pattern.span.offset, &name_str)
-    {
-        push_token_at_offset(source, off, &name_str, TT_VARIABLE, out);
     }
 }
 
@@ -662,11 +577,17 @@ mod tests {
         assert_eq!(encoded[1].delta_start, 4);
     }
 
+    fn file(source: &str) -> SourceFile {
+        SourceFile::new(crate::source::SourceName::Builtin, source.into())
+    }
+
     /// Parse `source` and return the pattern of the first `let` stmt in
     /// the first fn's body block.
     fn first_let_pattern(source: &str) -> Pattern {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().expect("lex");
-        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
+            .tokenize()
+            .expect("lex");
+        let (program, _) = crate::parser::Parser::new(tokens, source).parse_program_recovering();
         let Some(Decl::Fn(f)) = program.decls.first() else {
             panic!("fixture must start with a fn decl");
         };
@@ -687,7 +608,7 @@ mod tests {
         let source = "fn main() {\n  let [h, ..t] = [1, 2, 3]\n  t\n}";
         let pattern = first_let_pattern(source);
         let mut out = Vec::new();
-        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        emit_pattern_binding_tokens(&pattern, &file(source), &mut out);
         assert_eq!(
             out.len(),
             2,
@@ -703,7 +624,7 @@ mod tests {
         let source = "fn main() {\n  let {x, ...rest} = p\n  x\n}";
         let pattern = first_let_pattern(source);
         let mut out = Vec::new();
-        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        emit_pattern_binding_tokens(&pattern, &file(source), &mut out);
         assert_eq!(
             out.len(),
             2,
@@ -725,7 +646,7 @@ mod tests {
     /// Round-102 BROKEN lock: anon-record shorthand and rest binders must
     /// get VARIABLE tokens at the binder idents THEMSELVES, not at the
     /// pattern head (the `{`). The pre-fix code anchored the `x` token at
-    /// `pattern.span.offset` (the `{`) and emitted nothing for `rest` at
+    /// `(pattern.span.start as usize)` (the `{`) and emitted nothing for `rest` at
     /// all — a count-only assertion would not catch the mis-anchoring, so
     /// this test pins exact (line, col, length) coordinates.
     #[test]
@@ -736,7 +657,7 @@ mod tests {
         //   `{` at col 6, `x` at col 7, `rest` at col 13.
         let pattern = first_let_pattern(source);
         let mut out = Vec::new();
-        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        emit_pattern_binding_tokens(&pattern, &file(source), &mut out);
         out.sort_by_key(|t| (t.line, t.col_utf16));
         assert_eq!(out.len(), 2, "one token for `x`, one for `rest`: {out:?}");
         assert_eq!(
@@ -776,7 +697,7 @@ mod tests {
             pattern.kind
         );
         let mut out = Vec::new();
-        emit_pattern_binding_tokens(&pattern, source, &mut out);
+        emit_pattern_binding_tokens(&pattern, &file(source), &mut out);
         out.sort_by_key(|t| (t.line, t.col_utf16));
         assert_eq!(out.len(), 2, "one token for `x`, one for `y`: {out:?}");
         assert_eq!(

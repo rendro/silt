@@ -26,12 +26,13 @@
 //! (`vm_error_display_frame`).  Both paths share one filter and one
 //! line shape; this test pins both invariants.
 
-use silt::lexer::Span;
+use silt::source::{FileId, Span};
 use silt::vm::VmError;
 use silt::vm::error::{render_call_stack, vm_error_display_frame};
 
-fn span(line: usize, col: usize) -> Span {
-    Span::new(line, col)
+/// A span at byte `at` of a file.
+fn span(at: u32) -> Span {
+    Span::point(FileId::default(), at)
 }
 
 /// Builds a `VmError` whose call stack mixes a real user frame, a
@@ -39,12 +40,12 @@ fn span(line: usize, col: usize) -> Span {
 /// and a `<script>` synthetic frame (which both helpers should drop).
 fn err_with_mixed_stack() -> VmError {
     let mut e = VmError::new("boom".to_string());
-    e.span = Some(span(7, 3));
+    e.span = Some(span(73));
     e.call_stack = vec![
-        ("inner".to_string(), span(7, 3)),
-        ("<module:foo>".to_string(), span(2, 1)),
-        ("main".to_string(), span(1, 1)),
-        ("<script>".to_string(), Span::new(0, 0)),
+        ("inner".to_string(), span(73)),
+        ("<module:foo>".to_string(), span(21)),
+        ("main".to_string(), span(11)),
+        ("<script>".to_string(), Span::BUILTIN),
     ];
     e
 }
@@ -101,7 +102,8 @@ fn display_keeps_module_frames() {
 }
 
 /// Lock the canonical line shape: TWO spaces before `at`, and a
-/// path-free `"line N, column M"` location for spans with line > 0.
+/// path-free `"byte N"` location (the Display has no source map to turn
+/// an offset into a line and column).
 /// This is the second half of the GAP — the OLD Display used ONE space
 /// and the format `"  -> {name} at line N, column M"`.
 #[test]
@@ -110,11 +112,11 @@ fn display_uses_two_space_at_separator() {
     let displayed = format!("{e}");
 
     assert!(
-        displayed.contains("  -> inner  at line 7, column 3"),
+        displayed.contains("  -> inner  at byte 73"),
         "expected canonical two-space `  at ` separator; got:\n{displayed}"
     );
     assert!(
-        displayed.contains("  -> <module:foo>  at line 2, column 1"),
+        displayed.contains("  -> <module:foo>  at byte 21"),
         "expected canonical rendering for module frame; got:\n{displayed}"
     );
     // The OLD one-space format must NOT appear.
@@ -136,25 +138,25 @@ fn display_header_unchanged() {
         "Display header must remain `error[runtime]: <msg>`; got:\n{displayed}"
     );
     assert!(
-        displayed.contains("\n --> <input>:7:3"),
-        "Display must emit a `-->` locator line for spans with line > 0; got:\n{displayed}"
+        displayed.contains("\n --> <input> byte 73"),
+        "Display must emit a `-->` locator line for an error with a span; got:\n{displayed}"
     );
 }
 
-/// Frames with `line == 0` (synthetic spans) get the path-free
+/// Frames of code silt adds itself (`Span::BUILTIN`) get the path-free
 /// `"<unknown location>"` placeholder rather than the OLD bare-name
 /// fallback (`"  -> name"` with no `at` clause).  This keeps every
 /// frame line shape-consistent.
 #[test]
 fn display_zero_line_frame_uses_unknown_location() {
     let mut e = VmError::new("boom".to_string());
-    e.span = Some(span(5, 1));
+    e.span = Some(span(51));
     // Two real frames so the helper doesn't filter the stack as
     // single-frame, plus one zero-span user frame in the middle.
     e.call_stack = vec![
-        ("inner".to_string(), span(5, 1)),
-        ("middle".to_string(), Span::new(0, 0)),
-        ("outer".to_string(), span(1, 1)),
+        ("inner".to_string(), span(51)),
+        ("middle".to_string(), Span::BUILTIN),
+        ("outer".to_string(), span(11)),
     ];
     let displayed = format!("{e}");
 

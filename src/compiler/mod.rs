@@ -7,7 +7,6 @@
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,9 +16,10 @@ use crate::ast::{
 };
 use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::{Lexer, Span};
+use crate::lexer::Lexer;
 use crate::module;
 use crate::parser::Parser;
+use crate::source::{SourceFile, SourceMap, SourceName, Span};
 use crate::typechecker;
 use crate::types::canonical::canonicalize_type_name;
 use crate::value::Value;
@@ -276,12 +276,6 @@ pub struct CompileError {
     pub span: Span,
 }
 
-impl fmt::Display for CompileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}:{}] {}", self.span.line, self.span.col, self.message)
-    }
-}
-
 /// Render a lex/parse error that happened inside an imported module into a
 /// human-readable `CompileError.message`. The resulting string embeds:
 ///
@@ -303,48 +297,41 @@ impl fmt::Display for CompileError {
 fn format_module_source_error(
     module_name: &str,
     file_path: &str,
-    source: &str,
+    file: &SourceFile,
     kind: &str,
     inner_message: &str,
     span: Span,
 ) -> String {
-    // Clamp a span pointing past EOF back onto the last real line so
+    // `locate` moves a position past EOF back onto the last real line so
     // unexpected-EOF parse errors still render a snippet. Without this,
     // truncated module files (e.g. `pub fn broken(\n` with an EOF on
     // line 2) produce a header-only error with no caret line — the G1
     // audit finding.
     // Lock: tests/lang/modules.rs `test_module_parse_error_eof_renders_snippet`.
-    let clamped_span = crate::errors::clamp_span_to_source(span, source);
-    let mut out = format!(
-        "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
-        line = clamped_span.line,
-        col = clamped_span.col,
-    );
+    let (line, col, source_line) = crate::errors::locate(file, span.start);
+    let mut out =
+        format!("module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",);
 
     // Pull the offending source line from the module file so the reader
-    // can see exactly where the caret points. If the span.line is 0 or
-    // past the end of the file we silently skip the snippet — there's
-    // nothing sensible to render.
-    if clamped_span.line > 0
-        && let Some(src_line) = source.lines().nth(clamped_span.line - 1)
-    {
+    // can see exactly where the caret points. An empty file has no line
+    // to show.
+    if let Some(src_line) = source_line.as_deref() {
         // Width of the line-number gutter for alignment. Matches the
         // convention in src/errors.rs::SourceError::Display by calling
         // the shared `errors::line_num_width` helper.
-        let line_num = clamped_span.line;
+        let line_num = line;
         let gutter_width = crate::errors::line_num_width(line_num);
         let gutter_blank: String = " ".repeat(gutter_width);
         // A long line is cut to a window around the error, as in
         // `SourceError::Display`.
-        let (src_line, col) =
-            crate::errors::excerpt_around(src_line, clamped_span.col.saturating_sub(1));
+        let (src_line, caret_col) = crate::errors::excerpt_around(src_line, col.saturating_sub(1));
         let src_line = src_line.as_str();
         // Preserve tabs so the caret lines up with the actual char.
         // Use the shared helper from `errors.rs` so CJK / emoji /
         // other double-wide chars get one space per display cell
         // (not one per `char`), keeping this site symmetric with
         // `SourceError::Display`.
-        let caret_spacing: String = crate::errors::caret_spacing(src_line, col);
+        let caret_spacing: String = crate::errors::caret_spacing(src_line, caret_col);
 
         // Round-85 follow-up: route the inner snippet glyphs through
         // `active_colors()` so this site honors NO_COLOR / FORCE_COLOR
@@ -358,7 +345,6 @@ fn format_module_source_error(
             arrow = format_args!("{}-->{}", c.cyan, c.reset),
             file_path = file_path,
             line = line_num,
-            col = clamped_span.col,
         ));
         out.push_str(&format!(
             "\n {gutter_blank} {bar}",
@@ -420,8 +406,9 @@ fn canonicalize_existing_prefix(p: &std::path::Path) -> Option<std::path::PathBu
     }
 }
 
-/// The unescaped text of [`normalize_module_path`].
-fn module_path_for_display(p: &std::path::Path) -> String {
+/// How a module file is named in a diagnostic: its path relative to the
+/// working directory when it lies under it, unescaped.
+pub fn module_path_for_display(p: &std::path::Path) -> String {
     if let Ok(cwd) = std::env::current_dir() {
         // First try a literal strip — cheap, no I/O.
         if let Ok(rel) = p.strip_prefix(&cwd) {
@@ -716,6 +703,11 @@ pub struct Compiler {
     /// accumulated state. See commit 6364552 for the migration
     /// rationale.
     resolver: crate::types::canonical::Resolver,
+    /// The text of every file of the compilation: the entry file, added
+    /// by whoever made the compiler (see `set_sources`), and each module
+    /// file the compiler reads. Spans of compiled code point into it, so
+    /// a runtime error is rendered against the file its span names.
+    sources: SourceMap,
 }
 
 /// Seed `known_enum_variants` with the builtin enums. Called from
@@ -796,6 +788,7 @@ impl Compiler {
             alias_decls: HashMap::new(),
             module_exports: HashMap::new(),
             resolver: crate::types::canonical::Resolver::new(),
+            sources: SourceMap::new(),
         }
     }
 
@@ -818,6 +811,28 @@ impl Compiler {
             "with_package_roots: local_package symbol must appear in package_roots"
         );
         Self::build(package_roots, Some(local_package))
+    }
+
+    /// Hand the compiler the source map that holds the entry file, so the
+    /// module files it reads are added to the same map.
+    pub fn set_sources(&mut self, sources: SourceMap) {
+        self.sources = sources;
+    }
+
+    /// The source map: the entry file and every module file read.
+    pub fn sources(&self) -> &SourceMap {
+        &self.sources
+    }
+
+    /// The source map, to add a file read outside the compiler.
+    pub fn sources_mut(&mut self) -> &mut SourceMap {
+        &mut self.sources
+    }
+
+    /// Take the source map out, for rendering diagnostics and runtime
+    /// errors after the compiler is done.
+    pub fn take_sources(&mut self) -> SourceMap {
+        std::mem::take(&mut self.sources)
     }
 
     /// Enable REPL mode. See the `repl_mode` field for semantics.
@@ -918,7 +933,6 @@ impl Compiler {
     fn harvest_module_type_errors(
         &mut self,
         errors: &[typechecker::TypeError],
-        source: &str,
         file_path: &std::path::Path,
     ) {
         if !self.module_type_error_files.insert(file_path.to_path_buf()) {
@@ -931,7 +945,7 @@ impl Compiler {
         let file = module_path_for_display(file_path);
         let converted: Vec<crate::errors::SourceError> = errors
             .iter()
-            .map(|e| crate::errors::SourceError::from_type_error(e, source, &file))
+            .map(|e| crate::errors::SourceError::from_type_error(e, &self.sources, &file))
             .collect();
         let has_user_import_warning = converted.iter().any(|e| {
             e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
@@ -1005,8 +1019,17 @@ impl Compiler {
             self.compile_decl(decl)?;
         }
 
-        // Emit: GetGlobal <entry_point>, Call 0, Return
-        let span = Span::new(0, 0);
+        // Emit: GetGlobal <entry_point>, Call 0, Return. The call is made
+        // for the entry point's declaration and takes its span; without
+        // one, silt itself makes the call.
+        let span = program
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Decl::Fn(f) if resolve(f.name) == entry_point => Some(f.span),
+                _ => None,
+            })
+            .unwrap_or(Span::BUILTIN);
         let name_idx = self.add_constant(Value::String(entry_point.into()), span)?;
         self.current_chunk()
             .emit_op_u16(Op::GetGlobal, name_idx, span);
@@ -1019,7 +1042,7 @@ impl Compiler {
             .pop()
             .ok_or(CompileError {
                 message: "compiler bug: missing script context".into(),
-                span: Span::new(0, 0),
+                span: Span::BUILTIN,
             })?
             .function;
 
@@ -1049,8 +1072,8 @@ impl Compiler {
             self.compile_decl(decl)?;
         }
 
-        // Return Unit instead of calling main.
-        let span = Span::new(0, 0);
+        // Return Unit instead of calling main: code silt adds itself.
+        let span = Span::BUILTIN;
         self.current_chunk().emit_op(Op::Unit, span);
         self.current_chunk().emit_op(Op::Return, span);
 
@@ -1059,7 +1082,7 @@ impl Compiler {
             .pop()
             .ok_or(CompileError {
                 message: "compiler bug: missing script context".into(),
-                span: Span::new(0, 0),
+                span: Span::BUILTIN,
             })?
             .function;
         let mut result = vec![script];
@@ -1103,7 +1126,7 @@ impl Compiler {
                 continue;
             };
             let mod_str = resolve(*module_name);
-            for item in items {
+            for (item, _) in items {
                 let item_str = resolve(*item);
                 if item_str.starts_with(|c: char| c.is_lowercase() || c == '_') {
                     self.selective_imports.insert(
@@ -1568,7 +1591,7 @@ impl Compiler {
                 if module::is_builtin_module(&mod_str) {
                     self.imported_builtin_modules.insert(mod_str.clone());
                     // For builtin modules, create aliases: bare "item" -> "module.item"
-                    for item in items {
+                    for (item, _) in items {
                         let item_str = resolve(*item);
                         let qualified = format!("{mod_str}.{item_str}");
                         let qi = self.add_constant(Value::String(qualified), span)?;
@@ -1583,7 +1606,7 @@ impl Compiler {
                 // File-based selective import: compile the module, then alias
                 // "module.item" -> bare "item" for each selected name.
                 self.compile_file_module(&mod_str, span)?;
-                for item in items {
+                for (item, _) in items {
                     let item_str = resolve(*item);
                     let qualified = format!("{mod_str}.{item_str}");
                     let qi = self.add_constant(Value::String(qualified), span)?;
@@ -1962,18 +1985,24 @@ impl Compiler {
             // Lock: tests/lang/round83_anonrec_spread_eq_tests.rs grep-asserts
             // the old wording never returns.
             let file_display = normalize_module_path(&resolved.file_path);
-            let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
-                message: format_module_source_error(
-                    module_name,
-                    &file_display,
-                    &source,
-                    "lex error",
-                    &e.message,
-                    e.span,
-                ),
-                span,
-            })?;
-            let (mut program, _) = Parser::new(tokens).parse_program_recovering();
+            let file = self.sources.add(
+                SourceName::Path(resolved.file_path.clone()),
+                source.as_str().into(),
+            );
+            let tokens = Lexer::new(file, &source)
+                .tokenize()
+                .map_err(|e| CompileError {
+                    message: format_module_source_error(
+                        module_name,
+                        &file_display,
+                        self.sources.file(file),
+                        "lex error",
+                        &e.message,
+                        e.span,
+                    ),
+                    span,
+                })?;
+            let (mut program, _) = Parser::new(tokens, &source).parse_program_recovering();
 
             // Recurse: pre-typecheck this module's own imports first.
             self.pre_typecheck_user_imports(&program);
@@ -1995,7 +2024,7 @@ impl Compiler {
             // of dropping the whole batch. Import-resolvable shapes
             // stay suppressed inside the harvest — see
             // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(&module_errors, &source, &resolved.file_path);
+            self.harvest_module_type_errors(&module_errors, &resolved.file_path);
             self.module_exports
                 .insert(intern(&resolved.module), exports);
             Ok(())
@@ -2052,18 +2081,24 @@ impl Compiler {
         // the same job for runtime SourceError rendering. Lock:
         // tests/lang/compiler_module_path_norm_round36_tests.rs.
         let file_display = normalize_module_path(file_path);
+        let file = self.sources.add(
+            SourceName::Path(file_path.to_path_buf()),
+            source.as_str().into(),
+        );
 
-        let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
-            message: format_module_source_error(
-                module_name,
-                &file_display,
-                &source,
-                "lex error",
-                &e.message,
-                e.span,
-            ),
-            span,
-        })?;
+        let tokens = Lexer::new(file, &source)
+            .tokenize()
+            .map_err(|e| CompileError {
+                message: format_module_source_error(
+                    module_name,
+                    &file_display,
+                    self.sources.file(file),
+                    "lex error",
+                    &e.message,
+                    e.span,
+                ),
+                span,
+            })?;
 
         // Parse with the recovery parser so a module with multiple
         // independent parse errors surfaces every one of them in a
@@ -2084,7 +2119,7 @@ impl Compiler {
         // reused for every accumulated error; `SourceError` rendering then
         // pins the outer caret at the import site while the pre-formatted
         // message carries the inner module location.
-        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+        let (mut program, parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
         if !parse_errors.is_empty() {
             let mut formatted: Vec<CompileError> = parse_errors
                 .iter()
@@ -2092,7 +2127,7 @@ impl Compiler {
                     message: format_module_source_error(
                         module_name,
                         &file_display,
-                        &source,
+                        self.sources.file(file),
                         "parse error",
                         &e.message,
                         e.span,
@@ -2144,7 +2179,7 @@ impl Compiler {
         // `harvest_module_type_errors`). First-wins keying by file path
         // means this is a no-op when the pre-typecheck pass already
         // harvested the same module.
-        self.harvest_module_type_errors(&module_type_errors, &source, file_path);
+        self.harvest_module_type_errors(&module_type_errors, file_path);
         self.module_exports.insert(module_sym, this_exports);
 
         // Collect public names so we know which to export.
@@ -2733,7 +2768,7 @@ impl Compiler {
                     self.current_chunk()
                         .emit_op_u16(Op::CallBuiltin, name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
-                } else if let ExprKind::FieldAccess(receiver, method) = &callee.kind {
+                } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
                     // Check if this is a module-qualified call on a non-local ident.
                     // Round 94: top-level let globals are value bindings too —
                     // they shadow same-named modules exactly like locals do
@@ -2895,7 +2930,7 @@ impl Compiler {
                 }
             }
 
-            ExprKind::FieldAccess(expr, field) => {
+            ExprKind::FieldAccess(expr, field, _) => {
                 // Check if this is a module-qualified name like list.map
                 // But only if the identifier is NOT a known local or upvalue.
                 if let ExprKind::Ident(name) = &expr.kind {
@@ -3654,7 +3689,7 @@ impl Compiler {
 
     fn compile_loop(
         &mut self,
-        bindings: &[(Symbol, Expr)],
+        bindings: &[(Symbol, Span, Expr)],
         body: &Expr,
         span: Span,
     ) -> Result<(), CompileError> {
@@ -3680,7 +3715,7 @@ impl Compiler {
         let first_slot = frame_slot(self.ctx().height, span)?;
 
         // Compile initial values; each stays on the stack as its binding.
-        for (name, init) in bindings {
+        for (name, _, init) in bindings {
             self.compile_expr(init)?;
             self.warn_if_shadows_module(*name, span);
             let slot = self.add_local(*name, span)?;
@@ -3715,7 +3750,7 @@ impl Compiler {
     /// return the qualified name. Only returns Some if the ident is NOT a
     /// local/upvalue AND belongs to a known builtin module.
     fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, CompileError> {
-        if let ExprKind::FieldAccess(expr, field) = &callee.kind
+        if let ExprKind::FieldAccess(expr, field, _) = &callee.kind
             && let ExprKind::Ident(module) = &expr.kind
         {
             // Check if it's a local or upvalue first (round 94: top-level
@@ -3913,7 +3948,7 @@ impl Compiler {
         let (binder, type_name) = match &type_arg.kind {
             ExprKind::Ident(name) => (*name, *name),
             // `module.Type`: types live in one namespace at run time.
-            ExprKind::FieldAccess(receiver, name) => match &receiver.kind {
+            ExprKind::FieldAccess(receiver, name, _) => match &receiver.kind {
                 ExprKind::Ident(module) => (*module, *name),
                 _ => return Ok(()),
             },
@@ -4325,8 +4360,10 @@ mod tests {
 
     /// Compile declarations (no main call) and return all functions.
     fn compile(input: &str) -> Vec<Function> {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        let program = Parser::new(tokens, input).parse_program().unwrap();
         let mut compiler = Compiler::new();
         compiler.import_all_builtins();
         compiler.compile_declarations(&program).unwrap()
@@ -4334,16 +4371,20 @@ mod tests {
 
     /// Compile expecting an error, return the error.
     fn compile_err(input: &str) -> CompileError {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        let program = Parser::new(tokens, input).parse_program().unwrap();
         let mut compiler = Compiler::new();
         compiler.compile_declarations(&program).unwrap_err()
     }
 
     /// Compile without builtin imports (to test import gating).
     fn compile_no_imports(input: &str) -> Result<Vec<Function>, CompileError> {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        let program = Parser::new(tokens, input).parse_program().unwrap();
         let mut compiler = Compiler::new();
         compiler.compile_declarations(&program)
     }
@@ -5130,8 +5171,12 @@ fn main() {
 
     #[test]
     fn test_compile_program_calls_main() {
-        let tokens = Lexer::new("fn main() { 42 }").tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), "fn main() { 42 }")
+            .tokenize()
+            .unwrap();
+        let program = Parser::new(tokens, "fn main() { 42 }")
+            .parse_program()
+            .unwrap();
         let mut compiler = Compiler::new();
         let fns = compiler.compile_program(&program).unwrap();
         let script = &fns[0];
@@ -5153,10 +5198,15 @@ fn main() {
 
     #[test]
     fn test_shadow_module_warning() {
-        let tokens = Lexer::new("fn main() { let list = 42\n list }")
-            .tokenize()
+        let tokens = Lexer::new(
+            crate::source::FileId::default(),
+            "fn main() { let list = 42\n list }",
+        )
+        .tokenize()
+        .unwrap();
+        let program = Parser::new(tokens, "fn main() { let list = 42\n list }")
+            .parse_program()
             .unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         compiler.import_all_builtins();
         compiler.compile_declarations(&program).unwrap();
@@ -5406,14 +5456,14 @@ fn f(expected, actual) {
     // >64KB loop body.
     #[test]
     fn test_jumpback_overflow_rejected() {
-        use crate::lexer::Span;
+        use crate::source::Span;
 
         // A distance that exactly fits must pass.
-        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::new(0, 0)).is_ok());
+        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::BUILTIN).is_ok());
 
         // One beyond the limit must produce a CompileError and not a
         // panic/wrap.
-        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::new(0, 0))
+        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::BUILTIN)
             .expect_err("expected u16 overflow to be rejected");
         assert!(
             err.message.contains("loop body too large"),
@@ -5422,7 +5472,7 @@ fn f(expected, actual) {
         );
 
         // Way beyond the limit also.
-        assert!(super::jumpback_fits_u16(usize::MAX, Span::new(0, 0)).is_err());
+        assert!(super::jumpback_fits_u16(usize::MAX, Span::BUILTIN).is_err());
     }
 
     // ── Audit regression: add_upvalue >255 upvalues (B5) ────────────
@@ -5443,7 +5493,7 @@ fn f(expected, actual) {
     #[test]
     fn test_add_upvalue_rejects_over_255() {
         use crate::bytecode::UpvalueDesc;
-        use crate::lexer::Span;
+        use crate::source::Span;
 
         let mut compiler = Compiler::new();
         // Push an outer (script) context plus the function context we'll
@@ -5465,7 +5515,7 @@ fn f(expected, actual) {
                 is_local: true,
                 index: i,
             };
-            let result = compiler.add_upvalue(inner_idx, desc, Span::new(0, 0));
+            let result = compiler.add_upvalue(inner_idx, desc, Span::BUILTIN);
             assert!(
                 result.is_ok(),
                 "upvalue {i} (of 255) should be accepted; got {result:?}"
@@ -5481,7 +5531,7 @@ fn f(expected, actual) {
             index: 0,
         };
         let err = compiler
-            .add_upvalue(inner_idx, overflowing, Span::new(0, 0))
+            .add_upvalue(inner_idx, overflowing, Span::BUILTIN)
             .expect_err("expected 256th upvalue to return CompileError");
         assert!(
             err.message.contains("too many upvalues"),
@@ -5513,7 +5563,7 @@ fn f(expected, actual) {
     #[test]
     fn test_add_upvalue_accepts_exactly_255_upvalues() {
         use crate::bytecode::UpvalueDesc;
-        use crate::lexer::Span;
+        use crate::source::Span;
 
         let mut compiler = Compiler::new();
         compiler
@@ -5530,7 +5580,7 @@ fn f(expected, actual) {
                 index: i,
             };
             let returned = compiler
-                .add_upvalue(inner_idx, desc, Span::new(0, 0))
+                .add_upvalue(inner_idx, desc, Span::BUILTIN)
                 .unwrap_or_else(|e| {
                     panic!("upvalue {i} (of 255) must be accepted; got {}", e.message)
                 });

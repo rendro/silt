@@ -1,7 +1,4 @@
 error[runtime]: division by zero
- --> <repl>:1:11
-   |
- 1 | let x: Int = shallow()
-   |           ^ division by zero
+ --> <declaration>
   -> deep  at <declaration>
   -> shallow  at <declaration>

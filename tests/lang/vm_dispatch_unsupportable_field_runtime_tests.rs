@@ -31,10 +31,10 @@ fn main() {
     println(h(p))
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .expect("lexer error");
-    let mut program = silt::parser::Parser::new(tokens)
+    let mut program = silt::parser::Parser::new(tokens, src)
         .parse_program()
         .expect("parse error");
     let errors = silt::typechecker::check(&mut program);

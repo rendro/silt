@@ -7,8 +7,8 @@
 use crate::ast::{Pattern, PatternKind};
 use crate::bytecode::Op;
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::Span;
 use crate::module;
+use crate::source::Span;
 use crate::value::Value;
 
 use super::{BindDestructKind, CompileError, Compiler};
@@ -186,7 +186,7 @@ impl Compiler {
                 }
 
                 // Test each field's sub-pattern
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue, // shorthand binding {name} — always matches
@@ -208,7 +208,7 @@ impl Compiler {
             PatternKind::AnonRecord { fields, .. } => {
                 // No tag check — anon records are structural.
                 let mut all_jumps = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -626,7 +626,7 @@ impl Compiler {
                     all_jumps.push((tag_jump, base_depth));
                 }
 
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -648,7 +648,7 @@ impl Compiler {
 
             PatternKind::AnonRecord { fields, .. } => {
                 let mut all_jumps = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -859,7 +859,7 @@ impl Compiler {
             PatternKind::Tuple(pats) => pats.iter().any(Self::pattern_can_fail),
             PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
                 .iter()
-                .any(|(_, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
+                .any(|(_, _, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
             PatternKind::Int(_)
             | PatternKind::Float(_)
             | PatternKind::Bool(_)
@@ -979,7 +979,7 @@ impl Compiler {
 
             PatternKind::Record { fields, .. } => {
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -1003,7 +1003,7 @@ impl Compiler {
 
             PatternKind::AnonRecord { fields, rest } => {
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -1021,7 +1021,7 @@ impl Compiler {
                         }
                     }
                 }
-                if let Some(rest_name) = rest {
+                if let Some((rest_name, _)) = rest {
                     // The rest-capture must run against the parent record,
                     // not against any per-field sub-value. Funnel it through
                     // `compile_compound_bind` so it shares the
@@ -1029,7 +1029,7 @@ impl Compiler {
                     // destructure — that way the rest opcode is fed the
                     // actual parent on every iteration regardless of which
                     // sub-value happens to be on TOS.
-                    let names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
+                    let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
                     if names.len() > u8::MAX as usize {
                         return Err(CompileError {
                             message: "anon record pattern cannot exclude more than 255 fields"
@@ -1333,7 +1333,7 @@ impl Compiler {
                 elems.iter().any(|p| self.pattern_has_bindings(p))
                     || rest.as_ref().is_some_and(|r| self.pattern_has_bindings(r))
             }
-            PatternKind::Record { fields, .. } => fields.iter().any(|(_, p)| {
+            PatternKind::Record { fields, .. } => fields.iter().any(|(_, _, p)| {
                 match p {
                     Some(pat) => self.pattern_has_bindings(pat),
                     None => true, // shorthand {name} always binds
@@ -1341,7 +1341,7 @@ impl Compiler {
             }),
             PatternKind::AnonRecord { fields, rest } => {
                 rest.is_some()
-                    || fields.iter().any(|(_, p)| match p {
+                    || fields.iter().any(|(_, _, p)| match p {
                         Some(pat) => self.pattern_has_bindings(pat),
                         None => true,
                     })
@@ -1382,7 +1382,7 @@ impl Compiler {
                 }
             }
             PatternKind::Record { fields, .. } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
@@ -1392,7 +1392,7 @@ impl Compiler {
                 }
             }
             PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
@@ -1400,7 +1400,7 @@ impl Compiler {
                         }
                     }
                 }
-                if let Some(r) = rest {
+                if let Some((r, _)) = rest {
                     names.insert(*r);
                 }
             }

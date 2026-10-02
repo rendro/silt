@@ -22,8 +22,10 @@ use silt::vm::Vm;
 use std::sync::Arc;
 
 fn compile_and_run(vm: &mut Vm, src: &str) -> Value {
-    let tokens = Lexer::new(src).tokenize().expect("lexer");
-    let mut program = Parser::new(tokens).parse_program().expect("parser");
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lexer");
+    let mut program = Parser::new(tokens, src).parse_program().expect("parser");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile");

@@ -52,10 +52,10 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         let Ok(s) = std::str::from_utf8(&bytes) else {
             continue;
         };
-        let Ok(tokens) = Lexer::new(s).tokenize() else {
+        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
             continue;
         };
-        let Ok(mut program) = Parser::new(tokens).parse_program() else {
+        let Ok(mut program) = Parser::new(tokens, s).parse_program() else {
             continue;
         };
         let errors = typechecker::check(&mut program);
@@ -74,12 +74,12 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
                 idx
             );
             assert!(
-                err.span.offset <= s.len(),
+                err.span.end as usize <= s.len(),
                 "corpus seed {:?} produced diagnostic #{} with \
-                 span.offset {} > source len {}",
+                 span end {} > source len {}",
                 entry.path(),
                 idx,
-                err.span.offset,
+                err.span.end,
                 s.len()
             );
         }

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use silt::errors::SourceError;
+use silt::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error, find_project_root};
 use crate::cli::paths::find_silt_files;
@@ -190,17 +191,21 @@ fn format_file(path: &str) -> Result<(), String> {
 /// so it is rendered under its own `error[fmt]` header, names the file,
 /// and says that the file was not touched.
 fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -> String {
+    // The formatter lexes the text as the only file of its own.
+    let mut sources = SourceMap::new();
+    sources.add(SourceName::Path(path.into()), source.into());
     match err {
         silt::formatter::FmtError::Lex(e) => {
-            format!("{}", SourceError::from_lex_error(e, source, path))
+            format!("{}", SourceError::from_lex_error(e, &sources, path))
         }
         silt::formatter::FmtError::Parse(e) => {
-            format!("{}", SourceError::from_parse_error(e, source, path))
+            format!("{}", SourceError::from_parse_error(e, &sources, path))
         }
         silt::formatter::FmtError::Internal(e) => {
             let mut out = format!("error[fmt]: {path}: formatting refused: {}", e.message);
             if let Some(span) = e.span {
-                out.push_str(&format!("\n --> {path}:{}:{}", span.line, span.col));
+                let (line, col) = sources.line_col((span.file, span.start));
+                out.push_str(&format!("\n --> {path}:{line}:{col}"));
             }
             out.push_str("\n  = note: the file was left unchanged");
             out.push_str(

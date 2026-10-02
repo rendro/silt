@@ -15,8 +15,12 @@ use silt::types::Severity;
 /// Type-check `input` with no package context (REPL / ad-hoc script).
 /// The orphan rule is disabled in this mode.
 fn errors_no_pkg(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lex error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lex error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     typechecker::check_with_package(&mut program, None)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)

@@ -72,8 +72,10 @@ fn fix_arrow_fn_type_matcher_matches_live_parser_error() {
     // (src/lexer.rs:138), so the message must contain the matcher's
     // required substring verbatim.
     let src = "fn -> Foo() { 1 }\n";
-    let tokens = Lexer::new(src).tokenize().expect("lexer error");
-    let err = Parser::new(tokens)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lexer error");
+    let err = Parser::new(tokens, src)
         .parse_program()
         .expect_err("expected a parse error on `fn -> Foo() { ... }`");
 

@@ -19,8 +19,12 @@ use std::sync::Arc;
 // ── Helper: run a silt program and return the runtime error string ────
 
 fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     let _ = typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = match compiler.compile_program(&program) {

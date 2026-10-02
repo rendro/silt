@@ -1960,8 +1960,12 @@ mod tests {
 
     /// Compile a Silt snippet and return a VM ready for execute_slice.
     fn make_vm(src: &str) -> Vm {
-        let tokens = Lexer::new(src).tokenize().expect("lexer error");
-        let mut program = Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = Lexer::new(crate::source::FileId::default(), src)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = Parser::new(tokens, src)
+            .parse_program()
+            .expect("parse error");
         let _ = crate::typechecker::check(&mut program);
         let mut compiler = Compiler::new();
         let functions = compiler.compile_program(&program).expect("compile error");

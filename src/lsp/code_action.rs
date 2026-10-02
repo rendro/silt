@@ -38,7 +38,7 @@ use lsp_types::{
 };
 
 use super::Server;
-use super::conversions::{offset_to_position, position_to_offset};
+use super::conversions::{offsets_to_range, position_to_offset};
 use super::state::Document;
 
 // ── QuickFix trait & catalog ─────────────────────────────────────────
@@ -143,7 +143,7 @@ impl QuickFix for AddImport {
         let module = import_module_from_message(&diag.message)?;
         // Don't duplicate an existing import.
         let needle = format!("import {module}");
-        if doc.source.lines().any(|line| {
+        if doc.source.text.lines().any(|line| {
             line.trim() == needle || line.trim_start().starts_with(&(needle.clone() + " "))
         }) {
             return None;
@@ -199,12 +199,13 @@ impl QuickFix for FixArrowFnType {
     ) -> Option<Vec<TextEdit>> {
         // Expand the diagnostic range outward to the enclosing `(` and `)`
         // on the same line, verifying we really see a `(A -> B)` shape.
-        let src = &doc.source;
+        let file = &doc.source;
+        let src: &str = &file.text;
         // `position_to_offset` returns a char boundary. The diagnostic may
         // be stale (computed for an earlier version of the text), so check
         // that it still points at `->` before using it: this also makes
         // `arrow_off + 2` a char boundary, which every slice below needs.
-        let arrow_off = position_to_offset(src, &diag.range.start);
+        let arrow_off = position_to_offset(file, &diag.range.start);
         if !src[arrow_off..].starts_with("->") {
             return None;
         }
@@ -237,10 +238,7 @@ impl QuickFix for FixArrowFnType {
         }
 
         let replacement = format!("Fn({a}) -> {b}");
-        let range = Range::new(
-            offset_to_position(src, open),
-            offset_to_position(src, close + 1),
-        );
+        let range = offsets_to_range(file, open, close + 1);
         Some(vec![TextEdit {
             range,
             new_text: replacement,
@@ -268,9 +266,10 @@ impl QuickFix for WrapInOk {
         _params: &CodeActionParams,
         diag: &Diagnostic,
     ) -> Option<Vec<TextEdit>> {
-        let src = &doc.source;
-        let start = position_to_offset(src, &diag.range.start);
-        let end = position_to_offset(src, &diag.range.end);
+        let file = &doc.source;
+        let src: &str = &file.text;
+        let start = position_to_offset(file, &diag.range.start);
+        let end = position_to_offset(file, &diag.range.end);
         if end <= start || end > src.len() {
             return None;
         }
@@ -302,14 +301,5 @@ mod tests {
     fn import_module_parser_rejects_unrelated() {
         assert!(import_module_from_message("type mismatch").is_none());
         assert!(import_module_from_message("'foo' something else").is_none());
-    }
-
-    #[test]
-    fn offset_to_position_handles_multiline() {
-        let src = "ab\ncde\nfg";
-        assert_eq!(offset_to_position(src, 0), Position::new(0, 0));
-        assert_eq!(offset_to_position(src, 3), Position::new(1, 0));
-        assert_eq!(offset_to_position(src, 5), Position::new(1, 2));
-        assert_eq!(offset_to_position(src, 7), Position::new(2, 0));
     }
 }

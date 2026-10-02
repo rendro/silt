@@ -18,8 +18,10 @@ use std::sync::Arc;
 /// Expect a parse error; returns the error message.
 /// Uses parse_program which returns the first fatal error.
 fn parse_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    match Parser::new(tokens).parse_program() {
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    match Parser::new(tokens, input).parse_program() {
         Err(e) => vec![e.message.clone()],
         Ok(_) => vec![], // no error; caller should check
     }
@@ -28,8 +30,12 @@ fn parse_errors(input: &str) -> Vec<String> {
 /// Compile and run, returning the runtime error message.
 /// Panics if the program succeeds instead of erroring.
 fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, input)
+        .parse_program()
+        .expect("parse error");
     let _ = typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = match compiler.compile_program(&program) {

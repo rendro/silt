@@ -21,10 +21,12 @@ use silt::parser::Parser;
 fn assert_formatted_parses(source: &str) {
     let formatted =
         format(source).unwrap_or_else(|e| panic!("format failed: {e:?}\nsource:\n{source}"));
-    let tokens = Lexer::new(&formatted).tokenize().unwrap_or_else(|e| {
-        panic!("formatted output failed to lex: {e:?}\nformatted:\n{formatted}")
-    });
-    Parser::new(tokens).parse_program().unwrap_or_else(|e| {
+    let tokens = Lexer::new(silt::source::FileId::default(), &formatted)
+        .tokenize()
+        .unwrap_or_else(|e| {
+            panic!("formatted output failed to lex: {e:?}\nformatted:\n{formatted}")
+        });
+    Parser::new(tokens, &formatted).parse_program().unwrap_or_else(|e| {
         panic!(
             "formatted output failed to parse: {e:?}\nsource:\n{source}\nformatted:\n{formatted}"
         )

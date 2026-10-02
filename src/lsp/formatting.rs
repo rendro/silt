@@ -18,9 +18,9 @@ impl Server {
         // whose formatted text the formatter refused (it would not parse,
         // would be a different program, or would lose a comment): the
         // editor's buffer stays as it is.
-        let formatted = crate::formatter::format(&doc.source).ok()?;
+        let formatted = crate::formatter::format(&doc.source.text).ok()?;
 
-        if formatted == doc.source {
+        if *formatted == *doc.source.text {
             return Some(vec![]);
         }
 
@@ -34,7 +34,7 @@ impl Server {
         //   2. Trailing newline(s) → end at (line_after_last_newline, 0)
         //   3. No trailing newline → end at (last_line_idx, utf16_len(last))
         let end_position = {
-            let src = doc.source.as_str();
+            let src: &str = &doc.source.text;
             if src.is_empty() {
                 Position::new(0, 0)
             } else if src.ends_with('\n') {

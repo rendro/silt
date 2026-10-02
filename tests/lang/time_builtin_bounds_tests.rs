@@ -50,10 +50,10 @@ fn main() -> Int {{
         // Use the error path (this may succeed or fail; we just care
         // that no panic noise surfaces). Drive the VM manually so we
         // tolerate both success and VmError outcomes.
-        let tokens = silt::lexer::Lexer::new(&src)
+        let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
             .tokenize()
             .expect("lexer error");
-        let mut program = silt::parser::Parser::new(tokens)
+        let mut program = silt::parser::Parser::new(tokens, &src)
             .parse_program()
             .expect("parse error");
         let _ = silt::typechecker::check(&mut program);

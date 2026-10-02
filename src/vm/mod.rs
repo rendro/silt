@@ -366,7 +366,7 @@ pub struct Vm {
     ///
     /// Lock: tests/lang/callback_frame_capture_tests.rs
     /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
-    pub(crate) tco_elided: Vec<(usize, String, crate::lexer::Span)>,
+    pub(crate) tco_elided: Vec<(usize, String, crate::source::Span)>,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, FIFO eviction —
@@ -951,7 +951,7 @@ impl Vm {
         if let Some(frame) = self.frames.last() {
             let ip = frame.ip.saturating_sub(1);
             let span = frame.closure.function.chunk.span_at(ip);
-            if span.line > 0 {
+            if span.is_in_source() {
                 err.span = Some(span);
             }
         }

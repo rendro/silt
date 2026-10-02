@@ -49,7 +49,7 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))?;
         let name_str = resolve_sym(name);
 
         // Scope-aware gate: a symbol is renameable when it resolves to a
@@ -104,7 +104,7 @@ impl Server {
             return Ok(None);
         };
         let cursor = position_to_offset(&doc.source, &pos);
-        let Some(name) = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))
+        let Some(name) = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))
         else {
             return Ok(None);
         };

@@ -12,10 +12,10 @@ use silt::value::Value;
 /// Compile and run a silt program; capture either the returned `Value`
 /// or the runtime `VmError` message.
 fn try_run(input: &str) -> Result<Value, String> {
-    let tokens = silt::lexer::Lexer::new(input)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
         .map_err(|e| format!("lex error: {}", e.message))?;
-    let mut program = silt::parser::Parser::new(tokens)
+    let mut program = silt::parser::Parser::new(tokens, input)
         .parse_program()
         .map_err(|e| format!("parse error: {}", e.message))?;
     let _ = silt::typechecker::check(&mut program);

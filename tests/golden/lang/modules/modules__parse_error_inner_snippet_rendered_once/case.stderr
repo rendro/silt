@@ -1,7 +1,7 @@
 error[compile]: module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found =
- --> main.silt:1:1
+ --> m_top.silt:1:1
    |
- 1 | -- cmd: check
+ 1 | import m_inner
    | ^ module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found =
   = note:  --> m_inner.silt:1:16
              |

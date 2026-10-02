@@ -17,7 +17,7 @@ impl Server {
         // Use the source-aware variant so cursors on `fn`/`type` decl
         // names resolve (round-63 B2: pre-fix this path returned None
         // when cursor was on the binding-site name).
-        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
+        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))?;
 
         let include_definition = params.context.include_declaration;
         let locations = self.workspace_find_references(name, include_definition);

@@ -1,10 +1,8 @@
-//! Round-84 LATENT lock: `textDocument/selectionRange` must compute a
-//! tight upper bound on `expr_extent` for **non-Block** expressions.
-//! Round 83 fixed the analogous issue for `Decl::Type` / `Decl::Trait`
-//! via a dedicated `type_decl_extent` helper, but the `Decl::Let` arm
-//! still flows through `expr_extent`, which pre-fix collapsed to
-//! `source.len()` for any `ExprKind` other than `Block`: `let g = 99`
-//! (value `Int`) claimed to extend to EOF. Selection-range chains for
+//! Round-84 LATENT lock: `textDocument/selectionRange` must bound a
+//! **non-Block** expression tightly. The extent used to be guessed from
+//! the source text and collapsed to `source.len()` for any `ExprKind`
+//! other than `Block`: `let g = 99` (value `Int`) claimed to extend to
+//! EOF. Selection-range chains for
 //! any cursor in a later decl would drag the earlier `let` span in as a
 //! parent — Shift+Alt+→ in editors cycled into the unrelated binding.
 //!
