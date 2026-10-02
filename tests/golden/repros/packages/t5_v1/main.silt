@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import lib1
 fn main() {
   let s = lib1.mk()

@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import lib1
 fn take(x: Secret) -> Int { 1 }
 fn main() {

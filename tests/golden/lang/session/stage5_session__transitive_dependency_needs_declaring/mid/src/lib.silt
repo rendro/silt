@@ -1,0 +1,2 @@
+import leaf
+pub fn m() -> Int { leaf.l() + 1 }

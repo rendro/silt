@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import shapes
 type Sq { side: Int }
 trait shapes.Area for Sq {

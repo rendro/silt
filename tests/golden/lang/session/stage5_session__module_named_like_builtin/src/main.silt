@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- `import list` always means the builtin module, so a module file
+-- src/list.silt could never be imported.
+-- stderr-contains: error[compile]: the module `list` cannot be imported: `import list` names the builtin module `list`
+-- stderr-contains: src/list.silt:1:1
+fn main() {
+  println(1)
+}

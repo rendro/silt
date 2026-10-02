@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import selfimp
 pub fn f() { 1 }
 fn main() { println(f()) }
