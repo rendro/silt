@@ -1,0 +1,7 @@
+-- verdict: known-divergent run
+import util
+
+fn main() -> () !{io, fs, net, random, time} {
+  let r = util.shout("x")
+  println(r)
+}

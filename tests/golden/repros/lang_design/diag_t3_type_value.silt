@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let t = Int
+  let u = [Int, String]
+  println(t)
+  println(u)
+  println(t == Int)
+}

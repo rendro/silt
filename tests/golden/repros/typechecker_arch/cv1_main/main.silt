@@ -1,0 +1,7 @@
+-- verdict: known-divergent lsp
+import shapes
+import other
+fn main() {
+  println(shapes.tag_name(shapes.Red))
+  println(other.hue_name(other.Blue))
+}

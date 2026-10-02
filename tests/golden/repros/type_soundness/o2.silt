@@ -1,0 +1,4 @@
+-- verdict: same
+fn grow(x) { [grow(x)] }
+fn pairup(x) { (x, pairup(x)) }
+fn main() { println("x") }

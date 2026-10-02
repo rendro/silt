@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+import string
+import float
+fn main() {
+  println(list.sort([[3, 1], [2], []]))
+  println(list.sort([(2, "b"), (1, "z"), (1, "a")]))
+  println(list.sort([Some(3), None, Some(1)]))
+  println(list.sort(["b", "B", "a", "é", "z"]))
+  println(list.sort([true, false]))
+  println(list.sort_by(["bb", "a", "ccc"], string.length))
+  println(list.sort_by([1, 2, 3, 4]) { x -> x % 2 })
+  println(list.max_by([1, 2, 3, 4]) { x -> x % 2 })
+  println(list.min_by([1, 2, 3, 4]) { x -> x % 2 })
+  println(list.min_by([]) { x -> x })
+  println(list.sort_by([1, 2, 3]) { x -> fn(y) { y } })
+}

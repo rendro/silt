@@ -1,0 +1,17 @@
+-- verdict: same
+fn sign(n) {
+  match {
+    n > 0 -> "pos"
+    n < 0 -> "neg"
+  }
+}
+fn classify(n) {
+  match n {
+    x when x > 0 -> "pos"
+    x when x <= 0 -> "nonpos"
+  }
+}
+fn main() {
+  println(sign(1))
+  println(sign(0))
+}

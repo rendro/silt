@@ -1,0 +1,14 @@
+-- verdict: same
+import int
+fn parse2(a, b) {
+  let t = int.parse(a)? + (int.parse(b)?)
+  Ok(t)
+}
+fn parse3(a) {
+  let t = 1 + int.parse(a)?
+  Ok(t)
+}
+fn main() {
+  println("{parse2("1", "2")}")
+  println("{parse3("1")}")
+}

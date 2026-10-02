@@ -1,0 +1,10 @@
+-- verdict: same
+fn run(f) = f()
+
+fn main() {
+  let h = match run {  -> 1 } {
+    1 -> "one"
+    _ -> "other"
+  }
+  println(h)
+}

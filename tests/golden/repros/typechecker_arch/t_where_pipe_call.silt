@@ -1,0 +1,5 @@
+-- verdict: same
+trait Showable { fn show(self) -> String }
+trait Showable for Int { fn show(self) -> String { "int" } }
+fn display(x: a) -> String where a: Showable { x.show() }
+fn main() { println("text" |> display()) }

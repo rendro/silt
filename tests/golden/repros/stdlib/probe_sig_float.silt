@@ -1,0 +1,24 @@
+-- verdict: same
+import float
+fn main() {
+  let v_float_abs: Int = float.abs
+  let v_float_ceil: Int = float.ceil
+  let v_float_clamp: Int = float.clamp
+  let v_float_epsilon: Int = float.epsilon
+  let v_float_floor: Int = float.floor
+  let v_float_infinity: Int = float.infinity
+  let v_float_is_finite: Int = float.is_finite
+  let v_float_is_infinite: Int = float.is_infinite
+  let v_float_is_nan: Int = float.is_nan
+  let v_float_max: Int = float.max
+  let v_float_max_value: Int = float.max_value
+  let v_float_min: Int = float.min
+  let v_float_min_positive: Int = float.min_positive
+  let v_float_min_value: Int = float.min_value
+  let v_float_nan: Int = float.nan
+  let v_float_neg_infinity: Int = float.neg_infinity
+  let v_float_parse: Int = float.parse
+  let v_float_round: Int = float.round
+  let v_float_to_int: Int = float.to_int
+  let v_float_to_string: Int = float.to_string
+}

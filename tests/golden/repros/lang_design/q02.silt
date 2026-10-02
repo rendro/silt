@@ -1,0 +1,16 @@
+-- verdict: same
+import int
+
+fn total(a: String, b: String) -> Result(Int, ParseError) {
+  let n = int.parse(a)? + int.parse(b)?
+  Ok(n)
+}
+
+fn neg(a: String) -> Result(Int, ParseError) {
+  Ok(-int.parse(a)?)
+}
+
+fn main() {
+  println(total("1", "2"))
+  println(neg("3"))
+}

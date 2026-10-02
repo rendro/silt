@@ -1,0 +1,5 @@
+-- verdict: known-divergent lsp
+import net
+fn main() {
+  println(net.http.ping())
+}

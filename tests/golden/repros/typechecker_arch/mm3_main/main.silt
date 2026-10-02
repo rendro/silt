@@ -1,0 +1,7 @@
+-- verdict: known-divergent lsp
+import a
+import b
+fn main() {
+  let c = b.Cat { name: "c" }
+  println(a.talk(c))
+}

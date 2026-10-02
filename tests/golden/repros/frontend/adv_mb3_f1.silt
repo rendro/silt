@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let xs = [1, {- one
+          more line -} 2,]
+  println("{xs}")
+}

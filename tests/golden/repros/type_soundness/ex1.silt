@@ -1,0 +1,8 @@
+-- verdict: same
+fn a(b: Bool, n: Int) -> Int {
+  match b {
+    true when n > 0 -> 1
+    false -> 0
+  }
+}
+fn main() { println(a(true, 0)) }

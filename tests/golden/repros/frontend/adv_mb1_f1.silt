@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let b = 10 {- why ten:
+     because -} - 3
+  println("{b}")
+}

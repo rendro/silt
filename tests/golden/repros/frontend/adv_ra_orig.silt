@@ -1,0 +1,6 @@
+-- verdict: same
+type P { -- a point
+  x: Int,
+  y: Int,
+}
+fn main() { println("{P { x: 1, y: 2 }.x}") }

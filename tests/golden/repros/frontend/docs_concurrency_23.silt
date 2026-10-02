@@ -1,0 +1,26 @@
+-- verdict: same
+import channel
+import task
+fn main() {
+  let ch = channel.new(10)
+
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "from")
+    channel.send(ch, "silt")
+    channel.close(ch)
+  })
+
+  let consumer = task.spawn(fn() {
+    channel.each(ch) { msg ->
+      println(msg)
+    }
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+-- prints:
+--   hello
+--   from
+--   silt

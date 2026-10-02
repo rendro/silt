@@ -1,0 +1,4 @@
+-- verdict: same
+fn f() !* { println("x") }
+fn g() !{io, bogus} { println("x") }
+fn main() { f() }

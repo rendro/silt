@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let r = {a: 1, b: "x"}
+  let s = r.{ a: "now a string" }
+  println(s.a)
+}

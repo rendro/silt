@@ -1,0 +1,6 @@
+-- verdict: same
+fn helper() -> String {
+  """
+fn main() { }
+"""
+}

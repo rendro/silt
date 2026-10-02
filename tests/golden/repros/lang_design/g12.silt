@@ -1,0 +1,10 @@
+-- verdict: known-divergent run
+import list
+fn apply(f, x) { f(x) }
+fn main() {
+  let sum = fn(a, b) { a + b }
+  println(sum(1, 2))
+  println(sum("x", "y"))
+  let r = list.map([true, false]) { b -> b + b }
+  println(r)
+}

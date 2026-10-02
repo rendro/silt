@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import set
+fn main() {
+  let xs: List(ExtFloat) = [1.0, -1.0, 0.5]
+  let ys = [2.0 / 1.0, -2.0 / 1.0]
+  let all = list.concat(xs, ys)
+  println(list.sort(all))
+  println(set.from_list(all))
+}

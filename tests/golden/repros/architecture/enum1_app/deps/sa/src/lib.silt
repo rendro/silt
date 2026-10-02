@@ -1,0 +1,13 @@
+pub type ColorA { Red, Blue }
+trait Describe {
+  fn describe(self) -> String
+}
+trait Describe for ColorA {
+  fn describe(self) -> String {
+    match self {
+      Red -> "sa.ColorA.Red"
+      Blue -> "sa.ColorA.Blue"
+    }
+  }
+}
+pub fn show_red() -> String = Red.describe()

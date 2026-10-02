@@ -1,0 +1,16 @@
+-- verdict: same
+fn f(x: Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Bool)))))))))))))))))))))))))) -> Int {
+  match x {
+    Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(true))))))))))))))))))))))))) -> 1
+    _ -> 0
+  }
+}
+fn g(x: Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Option(Bool)))))))))))))))))))))))))) -> Int {
+  match x {
+    Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(true))))))))))))))))))))))))) -> 1
+  }
+}
+fn main() {
+  println(f(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(false)))))))))))))))))))))))))))
+  println(g(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(Some(false)))))))))))))))))))))))))))
+}

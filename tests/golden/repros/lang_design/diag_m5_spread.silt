@@ -1,0 +1,11 @@
+-- verdict: same
+type P { a: Int, b: Int }
+fn main() {
+  let xs = [1, 2]
+  let ys = [0, ..xs, 3]
+  let zs = [0, ...xs]
+  println(ys)
+  let r = { a: 1 }
+  let r2 = { ..r, b: 2 }
+  println(r2.b)
+}

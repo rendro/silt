@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import string
+type P { a: Int, b: Int }
+fn add(a, b) { a + b }
+fn main() {
+  let x = 5
+  let r = 1000 + loop i = 1, acc = 0 { match i > 3 { true -> acc, false -> loop(i + 1, acc + i) } }
+  println(r)
+}

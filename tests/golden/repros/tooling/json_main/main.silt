@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import broken
+
+fn main() {
+  println("{broken.double(2)}")
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+fn f(v: Option(Int)) -> Int {
+  when let Some(n) = v else { return 0 }
+  n + 1
+}
+
+fn main() {
+  println("{f(Some(1))}")
+}

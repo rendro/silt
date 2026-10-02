@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let i = 0
+  while i < 3 {
+    println(i)
+  }
+}

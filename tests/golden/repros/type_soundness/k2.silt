@@ -1,0 +1,11 @@
+-- verdict: same
+fn h3(xs: List(Bool)) -> Int {
+  match xs {
+    [] -> 0
+    [true, ..rest] -> 1
+    [false] -> 2
+  }
+}
+fn main() {
+  println(h3([false, true]))
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+fn main() {
+  let m = #{ "host": "localhost", "port": "8080" }
+  match m {
+    #{ "host": hostval } -> println("host={hostval}")
+    _ -> println("none")
+  }
+  match (1, "x") {
+    (numval, strval) -> println("{numval} {strval}")
+  }
+}

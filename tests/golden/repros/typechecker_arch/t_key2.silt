@@ -1,0 +1,8 @@
+-- verdict: same
+type P { n: Int }
+trait Bump { fn bump(self) -> Int }
+trait Bump for P {
+  fn bump(self) -> Int { bump(self.n) }
+}
+fn bump(x: a) -> a { x + 1 }
+fn main() { println(bump(1)) }

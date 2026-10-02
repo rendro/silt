@@ -1,0 +1,6 @@
+-- verdict: same
+type Expr { Num(Int), Add(Expr, Expr) }
+fn main() {
+  let e = Add(Num(1), Num(2))
+  println(e)
+}

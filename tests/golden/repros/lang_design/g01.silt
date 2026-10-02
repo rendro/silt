@@ -1,0 +1,14 @@
+-- verdict: same
+fn add(a, b) { a + b }
+fn lt(a, b) { a < b }
+fn show(x) { "{x}" }
+fn same(a, b) { a == b }
+
+fn main() {
+  println(add(1, 2))
+  println(add("a", "b"))
+  println(lt(1, 2))
+  println(show(3))
+  println(same(1, 1))
+  println(add(true, false))
+}

@@ -1,0 +1,9 @@
+-- verdict: known-divergent lsp
+type Node { Leaf(String), Empty }
+fn main() {
+  let n = Leaf("x")
+  match n {
+    Leaf(s) -> println(s)
+    Empty -> println("empty")
+  }
+}

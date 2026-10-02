@@ -1,0 +1,9 @@
+-- verdict: known-divergent run
+import map
+fn main() {
+  let f = fn(x) { x + 1 }
+  let m = #{ f: 1 }
+  println(map.get(m, f))
+  let m2 = map.set(#{}, f, 2)
+  println(map.get(m2, fn(x) { x + 1 }))
+}

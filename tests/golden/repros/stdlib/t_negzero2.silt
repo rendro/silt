@@ -1,0 +1,15 @@
+-- verdict: same
+import float
+import list
+import string
+fn main() {
+  when let Ok(z) = float.parse("-0.0") else { return }
+  println(z == 0.0)
+  println(z.hash() == (0.0).hash())
+  println(z.compare(0.0))
+  println(string.from(z) == string.from(0.0))
+  println("{z}")
+  println(list.sort([0.0, z, 0.0]))
+  println(1.0 / z)
+  println(1.0 / 0.0)
+}

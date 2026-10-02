@@ -1,0 +1,15 @@
+-- verdict: same
+type User {
+  name: String,
+  age: Int,
+  active: Bool
+}
+
+fn make(name, age, active, extra_one, extra_two) = User { name: name, age: age, active: active }
+
+fn main() {
+  let users = [User { name: "Alice", age: 30, active: true }, User { name: "Bob", age: 25, active: false }, User { name: "Carol", age: 28, active: true }, User { name: "Dave", age: 41, active: true },]
+  let result = make("a very long argument string number one", 12345678901234, true, "another long argument string, number four", "and the fifth argument, which is also long",)
+  let m = #{ "alpha": 1, "beta": 2, }
+  println("{users} {result} {m}")
+}

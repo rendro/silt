@@ -1,0 +1,8 @@
+-- verdict: same
+type W(a) { W(a) }
+fn main() {
+  let w1 = W(fn(x) { x + 1 })
+  println(w1.display())
+  println("{w1}")
+  println(w1)
+}

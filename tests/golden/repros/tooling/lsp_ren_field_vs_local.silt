@@ -1,0 +1,15 @@
+-- verdict: same
+type P {
+  name: String,
+}
+
+fn f(p: P) -> String {
+  let nm = p.name
+  let q = P { name: nm }
+  let r = q.{ name: "z" }
+  "{nm} {q.name} {r.name}"
+}
+
+fn main() {
+  println(f(P { name: "a" }))
+}

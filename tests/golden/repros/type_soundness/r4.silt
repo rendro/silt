@@ -1,0 +1,11 @@
+-- verdict: same
+type P { name: String, age: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for P { fn greet(self) -> String { "I am {self.name}" } }
+fn takes_p(p: P) -> String { p.greet() }
+fn show_p(p: P) -> String { "{p}" }
+fn main() {
+  println(takes_p(P {name: "x", age: 3}))
+  println(show_p({name: "x", age: 3}))
+  println(takes_p({name: "x", age: 3}))
+}

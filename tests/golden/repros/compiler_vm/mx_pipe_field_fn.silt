@@ -1,0 +1,8 @@
+-- verdict: same
+type Ops { inc: Fn(Int) -> Int }
+fn main() {
+  let o = Ops { inc: fn(x) { x + 1 } }
+  println(o.inc(5))
+  println(5 |> o.inc)
+  println(5 |> o.inc())
+}

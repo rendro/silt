@@ -1,0 +1,5 @@
+-- verdict: known-divergent lsp
+type Shape { Circle(Int), Square(String) }
+let s = Circle(5)
+let Square(n) = s
+fn main() { println(n) }

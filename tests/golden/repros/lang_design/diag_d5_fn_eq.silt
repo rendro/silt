@@ -1,0 +1,5 @@
+-- verdict: same
+fn f(x) { x }
+fn main() {
+  println(f == f)
+}

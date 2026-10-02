@@ -1,0 +1,7 @@
+-- verdict: same
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+-- where clause names Loud, body calls greet (not in the bound)
+fn g(x: a) -> String where a: Loud { x.greet() }
+fn main() { println("x") }

@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let xs = [1, 2, 3]
+  println(xs.length())
+  println(xs.len)
+}

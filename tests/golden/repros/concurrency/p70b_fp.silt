@@ -1,0 +1,26 @@
+-- verdict: same
+import channel
+import task
+
+fn one_round(i) {
+  let ch = channel.new(1)
+  let a = task.spawn(fn() {
+    match channel.receive(ch) {
+      Message(v) -> v
+      _ -> 0 - 1
+    }
+  })
+  let b = task.spawn(fn() { channel.send(ch, i) })
+  task.join(a)
+}
+
+fn go(i, acc) {
+  match i < 40 {
+    true -> go(i + 1, acc + one_round(i))
+    false -> acc
+  }
+}
+
+fn main() {
+  println("sum {go(0, 0)}")
+}

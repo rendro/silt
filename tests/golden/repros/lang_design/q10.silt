@@ -1,0 +1,30 @@
+-- verdict: same
+import float
+import math
+import map
+import set
+import list
+
+fn main() {
+  let a = 1.0 / 3.0
+  println(a)
+  let nan = 0.0 / 0.0
+  println(nan)
+  println(nan == nan)
+  println(nan != nan)
+  println(nan < 1.0)
+  let inf = 1.0 / 0.0
+  println(inf)
+  println(-0.0 == 0.0)
+  println(-0.0)
+  let z = 0.0 * -1.0
+  println(z)
+  println([nan] == [nan])
+  println((nan, 1) == (nan, 1))
+  let m = #{ nan: "x" }
+  println(map.get(m, nan))
+  let s = #[nan, nan]
+  println(set.length(s))
+  println(list.sort([3.0 / 1.0, nan, 1.0 / 1.0]))
+  println(1e308 * 10.0)
+}

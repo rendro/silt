@@ -1,0 +1,11 @@
+-- verdict: same
+type P { x: Int, y: Int }
+fn show(p: P) -> Int {
+  match p {
+    P { x, y } -> x + y
+  }
+}
+fn main() {
+  let a = { x: 1, y: 2 }
+  println(show(a))
+}

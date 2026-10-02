@@ -1,0 +1,4 @@
+-- verdict: same
+import shapes
+fn f(s: shapes.Shape) -> Int { s.area() }
+fn main() { println(f(shapes.unit())) }

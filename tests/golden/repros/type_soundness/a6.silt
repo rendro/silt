@@ -1,0 +1,10 @@
+-- verdict: same
+-- trait impl method signature vs trait decl
+trait Sz { fn sz(self) -> Int }
+type P { n: Int }
+trait Sz for P { fn sz(self) -> String { "big" } }
+trait Sz for Int { fn sz(self) { "unannotated string" } }
+fn total(x: a, y: a) -> Int where a: Sz { x.sz() + y.sz() }
+fn main() {
+  println(total(1, 2))
+}

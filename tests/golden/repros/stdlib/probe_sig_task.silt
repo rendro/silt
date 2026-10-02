@@ -1,0 +1,9 @@
+-- verdict: same
+import task
+fn main() {
+  let v_task_cancel: Int = task.cancel
+  let v_task_deadline: Int = task.deadline
+  let v_task_join: Int = task.join
+  let v_task_spawn: Int = task.spawn
+  let v_task_spawn_until: Int = task.spawn_until
+}

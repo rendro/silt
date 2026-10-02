@@ -1,0 +1,9 @@
+-- verdict: known-divergent run
+import io
+-- local lambda
+fn quiet() -> Int !{} {
+  let f = fn() { println("side effect") }
+  f()
+  0
+}
+fn main() !{io} { println(quiet()) }

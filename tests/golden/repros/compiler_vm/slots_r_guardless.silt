@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let n = 3
+  println(match {
+    n == 0 -> "zero"
+    _ -> "many"
+  })
+  println(10 + match {
+    n > 2 -> 1
+    _ -> 2
+  })
+}

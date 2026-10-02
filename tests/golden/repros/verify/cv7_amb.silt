@@ -1,0 +1,8 @@
+-- verdict: same
+type L { Nil, Cons(Int, L) }
+fn main() {
+  let r = loop acc = Nil {
+    acc
+  }
+  println(r)
+}

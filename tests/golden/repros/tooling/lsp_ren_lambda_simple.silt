@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+
+fn main() {
+  let ys = list.map([1, 2], fn(x) { elem + 1 })
+  println("{ys}")
+}

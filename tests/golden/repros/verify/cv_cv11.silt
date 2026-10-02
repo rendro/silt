@@ -1,0 +1,20 @@
+-- verdict: same
+import channel
+fn drain(ch, label) {
+  let prefix = "got"
+  loop {
+    match channel.try_receive(ch) {
+      Message(v) -> {
+        println("{prefix} {label} {v}")
+        loop()
+      }
+      _ -> "done {label}"
+    }
+  }
+}
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  println(drain(ch, "x"))
+}

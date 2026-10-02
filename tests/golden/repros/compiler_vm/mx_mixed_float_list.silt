@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let e = 1.0 / 2.0
+  let xs = [1.0, e]
+  println(xs)
+}

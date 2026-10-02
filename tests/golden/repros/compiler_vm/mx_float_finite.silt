@@ -1,0 +1,31 @@
+-- verdict: same
+import float
+import json
+import int
+import list
+import math
+import set
+type R { v: Float }
+fn show(label: String, r: Result(Float, e)) {
+  match r {
+    Ok(v) -> println("{label}: Ok({v}) v==v:{v == v} v+1.0: {v + 1.0}")
+    Err(_) -> println("{label}: Err")
+  }
+}
+fn main() {
+  show("parse inf", float.parse("inf"))
+  show("parse NaN", float.parse("NaN"))
+  show("parse 1e999", float.parse("1e999"))
+  show("parse infinity", float.parse("infinity"))
+  show("parse -0.0", float.parse("-0.0"))
+  match json.parse("""{"v": 1e999}""", R) {
+    Ok(r) -> println("json 1e999: {r.v}")
+    Err(e) -> println("json 1e999: Err {e.message()}")
+  }
+  match json.parse("""{"v": -0.0}""", R) {
+    Ok(r) -> println("json -0.0: {r.v}")
+    Err(e) -> println("json -0.0: Err {e.message()}")
+  }
+  println("int.to_float max: {int.to_float(9223372036854775807)}")
+  println("abs min: {int.abs(-9223372036854775807 - 1)}")
+}

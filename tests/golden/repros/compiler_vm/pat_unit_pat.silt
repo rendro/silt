@@ -1,0 +1,8 @@
+-- verdict: same
+fn nothing() { () }
+fn main() {
+  let r = match nothing() {
+    () -> "unit"
+  }
+  println(r)
+}

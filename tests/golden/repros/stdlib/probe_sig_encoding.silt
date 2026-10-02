@@ -1,0 +1,8 @@
+-- verdict: same
+import encoding
+fn main() {
+  let v_encoding_form_decode: Int = encoding.form_decode
+  let v_encoding_form_encode: Int = encoding.form_encode
+  let v_encoding_url_decode: Int = encoding.url_decode
+  let v_encoding_url_encode: Int = encoding.url_encode
+}

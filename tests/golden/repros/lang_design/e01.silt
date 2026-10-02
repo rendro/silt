@@ -1,0 +1,31 @@
+-- verdict: known-divergent run
+import list
+import io
+import time
+
+fn apply(f, x) { f(x) }
+
+fn pure_looking(xs) {
+  xs |> list.map { x -> x + 1 }
+}
+
+fn sneaky(xs) {
+  xs |> list.each { x -> println(x) }
+}
+
+fn via_apply(p) {
+  apply(fn(q) { io.read_file(q) }, p)
+}
+
+fn stored() {
+  let f = fn() { time.now() }
+  f
+}
+
+fn main() {
+  sneaky(pure_looking([1, 2]))
+  let _r = via_apply("/etc/hostname")
+  let g = stored()
+  let _t = g()
+  ()
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+let x = f()
+fn f() { 42 }
+fn main() {
+  println(x)
+}

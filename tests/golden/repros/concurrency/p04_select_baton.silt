@@ -1,0 +1,31 @@
+-- verdict: same
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new(4)
+  let b = channel.new(4)
+  -- R1: one-shot select over a and b
+  let r1 = task.spawn(fn() {
+    match channel.select([Recv(a), Recv(b)]) {
+      (^a, Message(v)) -> "r1 took a:{v}"
+      (^b, Message(v)) -> "r1 took b:{v}"
+      _ -> "r1 other"
+    }
+  })
+  time.sleep(time.ms(50))
+  -- R2: plain receive on a (registered behind R1 in a's waker FIFO)
+  let r2 = task.spawn(fn() {
+    match channel.receive(a) {
+      Message(v) -> "r2 took a:{v}"
+      _ -> "r2 other"
+    }
+  })
+  time.sleep(time.ms(50))
+  -- one value for each channel: enough for both receivers
+  channel.send(a, 1)
+  channel.send(b, 2)
+  println(task.join(r1))
+  println(task.join(r2))
+}

@@ -1,0 +1,4 @@
+-- verdict: same
+fn main() {
+  println(match 5 { 1..5 -> "in", _ -> "out" })
+}

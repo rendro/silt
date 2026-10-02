@@ -1,0 +1,3 @@
+-- verdict: same
+fn add(a, b) { a + b }
+fn main() { println(add(true, false)) }

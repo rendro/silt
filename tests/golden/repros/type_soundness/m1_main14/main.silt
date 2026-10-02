@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import util.{ nothere, leaf }
+fn main() {
+  println(leaf())
+  println(nothere())
+}

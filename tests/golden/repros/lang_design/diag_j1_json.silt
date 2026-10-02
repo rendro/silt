@@ -1,0 +1,8 @@
+-- verdict: same
+import json
+type Ev { kind: String, userId: Int }
+fn main() {
+  println(json.parse("""{"kind": "a", "userId": 3}""", Ev))
+  let m = json.parse_map("""{"type": "a", "mod": "b"}""", String)
+  println(m)
+}

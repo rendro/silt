@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import hlper_typo
+
+fn main() {
+  undefined_thing(1)
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+fn l(xs: List(Int)) -> Int {
+  match xs {
+    [1, ..rest] -> 1
+    [_] -> 2
+    [] -> 0
+  }
+}
+fn main() { println(l([2, 3])) }

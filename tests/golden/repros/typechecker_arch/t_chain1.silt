@@ -1,0 +1,5 @@
+-- verdict: same
+fn h(x) { x + 1 }
+fn main() {
+  println(h("hello"))
+}

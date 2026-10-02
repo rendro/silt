@@ -1,0 +1,8 @@
+-- verdict: known-divergent run
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
+
+fn main() {
+  let q = id_name({name: "Alice", age: 30})
+  -- `age` came along with the row
+  println(q.age)       -- 30
+}

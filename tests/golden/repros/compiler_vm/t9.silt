@@ -1,0 +1,20 @@
+-- verdict: same
+import math
+import set
+import map
+import list
+import float
+
+fn main() {
+  let z = 0.0 / 1.0
+  let p = math.pow(-1.0e-200, 3.0)
+  println("pow result: {p}")
+  println("p == z: {p == z}")
+  println("set size (expect 1): {set.length(set.from_list([p, z]))}")
+  let m = #{ p: "neg", z: "pos" }
+  println("map size (expect 1): {map.length(m)}")
+  println("dedup: {list.unique([p, z])}")
+  println("sqrt path: {math.sqrt(0.0)}")
+  println("round: {float.round(-0.4)}")
+  println("ceil: {float.ceil(-0.5)}")
+}

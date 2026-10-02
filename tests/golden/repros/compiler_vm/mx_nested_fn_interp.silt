@@ -1,0 +1,7 @@
+-- verdict: same
+fn show(a: a) -> String { "{a}" }
+fn main() {
+  let f = fn(x) { x + 1 }
+  println(show([f]))
+  println(show(Some(f)))
+}

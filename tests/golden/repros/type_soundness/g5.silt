@@ -1,0 +1,7 @@
+-- verdict: same
+fn inc(x) { x + 1 }
+fn twice(x) { inc(inc(x)) }
+fn main() {
+  println(twice(1))
+  println(twice("s"))
+}

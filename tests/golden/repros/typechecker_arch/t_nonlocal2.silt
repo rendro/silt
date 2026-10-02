@@ -1,0 +1,10 @@
+-- verdict: same
+type Tag { t: String }
+trait Labelled { fn label(self) -> String }
+trait Labelled for Tag { fn label(self) -> String { self.t } }
+
+fn label_of(p) { p.label }
+fn main() {
+  println(label_of({label: "a", n: 1}))
+  println(label_of(42))
+}

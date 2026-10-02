@@ -1,0 +1,11 @@
+-- verdict: known-divergent lsp
+import helper
+
+fn main() {
+  let list = 3
+  println("{helper.double(2)}")
+  zzz_totally_undefined(1)
+  let q: Int = "str"
+  helper.nonexistent(1)
+  Foo { a: 1 }
+}

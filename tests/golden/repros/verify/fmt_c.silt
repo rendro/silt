@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+
+fn main() {
+  println(list.map([1, 2]) { x: Int -> x + 1 })
+}

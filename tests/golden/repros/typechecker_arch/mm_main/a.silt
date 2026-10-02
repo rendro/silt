@@ -1,0 +1,7 @@
+pub type T { A(Int) }
+pub fn make() -> T { A(41) }
+pub fn use_a(t: T) -> Int {
+  match t {
+    A(n) -> n + 1
+  }
+}

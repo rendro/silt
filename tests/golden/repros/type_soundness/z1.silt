@@ -1,0 +1,18 @@
+-- verdict: same
+import channel
+type Box(a) { Box(a) }
+fn show(x) { "{x}" }
+fn show2(x) { x.display() }
+fn pr(x) { println(x) }
+fn main() {
+  let f = fn(x) { x }
+  println(show([f]))
+  println(show(Box(f)))
+  println(show((1, f)))
+  println(show2(Box(f)))
+  println(show2(f))
+  pr(f)
+  pr([f])
+  pr(channel.new(1))
+  println(show(f))
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+import int
+import float
+import list
+import toml
+fn main() {
+  println(int.max(3, 9))
+  println(int.min(3, 9))
+  println(float.abs(-2.5))
+  println(list.contains([1, 2, 3], 2))
+}

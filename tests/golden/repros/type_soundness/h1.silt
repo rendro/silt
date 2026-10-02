@@ -1,0 +1,7 @@
+-- verdict: same
+-- top-level let calling an unannotated fn (depth 1)
+fn mk() { "a string" }
+let n = mk()
+fn main() {
+  println(n + 1)
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+import a
+type T { X(String) }
+fn main() {
+  println(a.use_a(X("s")))
+}

@@ -1,0 +1,28 @@
+-- verdict: same
+import int
+import float
+import math
+import string
+import list
+import map
+import set
+import bytes
+import regex
+import time
+import env
+import json
+import channel
+import io
+import fs
+import encoding
+import uuid
+import crypto
+import toml
+import result
+import option
+fn main() {
+  println(uuid.parse("zz"))
+  println(encoding.url_decode("%%zz"))
+  println(crypto.random_bytes(-1))
+  println(crypto.random_bytes(99999999))
+}

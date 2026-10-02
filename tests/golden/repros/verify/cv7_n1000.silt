@@ -1,0 +1,21 @@
+-- verdict: same
+type L { Nil, Cons(Int, L) }
+fn build(n) {
+  loop acc = Nil, i = n {
+    match i {
+      0 -> acc
+      _ -> loop(Cons(i, acc), i - 1)
+    }
+  }
+}
+fn len(l) {
+  loop cur = l, n = 0 {
+    match cur {
+      Nil -> n
+      Cons(_, rest) -> loop(rest, n + 1)
+    }
+  }
+}
+fn main() {
+  println(len(build(1000)))
+}

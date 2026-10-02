@@ -1,0 +1,2 @@
+-- verdict: same
+fn main() { match [1, 2] { [a, b,] -> println("{a}{b}")  _ -> println("no") } }

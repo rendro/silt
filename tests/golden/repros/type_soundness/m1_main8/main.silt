@@ -1,0 +1,10 @@
+-- verdict: known-divergent lsp
+import util
+fn area(p: Pt) -> Int { p.x * p.y }
+fn main() {
+  -- Pt was never imported by bare name; only `import util`
+  let b = Pt { x: 1, y: 2 }
+  println(area(b))
+  let h = Hidden(3)
+  println(h)
+}

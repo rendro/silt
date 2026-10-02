@@ -1,0 +1,11 @@
+-- verdict: same
+type A { v: Int }
+type B { v: String }
+
+fn main() {
+  let a = A { v: 1 }
+  let b = B { v: "s" }
+  let x = a.v
+  let r = {first: b.v, second: 2}
+  println("{x} {r.first}")
+}

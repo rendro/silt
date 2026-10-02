@@ -1,0 +1,47 @@
+-- verdict: known-divergent run
+import channel
+import task
+
+fn spin(n) {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1)
+  }
+}
+
+fn consume(ch, n) {
+  match channel.receive(ch) {
+    Message(_) -> consume(ch, n + 1)
+    _ -> n
+  }
+}
+
+fn produce(ch, n) {
+  match channel.select([Send(ch, n)]) {
+    (_, Sent) -> produce(ch, n + 1)
+    _ -> n
+  }
+}
+
+fn go(i, lost_rounds, lost_values) {
+  match i < 400 {
+    true -> {
+      let ch = channel.new(8)
+      let c = task.spawn(fn() { consume(ch, 0) })
+      let s = task.spawn(fn() { produce(ch, 0) })
+      let _ = spin(200 + i % 97)
+      channel.close(ch)
+      let sent = task.join(s)
+      let received = task.join(c)
+      match sent > received {
+        true -> go(i + 1, lost_rounds + 1, lost_values + sent - received)
+        false -> go(i + 1, lost_rounds, lost_values)
+      }
+    }
+    false -> println("rounds with sends acknowledged but never delivered: {lost_rounds}/400, values lost: {lost_values}")
+  }
+}
+
+fn main() {
+  go(0, 0, 0)
+}

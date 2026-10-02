@@ -1,0 +1,10 @@
+import calc
+import test
+fn test_hole() {
+  let s: String = calc.f()
+  test.assert_eq(undefined_thing_xyz, 1)
+}
+fn test_ok() {
+  let s: String = calc.f()
+  test.assert_eq(1, 1)
+}

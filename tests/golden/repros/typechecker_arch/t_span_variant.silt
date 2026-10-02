@@ -1,0 +1,9 @@
+-- verdict: same
+type Box(a) { value: a }
+
+type E {
+  Wrap(Box(Int, String)),
+  Other,
+}
+
+fn main() { println("x") }

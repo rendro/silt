@@ -1,0 +1,5 @@
+-- verdict: known-divergent lsp
+type Light { Stop, Go }
+fn main() {
+  println(Stop < Go)
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+fn sum(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(rest)
+  }
+}
+
+fn main() {
+  println("{sum([1, 2, 3])}")
+}

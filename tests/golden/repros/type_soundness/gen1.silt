@@ -1,0 +1,8 @@
+-- verdict: known-divergent run
+fn f(x) {
+  let g = fn() { x }
+  let a = g() + 1
+  let b = g() + "s"
+  (a, b)
+}
+fn main() { println(f(1)) }

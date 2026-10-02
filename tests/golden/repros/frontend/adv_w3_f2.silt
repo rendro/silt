@@ -1,0 +1,13 @@
+-- verdict: same
+fn f(x) {
+  let y = match x {
+    -- classify
+    1 -> "one" -- first
+    _ -> "many"
+  } -- end
+  y
+}
+
+fn main() {
+  println("{f(3)}")
+}

@@ -1,0 +1,18 @@
+-- verdict: same
+fn f(n) {
+  match n {
+    0 -> "zero"
+    _ -> "many"
+  }
+}
+fn g(n) {
+  let label = match n {
+    0 -> "zero"
+    _ -> "many"
+  }
+  "n is " + label
+}
+fn main() {
+  println(f(0))
+  println(g(1))
+}

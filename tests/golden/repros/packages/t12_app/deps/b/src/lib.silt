@@ -1,0 +1,4 @@
+import d
+pub fn dv() -> Int { d.version() + 100 }
+pub fn tok() { d.mk() }
+pub fn use_tok(t) -> Int { d.val(t) }

@@ -1,0 +1,10 @@
+-- verdict: same
+import moda
+import modb
+fn main() {
+  let a = moda.mk()
+  let b = modb.mk()
+  println(a)
+  println(b)
+  println(moda.getx(b))
+}

@@ -1,0 +1,5 @@
+-- verdict: known-divergent run
+import net.http
+fn main() {
+  println(net.http.ping())
+}

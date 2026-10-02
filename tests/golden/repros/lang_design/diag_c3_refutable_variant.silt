@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+type S { A(Int), B(String) }
+fn main() {
+  println([A(1), B("x")] |> list.map { A(n) -> n })
+}

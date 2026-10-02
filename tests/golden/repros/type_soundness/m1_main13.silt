@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import nonexistent
+fn main() {
+  let n: Int = nonexistent.foo(1)
+  println(n)
+}

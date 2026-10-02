@@ -1,0 +1,8 @@
+-- verdict: known-divergent lsp
+import mymath
+
+fn main() {
+  let result = mymath.add(3, 4)
+  println("3 + 4 = {result}")
+  println("5^2 = {mymath.square(5)}")
+}

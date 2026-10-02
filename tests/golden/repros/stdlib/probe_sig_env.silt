@@ -1,0 +1,8 @@
+-- verdict: same
+import env
+fn main() {
+  let v_env_get: Int = env.get
+  let v_env_remove: Int = env.remove
+  let v_env_set: Int = env.set
+  let v_env_vars: Int = env.vars
+}

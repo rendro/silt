@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+fn head_plus(xs: List(Int)) -> Result(Int, String) {
+  let h = list.head(xs)?
+  Ok(h + 1)
+}
+fn main() {
+  println(head_plus([]))
+}

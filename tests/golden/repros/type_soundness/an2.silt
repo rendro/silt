@@ -1,0 +1,7 @@
+-- verdict: same
+type Box(a) { Box(a) }
+fn unbox(b: Box) -> Int { match b { Box(v) -> v } }
+fn main() {
+  println(unbox(Box(1)))
+  println(unbox(Box("s")))
+}

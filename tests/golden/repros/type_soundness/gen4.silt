@@ -1,0 +1,12 @@
+-- verdict: same
+import channel
+-- ident alias of monomorphic channel inside tuple pattern / when let
+fn main() {
+  let ch = channel.new(4)
+  let alias = ch
+  let t = (ch, [ch])
+  channel.send(alias, 1)
+  let (c2, _) = t
+  channel.send(c2, "s")
+  println("ok")
+}

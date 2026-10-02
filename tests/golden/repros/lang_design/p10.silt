@@ -1,0 +1,9 @@
+-- verdict: same
+fn f(x) {
+  let a = match x { 5 -> 1, _ -> 2 }
+  let b = 3
+  a + b
+}
+fn main() {
+  println(f(5))
+}

@@ -1,0 +1,23 @@
+-- verdict: same
+fn grade(score) {
+  match score {
+    90..100 -> "A"
+    80..89 -> "B"
+    _ -> "F"
+  }
+}
+fn f(x) {
+  match x {
+    0.0..1.0 -> "unit"
+    _ -> "other"
+  }
+}
+fn main() {
+  println(grade(100))
+  println(grade(89))
+  println(f(1.0))
+  println(f(0.5))
+  let lo = 1
+  let r = lo..3
+  println(r)
+}

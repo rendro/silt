@@ -1,0 +1,9 @@
+-- verdict: known-divergent lsp
+import shapes
+fn f(s: Shape) -> Int {
+  match s {
+    shapes.Circle(r) -> r
+    shapes.Square(x) -> x
+  }
+}
+fn main() { println(f(shapes.Circle(5))) }

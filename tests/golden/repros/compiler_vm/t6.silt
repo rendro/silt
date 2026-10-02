@@ -1,0 +1,19 @@
+-- verdict: same
+fn id(x) { x }
+fn main() {
+  let opt = Some(41)
+  println(match opt {
+    Some(v) -> v + 1
+    None -> 0
+  })
+  let y = id(match opt {
+    Some(v) -> v + 1
+    None -> 0
+  })
+  println(y)
+  println("interp: {match opt { Some(v) -> v
+    None -> 0 }}")
+  let xs = [1, match opt { Some(v) -> v
+    None -> 0 }, 3]
+  println(xs)
+}

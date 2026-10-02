@@ -1,0 +1,12 @@
+-- verdict: known-divergent lsp
+import shapes
+import other
+fn describe(s: Shape) -> Int {
+  match s {
+    Circle(r) -> r
+    Square(x) -> x
+  }
+}
+fn main() {
+  println(describe(other.mk()))
+}

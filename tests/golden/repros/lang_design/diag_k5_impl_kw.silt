@@ -1,0 +1,5 @@
+-- verdict: known-divergent run
+type P { x: Int }
+trait Show { fn show(self) -> String }
+impl Show for P { fn show(self) -> String { "p" } }
+fn main() { println(P { x: 1 }.show()) }

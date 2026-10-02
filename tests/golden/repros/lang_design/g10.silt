@@ -1,0 +1,8 @@
+-- verdict: same
+fn f(x) { x.nonexistent_method_xyz(1, 2, 3) }
+fn g(x, y) { x * y - x }
+fn h(x) { !x }
+fn main() {
+  println("start")
+  println(g("a", "b"))
+}

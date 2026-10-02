@@ -1,0 +1,7 @@
+-- verdict: same
+type User { name: String }
+fn show(u: user) { u.name }
+fn count(xs: list(Int)) { xs }
+fn main() {
+  println(show(User { name: "a" }))
+}

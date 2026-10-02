@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+import map
+trait Same { fn same(self) -> Self }
+trait Same for String { fn same(self) -> Self { self } }
+
+fn coerce(x) { x.same() }
+
+fn main() {
+  let r: {name: String, age: Int} = coerce("zzz")
+  println(r)
+  let f: Fn(Int) -> Int = coerce("callme")
+  println(f)
+  let xs: List(Int) = coerce("not a list")
+  println(list.length(xs))
+}

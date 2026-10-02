@@ -1,0 +1,3 @@
+-- verdict: same
+fn bump(x: a) -> a { x + 1 }
+fn main() { println(bump(1)) }

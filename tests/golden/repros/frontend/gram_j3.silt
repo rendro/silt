@@ -1,0 +1,7 @@
+-- verdict: known-divergent run
+fn f(x: (Int)) = x
+fn g(x: (Int,)) = x
+fn main() {
+  println("{g((1,))}")
+  println("{f(1)}")
+}

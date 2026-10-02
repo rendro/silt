@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let Some(x) = Some(1)
+  let [a, b] = [1, 2]
+  println(x + a + b)
+}

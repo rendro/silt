@@ -1,0 +1,13 @@
+-- verdict: same
+import set
+import channel
+fn main() {
+  let nan = 0.0 / 0.0
+  let s = #[nan, nan]
+  println(set.length(s))
+  println(nan == nan)
+  let xs = [nan]
+  println(xs == xs)
+  let t = (nan, 1)
+  println(t == t)
+}

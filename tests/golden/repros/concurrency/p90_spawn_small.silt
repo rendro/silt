@@ -1,0 +1,11 @@
+-- verdict: known-divergent run
+import task
+import list
+import time
+
+fn main() {
+  let t0 = time.now()
+  let hs = 1..3000 |> list.map { i -> task.spawn(fn() { i * 2 }) }
+  let total = hs |> list.fold(0) { acc, h -> acc + task.join(h) }
+  println("total {total} spawn+join of 3000 tasks took {time.since(t0, time.now())}")
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+import task
+import time
+fn main() {
+  let _ = task.spawn(fn() { panic("worker failed") })
+  time.sleep(time.ms(200))
+  println("main done")
+}

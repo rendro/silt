@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+fn main() {
+  println(list.sort([(1, 2), (1, 1)]))
+  println((1, 2).compare((1, 3)))
+}

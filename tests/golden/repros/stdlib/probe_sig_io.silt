@@ -1,0 +1,9 @@
+-- verdict: same
+import io
+fn main() {
+  let v_io_args: Int = io.args
+  let v_io_inspect: Int = io.inspect
+  let v_io_read_file: Int = io.read_file
+  let v_io_read_line: Int = io.read_line
+  let v_io_write_file: Int = io.write_file
+}

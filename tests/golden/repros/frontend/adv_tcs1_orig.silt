@@ -1,0 +1,10 @@
+-- verdict: same
+fn main() {
+  let a = "x"
+  let xs = [a, "{ "," + "]" }"]
+  let ys = [
+    a, -- c
+    "{ "," + "]" }"
+  ]
+  println("{xs} {ys}")
+}

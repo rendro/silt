@@ -1,0 +1,19 @@
+-- verdict: same
+import channel
+import task
+
+fn main() {
+  let ch = channel.new()
+  -- a single task offering BOTH directions on one unbuffered channel.
+  -- There is no second party, so neither arm can ever complete.
+  let h = task.spawn(fn() {
+    match channel.select([Recv(ch), Send(ch, 7)]) {
+      (_, Sent) -> "Sent (to whom?)"
+      (_, Message(v)) -> "Message {v}"
+      (_, Closed) -> "Closed"
+      _ -> "other"
+    }
+  })
+  println(task.join(h))
+  println("leftover in channel: {channel.try_receive(ch)}")
+}

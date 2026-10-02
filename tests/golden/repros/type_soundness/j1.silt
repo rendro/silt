@@ -1,0 +1,10 @@
+-- verdict: same
+-- two enums with same variant name
+type A { Foo(Int), Bar }
+type B { Foo(String), Baz }
+fn main() {
+  let a = Foo(1)
+  let b = Foo("s")
+  println(a)
+  println(b)
+}

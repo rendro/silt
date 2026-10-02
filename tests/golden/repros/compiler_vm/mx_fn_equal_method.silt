@@ -1,0 +1,13 @@
+-- verdict: same
+import channel
+fn same(a: a, b: a) -> Bool { a.equal(b) }
+fn same_op(a: a, b: a) -> Bool { a == b }
+fn h(a: a) -> Int { a.hash() }
+fn lt(a: a, b: a) -> Bool { a < b }
+fn main() {
+  let f = fn(x) { x + 1 }
+  println(same(f, f))
+  println(h([f]))
+  println(lt([f], [f]))
+  println(same_op(f, f))
+}

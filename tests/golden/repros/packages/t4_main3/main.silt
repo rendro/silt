@@ -1,0 +1,8 @@
+-- verdict: same
+let counter = 5
+import moda
+fn show() { counter }
+fn main() {
+  println(moda.get())
+  println(show())
+}

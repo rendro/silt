@@ -1,0 +1,3 @@
+pub type Tok { T(String) }
+pub fn version() -> String { "two" }
+pub fn mk() -> Tok { T("two") }

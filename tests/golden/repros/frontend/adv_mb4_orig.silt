@@ -1,0 +1,7 @@
+-- verdict: same
+fn f(x) = x + 1
+fn main() {
+  let a = f {- multi
+  line -} (2)
+  println("{a}")
+}

@@ -1,0 +1,10 @@
+-- verdict: known-divergent lsp
+import util
+import other
+fn main() {
+  let a = util.Pt { x: 1, y: 2 }
+  let b = other.Pt { label: "l" }
+  println(a == b)
+  let xs = [a, b]
+  println(xs)
+}

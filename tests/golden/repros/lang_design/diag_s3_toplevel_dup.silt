@@ -1,0 +1,7 @@
+-- verdict: same
+fn f() { 1 }
+fn f() { 2 }
+type T { a: Int }
+type T { b: Int }
+fn print(x) { x }
+fn main() { println(f()) }

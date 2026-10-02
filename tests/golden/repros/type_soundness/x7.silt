@@ -1,0 +1,7 @@
+-- verdict: same
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int { f(x) }
+fn double(n: Int) -> Int { n * 2 }
+fn main() {
+  let r = apply(double, 2)
+  r
+}

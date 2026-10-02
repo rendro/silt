@@ -1,0 +1,10 @@
+-- verdict: same
+fn for(x) { x }
+fn main() {
+  let type_ = 1
+  let self = 2
+  let for = 3
+  let if = 4
+  let select = 5
+  println(self + for + if + select)
+}

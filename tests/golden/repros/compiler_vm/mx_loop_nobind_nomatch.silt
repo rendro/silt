@@ -1,0 +1,10 @@
+-- verdict: same
+fn count(n) {
+  loop {
+    println(n)
+    loop()
+  }
+}
+fn main() {
+  count(7)
+}

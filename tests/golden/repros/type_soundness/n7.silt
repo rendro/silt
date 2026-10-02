@@ -1,0 +1,13 @@
+-- verdict: same
+-- Float guaranteed finite? division laundered through a polymorphic fn
+fn div(a, b) { a / b }
+fn takes_f(x: Float) -> Float { x }
+fn main() {
+  let x: Float = div(1.0, 0.0)
+  println(x)
+  let y: Float = div(0.0, 0.0)
+  println(y)
+  println(takes_f(x))
+  println(y == y)
+  println(x + 1.0)
+}

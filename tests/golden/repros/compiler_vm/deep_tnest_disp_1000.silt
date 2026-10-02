@@ -1,0 +1,28 @@
+-- verdict: same
+import list
+import set
+import string
+import task
+type T {
+  Leaf,
+  Node(List(T))
+}
+fn build(n) {
+  let leaf = Leaf
+  loop i = 0, acc = leaf {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Node([acc]))
+    }
+  }
+}
+fn work() {
+  let a = build(1000)
+  let b = build(1000)
+  string.length("{a}")
+}
+fn main() {
+  let h = task.spawn(fn() { work() })
+  println(task.join(h))
+  println("done")
+}

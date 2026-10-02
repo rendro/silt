@@ -1,0 +1,17 @@
+-- verdict: same
+import channel
+import list
+import task
+import time
+fn outer(g, ys) { "outer called with a function and {list.length(ys)} results" }
+fn inner(c, ys) { "INNER called instead: second arg has {list.length(ys)} results" }
+fn main() {
+  let a = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+  }
+  let worker = task.spawn { -> outer(inner, list.map([a], channel.receive)) }
+  println(task.join(worker))
+  task.join(sender)
+}

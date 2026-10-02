@@ -1,0 +1,16 @@
+-- verdict: same
+fn main() {
+  let p0 = (1, 1)
+  let p1 = (p0, p0)
+  let p2 = (p1, p1)
+  let p3 = (p2, p2)
+  let p4 = (p3, p3)
+  let p5 = (p4, p4)
+  let p6 = (p5, p5)
+  let p7 = (p6, p6)
+  let p8 = (p7, p7)
+  let p9 = (p8, p8)
+  let p10 = (p9, p9)
+  let p11 = (p10, p10)
+  println(1)
+}

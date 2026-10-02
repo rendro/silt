@@ -1,0 +1,12 @@
+-- verdict: same
+fn sum(xs) {
+  loop remaining = xs, total = 0 {
+    match remaining {
+      [] -> total
+      [head, ..tail] -> loop(tail, total + head)
+    }
+  }
+}
+fn main() {
+  println(sum(1..20000))
+}

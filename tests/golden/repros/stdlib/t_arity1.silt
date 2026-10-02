@@ -1,0 +1,8 @@
+-- verdict: same
+import string
+import list
+import map
+fn main() {
+  let a = string.trim()
+  println(a)
+}

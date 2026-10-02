@@ -1,0 +1,11 @@
+-- verdict: same
+-- loop / recur
+fn f() {
+  loop (i = 0, acc = "") {
+    match i {
+      3 -> acc
+      _ -> recur(i + 1, i)
+    }
+  }
+}
+fn main() { println(f()) }

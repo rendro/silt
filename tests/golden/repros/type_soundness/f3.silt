@@ -1,0 +1,6 @@
+-- verdict: same
+fn f(x: a) -> Int { x + 1 }
+fn main() {
+  println(f(1))
+  println(f("s"))
+}

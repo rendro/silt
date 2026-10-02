@@ -1,0 +1,10 @@
+-- verdict: same
+import int
+fn main() {
+  let a = 42 as Int
+  let b = [] as List(Int)
+  let c = 42 as Float
+  let d = 1.0 as ExtFloat
+  let e = (1.0 / 2.0) as Float
+  println(d)
+}

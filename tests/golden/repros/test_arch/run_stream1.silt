@@ -1,0 +1,20 @@
+-- verdict: same
+import stream
+import list
+fn main() {
+  let a = stream.from_list([1, 2, 3])
+  let b = stream.from_list([10, 20, 30])
+  let m = stream.merge([a, b])
+  let xs = stream.collect(m)
+  println(list.length(xs))
+  let d = stream.from_list([1, 2, 3, 4, 5]) |> stream.drop_while({x -> x < 3}) |> stream.collect
+  println(d)
+  let f = stream.from_list([1, 2, 3]) |> stream.flat_map({x -> [x, x * 10]}) |> stream.collect
+  println(f)
+  let bu = stream.from_list([1, 2, 3]) |> stream.buffered(2) |> stream.collect
+  println(bu)
+  let ok = stream.from_list([Ok(1), Err("e"), Ok(3)]) |> stream.map_ok({x -> x + 1}) |> stream.collect
+  println(ok)
+  let fo = stream.from_list([Ok(1), Err("e"), Ok(3)]) |> stream.filter_ok({x -> x > 1}) |> stream.collect
+  println(fo)
+}

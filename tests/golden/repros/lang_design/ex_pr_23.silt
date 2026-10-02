@@ -1,0 +1,19 @@
+-- verdict: same
+import list
+import map
+import set
+import string
+import int
+import float
+import io
+import option
+import result
+type Celsius { c: Float }
+type Shape { Circle(Int), Sq(Int) }
+fn add(a, b) { a + b }
+fn inc(a) { a + 1 }
+fn main() {
+  let nan = 0.0 / 0.0
+  let inf = 1.0 / 0.0
+  println(map.get(#{1: 2}, 1))
+}

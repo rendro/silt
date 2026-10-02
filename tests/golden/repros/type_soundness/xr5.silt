@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+fn main() {
+  println(list.fold([(1, 2)], 0) { acc, (a, b) -> acc + a + b })
+  println(list.map([[1], []]) { [h, ..t] -> h })
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+type C { R, G, B }
+fn f(c: C, p: C) -> Int {
+  match c {
+    ^p -> 1
+    G -> 2
+    B -> 3
+  }
+}
+fn main() { println(f(R, G)) }

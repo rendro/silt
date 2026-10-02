@@ -1,0 +1,39 @@
+-- verdict: same
+import channel
+import task
+import time
+
+fn spin_loop(n, acc) {
+  match n {
+    0 -> acc
+    _ -> spin_loop(n - 1, acc + n)
+  }
+}
+
+fn worker(ch, n) {
+  let _ = spin_loop(30000, 0)
+  match channel.receive(ch) {
+    Message(v) -> {
+      println("worker: processed message {v}")
+      worker(ch, n + 1)
+    }
+    _ -> println("worker: channel closed")
+  }
+}
+
+fn main() {
+  let ch = channel.new(8)
+  let h = task.spawn(fn() { worker(ch, 0) })
+  time.sleep(time.ms(20))
+  task.cancel(h)
+  println("main: cancel #1 (worker running)")
+  time.sleep(time.ms(1500))
+  -- worker is now PARKED in channel.receive; docs: a parked task that is
+  -- cancelled "will not be resumed"
+  task.cancel(h)
+  println("main: cancel #2 (worker parked)")
+  time.sleep(time.ms(100))
+  channel.send(ch, 1)
+  time.sleep(time.ms(1000))
+  println("main: done")
+}

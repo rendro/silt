@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let x = 9223372036854775807
+  println(x)
+  let y = -9223372036854775808
+  println(y)
+}

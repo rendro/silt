@@ -1,0 +1,9 @@
+-- verdict: same
+fn f(x: a) -> a { 1 }
+fn g(x: a, y: b) -> a { y }
+fn h(xs: List(a)) -> a { 42 }
+fn main() {
+  println(f(2))
+  println(g(1, 2))
+  println(h([1]))
+}

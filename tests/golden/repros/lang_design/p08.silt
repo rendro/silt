@@ -1,0 +1,21 @@
+-- verdict: same
+fn id(s) { s }
+fn f(x) {
+  let y = id(match x { 5 -> "in", _ -> "out" })
+  y
+}
+fn g(x) {
+  let y = id({
+    let a = x + 1
+    a
+  })
+  y
+}
+fn h(x) {
+  1 + match x { 5 -> 10, _ -> 20 }
+}
+fn main() {
+  println(h(5))
+  println(g(5))
+  println(f(5))
+}

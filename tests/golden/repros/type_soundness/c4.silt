@@ -1,0 +1,9 @@
+-- verdict: same
+-- annotated but no where clause
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn g(x: a) -> String { x.greet() }
+fn main() {
+  println(g(1))
+  println(g("s"))
+}

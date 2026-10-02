@@ -1,0 +1,12 @@
+-- verdict: same
+-- does Float flow to ExtFloat param? "happens automatically where needed"
+fn takes_ext(x: ExtFloat) -> ExtFloat { x }
+fn takes_f(x: Float) -> Float { x }
+fn main() {
+  println(takes_ext(1.0))
+  let xs: List(ExtFloat) = [1.0, 2.0]
+  println(xs)
+  let e = 1.0 / 0.0
+  let ys = [1.0, e]
+  println(ys)
+}

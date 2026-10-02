@@ -1,0 +1,21 @@
+-- verdict: same
+import list
+
+fn first() {
+  let a = 1
+  let b = = 2
+  let c = 3
+  println("{a} {c}")
+  let d = [1, 2] |> list.map(fn(x) { x + 1 })
+  d
+}
+
+fn second() {
+  let z = )
+  z
+}
+
+fn main() {
+  first()
+  second()
+}

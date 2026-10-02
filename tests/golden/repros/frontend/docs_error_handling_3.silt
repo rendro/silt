@@ -1,0 +1,17 @@
+-- verdict: same
+import io
+import result
+
+type Wrap { Wrap(IoError) }
+
+fn load(path: String) -> Result(String, Wrap) {
+  let raw = io.read_file(path) |> result.map_err({ e -> Wrap(e) })?
+  Ok(raw)
+}
+
+fn main() {
+  match load("config.toml") {
+    Ok(raw) -> println("loaded")
+    Err(_) -> println("no config")
+  }
+}

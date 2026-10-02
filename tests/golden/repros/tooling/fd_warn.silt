@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+
+fn helper() {
+  let list = [1, 2, 3]
+  list
+}
+
+fn main() {
+  println("{helper()}")
+}
+
+fn test_helper() {
+  let json = 5
+  println("{json}")
+}

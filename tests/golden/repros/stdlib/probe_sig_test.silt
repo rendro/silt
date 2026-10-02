@@ -1,0 +1,7 @@
+-- verdict: same
+import test
+fn main() {
+  let v_test_assert: Int = test.assert
+  let v_test_assert_eq: Int = test.assert_eq
+  let v_test_assert_ne: Int = test.assert_ne
+}

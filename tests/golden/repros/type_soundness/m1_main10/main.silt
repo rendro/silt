@@ -1,0 +1,7 @@
+-- verdict: known-divergent lsp
+import util
+import list
+import string
+fn main() {
+  println(util.typed())
+}

@@ -1,0 +1,11 @@
+-- verdict: known-divergent run
+import task
+import io
+fn sneaky() -> Int !{} {
+  let h = task.spawn(fn() { println("spawned io") 1 })
+  task.join(h)
+}
+fn main() !{} {
+  let _ = sneaky()
+  ()
+}

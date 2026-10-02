@@ -1,0 +1,3 @@
+-- verdict: same
+fn f(x: Result(Int, String,)) = x
+fn main() { println("{f(Ok(1))}") }

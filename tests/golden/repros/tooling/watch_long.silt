@@ -1,0 +1,6 @@
+-- verdict: same
+import time
+
+fn main() {
+  println("v2 (edited at t+4s)")
+}

@@ -1,0 +1,7 @@
+-- verdict: known-divergent run
+-- lambda annotation with tyvar
+fn main() {
+  let f = fn(x: a) -> a { 1 }
+  let s: String = f("x")
+  println(s)
+}

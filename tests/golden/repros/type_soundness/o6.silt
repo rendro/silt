@@ -1,0 +1,6 @@
+-- verdict: same
+-- row occurs check
+fn f(r) { {...r, inner: r} }
+fn g(r) { f(g(r)) }
+fn h(r) { r.{ me: r } }
+fn main() { println("x") }

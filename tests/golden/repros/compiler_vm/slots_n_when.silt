@@ -1,0 +1,11 @@
+-- verdict: same
+fn f(opt) {
+  let r = 10 + {
+    when let Some(v) = opt else { return -1 }
+    v
+  }
+  r
+}
+fn main() {
+  println(f(Some(5)))
+}

@@ -1,0 +1,5 @@
+-- verdict: same
+import geometry.{ answer }
+fn main() {
+  println(answer)
+}

@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+import int
+
+fn find_neg(xs) {
+  xs |> list.each { x ->
+    match x < 0 {
+      true -> return Some(x)
+      false -> ()
+    }
+  }
+  None
+}
+
+fn main() {
+  println(find_neg([1, -2, 3]))
+}

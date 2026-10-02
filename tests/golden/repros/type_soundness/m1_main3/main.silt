@@ -1,0 +1,7 @@
+-- verdict: same
+import util
+import other
+fn main() {
+  let p = util.Pt { x: 1, y: 2 }
+  println(other.show(p))
+}

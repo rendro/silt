@@ -1,0 +1,17 @@
+-- verdict: same
+fn run(f) = f()
+fn app(f, x) = f(x)
+fn main() {
+  let a = run(fn() { 1 })
+  let b = run(fn() !{io} { println("x") })
+  let c = run(fn() !{} { 2 })
+  let d = app(fn(x) { x }, 3)
+  let e = app(fn(x) { x }, fn(y) { y })
+  let g = run(fn() { fn(z) { z } })
+  let h = match run(fn() { 1 }) { 1 -> "one"  _ -> "other" }
+  let i = run(fn() {
+    let q = 1
+    q
+  })
+  println("{a} {c} {d} {h} {i}")
+}

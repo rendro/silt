@@ -1,0 +1,11 @@
+-- verdict: same
+-- OK: both alternatives bind `x`
+fn unwrap_either(r: Result(Int, Int)) -> Int {
+  match r {
+    Ok(x) | Err(x) -> x
+  }
+}
+
+fn main() {
+  println("{unwrap_either(Ok(7))}")   -- 7
+}

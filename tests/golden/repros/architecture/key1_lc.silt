@@ -1,0 +1,6 @@
+-- verdict: known-divergent run
+type point { x: Int }
+fn main() {
+  let p = point { x: 1 }
+  println("{p.x}")
+}

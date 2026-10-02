@@ -1,0 +1,7 @@
+-- verdict: known-divergent run
+import task
+fn wait(h: Handle(Int)) -> Int { task.join(h) }
+fn main() {
+  let h = task.spawn(fn() { 1 })
+  println(wait(h))
+}

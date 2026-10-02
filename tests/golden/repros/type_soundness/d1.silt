@@ -1,0 +1,13 @@
+-- verdict: same
+-- unsafeCoerce via method call on unconstrained tyvar
+trait Same { fn same(self) -> Self }
+trait Same for String { fn same(self) -> Self { self } }
+
+fn coerce(x) { x.same() }
+
+fn main() {
+  let n: Int = coerce("not an int")
+  println(n)
+  let m = n + 1
+  println(m)
+}

@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+import set
+import math
+fn main() {
+  let a = 1.0 / 1.0
+  let b = -1.0 / 1.0
+  let c = 2.0 / 1.0
+  let d = -2.0 / 1.0
+  println(list.sort([a, b, c, d]))
+  println(b < a)
+  println([b] < [a])
+  let z = 0.0 / 1.0
+  let p = math.pow(-1.0e-200, 3.0)
+  println(p == z)
+  println(set.length(set.from_list([z, p])))
+}

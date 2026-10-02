@@ -1,0 +1,3 @@
+-- verdict: same
+fn ap(f: Fn(Int, Int,) -> Int) = f(1, 2)
+fn main() { println("{ap(fn(a, b) { a + b })}") }

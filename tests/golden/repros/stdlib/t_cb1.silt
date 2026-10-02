@@ -1,0 +1,24 @@
+-- verdict: same
+import channel
+import list
+import task
+import time
+
+-- builtin passed directly as callback; it must block (yield)
+fn main() {
+  let a = channel.new(1)
+  let b = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    time.sleep(time.ms(50))
+    channel.send(b, 2)
+  }
+  let marker = "marker"
+  let r = list.map([a, b], channel.receive)
+  let after = "after"
+  println(marker)
+  println(r)
+  println(after)
+  task.join(sender)
+}

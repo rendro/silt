@@ -1,0 +1,7 @@
+-- verdict: same
+import time
+fn main() {
+  time.sleep(time.ms(500))
+  println("READY")
+  time.sleep(time.ms(2500))
+}

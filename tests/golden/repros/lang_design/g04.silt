@@ -1,0 +1,6 @@
+-- verdict: same
+fn same(a, b) { a == b }
+fn id(x) { x }
+fn main() {
+  println(same(id, id))
+}

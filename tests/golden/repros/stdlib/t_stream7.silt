@@ -1,0 +1,11 @@
+-- verdict: same
+import stream
+import time
+fn main() {
+  let out = stream.from_list([1, 2, 3])
+    |> stream.map(fn(x) {
+      time.sleep(time.ms(300))
+      x * 10
+    })
+  println(stream.collect(out))
+}

@@ -1,0 +1,5 @@
+-- verdict: known-divergent lsp
+import a
+fn main() {
+  println(a.even(10))
+}

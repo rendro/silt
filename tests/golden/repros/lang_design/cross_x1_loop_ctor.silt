@@ -1,0 +1,11 @@
+-- verdict: same
+type L { Nil, Cons(Int, L) }
+fn main() {
+  let r = loop i = 0, acc = Nil {
+    match i < 3 {
+      true -> loop(i + 1, Cons(i, acc))
+      false -> acc
+    }
+  }
+  println(r)
+}

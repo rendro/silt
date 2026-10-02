@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import ca
+import cb
+fn main() {
+  println("hi")
+}

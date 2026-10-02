@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+fn main() {
+  let opts = [Some(1), None]
+  println(opts |> list.map { Some(v) -> v })
+}

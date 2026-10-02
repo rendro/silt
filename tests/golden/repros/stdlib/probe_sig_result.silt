@@ -1,0 +1,11 @@
+-- verdict: same
+import result
+fn main() {
+  let v_result_flat_map: Int = result.flat_map
+  let v_result_flatten: Int = result.flatten
+  let v_result_is_err: Int = result.is_err
+  let v_result_is_ok: Int = result.is_ok
+  let v_result_map_err: Int = result.map_err
+  let v_result_map_ok: Int = result.map_ok
+  let v_result_unwrap_or: Int = result.unwrap_or
+}

@@ -1,0 +1,25 @@
+-- verdict: same
+fn fact(n) {
+  loop i = n {
+    match i <= 1 {
+      true -> 1
+      false -> i * loop(i - 1)
+    }
+  }
+}
+fn sum_to(n) {
+  loop i = n {
+    match i == 0 {
+      true -> 0
+      false -> {
+        let rest = loop(i - 1)
+        println("unreachable? rest={rest}")
+        i + rest
+      }
+    }
+  }
+}
+fn main() {
+  println(fact(5))
+  println(sum_to(3))
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1, 2, 3] -- trailing one
+    |> list.map { x -> x * 2 } -- trailing two
+    -- standalone between stages
+    |> list.filter { x -> x > 2 }
+  println("{xs}")
+}

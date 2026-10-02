@@ -1,0 +1,61 @@
+-- verdict: known-divergent run
+import channel
+import task
+import time
+
+fn flag(done) {
+  match channel.try_receive(done) {
+    Message(_) -> 1
+    _ -> 0
+  }
+}
+
+fn one_round() {
+  let a = channel.new()
+  let b = channel.new()
+  let gate = channel.new()
+  let done = channel.new(4)
+  let r = task.spawn(fn() {
+    match channel.select([Recv(a), Recv(b)]) {
+      (_, Message(v)) -> v
+      _ -> 0
+    }
+  })
+  let s1 = task.spawn(fn() {
+    channel.receive(gate)
+    channel.send(a, 1)
+    channel.send(done, 1)
+  })
+  let s2 = task.spawn(fn() {
+    channel.receive(gate)
+    channel.send(b, 2)
+    channel.send(done, 2)
+  })
+  time.sleep(time.ms(5))
+  channel.close(gate)
+  let got = task.join(r)
+  time.sleep(time.ms(5))
+  let n1 = flag(done)
+  let n2 = flag(done)
+  task.cancel(s1)
+  task.cancel(s2)
+  n1 + n2
+}
+
+fn go(i, both) {
+  match i < 300 {
+    true -> {
+      let n = one_round()
+      let inc = match n {
+        2 -> 1
+        _ -> 0
+      }
+      go(i + 1, both + inc)
+    }
+    false -> println("rounds where BOTH rendezvous sends returned with ONE receive: {both} / 300")
+  }
+}
+
+fn main() {
+  go(0, 0)
+}

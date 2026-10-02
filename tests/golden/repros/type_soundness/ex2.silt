@@ -1,0 +1,8 @@
+-- verdict: same
+fn m(x: Map(String, Int)) -> Int {
+  match x {
+    #{ "a": a } -> a
+    #{} -> 0
+  }
+}
+fn main() { println(m(#{"b": 2})) }

@@ -1,0 +1,11 @@
+-- verdict: known-divergent run
+fn f(x) = x + 1
+fn main() {
+  let a = f {- multi
+  line -} (2)
+  let b = 10 {- c
+  -} - 3
+  let c = f -- call next line?
+    (5)
+  println("{a} {b} {c}")
+}

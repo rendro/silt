@@ -1,0 +1,7 @@
+-- verdict: same
+import other.{ Pt }
+import util
+fn main() {
+  let b = Pt { label: "l" }
+  println(b.label)
+}

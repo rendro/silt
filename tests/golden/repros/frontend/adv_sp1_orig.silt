@@ -1,0 +1,7 @@
+-- verdict: known-divergent run
+fn add(a, b) = a + b
+fn main() {
+  let x = add(1, {- second -} 2)
+  let y = (x + 1)
+  println("{x} {y}")
+}

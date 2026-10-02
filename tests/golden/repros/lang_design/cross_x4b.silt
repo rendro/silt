@@ -1,0 +1,17 @@
+-- verdict: same
+import channel
+fn main() {
+  let ch = channel.new(3)
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  channel.close(ch)
+  loop {
+    match channel.receive(ch) {
+      Message(v) -> {
+        println(v)
+        loop()
+      }
+      _ -> ()
+    }
+  }
+}

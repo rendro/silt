@@ -1,0 +1,10 @@
+-- verdict: known-divergent run
+fn main() {
+  let e = 1.0 / 0.0
+  let f = fn(a, b) { a + b }
+  let x: Float = f(1.0, 2.0)
+  println(x)
+  -- lambda with float param inferred later
+  let g = fn(a) { a + 1.0 }
+  println(g(e))
+}

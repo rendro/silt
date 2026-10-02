@@ -1,0 +1,7 @@
+pub type T { B(String) }
+pub fn make() -> T { B("hello") }
+pub fn use_b(t: T) -> String {
+  match t {
+    B(s) -> s
+  }
+}

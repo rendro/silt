@@ -1,0 +1,10 @@
+-- verdict: same
+trait Same { fn same(self) -> Self }
+trait Same for String { fn same(self) -> Self { self } }
+
+fn coerce(x: a) -> b { x.same() }
+
+fn main() {
+  let n: Int = coerce("not an int")
+  println(n)
+}

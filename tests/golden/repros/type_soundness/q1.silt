@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+-- return inside lambda
+fn f(xs: List(Int)) -> String {
+  let ys = list.map(xs) { x ->
+    match x {
+      0 -> return "early"
+      _ -> x + 1
+    }
+  }
+  "done {ys}"
+}
+fn main() {
+  println(f([1, 2]))
+  println(f([1, 0]))
+}

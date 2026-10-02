@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let x = 5
+  let s = if x > 3 { "big" } else { "small" }
+  println(s)
+}

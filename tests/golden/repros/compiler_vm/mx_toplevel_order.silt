@@ -1,0 +1,8 @@
+-- verdict: same
+let x = compute()
+
+fn compute() { 42 }
+
+fn main() {
+  println(x)
+}

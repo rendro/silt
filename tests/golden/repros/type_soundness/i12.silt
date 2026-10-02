@@ -1,0 +1,9 @@
+-- verdict: known-divergent run
+import map
+fn put(m, k, v) { map.set(m, k, v) }
+fn mk(k) { #{ k: 1 } }
+fn main() {
+  let f = fn(x) { x + 1 }
+  let m = mk(f)
+  println(map.length(m))
+}

@@ -1,0 +1,15 @@
+-- verdict: same
+fn first() {
+  let a = 1 @ 2
+  a
+}
+
+fn second() {
+  let z = )
+  z
+}
+
+fn main() {
+  let s: Int = "x"
+  first()
+}

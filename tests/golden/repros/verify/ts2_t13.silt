@@ -1,0 +1,11 @@
+-- verdict: same
+type P { x: Int }
+trait Equal for P {
+  fn equal(self, other: P) -> Bool { true }
+}
+fn main() {
+  let a = P { x: 1 }
+  let b = P { x: 2 }
+  println(a.equal(b))
+  println(a == b)
+}

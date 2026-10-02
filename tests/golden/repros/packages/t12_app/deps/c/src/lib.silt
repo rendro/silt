@@ -1,0 +1,3 @@
+import d
+pub fn dv() -> String { d.version() }
+pub fn tok() { d.mk() }

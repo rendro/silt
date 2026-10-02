@@ -1,0 +1,3 @@
+-- verdict: same
+type T { A, B, }
+fn main() { println("x") }

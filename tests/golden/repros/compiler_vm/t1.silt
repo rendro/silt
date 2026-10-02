@@ -1,0 +1,14 @@
+-- verdict: same
+import list
+import set
+
+fn main() {
+  let a = 1.0 / 1.0
+  let b = -1.0 / 1.0
+  let c = 2.0 / 1.0
+  let d = -2.0 / 1.0
+  let xs = [a, b, c, d]
+  println(list.sort(xs))
+  println(b < a)
+  println(set.from_list(xs))
+}

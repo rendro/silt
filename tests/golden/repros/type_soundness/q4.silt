@@ -1,0 +1,11 @@
+-- verdict: same
+-- generic record
+type Pair(a, b) { first: a, second: b }
+fn swap(p: Pair(a, b)) -> Pair(b, a) { Pair { first: p.second, second: p.first } }
+fn main() {
+  let p = Pair { first: 1, second: "s" }
+  let q = swap(p)
+  println(q.first)
+  let r: Pair(Int, Int) = p
+  println(r.second + 1)
+}

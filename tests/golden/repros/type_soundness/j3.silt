@@ -1,0 +1,10 @@
+-- verdict: same
+type MyOpt { Some(Int, Int), None }
+fn main() {
+  let r = Some(1, 2)
+  println(r)
+  let o: Option(Int) = Some(3)
+  println(o)
+  let n = None
+  println(n)
+}

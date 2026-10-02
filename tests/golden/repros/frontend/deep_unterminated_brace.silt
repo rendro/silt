@@ -1,0 +1,3 @@
+-- verdict: known-divergent lsp
+fn main() {
+  let x = [1, 2

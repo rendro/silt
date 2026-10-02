@@ -1,0 +1,7 @@
+pub type Tag { Red, Green }
+pub fn tag_name(t: Tag) -> String {
+  match t {
+    Red -> "red"
+    Green -> "green"
+  }
+}

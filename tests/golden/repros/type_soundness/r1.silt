@@ -1,0 +1,8 @@
+-- verdict: same
+type P { name: String, age: Int }
+type Q { name: String, age: Int }
+fn getp(p: P) -> String { p.name }
+fn main() {
+  let q = Q { name: "q", age: 1 }
+  println(getp(q))
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.close(ch)
+  match channel.receive(ch) {
+    Message(v) -> println(v)
+    _ -> println("closed")
+  }
+}

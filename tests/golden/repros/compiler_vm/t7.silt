@@ -1,0 +1,19 @@
+-- verdict: same
+trait Shift {
+  fn shift(self, delta: (Int, Int), scale: Int) -> Int
+}
+
+trait Shift for Int {
+  fn shift(self, (dx, dy), scale) -> Int {
+    (self + dx + dy) * scale
+  }
+}
+
+fn plain(base, (dx, dy), scale) {
+  (base + dx + dy) * scale
+}
+
+fn main() {
+  println(plain(1, (2, 3), 10))
+  println(1.shift((2, 3), 10))
+}

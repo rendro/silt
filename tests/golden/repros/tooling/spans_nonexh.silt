@@ -1,0 +1,8 @@
+-- verdict: same
+type C { R, G, B }
+fn f(c: C) -> Int {
+  match c {
+    R -> 1
+  }
+}
+fn main() { f(R) }

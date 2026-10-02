@@ -1,0 +1,7 @@
+-- verdict: same
+fn f(x: int) -> string {
+  "{x}"
+}
+fn main() {
+  println(f(1))
+}

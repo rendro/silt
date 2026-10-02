@@ -1,0 +1,6 @@
+-- verdict: same
+fn mk() { "a string" }
+let n: Int = mk()
+fn main() {
+  println(n)
+}

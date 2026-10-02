@@ -1,0 +1,10 @@
+-- verdict: same
+import channel
+-- generalization through a record literal holding a lambda that captures a channel
+fn main() {
+  let ch = channel.new(4)
+  let ops = { put: fn(v) { channel.send(ch, v) }, ch: ch }
+  ops.put(1)
+  ops.put("two")
+  println("sent")
+}

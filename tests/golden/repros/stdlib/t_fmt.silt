@@ -1,0 +1,27 @@
+-- verdict: same
+import int
+import float
+import string
+import list
+import math
+fn main() {
+  [0.1, 0.30000000000000004, 1.0, 100.0, 1.0e21, 1.0e-7, 123456789.123456789, 5.0e-324, 1.7976931348623157e308, 0.1 + 0.2]
+  |> list.each { x ->
+    let s = float.to_string(x)
+    let back = float.parse(s)
+    println("display={x} to_string={s} from={string.from(x)} roundtrip={back == Ok(x)}")
+  }
+  println(float.to_string(1.005, 2))
+  println(float.to_string(2.5, 0))
+  println(float.to_string(0.5, 0))
+  println(float.to_string(1.0e21, 2))
+  println(float.to_string(-0.001, 2))
+  println(float.round(2.5))
+  println(float.round(-2.5))
+  println(float.round(0.5))
+  println(float.to_int(2.9))
+  println(float.to_int(-2.9))
+  println(float.to_string(float.round(2.5)))
+  println(int.to_float(9007199254740993))
+  println(float.to_int(int.to_float(9223372036854775807)))
+}

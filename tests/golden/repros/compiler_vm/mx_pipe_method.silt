@@ -1,0 +1,14 @@
+-- verdict: same
+type Acc { base: Int }
+trait Adder {
+  fn add(self, x: Int) -> Int
+}
+trait Adder for Acc {
+  fn add(self, x: Int) -> Int { self.base + x }
+}
+type Color { Red, Green }
+fn main() {
+  let a = Acc { base: 100 }
+  println(a.add(5))
+  println(5 |> a.add())
+}

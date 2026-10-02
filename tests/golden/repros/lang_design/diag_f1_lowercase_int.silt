@@ -1,0 +1,13 @@
+-- verdict: same
+fn double(x: int) -> int {
+  x + x
+}
+fn greet(name: string) {
+  println("hello {name}")
+}
+fn main() {
+  println(double(2))
+  println(double("ab"))
+  greet(42)
+  println(double(true))
+}

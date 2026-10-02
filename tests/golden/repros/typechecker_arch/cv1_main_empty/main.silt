@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import shapes
+import other
+fn main() {
+  println("hi")
+}

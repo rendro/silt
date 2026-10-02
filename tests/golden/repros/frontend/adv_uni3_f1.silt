@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let éa = 1
+  println("{éa}")
+}

@@ -1,0 +1,38 @@
+-- verdict: same
+import list
+type Shape { Circle(Float), Rect(Float, Float) }
+fn main() {
+  -- or-pattern binding at different positions
+  let xs = [Circle(1.5), Rect(2.5, 3.5)]
+  let r = xs |> list.map { s ->
+    match s {
+      Circle(w) | Rect(_, w) -> w
+    }
+  }
+  println(r)
+  -- nested or with literals in tuple
+  let t = (Some(3), [1, 2, 3])
+  let m = match t {
+    (Some(1 | 2), _) -> "small"
+    (Some(n), [_, ..rest]) when n > 2 -> "big with rest {rest}"
+    (None, []) -> "none-empty"
+    _ -> "other"
+  }
+  println(m)
+  -- range as list scrutinee
+  let q = match 1..3 {
+    [a, b, c] -> a + b + c
+    _ -> -1
+  }
+  println(q)
+  let q2 = match 5..1 {
+    [] -> "empty"
+    _ -> "nonempty"
+  }
+  println(q2)
+  let q3 = match 1..5 {
+    [h, ..t] -> "{h} then {t}"
+    [] -> "empty"
+  }
+  println(q3)
+}

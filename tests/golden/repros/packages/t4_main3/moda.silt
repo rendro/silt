@@ -1,0 +1,4 @@
+let counter = 100
+fn helper() { "helper-from-moda" }
+pub fn get() { counter }
+pub fn who() { helper() }

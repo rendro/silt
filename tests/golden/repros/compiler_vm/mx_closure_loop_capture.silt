@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+fn main() {
+  let fs = loop i = 0, acc = [] {
+    match i >= 3 {
+      true -> acc
+      false -> loop(i + 1, list.append(acc, fn() { i * 10 }))
+    }
+  }
+  println(list.map(fs) { f -> f() })
+}

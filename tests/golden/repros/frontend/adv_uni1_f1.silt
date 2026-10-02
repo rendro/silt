@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let s = "héllo wörld ✓ 日本語"
+  let t = "tab\there"
+  println("{s} {t}")
+}

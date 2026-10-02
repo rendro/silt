@@ -1,0 +1,7 @@
+-- verdict: same
+import set
+type Duration { ns: Int, label: String }
+fn main() {
+  let a = Duration { ns: 5, label: "a" }
+  println(a)
+}

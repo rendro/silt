@@ -1,0 +1,7 @@
+-- verdict: same
+import env
+fn main() {
+  println("before")
+  env.set("A=B", "x")
+  println("after")
+}

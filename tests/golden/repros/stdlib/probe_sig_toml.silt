@@ -1,0 +1,9 @@
+-- verdict: same
+import toml
+fn main() {
+  let v_toml_parse: Int = toml.parse
+  let v_toml_parse_list: Int = toml.parse_list
+  let v_toml_parse_map: Int = toml.parse_map
+  let v_toml_pretty: Int = toml.pretty
+  let v_toml_stringify: Int = toml.stringify
+}

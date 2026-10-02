@@ -1,0 +1,6 @@
+-- verdict: same
+type Box(a) { value: a }
+
+type Al = Box(Int, String)
+
+fn main() { println("x") }

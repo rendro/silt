@@ -1,0 +1,14 @@
+-- verdict: same
+trait Convert(b) {
+  fn convert(self) -> b
+}
+trait Convert(Int) for String {
+  fn convert(self) -> Int { 1 }
+}
+trait Convert(Float) for String {
+  fn convert(self) -> Float { 2.0 }
+}
+fn main() {
+  let a: Int = "x".convert()
+  println(a)
+}

@@ -1,0 +1,16 @@
+-- verdict: same
+fn l(xs: List(Bool)) -> Int {
+  match xs {
+    [] -> 0
+    [true, ..rest] -> 1
+    [false, ..rest] -> 2
+  }
+}
+fn o(xs: List(Option(Int))) -> Int {
+  match xs {
+    [] -> 0
+    [Some(n), ..rest] -> n
+    [None, ..rest] -> 2
+  }
+}
+fn main() { println(l([false])) println(o([None])) }

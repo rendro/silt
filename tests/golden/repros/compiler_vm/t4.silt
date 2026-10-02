@@ -1,0 +1,15 @@
+-- verdict: same
+fn add3(a, b, c) { a + b + c }
+
+fn main() {
+  let r = 1 + { let a = 2
+    a + 1 }
+  println(r)
+  let s = add3(10, { let q = 5
+    q * 2 }, { let z = 7
+    z })
+  println(s)
+  let t = [1, { let u = 9
+    u }, 3]
+  println(t)
+}

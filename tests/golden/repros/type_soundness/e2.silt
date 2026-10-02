@@ -1,0 +1,9 @@
+-- verdict: same
+-- a trait declaring method `x` changes typing of r.x globally
+trait HasX { fn x(self) -> Int }
+fn getx(r) { r.x }
+fn main() {
+  let n: String = getx({x: 1})
+  println(n)
+  println(getx({y: 1}))
+}

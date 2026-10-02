@@ -1,0 +1,9 @@
+-- verdict: same
+import float
+fn main() {
+  let nan = float.nan
+  println("nan == nan: {nan == nan}")
+  println("nan.equal(nan): {nan.equal(nan)}")
+  println("[nan].equal([nan]): {[nan].equal([nan])}")
+  println("[nan] == [nan]: {[nan] == [nan]}")
+}

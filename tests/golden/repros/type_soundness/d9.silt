@@ -1,0 +1,12 @@
+-- verdict: same
+trait Same { fn same(self) -> Self }
+trait Same for Int { fn same(self) -> Self { self } }
+fn coerce(x) { x.same() }
+type Shape { Circle(Int), Sq(Int) }
+fn main() {
+  let b: Bool = coerce(7)
+  match b {
+    true -> println("t")
+    false -> println("f")
+  }
+}

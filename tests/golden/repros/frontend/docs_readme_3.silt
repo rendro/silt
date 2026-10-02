@@ -1,0 +1,16 @@
+-- verdict: same
+import io
+import json
+
+type Config { name: String }
+
+fn main() {
+  match io.read_file("settings.json") {
+    Ok(content) -> match json.parse(content, Config) {
+      Ok(cfg) -> println("loaded: {cfg.name}")
+      Err(e) -> println("parse error: {e.message()}")
+    }
+    Err(IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
+    Err(e) -> println("read error: {e.message()}")
+  }
+}

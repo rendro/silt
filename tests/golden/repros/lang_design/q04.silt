@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let y = 10
+    + 20
+  println(y)
+  let z = 10
+    - 3
+  println(z)
+  let w = 10
+    * 3
+  println(w)
+}

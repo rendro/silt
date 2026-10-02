@@ -1,0 +1,8 @@
+-- verdict: same
+import channel
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  let Message(val) = channel.receive(ch)
+  val
+}

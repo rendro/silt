@@ -1,0 +1,8 @@
+-- verdict: same
+import list
+import string
+type S { A(Int), B(String) }
+fn main() {
+  let r = [A(1), B("seven")] |> list.map { A(n) -> n * 2 }
+  println(r)
+}

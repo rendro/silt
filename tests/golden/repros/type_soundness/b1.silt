@@ -1,0 +1,14 @@
+-- verdict: same
+-- operator laundering: polymorphic fn with operators
+fn lt(a, b) { a < b }
+fn eq(a, b) { a == b }
+fn add(a, b) { a + b }
+
+fn main() {
+  let f = fn(x) { x + 1 }
+  let g = fn(x) { x + 2 }
+  println(eq(f, g))
+  println(eq(f, f))
+  println(lt(f, g))
+  println(lt(g, f))
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+-- update with unknown field through row-polymorphic fn
+fn setz(r) { r.{ z: 1 } }
+fn main() {
+  let r = {a: 1}
+  let s = setz(r)
+  println(s)
+}

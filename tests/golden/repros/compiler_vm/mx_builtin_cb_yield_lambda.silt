@@ -1,0 +1,20 @@
+-- verdict: same
+import channel
+import task
+import list
+import time
+
+fn pair(x, ys) { (x, ys) }
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let feeder = task.spawn(fn() {
+    time.sleep(time.ms(50))
+    channel.send(a, 1)
+    channel.send(b, 2)
+  })
+  let h1 = task.spawn(fn() { pair("x", list.map([a, b]) { c -> channel.receive(c) }) })
+  println(task.join(h1))
+  task.join(feeder)
+}

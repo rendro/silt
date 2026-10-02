@@ -1,0 +1,5 @@
+-- verdict: known-divergent lsp
+import util
+fn main() {
+  println(util.secret_fn())
+}

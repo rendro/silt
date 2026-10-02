@@ -1,0 +1,18 @@
+-- verdict: same
+import list
+import time
+fn main() {
+  let t0 = time.now()
+  let s = list.fold(1..1000000, 0) { acc, x -> acc + x }
+  println(s)
+  let xs = list.map(1..1000000) { x -> x * 2 }
+  println(list.length(xs))
+  let s2 = list.fold(xs, 0) { acc, x -> acc + x }
+  println(s2)
+  let ys = list.filter(xs) { x -> x % 3 == 0 }
+  println(list.length(ys))
+  let zs = list.sort_by(xs) { x -> 0 - x }
+  println(list.head(zs))
+  let d = time.since(t0, time.now())
+  println(d.ns / 1000000)
+}

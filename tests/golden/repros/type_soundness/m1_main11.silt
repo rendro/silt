@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import string
+import map
+fn main() {
+  println(list.map([1, 2]))
+  println(string.length())
+  println(list.fold([1,2], 0))
+  println(map.get(#{"a": 1}))
+}

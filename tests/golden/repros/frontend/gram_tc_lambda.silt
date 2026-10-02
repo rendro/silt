@@ -1,0 +1,3 @@
+-- verdict: same
+import list
+fn main() { [1] |> list.each(fn(x,) { println("{x}") }) }

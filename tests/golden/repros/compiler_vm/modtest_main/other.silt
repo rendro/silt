@@ -1,0 +1,3 @@
+pub type Hue { Green, Blue, Red }
+pub fn hgreen() -> Hue { Green }
+pub fn hred() -> Hue { Red }

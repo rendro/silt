@@ -1,0 +1,10 @@
+-- verdict: same
+-- mutual recursion
+fn ping(n) { match n { 0 -> "done", _ -> pong(n - 1) } }
+fn pong(n) { match n { 0 -> 0, _ -> ping(n - 1) } }
+fn main() {
+  println(ping(3))
+  println(ping(2))
+  let n: Int = pong(3)
+  println(n + 1)
+}

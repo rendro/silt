@@ -1,0 +1,11 @@
+-- verdict: same
+type P { name: String, age: Int }
+type Q { name: String, age: Int }
+fn same(a: P, b: P) -> Bool { a == b }
+fn main() {
+  let anon = {name: "x", age: 3}
+  let p: P = anon
+  let q: Q = anon
+  println(same(P {name: "x", age: 3}, anon))
+  println(p == P {name: "x", age: 3})
+}

@@ -1,0 +1,16 @@
+-- verdict: same
+type Color {
+  Red,
+  Green,
+}
+
+fn name(c: Color) -> String {
+  match c {
+    Red -> "red"
+    Green -> "green"
+  }
+}
+
+fn main() {
+  println(name(Red))
+}

@@ -1,0 +1,29 @@
+-- verdict: known-divergent run
+import list
+import io
+import time
+
+fn sneaky(xs) {
+  xs |> list.each { x -> println(x) }
+}
+
+fn reads(paths) {
+  paths |> list.map { p -> io.read_file(p) }
+}
+
+fn thunk() {
+  fn() { time.now() }
+}
+
+fn run_thunk() {
+  let f = fn() { io.read_file("/etc/hostname") }
+  f()
+}
+
+fn main() !{} {
+  sneaky([1, 2])
+  let _a = reads(["/etc/hostname"])
+  let t = thunk()
+  let _b = run_thunk()
+  ()
+}

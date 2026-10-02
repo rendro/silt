@@ -1,0 +1,10 @@
+-- verdict: same
+import channel
+import task
+-- polymorphic fn returning its arg channel: fine. What about channel stored at top-level via value form?
+let chans = []
+fn main() {
+  let a: List(Channel(Int)) = chans
+  let b: List(Channel(String)) = chans
+  println("ok")
+}

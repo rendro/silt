@@ -1,0 +1,9 @@
+-- verdict: same
+fn main(
+  -- after fn
+  -- after paren
+) {
+  -- after brace
+  let x = 1 * 2 -- after one -- after two
+  println("{x}") -- after println
+} -- after close brace

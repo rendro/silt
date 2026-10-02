@@ -1,0 +1,11 @@
+-- verdict: same
+-- recursion & polymorphic recursion
+fn depth(x: a, n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + depth([x], n - 1)
+  }
+}
+fn main() {
+  println(depth(1, 3))
+}

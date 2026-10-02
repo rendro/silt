@@ -1,0 +1,4 @@
+-- verdict: same
+fn main(x: Int) {
+  x
+}

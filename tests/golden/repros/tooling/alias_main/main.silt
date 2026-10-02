@@ -1,0 +1,15 @@
+-- verdict: known-divergent lsp
+import units.{ Meters, mk }
+import test
+
+fn add_one(m: Meters) -> Meters {
+  m + 1
+}
+
+fn main() {
+  println("{add_one(mk(1))}")
+}
+
+fn test_alias() {
+  test.assert_eq(add_one(mk(1)), 2)
+}

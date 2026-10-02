@@ -1,0 +1,9 @@
+-- verdict: known-divergent lsp
+import util
+fn main() {
+  let p = util.mkpriv()
+  match p {
+    Priv(n) -> println(n)
+  }
+  println(p)
+}

@@ -1,0 +1,17 @@
+-- verdict: same
+trait Default {
+  fn default() -> Self
+}
+
+trait Default for Int {
+  fn default() -> Self { 0 }
+}
+
+fn default(type a) -> a where a: Default {
+  a.default()                -- dispatches to Int.default at the call site
+}
+
+fn main() {
+  let n = default(Int)       -- 0 — generic path
+  let m = Int.default()      -- 0 — concrete path
+}

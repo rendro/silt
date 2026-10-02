@@ -1,0 +1,10 @@
+-- verdict: known-divergent lsp
+import a
+import b
+
+fn main() {
+  println("a: Red < Blue  (decl order => true): {a.a_red_lt_blue()}")
+  println("a sorted (decl order => [Red, Blue]): {a.a_sorted()}")
+  println("b: Blue < Red  (decl order => true): {b.b_blue_lt_red()}")
+  println("b sorted (decl order => [Blue, Red]): {b.b_sorted()}")
+}

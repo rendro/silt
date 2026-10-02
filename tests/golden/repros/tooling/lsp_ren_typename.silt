@@ -1,0 +1,14 @@
+-- verdict: same
+type Vec2 {
+  x: Int,
+  y: Int,
+}
+
+fn mk() -> Point {
+  Point { x: 1, y: 2 }
+}
+
+fn main() {
+  let p: Point = mk()
+  println("{p.x}")
+}

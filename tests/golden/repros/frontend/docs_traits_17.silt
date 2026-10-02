@@ -1,0 +1,14 @@
+-- verdict: same
+import list
+
+type Celsius { c: Float }
+
+trait Display for Celsius {
+  fn display(self) -> String { "{self.c}°C" }
+}
+
+fn main() {
+  let temps = [Celsius { c: 20.0 }, Celsius { c: 25.5 }]
+  let rendered = list.map(temps, Celsius.display)
+  list.each(rendered) { line -> println(line) }
+}

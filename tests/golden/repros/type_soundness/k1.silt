@@ -1,0 +1,34 @@
+-- verdict: same
+-- exhaustiveness: ranges over Int
+fn f(n: Int) -> String {
+  match n {
+    0..10 -> "a"
+    11..20 -> "b"
+  }
+}
+fn g(b: Bool, c: Bool) -> Int {
+  match (b, c) {
+    (true, _) -> 1
+    (_, true) -> 2
+    (false, false) -> 3
+  }
+}
+fn h(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [a] -> a
+    [a, b, ..rest] -> a + b
+  }
+}
+fn h2(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [a, b, ..rest] -> a + b
+  }
+}
+fn main() {
+  println(g(false, false))
+  println(h([1]))
+  println(h2([1]))
+  println(f(50))
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+fn helper(n) { n + 1 }
+fn main() {
+  let helper = fn(n) {
+    match n {
+      0 -> 100
+      _ -> helper(n - 1)
+    }
+  }
+  println(helper(3))
+}

@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+fn main() {
+  let n = loop i = 0, acc = [] {
+    match i < 3 {
+      true -> loop(i + 1, list.append(acc, [fn() { i }]))
+      false -> acc
+    }
+  }
+  println(list.map(n) { f -> f() })
+  let r = loop i = 0 {
+    let g = fn() { loop(i + 1) }
+    match i < 3 { true -> g(), false -> i }
+  }
+  println(r)
+}

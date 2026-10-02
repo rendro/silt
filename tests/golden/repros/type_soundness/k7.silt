@@ -1,0 +1,37 @@
+-- verdict: same
+type T { A, B, C }
+fn f(p: (T, T)) -> Int {
+  match p {
+    (A | B, _) -> 1
+    (C, A | B | C) -> 2
+  }
+}
+fn g(p: (Bool, Option(Bool))) -> Int {
+  match p {
+    (true, Some(true | false)) -> 1
+    (true, None) -> 2
+    (false, _) -> 3
+  }
+}
+type R { on: Bool, n: Int }
+fn h(r: R) -> Int {
+  match r {
+    R { on: true, .. } -> 1
+    R { on: false, n } -> n
+  }
+}
+fn u(x: ()) -> Int { match x { () -> 1 } }
+fn l(xs: List(List(Int))) -> Int {
+  match xs {
+    [] -> 0
+    [[], ..rest] -> 1
+    [[a, ..r], ..rest] -> a
+  }
+}
+fn main() {
+  println(f((C, C)))
+  println(g((true, Some(false))))
+  println(h(R { on: false, n: 5 }))
+  println(u(()))
+  println(l([[3]]))
+}

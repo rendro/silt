@@ -1,0 +1,9 @@
+-- verdict: same
+fn f(x) { x }
+fn g() { f(1) }
+fn main() {
+  let y = g() as String
+  println(y)
+  let z = (f(1) as Int)
+  println(z)
+}

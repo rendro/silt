@@ -1,0 +1,13 @@
+-- verdict: same
+fn total() -> Int {
+  5
+}
+
+fn g() -> Int {
+  let total = 1
+  total + 1
+}
+
+fn main() {
+  println("{total()} {g()}")
+}

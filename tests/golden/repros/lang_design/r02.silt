@@ -1,0 +1,12 @@
+-- verdict: same
+import list
+import int
+
+fn parse_all(xs) {
+  let parsed = xs |> list.map { s -> int.parse(s)? }
+  Ok(parsed)
+}
+
+fn main() {
+  println(parse_all(["1", "x", "3"]))
+}

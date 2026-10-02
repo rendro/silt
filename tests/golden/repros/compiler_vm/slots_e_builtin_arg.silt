@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+fn main() {
+  let opt = Some(2)
+  let r = list.take([10, 20, 30], match opt {
+    Some(v) -> v
+    None -> 0
+  })
+  println(r)
+}

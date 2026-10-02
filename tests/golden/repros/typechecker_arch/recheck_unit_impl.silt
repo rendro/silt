@@ -1,0 +1,6 @@
+-- verdict: known-divergent run
+trait Foo { fn foo(self) -> Int }
+trait Foo for () {
+  fn foo(self) -> Int { 1 + "x" }
+}
+fn main() { println(().foo()) }

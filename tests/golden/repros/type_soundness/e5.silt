@@ -1,0 +1,6 @@
+-- verdict: known-divergent run
+fn main() {
+  let f = fn(x) { x.display() }
+  let n: Int = f(1)
+  println(n)
+}

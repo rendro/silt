@@ -1,0 +1,17 @@
+-- verdict: same
+import shapes as sh
+import shapes.{ area, Circle }
+import list.{ map }
+import string as str
+
+fn area(n: Int) -> Int {
+  n
+}
+
+fn main() {
+  let a = sh.area(Circle(1.0))
+  let b = area(2)
+  let c = map([1, 2]) { x -> x + 1 }
+  let d = str.length("abc")
+  println("{a} {b} {c} {d}")
+}

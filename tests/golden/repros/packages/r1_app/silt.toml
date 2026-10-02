@@ -1,0 +1,6 @@
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+mid = { path = "deps/mid" }

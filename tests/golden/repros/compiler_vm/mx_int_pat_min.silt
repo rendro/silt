@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let y = -9223372036854775807 - 1
+  let r = match y {
+    -9223372036854775808 -> "min"
+    _ -> "other"
+  }
+  println(r)
+}

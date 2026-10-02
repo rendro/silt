@@ -1,0 +1,1003 @@
+-- verdict: same
+import list
+fn f0(x: Int) -> Int {
+  let y = x + 0
+  list.length([y, x])
+}
+
+fn f1(x: Int) -> Int {
+  let y = x + 1
+  list.length([y, x])
+}
+
+fn f2(x: Int) -> Int {
+  let y = x + 2
+  list.length([y, x])
+}
+
+fn f3(x: Int) -> Int {
+  let y = x + 3
+  list.length([y, x])
+}
+
+fn f4(x: Int) -> Int {
+  let y = x + 4
+  list.length([y, x])
+}
+
+fn f5(x: Int) -> Int {
+  let y = x + 5
+  list.length([y, x])
+}
+
+fn f6(x: Int) -> Int {
+  let y = x + 6
+  list.length([y, x])
+}
+
+fn f7(x: Int) -> Int {
+  let y = x + 7
+  list.length([y, x])
+}
+
+fn f8(x: Int) -> Int {
+  let y = x + 8
+  list.length([y, x])
+}
+
+fn f9(x: Int) -> Int {
+  let y = x + 9
+  list.length([y, x])
+}
+
+fn f10(x: Int) -> Int {
+  let y = x + 10
+  list.length([y, x])
+}
+
+fn f11(x: Int) -> Int {
+  let y = x + 11
+  list.length([y, x])
+}
+
+fn f12(x: Int) -> Int {
+  let y = x + 12
+  list.length([y, x])
+}
+
+fn f13(x: Int) -> Int {
+  let y = x + 13
+  list.length([y, x])
+}
+
+fn f14(x: Int) -> Int {
+  let y = x + 14
+  list.length([y, x])
+}
+
+fn f15(x: Int) -> Int {
+  let y = x + 15
+  list.length([y, x])
+}
+
+fn f16(x: Int) -> Int {
+  let y = x + 16
+  list.length([y, x])
+}
+
+fn f17(x: Int) -> Int {
+  let y = x + 17
+  list.length([y, x])
+}
+
+fn f18(x: Int) -> Int {
+  let y = x + 18
+  list.length([y, x])
+}
+
+fn f19(x: Int) -> Int {
+  let y = x + 19
+  list.length([y, x])
+}
+
+fn f20(x: Int) -> Int {
+  let y = x + 20
+  list.length([y, x])
+}
+
+fn f21(x: Int) -> Int {
+  let y = x + 21
+  list.length([y, x])
+}
+
+fn f22(x: Int) -> Int {
+  let y = x + 22
+  list.length([y, x])
+}
+
+fn f23(x: Int) -> Int {
+  let y = x + 23
+  list.length([y, x])
+}
+
+fn f24(x: Int) -> Int {
+  let y = x + 24
+  list.length([y, x])
+}
+
+fn f25(x: Int) -> Int {
+  let y = x + 25
+  list.length([y, x])
+}
+
+fn f26(x: Int) -> Int {
+  let y = x + 26
+  list.length([y, x])
+}
+
+fn f27(x: Int) -> Int {
+  let y = x + 27
+  list.length([y, x])
+}
+
+fn f28(x: Int) -> Int {
+  let y = x + 28
+  list.length([y, x])
+}
+
+fn f29(x: Int) -> Int {
+  let y = x + 29
+  list.length([y, x])
+}
+
+fn f30(x: Int) -> Int {
+  let y = x + 30
+  list.length([y, x])
+}
+
+fn f31(x: Int) -> Int {
+  let y = x + 31
+  list.length([y, x])
+}
+
+fn f32(x: Int) -> Int {
+  let y = x + 32
+  list.length([y, x])
+}
+
+fn f33(x: Int) -> Int {
+  let y = x + 33
+  list.length([y, x])
+}
+
+fn f34(x: Int) -> Int {
+  let y = x + 34
+  list.length([y, x])
+}
+
+fn f35(x: Int) -> Int {
+  let y = x + 35
+  list.length([y, x])
+}
+
+fn f36(x: Int) -> Int {
+  let y = x + 36
+  list.length([y, x])
+}
+
+fn f37(x: Int) -> Int {
+  let y = x + 37
+  list.length([y, x])
+}
+
+fn f38(x: Int) -> Int {
+  let y = x + 38
+  list.length([y, x])
+}
+
+fn f39(x: Int) -> Int {
+  let y = x + 39
+  list.length([y, x])
+}
+
+fn f40(x: Int) -> Int {
+  let y = x + 40
+  list.length([y, x])
+}
+
+fn f41(x: Int) -> Int {
+  let y = x + 41
+  list.length([y, x])
+}
+
+fn f42(x: Int) -> Int {
+  let y = x + 42
+  list.length([y, x])
+}
+
+fn f43(x: Int) -> Int {
+  let y = x + 43
+  list.length([y, x])
+}
+
+fn f44(x: Int) -> Int {
+  let y = x + 44
+  list.length([y, x])
+}
+
+fn f45(x: Int) -> Int {
+  let y = x + 45
+  list.length([y, x])
+}
+
+fn f46(x: Int) -> Int {
+  let y = x + 46
+  list.length([y, x])
+}
+
+fn f47(x: Int) -> Int {
+  let y = x + 47
+  list.length([y, x])
+}
+
+fn f48(x: Int) -> Int {
+  let y = x + 48
+  list.length([y, x])
+}
+
+fn f49(x: Int) -> Int {
+  let y = x + 49
+  list.length([y, x])
+}
+
+fn f50(x: Int) -> Int {
+  let y = x + 50
+  list.length([y, x])
+}
+
+fn f51(x: Int) -> Int {
+  let y = x + 51
+  list.length([y, x])
+}
+
+fn f52(x: Int) -> Int {
+  let y = x + 52
+  list.length([y, x])
+}
+
+fn f53(x: Int) -> Int {
+  let y = x + 53
+  list.length([y, x])
+}
+
+fn f54(x: Int) -> Int {
+  let y = x + 54
+  list.length([y, x])
+}
+
+fn f55(x: Int) -> Int {
+  let y = x + 55
+  list.length([y, x])
+}
+
+fn f56(x: Int) -> Int {
+  let y = x + 56
+  list.length([y, x])
+}
+
+fn f57(x: Int) -> Int {
+  let y = x + 57
+  list.length([y, x])
+}
+
+fn f58(x: Int) -> Int {
+  let y = x + 58
+  list.length([y, x])
+}
+
+fn f59(x: Int) -> Int {
+  let y = x + 59
+  list.length([y, x])
+}
+
+fn f60(x: Int) -> Int {
+  let y = x + 60
+  list.length([y, x])
+}
+
+fn f61(x: Int) -> Int {
+  let y = x + 61
+  list.length([y, x])
+}
+
+fn f62(x: Int) -> Int {
+  let y = x + 62
+  list.length([y, x])
+}
+
+fn f63(x: Int) -> Int {
+  let y = x + 63
+  list.length([y, x])
+}
+
+fn f64(x: Int) -> Int {
+  let y = x + 64
+  list.length([y, x])
+}
+
+fn f65(x: Int) -> Int {
+  let y = x + 65
+  list.length([y, x])
+}
+
+fn f66(x: Int) -> Int {
+  let y = x + 66
+  list.length([y, x])
+}
+
+fn f67(x: Int) -> Int {
+  let y = x + 67
+  list.length([y, x])
+}
+
+fn f68(x: Int) -> Int {
+  let y = x + 68
+  list.length([y, x])
+}
+
+fn f69(x: Int) -> Int {
+  let y = x + 69
+  list.length([y, x])
+}
+
+fn f70(x: Int) -> Int {
+  let y = x + 70
+  list.length([y, x])
+}
+
+fn f71(x: Int) -> Int {
+  let y = x + 71
+  list.length([y, x])
+}
+
+fn f72(x: Int) -> Int {
+  let y = x + 72
+  list.length([y, x])
+}
+
+fn f73(x: Int) -> Int {
+  let y = x + 73
+  list.length([y, x])
+}
+
+fn f74(x: Int) -> Int {
+  let y = x + 74
+  list.length([y, x])
+}
+
+fn f75(x: Int) -> Int {
+  let y = x + 75
+  list.length([y, x])
+}
+
+fn f76(x: Int) -> Int {
+  let y = x + 76
+  list.length([y, x])
+}
+
+fn f77(x: Int) -> Int {
+  let y = x + 77
+  list.length([y, x])
+}
+
+fn f78(x: Int) -> Int {
+  let y = x + 78
+  list.length([y, x])
+}
+
+fn f79(x: Int) -> Int {
+  let y = x + 79
+  list.length([y, x])
+}
+
+fn f80(x: Int) -> Int {
+  let y = x + 80
+  list.length([y, x])
+}
+
+fn f81(x: Int) -> Int {
+  let y = x + 81
+  list.length([y, x])
+}
+
+fn f82(x: Int) -> Int {
+  let y = x + 82
+  list.length([y, x])
+}
+
+fn f83(x: Int) -> Int {
+  let y = x + 83
+  list.length([y, x])
+}
+
+fn f84(x: Int) -> Int {
+  let y = x + 84
+  list.length([y, x])
+}
+
+fn f85(x: Int) -> Int {
+  let y = x + 85
+  list.length([y, x])
+}
+
+fn f86(x: Int) -> Int {
+  let y = x + 86
+  list.length([y, x])
+}
+
+fn f87(x: Int) -> Int {
+  let y = x + 87
+  list.length([y, x])
+}
+
+fn f88(x: Int) -> Int {
+  let y = x + 88
+  list.length([y, x])
+}
+
+fn f89(x: Int) -> Int {
+  let y = x + 89
+  list.length([y, x])
+}
+
+fn f90(x: Int) -> Int {
+  let y = x + 90
+  list.length([y, x])
+}
+
+fn f91(x: Int) -> Int {
+  let y = x + 91
+  list.length([y, x])
+}
+
+fn f92(x: Int) -> Int {
+  let y = x + 92
+  list.length([y, x])
+}
+
+fn f93(x: Int) -> Int {
+  let y = x + 93
+  list.length([y, x])
+}
+
+fn f94(x: Int) -> Int {
+  let y = x + 94
+  list.length([y, x])
+}
+
+fn f95(x: Int) -> Int {
+  let y = x + 95
+  list.length([y, x])
+}
+
+fn f96(x: Int) -> Int {
+  let y = x + 96
+  list.length([y, x])
+}
+
+fn f97(x: Int) -> Int {
+  let y = x + 97
+  list.length([y, x])
+}
+
+fn f98(x: Int) -> Int {
+  let y = x + 98
+  list.length([y, x])
+}
+
+fn f99(x: Int) -> Int {
+  let y = x + 99
+  list.length([y, x])
+}
+
+fn f100(x: Int) -> Int {
+  let y = x + 100
+  list.length([y, x])
+}
+
+fn f101(x: Int) -> Int {
+  let y = x + 101
+  list.length([y, x])
+}
+
+fn f102(x: Int) -> Int {
+  let y = x + 102
+  list.length([y, x])
+}
+
+fn f103(x: Int) -> Int {
+  let y = x + 103
+  list.length([y, x])
+}
+
+fn f104(x: Int) -> Int {
+  let y = x + 104
+  list.length([y, x])
+}
+
+fn f105(x: Int) -> Int {
+  let y = x + 105
+  list.length([y, x])
+}
+
+fn f106(x: Int) -> Int {
+  let y = x + 106
+  list.length([y, x])
+}
+
+fn f107(x: Int) -> Int {
+  let y = x + 107
+  list.length([y, x])
+}
+
+fn f108(x: Int) -> Int {
+  let y = x + 108
+  list.length([y, x])
+}
+
+fn f109(x: Int) -> Int {
+  let y = x + 109
+  list.length([y, x])
+}
+
+fn f110(x: Int) -> Int {
+  let y = x + 110
+  list.length([y, x])
+}
+
+fn f111(x: Int) -> Int {
+  let y = x + 111
+  list.length([y, x])
+}
+
+fn f112(x: Int) -> Int {
+  let y = x + 112
+  list.length([y, x])
+}
+
+fn f113(x: Int) -> Int {
+  let y = x + 113
+  list.length([y, x])
+}
+
+fn f114(x: Int) -> Int {
+  let y = x + 114
+  list.length([y, x])
+}
+
+fn f115(x: Int) -> Int {
+  let y = x + 115
+  list.length([y, x])
+}
+
+fn f116(x: Int) -> Int {
+  let y = x + 116
+  list.length([y, x])
+}
+
+fn f117(x: Int) -> Int {
+  let y = x + 117
+  list.length([y, x])
+}
+
+fn f118(x: Int) -> Int {
+  let y = x + 118
+  list.length([y, x])
+}
+
+fn f119(x: Int) -> Int {
+  let y = x + 119
+  list.length([y, x])
+}
+
+fn f120(x: Int) -> Int {
+  let y = x + 120
+  list.length([y, x])
+}
+
+fn f121(x: Int) -> Int {
+  let y = x + 121
+  list.length([y, x])
+}
+
+fn f122(x: Int) -> Int {
+  let y = x + 122
+  list.length([y, x])
+}
+
+fn f123(x: Int) -> Int {
+  let y = x + 123
+  list.length([y, x])
+}
+
+fn f124(x: Int) -> Int {
+  let y = x + 124
+  list.length([y, x])
+}
+
+fn f125(x: Int) -> Int {
+  let y = x + 125
+  list.length([y, x])
+}
+
+fn f126(x: Int) -> Int {
+  let y = x + 126
+  list.length([y, x])
+}
+
+fn f127(x: Int) -> Int {
+  let y = x + 127
+  list.length([y, x])
+}
+
+fn f128(x: Int) -> Int {
+  let y = x + 128
+  list.length([y, x])
+}
+
+fn f129(x: Int) -> Int {
+  let y = x + 129
+  list.length([y, x])
+}
+
+fn f130(x: Int) -> Int {
+  let y = x + 130
+  list.length([y, x])
+}
+
+fn f131(x: Int) -> Int {
+  let y = x + 131
+  list.length([y, x])
+}
+
+fn f132(x: Int) -> Int {
+  let y = x + 132
+  list.length([y, x])
+}
+
+fn f133(x: Int) -> Int {
+  let y = x + 133
+  list.length([y, x])
+}
+
+fn f134(x: Int) -> Int {
+  let y = x + 134
+  list.length([y, x])
+}
+
+fn f135(x: Int) -> Int {
+  let y = x + 135
+  list.length([y, x])
+}
+
+fn f136(x: Int) -> Int {
+  let y = x + 136
+  list.length([y, x])
+}
+
+fn f137(x: Int) -> Int {
+  let y = x + 137
+  list.length([y, x])
+}
+
+fn f138(x: Int) -> Int {
+  let y = x + 138
+  list.length([y, x])
+}
+
+fn f139(x: Int) -> Int {
+  let y = x + 139
+  list.length([y, x])
+}
+
+fn f140(x: Int) -> Int {
+  let y = x + 140
+  list.length([y, x])
+}
+
+fn f141(x: Int) -> Int {
+  let y = x + 141
+  list.length([y, x])
+}
+
+fn f142(x: Int) -> Int {
+  let y = x + 142
+  list.length([y, x])
+}
+
+fn f143(x: Int) -> Int {
+  let y = x + 143
+  list.length([y, x])
+}
+
+fn f144(x: Int) -> Int {
+  let y = x + 144
+  list.length([y, x])
+}
+
+fn f145(x: Int) -> Int {
+  let y = x + 145
+  list.length([y, x])
+}
+
+fn f146(x: Int) -> Int {
+  let y = x + 146
+  list.length([y, x])
+}
+
+fn f147(x: Int) -> Int {
+  let y = x + 147
+  list.length([y, x])
+}
+
+fn f148(x: Int) -> Int {
+  let y = x + 148
+  list.length([y, x])
+}
+
+fn f149(x: Int) -> Int {
+  let y = x + 149
+  list.length([y, x])
+}
+
+fn f150(x: Int) -> Int {
+  let y = x + 150
+  list.length([y, x])
+}
+
+fn f151(x: Int) -> Int {
+  let y = x + 151
+  list.length([y, x])
+}
+
+fn f152(x: Int) -> Int {
+  let y = x + 152
+  list.length([y, x])
+}
+
+fn f153(x: Int) -> Int {
+  let y = x + 153
+  list.length([y, x])
+}
+
+fn f154(x: Int) -> Int {
+  let y = x + 154
+  list.length([y, x])
+}
+
+fn f155(x: Int) -> Int {
+  let y = x + 155
+  list.length([y, x])
+}
+
+fn f156(x: Int) -> Int {
+  let y = x + 156
+  list.length([y, x])
+}
+
+fn f157(x: Int) -> Int {
+  let y = x + 157
+  list.length([y, x])
+}
+
+fn f158(x: Int) -> Int {
+  let y = x + 158
+  list.length([y, x])
+}
+
+fn f159(x: Int) -> Int {
+  let y = x + 159
+  list.length([y, x])
+}
+
+fn f160(x: Int) -> Int {
+  let y = x + 160
+  list.length([y, x])
+}
+
+fn f161(x: Int) -> Int {
+  let y = x + 161
+  list.length([y, x])
+}
+
+fn f162(x: Int) -> Int {
+  let y = x + 162
+  list.length([y, x])
+}
+
+fn f163(x: Int) -> Int {
+  let y = x + 163
+  list.length([y, x])
+}
+
+fn f164(x: Int) -> Int {
+  let y = x + 164
+  list.length([y, x])
+}
+
+fn f165(x: Int) -> Int {
+  let y = x + 165
+  list.length([y, x])
+}
+
+fn f166(x: Int) -> Int {
+  let y = x + 166
+  list.length([y, x])
+}
+
+fn f167(x: Int) -> Int {
+  let y = x + 167
+  list.length([y, x])
+}
+
+fn f168(x: Int) -> Int {
+  let y = x + 168
+  list.length([y, x])
+}
+
+fn f169(x: Int) -> Int {
+  let y = x + 169
+  list.length([y, x])
+}
+
+fn f170(x: Int) -> Int {
+  let y = x + 170
+  list.length([y, x])
+}
+
+fn f171(x: Int) -> Int {
+  let y = x + 171
+  list.length([y, x])
+}
+
+fn f172(x: Int) -> Int {
+  let y = x + 172
+  list.length([y, x])
+}
+
+fn f173(x: Int) -> Int {
+  let y = x + 173
+  list.length([y, x])
+}
+
+fn f174(x: Int) -> Int {
+  let y = x + 174
+  list.length([y, x])
+}
+
+fn f175(x: Int) -> Int {
+  let y = x + 175
+  list.length([y, x])
+}
+
+fn f176(x: Int) -> Int {
+  let y = x + 176
+  list.length([y, x])
+}
+
+fn f177(x: Int) -> Int {
+  let y = x + 177
+  list.length([y, x])
+}
+
+fn f178(x: Int) -> Int {
+  let y = x + 178
+  list.length([y, x])
+}
+
+fn f179(x: Int) -> Int {
+  let y = x + 179
+  list.length([y, x])
+}
+
+fn f180(x: Int) -> Int {
+  let y = x + 180
+  list.length([y, x])
+}
+
+fn f181(x: Int) -> Int {
+  let y = x + 181
+  list.length([y, x])
+}
+
+fn f182(x: Int) -> Int {
+  let y = x + 182
+  list.length([y, x])
+}
+
+fn f183(x: Int) -> Int {
+  let y = x + 183
+  list.length([y, x])
+}
+
+fn f184(x: Int) -> Int {
+  let y = x + 184
+  list.length([y, x])
+}
+
+fn f185(x: Int) -> Int {
+  let y = x + 185
+  list.length([y, x])
+}
+
+fn f186(x: Int) -> Int {
+  let y = x + 186
+  list.length([y, x])
+}
+
+fn f187(x: Int) -> Int {
+  let y = x + 187
+  list.length([y, x])
+}
+
+fn f188(x: Int) -> Int {
+  let y = x + 188
+  list.length([y, x])
+}
+
+fn f189(x: Int) -> Int {
+  let y = x + 189
+  list.length([y, x])
+}
+
+fn f190(x: Int) -> Int {
+  let y = x + 190
+  list.length([y, x])
+}
+
+fn f191(x: Int) -> Int {
+  let y = x + 191
+  list.length([y, x])
+}
+
+fn f192(x: Int) -> Int {
+  let y = x + 192
+  list.length([y, x])
+}
+
+fn f193(x: Int) -> Int {
+  let y = x + 193
+  list.length([y, x])
+}
+
+fn f194(x: Int) -> Int {
+  let y = x + 194
+  list.length([y, x])
+}
+
+fn f195(x: Int) -> Int {
+  let y = x + 195
+  list.length([y, x])
+}
+
+fn f196(x: Int) -> Int {
+  let y = x + 196
+  list.length([y, x])
+}
+
+fn f197(x: Int) -> Int {
+  let y = x + 197
+  list.length([y, x])
+}
+
+fn f198(x: Int) -> Int {
+  let y = x + 198
+  list.length([y, x])
+}
+
+fn f199(x: Int) -> Int {
+  let y = x + 199
+  list.length([y, x])
+}
+
+fn main() { println("{f1(2)}") }

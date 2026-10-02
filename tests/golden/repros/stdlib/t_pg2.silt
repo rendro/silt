@@ -1,0 +1,8 @@
+-- verdict: same
+import postgres
+fn main() {
+  let f = postgres.uuidv7
+  println("got fn")
+  let x = postgres.uuidv7()
+  println(x)
+}

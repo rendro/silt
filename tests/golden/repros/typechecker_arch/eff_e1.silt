@@ -1,0 +1,6 @@
+-- verdict: same
+fn apply(f, x) { f(x) }
+fn quiet() -> () !{} {
+  apply(println, "side effect from a pure fn")
+}
+fn main() { quiet() }

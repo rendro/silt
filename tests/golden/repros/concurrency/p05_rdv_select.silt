@@ -1,0 +1,30 @@
+-- verdict: same
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new()
+  let b = channel.new()
+  let done = channel.new(4)
+  -- one receiver, takes exactly ONE message from either a or b, then exits
+  let r = task.spawn(fn() {
+    match channel.select([Recv(a), Recv(b)]) {
+      (^a, Message(v)) -> "r took a:{v}"
+      (^b, Message(v)) -> "r took b:{v}"
+      _ -> "r other"
+    }
+  })
+  time.sleep(time.ms(50))
+  let s1 = task.spawn(fn() { channel.send(a, 1)  channel.send(done, "s1 send returned") })
+  let s2 = task.spawn(fn() { channel.send(b, 2)  channel.send(done, "s2 send returned") })
+  println(task.join(r))
+  time.sleep(time.ms(200))
+  -- rendezvous: exactly one sender can have completed
+  loop _ = () {
+    match channel.try_receive(done) {
+      Message(m) -> { println(m)  loop(()) }
+      _ -> ()
+    }
+  }
+}

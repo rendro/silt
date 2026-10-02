@@ -1,0 +1,36 @@
+-- verdict: known-divergent run
+import channel
+import task
+import time
+
+fn spin(n) {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1)
+  }
+}
+
+-- T is fully PARKED in channel.receive (we wait 2ms to be sure).
+-- Then a sender task wakes it while main cancels it.
+fn go(i, n) {
+  match i < n {
+    true -> {
+      let ch = channel.new(1)
+      let t = task.spawn(fn() { channel.receive(ch) })
+      time.sleep(time.ms(2))
+      let s = task.spawn(fn() { channel.try_send(ch, i) })
+      let _ = spin(i % 30)
+      println("B{i} before cancel")
+      task.cancel(t)
+      println("C{i} after cancel")
+      let _ = task.join(s)
+      go(i + 1, n)
+    }
+    false -> ()
+  }
+}
+
+fn main() {
+  go(0, 1500)
+  println("completed 1500 rounds")
+}

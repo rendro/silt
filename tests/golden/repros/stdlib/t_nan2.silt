@@ -1,0 +1,25 @@
+-- verdict: same
+import list
+import map
+import set
+import float
+import math
+fn main() {
+  let nan = float.nan
+  let inf = float.infinity
+  let xs = [nan, 1.0 / 1.0, inf, nan]
+  println(list.unique(xs))
+  println(list.contains(xs, nan))
+  println(list.index_of(xs, nan))
+  println(set.length(set.from_list(xs)))
+  let m = #{nan: "a"}
+  println(map.get(m, nan))
+  println(map.contains(m, nan))
+  println(m == m)
+  println(xs == xs)
+  println(list.sort(xs))
+  println(list.sort_by(xs) { x -> x })
+  println(list.min_by(xs) { x -> x })
+  println(list.max_by(xs) { x -> x })
+  println(list.group_by(xs) { x -> x })
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+fn key(x) {
+  match x {
+    3 -> panic("bad key {x}")
+    _ -> x
+  }
+}
+fn main() {
+  println(list.sort_by([5, 3, 1], key))
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+type Box { f: Fn(String) -> () }
+fn quiet(b: Box) -> () !{} {
+  b.f("via record field")
+}
+fn main() { quiet(Box { f: println }) }

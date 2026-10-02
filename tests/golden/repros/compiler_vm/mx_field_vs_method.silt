@@ -1,0 +1,6 @@
+-- verdict: same
+type R { hash: Fn() -> Int, n: Int }
+fn main() {
+  let r = R { hash: fn() { 42 }, n: 1 }
+  println(r.hash())
+}

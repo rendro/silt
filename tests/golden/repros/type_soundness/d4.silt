@@ -1,0 +1,7 @@
+-- verdict: same
+-- field access on unconstrained tyvar
+fn getx(r) { r.x }
+fn main() {
+  println(getx({x: 1}))
+  println(getx({y: 1}))
+}

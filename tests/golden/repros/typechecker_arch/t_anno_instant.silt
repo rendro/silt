@@ -1,0 +1,3 @@
+-- verdict: same
+fn f(x: Instant) -> Int { 1 }
+fn main() { println("ok") }

@@ -1,0 +1,20 @@
+-- verdict: same
+import set
+fn main() {
+  let v_set_contains: Int = set.contains
+  let v_set_difference: Int = set.difference
+  let v_set_each: Int = set.each
+  let v_set_filter: Int = set.filter
+  let v_set_fold: Int = set.fold
+  let v_set_from_list: Int = set.from_list
+  let v_set_insert: Int = set.insert
+  let v_set_intersection: Int = set.intersection
+  let v_set_is_subset: Int = set.is_subset
+  let v_set_length: Int = set.length
+  let v_set_map: Int = set.map
+  let v_set_new: Int = set.new
+  let v_set_remove: Int = set.remove
+  let v_set_symmetric_difference: Int = set.symmetric_difference
+  let v_set_to_list: Int = set.to_list
+  let v_set_union: Int = set.union
+}

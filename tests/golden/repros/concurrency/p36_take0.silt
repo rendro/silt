@@ -1,0 +1,6 @@
+-- verdict: same
+import stream
+fn main() {
+  let out = stream.from_list([1, 2, 3]) |> stream.take(0) |> stream.collect
+  println(out)
+}

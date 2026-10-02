@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+trait Same { fn same(self) -> Self }
+trait Same for String { fn same(self) -> Self { self } }
+fn coerce(x) { x.same() }
+fn main() {
+  let r: {name: String, age: Int} = coerce("zzz")
+  println(r.age)
+}

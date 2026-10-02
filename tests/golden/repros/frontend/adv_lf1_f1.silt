@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+
+fn main() {
+  let xs = [
+    1, -- one
+    2,
+  ]
+  -- standalone
+  println("{xs}") -- trailing
+}

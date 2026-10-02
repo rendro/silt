@@ -1,0 +1,4 @@
+type Id = Int
+trait Show2 { fn show2(self) -> String }
+trait Show2 for Id { fn show2(self) -> String { "int-id" } }
+pub fn f(x: Int) -> String { x.show2() }

@@ -1,0 +1,5 @@
+-- verdict: same
+import list
+fn main() {
+  println([1, 2, 3] |> list.map { 1 -> "one" })
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+type Shape { Circle(Int), Sq(Int) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Shape { fn greet(self) -> String { "shape" } }
+fn main() {
+  println(list.map([Circle(1)]) { p -> p.greet() })
+  println(list.map([Circle(1)]) { p -> p.display() })
+}

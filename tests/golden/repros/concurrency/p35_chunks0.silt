@@ -1,0 +1,6 @@
+-- verdict: same
+import stream
+fn main() {
+  let out = stream.file_chunks("p35_chunks0.silt", 0) |> stream.collect
+  println(out)
+}

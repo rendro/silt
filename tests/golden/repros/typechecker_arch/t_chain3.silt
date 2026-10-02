@@ -1,0 +1,7 @@
+-- verdict: same
+fn h(x) { x + 1 }
+fn g(x) { h(x) }
+fn f(x) { g(x) }
+fn main() {
+  println(f("hello"))
+}

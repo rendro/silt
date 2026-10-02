@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [[1, 2], []]
+  let ys = xs |> list.map { [a, ..rest] -> a }
+  println(ys)
+}

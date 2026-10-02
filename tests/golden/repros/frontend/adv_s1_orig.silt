@@ -1,0 +1,32 @@
+-- verdict: known-divergent run
+import int
+import list
+import result
+fn inc(x) = x + 1
+fn safe(x) = Ok(x)
+fn f(a) {
+  let v1 = (safe(a)?) + 1
+  let v2 = (a |> safe)? + 1
+  let v3 = a |> (safe)
+  let v4 = (safe(a) |> result.map { x -> x + 1 })?
+  let v5 = -(a |> inc)
+  let v6 = (-a) |> inc
+  let v7 = !(a == 1)
+  let v8 = (1.0 / 0.0) else 2.0
+  let v9 = 1.0 / (0.0 else 2.0)
+  let v10 = (a as Int) + 1
+  let v11 = (1..(a + 2)) |> list.length
+  let v12 = 1..(a |> inc)
+  let v13 = (a + 1) * 2
+  let v14 = a - (1 - 2)
+  let v15 = a - (1 + 2)
+  let v16 = (a == 1) == (a == 2)
+  let v17 = ((a, 1), 2)
+  let v18 = (fn(x) { x + 1 })(a)
+  let v19 = (match a { 1 -> inc  _ -> inc })(a)
+  let v20 = ((safe(a))?)
+  Ok("{v1} {v2} {v3} {v4} {v5} {v6} {v7} {v8} {v9} {v10} {v11} {v12} {v13} {v14} {v15} {v16} {v17} {v18} {v19} {v20}")
+}
+fn main() {
+  println("{f(1)}")
+}

@@ -1,0 +1,8 @@
+-- verdict: known-divergent lsp
+import lib1
+fn main() {
+  let s = S(7)
+  println(s)
+  let r = Rec { a: 2, b: "x" }
+  println(r)
+}

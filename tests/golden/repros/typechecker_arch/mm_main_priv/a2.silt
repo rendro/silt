@@ -1,0 +1,7 @@
+type Hidden { H(Int) }
+pub fn mk() { H(1) }
+pub fn use_h(t: Hidden) -> Int {
+  match t {
+    H(n) -> n + 1
+  }
+}

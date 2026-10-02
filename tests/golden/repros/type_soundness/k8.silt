@@ -1,0 +1,11 @@
+-- verdict: same
+-- anon record patterns
+fn h(r: {on: Bool, n: Int}) -> Int {
+  match r {
+    {on: true} -> 1
+    {on: false, n: n} -> n
+  }
+}
+fn main() {
+  println(h({on: false, n: 5}))
+}

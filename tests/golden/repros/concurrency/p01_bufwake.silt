@@ -1,0 +1,27 @@
+-- verdict: same
+import channel
+import task
+import time
+import list
+
+fn main() {
+  let ch = channel.new(2)
+  let hs = [1, 2, 3, 4, 5, 6] |> list.map { i ->
+    task.spawn(fn() { channel.send(ch, i) })
+  }
+  time.sleep(time.ms(200))
+  -- now 2 values buffered, 4 senders parked
+  loop n = 0 {
+    match n < 6 {
+      true -> {
+        match channel.receive(ch) {
+          Message(v) -> println("got {v}")
+          _ -> println("other")
+        }
+        loop(n + 1)
+      }
+      false -> ()
+    }
+  }
+  println("done")
+}

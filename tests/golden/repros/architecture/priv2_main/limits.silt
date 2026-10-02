@@ -1,0 +1,2 @@
+let limit = 10
+pub fn headroom(x: Int) -> Int = limit - x

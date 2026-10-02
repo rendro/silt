@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+type R { on: Bool, n: Int }
+fn main() {
+  println(list.map([R { on: false, n: 3 }]) { R { on: true, n } -> n })
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+-- where clause on a tyvar that gets unified to concrete
+trait Greet { fn greet(self) -> String }
+fn f(x: a) -> String where a: Greet { x.greet() + int.to_string(x + 1) }
+fn main() {
+  println(f(2))
+}

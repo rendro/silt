@@ -1,0 +1,9 @@
+-- verdict: same
+fn same(a: a, b: a) -> Bool { a == b }
+fn main() {
+  let f = fn(x) { x + 1 }
+  let g = fn(x) { x + 1 }
+  println(same([f], [f]))
+  println(same([f], [g]))
+  println(same(Some(f), Some(g)))
+}

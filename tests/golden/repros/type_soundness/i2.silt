@@ -1,0 +1,11 @@
+-- verdict: known-divergent run
+import map
+import set
+type W(a) { W(a) }
+fn main() {
+  let w1 = W(fn(x) { x + 1 })
+  let m = #{ w1: 1 }
+  println(map.length(m))
+  let s = #[w1]
+  println(set.length(s))
+}

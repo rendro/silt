@@ -1,0 +1,2 @@
+let counter = "two hundred"
+pub fn get() { counter }

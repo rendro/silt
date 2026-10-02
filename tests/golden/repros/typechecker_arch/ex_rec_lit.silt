@@ -1,0 +1,9 @@
+-- verdict: same
+type P { x: Bool, y: Bool }
+fn f(p: P) -> Int {
+  match p {
+    P { x: true, y } -> 1
+    P { x: false, y: true } -> 2
+  }
+}
+fn main() { println(f(P { x: false, y: false })) }

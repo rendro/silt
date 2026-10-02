@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+
+type P { v: ExtFloat }
+type E { W(ExtFloat) }
+
+fn main() {
+  let a = 1.0 / 1.0
+  let b = -1.0 / 1.0
+  println("scalar b<a: {b < a}")
+  println("list [b]<[a]: {[b] < [a]}")
+  println("variant W(b)<W(a): {W(b) < W(a)}")
+  println("record: {P { v: b } < P { v: a }}")
+  println("compare method: {b.compare(a)}")
+  println("list compare method: {[b].compare([a])}")
+}

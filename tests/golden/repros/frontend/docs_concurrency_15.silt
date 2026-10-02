@@ -1,0 +1,15 @@
+-- verdict: same
+import io
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(200), fn() {
+    io.read_file("/var/log/slow.log")
+  })
+  match outcome {
+    Ok(contents) -> println(contents)
+    Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+    Err(_) -> println("other io error")
+  }
+}

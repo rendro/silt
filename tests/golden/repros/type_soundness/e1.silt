@@ -1,0 +1,8 @@
+-- verdict: same
+-- field named like a builtin trait method: `message` (Error trait)
+fn msg(r) { r.message }
+fn main() {
+  let n: Int = msg({message: "hi"})
+  println(n)
+  println(n + 1)
+}

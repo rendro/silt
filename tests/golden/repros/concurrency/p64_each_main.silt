@@ -1,0 +1,10 @@
+-- verdict: same
+import channel
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 1)
+  -- nobody will ever send again or close: receive() reports a deadlock here,
+  -- does each()?
+  channel.each(ch) { v -> println("each got {v}") }
+  println("unreachable")
+}

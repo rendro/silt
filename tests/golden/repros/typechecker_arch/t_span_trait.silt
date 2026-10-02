@@ -1,0 +1,8 @@
+-- verdict: same
+type Box(a) { value: a }
+
+trait T {
+  fn go(self, b: Box(Int, String)) -> Int
+}
+
+fn main() { println("x") }

@@ -1,0 +1,11 @@
+-- verdict: same
+import int
+fn main() {
+  let v_int_abs: Int = int.abs
+  let v_int_clamp: Int = int.clamp
+  let v_int_max: Int = int.max
+  let v_int_min: Int = int.min
+  let v_int_parse: Int = int.parse
+  let v_int_to_float: Int = int.to_float
+  let v_int_to_string: Int = int.to_string
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+import set
+type Time { label: String }
+fn main() {
+  let a = Time { label: "a" }
+  let b = Time { label: "b" }
+  println(a)
+  println(set.length(set.from_list([a, b])))
+}

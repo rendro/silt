@@ -1,0 +1,8 @@
+-- verdict: same
+import list
+fn sort_desc(xs: List(a)) -> List(a) where a: Compare { list.reverse(list.sort(xs)) }
+fn top(xs) { sort_desc(xs) }
+fn top3(xs) { list.take(top(xs), 3) }
+fn main() {
+  println(top3([3,1,2,5]))
+}

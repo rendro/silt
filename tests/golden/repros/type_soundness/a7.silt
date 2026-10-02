@@ -1,0 +1,7 @@
+-- verdict: same
+trait Sz { fn sz(self) -> Int }
+trait Sz for Int { fn sz(self) { "unannotated string" } }
+fn total(x: a, y: a) -> Int where a: Sz { x.sz() + y.sz() }
+fn main() {
+  println(total(1, 2))
+}

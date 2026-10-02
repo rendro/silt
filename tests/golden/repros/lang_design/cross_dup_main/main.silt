@@ -1,0 +1,7 @@
+-- verdict: known-divergent lsp
+import m1
+import m2
+fn main() {
+  println(m1.show(m1.mk()))
+  println(m2.show(m2.mk()))
+}

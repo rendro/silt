@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+import task
+fn main() {
+  let f = { x -> x + 1 }
+  let g = fn(x) { x + 1 }
+  let h = { -> 42 }
+  let k = fn() { 42 }
+  println(f(1) + g(1) + h() + k())
+  let t = task.spawn { -> 7 }
+  println(task.join(t))
+  let pairs = [(1, "a"), (2, "b")]
+  pairs |> list.each { (n, s) -> println("{n}{s}") }
+  pairs |> list.each(fn((n, s)) { println("{n}{s}") })
+  let opts = [Some(1), Some(2)]
+  println(opts |> list.map { Some(v) -> v })
+}

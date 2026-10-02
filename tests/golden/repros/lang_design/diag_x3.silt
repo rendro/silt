@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let f = Int.display
+  println(f(5))
+}

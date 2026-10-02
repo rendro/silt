@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let v = 1 + { let t = 2
+    t + 1 }
+  println("{v}")
+  let w = 10 * {
+    let a = 2
+    let b = 3
+    a + b
+  }
+  println("{w}")
+}

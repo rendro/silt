@@ -1,0 +1,20 @@
+-- verdict: known-divergent run
+type Box(a) { value: a }
+type P { x: Int }
+
+trait T {
+  fn go(self) -> Int
+}
+
+trait T for P {
+  fn go(self) -> Int {
+    let b: Box(Int, String) = Box { value: 1 }
+    1
+  }
+}
+
+trait T for Box(Int, String) {
+  fn go(self) -> Int { 1 }
+}
+
+fn main() { println("x") }

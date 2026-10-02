@@ -1,0 +1,7 @@
+-- verdict: same
+import a
+import b
+fn main() {
+  let x = b.make()
+  println(a.use_a(x))
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+fn first(p) { p.name }
+type U { name: String }
+fn main() {
+  println(first(U { name: "a" }))
+  println(first({ name: "b", age: 1 }))
+  println(first(3))
+}

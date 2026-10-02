@@ -1,0 +1,9 @@
+-- verdict: same
+fn l(xs: List(List(Int))) -> Int {
+  match xs {
+    [] -> 0
+    [[], ..rest] -> 1
+    [[a, ..r], ..rest] -> a
+  }
+}
+fn main() { println(l([[3]])) }

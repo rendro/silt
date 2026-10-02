@@ -1,0 +1,6 @@
+-- verdict: same
+type R { type: Int, match: Int }
+fn main() {
+  let r = R { type: 1, match: 2 }
+  println(r.type)
+}

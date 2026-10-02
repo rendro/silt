@@ -1,0 +1,31 @@
+-- verdict: same
+import int
+import float
+import string
+import io
+import bytes
+import list
+import json
+fn main() {
+  let n = 42
+  println([int.to_string(n), string.from(n), "{n}", n.display(), io.inspect(n), json.stringify(n)])
+  let f = 2.0
+  println([float.to_string(f), string.from(f), "{f}", f.display(), io.inspect(f), json.stringify(f)])
+  let s = "hi"
+  println([string.from(s), "{s}", s.display(), io.inspect(s), json.stringify(s)])
+  let xs = ["a", "b c", ""]
+  println(string.from(xs))
+  println(io.inspect(xs))
+  println(io.inspect(#{"k": "v"}))
+  println(string.from(#{"k": "v"}))
+  println(string.from(("a", 1)))
+  println(io.inspect(("a", 1)))
+  println(string.from(Some("x")))
+  println(io.inspect(Some("x")))
+  let b1 = bytes.from_string("ab")
+  let b2 = bytes.from_string("ab")
+  println(bytes.eq(b1, b2))
+  println(b1 == b2)
+  println(b1)
+  println(io.inspect(b1))
+}

@@ -1,0 +1,14 @@
+-- verdict: same
+fn main() {
+  let big = 1e300
+  let tiny = 1e-300
+  let raw = "line one
+line two -- not a comment"
+  let t = """
+    triple "quoted" {not interp}
+      indented -- keep
+    """
+  println("{big} {tiny}")
+  println(raw)
+  println(t)
+}

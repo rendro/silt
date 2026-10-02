@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import geometry
+fn main() {
+  println(secret)
+  println(answer)
+}

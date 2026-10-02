@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let n = 3
+  println(match n {
+    0 -> "zero"
+    _ -> "many"
+  })
+}

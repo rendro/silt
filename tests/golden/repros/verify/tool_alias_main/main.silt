@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import units.{ Meters, mk }
+fn add(a: Meters, b: Meters) -> Meters { a + b }
+fn main() {
+  println(add(mk(1), mk(2)))
+}

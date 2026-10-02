@@ -1,0 +1,16 @@
+-- verdict: known-divergent run
+fn s(x: String, y: Int) -> Int {
+  match (x, y) {
+    ("a", _) -> 1
+    (_, 0) -> 2
+    (_, 1..10) -> 3
+  }
+}
+fn o(x: Option(Int)) -> Int {
+  match x {
+    Some(0..100) -> 1
+    Some(n) when n > 100 -> 2
+    None -> 3
+  }
+}
+fn main() { println(s("b", 50)) println(o(Some(-5))) }

@@ -1,0 +1,24 @@
+-- verdict: same
+import list
+import set
+import string
+type T {
+  Leaf,
+  Node(List(T))
+}
+fn build(n) {
+  let leaf = Leaf
+  loop i = 0, acc = leaf {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Node([acc]))
+    }
+  }
+}
+fn main() {
+  let a = build(10000)
+  let b = build(10000)
+  println("built")
+  println(set.length(set.from_list([a, b])))
+  println("done")
+}

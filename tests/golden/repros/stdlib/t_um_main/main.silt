@@ -1,0 +1,6 @@
+-- verdict: known-divergent lsp
+import util
+fn main() {
+  let x: Int = util.add(1)
+  println(x)
+}

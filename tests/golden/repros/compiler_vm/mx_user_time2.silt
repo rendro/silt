@@ -1,0 +1,17 @@
+-- verdict: same
+import set
+import list
+import map
+type Time { label: String }
+fn main() {
+  let a = Time { label: "a" }
+  let b = Time { label: "b" }
+  println("a == b: {a == b}")
+  println("a < b: {a < b}  b < a: {b < a}")
+  println("set: {set.length(set.from_list([a, b]))}")
+  println("set lit: {set.length(#[a, b])}")
+  println("unique: {list.length(list.unique([a, b]))}")
+  let m = #{ a: 1, b: 2 }
+  println("map len: {map.length(m)}")
+  println("sorted: {list.sort([b, a]) |> list.map { t -> t.label }}")
+}

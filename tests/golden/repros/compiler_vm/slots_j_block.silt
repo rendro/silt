@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let r = 1 + {
+    let a = 2
+    a + 1
+  }
+  println(r)
+}

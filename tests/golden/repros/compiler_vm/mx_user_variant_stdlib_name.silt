@@ -1,0 +1,8 @@
+-- verdict: known-divergent lsp
+type Lookup { IoNotFound(String), Found(Int) }
+fn main() {
+  let a = IoNotFound("key-7")
+  println(a)
+  println("{a}")
+  println(Found(3))
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let e = 1.0 / 2.0
+  let r = match e {
+    0.5 -> "half"
+    _ -> "other"
+  }
+  println(r)
+}

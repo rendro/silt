@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let r = match {
+    1 -> "a"
+    _ -> "b"
+  }
+  println(r)
+}

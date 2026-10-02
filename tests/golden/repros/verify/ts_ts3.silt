@@ -1,0 +1,6 @@
+-- verdict: same
+type Light { Red, Green }
+type Color { Red, Blue }
+fn main() {
+  println("hi")
+}

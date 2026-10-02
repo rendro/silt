@@ -1,0 +1,12 @@
+-- verdict: same
+import math
+import float
+fn half(x) { x / 2 }
+fn halff(x) { x / 2.0 }
+fn main() {
+  println(half(5))
+  let q: Float = halff(5.0)
+  println(q)
+  let r: Float = halff(1.0e308) 
+  println(r)
+}

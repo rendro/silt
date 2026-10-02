@@ -1,0 +1,11 @@
+-- verdict: same
+import float
+fn main() {
+  match float.parse("-0.0") {
+    Ok(f) -> {
+      println(f)
+      println(1.0 / f)
+    }
+    Err(_) -> println("err")
+  }
+}

@@ -1,0 +1,8 @@
+pub type Hue { Green, Blue, Red }
+pub fn hue_name(h: Hue) -> String {
+  match h {
+    Green -> "green"
+    Blue -> "blue"
+    Red -> "red"
+  }
+}

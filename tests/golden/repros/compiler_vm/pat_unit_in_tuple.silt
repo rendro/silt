@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let v = (1, ())
+  let r = match v {
+    (n, ()) -> n
+  }
+  println(r)
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+-- without the trait, r.x is row-polymorphic and sound
+fn getx(r) { r.x }
+fn main() {
+  let n: String = getx({x: 1})
+  println(n)
+}

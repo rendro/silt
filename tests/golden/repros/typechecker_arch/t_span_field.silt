@@ -1,0 +1,8 @@
+-- verdict: same
+type Box(a) { value: a }
+
+type Holder {
+  inner: Box(Int, String),
+}
+
+fn main() { println("x") }

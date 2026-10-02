@@ -1,0 +1,3 @@
+-- verdict: same
+fn pick(x: a, y: b) -> a { y }
+fn main() { println(pick(1, "two") + 1) }

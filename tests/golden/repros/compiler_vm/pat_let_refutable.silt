@@ -1,0 +1,6 @@
+-- verdict: same
+fn get() -> Option(Int) { None }
+fn main() {
+  let Some(x) = get()
+  println(x)
+}

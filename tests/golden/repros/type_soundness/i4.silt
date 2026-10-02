@@ -1,0 +1,12 @@
+-- verdict: known-divergent run
+import list
+type W(a) { W(a) }
+fn main() {
+  let fs = [fn(x) { x + 1 }, fn(x) { x + 2 }]
+  let sorted = list.sort(fs)
+  println(list.length(sorted))
+  let ws = [W(fn(x) { x }), W(fn(x) { x })]
+  println(list.length(list.sort(ws)))
+  println(list.contains(fs, fn(x) { x + 1 }))
+  println(list.unique(fs) |> list.length)
+}

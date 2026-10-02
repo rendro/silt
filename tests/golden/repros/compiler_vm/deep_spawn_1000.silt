@@ -1,0 +1,8 @@
+-- verdict: known-divergent run
+import task
+import list
+fn main() {
+  let hs = list.map(1..1000) { i -> task.spawn(fn() { i }) }
+  let total = list.fold(hs, 0) { acc, h -> acc + task.join(h) }
+  println(total)
+}

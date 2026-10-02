@@ -1,0 +1,7 @@
+-- verdict: same
+import env
+import string
+fn main() {
+  env.set("OK_NAME", "a\0b")
+  println("after")
+}

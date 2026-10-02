@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let a = { 1 }
+  let x = 5
+  let b = { x }
+  let c = { x: x }
+  let d = { let y = 1
+            y }
+  println(a + b + c.x + d)
+  let e = {}
+  println(e)
+}

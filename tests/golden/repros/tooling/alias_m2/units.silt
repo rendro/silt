@@ -1,0 +1,5 @@
+pub type Meters = Int
+
+pub fn mk(n: Int) -> Meters {
+  n
+}

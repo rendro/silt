@@ -1,0 +1,16 @@
+-- verdict: known-divergent run
+Crimson Color {
+  Red,
+  Green,
+}
+
+fn name(c: Color) -> String {
+  match c {
+    Red -> "red"
+    Green -> "green"
+  }
+}
+
+fn main() {
+  println(name(Crimson))
+}

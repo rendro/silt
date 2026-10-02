@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+import float
+fn sorted(xs: List(a)) -> List(a) where a: Compare {
+  list.sort(xs)
+}
+fn main() {
+  println(sorted([float.nan, float.infinity]))
+}

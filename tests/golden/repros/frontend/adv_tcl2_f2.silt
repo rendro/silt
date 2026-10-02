@@ -1,0 +1,28 @@
+-- verdict: known-divergent run
+fn run(f) = f()
+
+fn app(f, x) = f(x)
+
+fn main() {
+  let a = run {  -> 1 }
+  let b = run {  -> println("x") }
+  let c = run {  -> 2 }
+  let d = app(fn(x) {
+    x
+  }, 3)
+  let e = app(fn(x) {
+    x
+  }) { y -> y }
+  let g = run {  -> fn(z) {
+    z
+  } }
+  let h = match run {  -> 1 } {
+    1 -> "one"
+    _ -> "other"
+  }
+  let i = run {  ->
+    let q = 1
+    q
+  }
+  println("{a} {c} {d} {h} {i}")
+}

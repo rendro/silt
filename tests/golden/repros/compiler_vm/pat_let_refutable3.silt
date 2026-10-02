@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let (5, y) = (6, 7)
+  println(y)
+}

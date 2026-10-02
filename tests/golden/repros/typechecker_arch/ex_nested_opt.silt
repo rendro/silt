@@ -1,0 +1,10 @@
+-- verdict: same
+fn f(r: Option((Bool, Option(Bool)))) -> Int {
+  match r {
+    None -> 0
+    Some((true, _)) -> 1
+    Some((false, Some(true))) -> 2
+    Some((false, None)) -> 3
+  }
+}
+fn main() { println(f(Some((false, Some(false))))) }

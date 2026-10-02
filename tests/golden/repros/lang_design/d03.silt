@@ -1,0 +1,20 @@
+-- verdict: same
+type Shape { Circle(Float), Rect(Float, Float) }
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+    }
+  }
+}
+
+fn main() {
+  let s = Circle(5.0)
+  println(s.display())
+  println("{s}")
+  println(s)
+  println([s])
+  panic(s)
+}

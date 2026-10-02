@@ -1,0 +1,8 @@
+-- verdict: same
+-- Float + ExtFloat widening depends on resolution at inference time
+fn add(a, b) { a + b }
+fn main() {
+  let e = 1.0 / 2.0
+  let x = add(1.5, e)
+  println(x)
+}

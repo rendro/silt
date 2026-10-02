@@ -1,0 +1,10 @@
+-- verdict: same
+trait Shape { fn area(self) -> Int }
+type Sq { s: Int }
+trait Shape for Sq { fn area(self) -> Int { self.s * self.s } }
+
+fn twice(x: a) -> Int { x.area() * 2 }
+
+fn main() {
+  println(twice(Sq { s: 2 }))
+}

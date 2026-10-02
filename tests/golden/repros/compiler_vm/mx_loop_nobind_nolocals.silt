@@ -1,0 +1,19 @@
+-- verdict: same
+import channel
+let ch = channel.new(10)
+fn drain() {
+  loop {
+    match channel.try_receive(ch) {
+      Message(v) -> {
+        println("got {v}")
+        loop()
+      }
+      _ -> "done"
+    }
+  }
+}
+fn main() {
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  println(drain())
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+fn f(x) { x }
+fn main() {
+  let a = f
+  (1, 2)
+  let b = [1, 2, 3]
+  let c = b
+  [0]
+  println(a)
+}

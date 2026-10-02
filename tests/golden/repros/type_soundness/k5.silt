@@ -1,0 +1,8 @@
+-- verdict: same
+fn f(o: Option(Int)) -> Int {
+  match o {
+    Some(n) when n > 0 -> 1
+    None -> 0
+  }
+}
+fn main() { println(f(Some(-1))) }

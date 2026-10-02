@@ -1,0 +1,11 @@
+-- verdict: same
+fn f(n) {
+  match n {
+    -9223372036854775807 -> "min+1"
+    _ -> "other"
+  }
+}
+fn main() {
+  let a = -9223372036854775808
+  println(a)
+}

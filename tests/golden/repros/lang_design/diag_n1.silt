@@ -1,0 +1,8 @@
+-- verdict: same
+import int
+fn f(s) -> Result(Int, ParseError) {
+  let n = int.parse(s)
+    ?
+  Ok(n)
+}
+fn main() { println(f("1")) }

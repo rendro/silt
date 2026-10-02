@@ -1,0 +1,12 @@
+-- verdict: same
+fn sum(xs) {
+  loop rest = xs, acc = 0 {
+    match rest {
+      [] -> acc
+      [h, ..t] -> loop(t, acc + h)
+    }
+  }
+}
+fn main() {
+  println(sum(1..6000))
+}

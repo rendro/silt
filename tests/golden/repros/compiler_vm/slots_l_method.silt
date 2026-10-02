@@ -1,0 +1,10 @@
+-- verdict: same
+import string
+fn main() {
+  let opt = Some("b")
+  let r = "abc".contains(match opt {
+    Some(v) -> v
+    None -> "z"
+  })
+  println(r)
+}

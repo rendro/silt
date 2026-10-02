@@ -1,0 +1,42 @@
+-- verdict: same
+import float
+import set
+import map
+import list
+import json
+import toml
+import int
+import math
+type P { x: Float }
+fn main() {
+  when let Ok(z) = float.parse("-0.0") else { return }
+  println(z)
+  println(z == 0.0)
+  println(set.length(set.from_list([0.0, z])))
+  println(list.unique([0.0, z]))
+  println(map.length(#{0.0: "a", z: "b"}))
+  println(list.contains([0.0], z))
+  println(float.to_string(z))
+  when let Ok(p) = json.parse("\{\"x\": -0.0\}", P) else { return }
+  println(p.x)
+  println(set.length(set.from_list([0.0, p.x])))
+  when let Ok(q) = toml.parse("x = -0.0", P) else { return }
+  println(q.x)
+  println(set.length(set.from_list([0.0, q.x])))
+  let a = float.min(0.0, z)
+  println(a)
+  let b = float.abs(z)
+  println(b)
+  let c = float.round(-0.4)
+  println(set.length(set.from_list([0.0, c])))
+  let d = float.ceil(-0.5)
+  println(set.length(set.from_list([0.0, d])))
+  let e = int.to_float(0) * -1.0
+  println(set.length(set.from_list([0.0, e])))
+  let f = float.clamp(z, z, z)
+  println(set.length(set.from_list([0.0, f])))
+  let g = math.sin(z)
+  println(set.length(set.from_list([0.0, g])))
+  let h = math.atan2(z, 1.0)
+  println(set.length(set.from_list([0.0, h])))
+}

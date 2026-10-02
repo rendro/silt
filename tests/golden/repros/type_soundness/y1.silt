@@ -1,0 +1,11 @@
+-- verdict: same
+import json
+type T { a: Int }
+type U { b: String }
+fn main() {
+  let r = json.parse("\{\"a\": 1\}", T)
+  match r {
+    Ok(t) -> println(t.a)
+    Err(e) -> println("err")
+  }
+}

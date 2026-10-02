@@ -1,0 +1,10 @@
+-- verdict: same
+import option
+fn main() {
+  let v_option_flat_map: Int = option.flat_map
+  let v_option_is_none: Int = option.is_none
+  let v_option_is_some: Int = option.is_some
+  let v_option_map: Int = option.map
+  let v_option_to_result: Int = option.to_result
+  let v_option_unwrap_or: Int = option.unwrap_or
+}

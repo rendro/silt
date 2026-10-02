@@ -1,0 +1,6 @@
+-- verdict: same
+type A { Foo(Int), Bar }
+type B { Foo(String), Baz }
+fn main() {
+  println("hi")
+}

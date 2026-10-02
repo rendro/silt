@@ -1,0 +1,8 @@
+-- verdict: same
+-- method call on unconstrained type var
+fn show(x) { x.display() }
+fn main() {
+  let f = fn(x) { x + 1 }
+  println(show(1))
+  println(show(f))
+}

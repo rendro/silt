@@ -1,0 +1,17 @@
+-- verdict: same
+import postgres
+fn main() {
+  let v_postgres_close: Int = postgres.close
+  let v_postgres_connect: Int = postgres.connect
+  let v_postgres_connect_with: Int = postgres.connect_with
+  let v_postgres_cursor: Int = postgres.cursor
+  let v_postgres_cursor_close: Int = postgres.cursor_close
+  let v_postgres_cursor_next: Int = postgres.cursor_next
+  let v_postgres_execute: Int = postgres.execute
+  let v_postgres_listen: Int = postgres.listen
+  let v_postgres_notify: Int = postgres.notify
+  let v_postgres_query: Int = postgres.query
+  let v_postgres_stream: Int = postgres.stream
+  let v_postgres_transact: Int = postgres.transact
+  let v_postgres_uuidv7: Int = postgres.uuidv7
+}

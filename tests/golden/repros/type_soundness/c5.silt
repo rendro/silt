@@ -1,0 +1,13 @@
+-- verdict: same
+-- rarely-taken branch
+fn pick(flag, a, b) {
+  match flag {
+    true -> a < b
+    false -> true
+  }
+}
+fn main() {
+  let f = fn(x) { x }
+  println(pick(false, f, f))
+  println(pick(true, f, f))
+}

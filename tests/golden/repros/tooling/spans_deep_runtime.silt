@@ -1,0 +1,8 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  println("{list.get(xs, 10)}")
+  let m = #{ "a": 1 }
+  panic("custom panic")
+}

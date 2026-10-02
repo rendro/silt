@@ -1,0 +1,9 @@
+-- verdict: same
+import int
+fn main() {
+  let res = int.parse("x")
+  when let Ok(n) = res else match res {
+    Err(e) -> panic("bad {e.message()}")
+  }
+  println(n)
+}

@@ -1,0 +1,19 @@
+-- verdict: same
+fn count(n) {
+  loop i = 0, acc = 0 {
+    match i >= n {
+      true -> acc
+      false -> {
+        loop(
+          i + 1,
+          acc + i
+        )
+        -- trailing comment after multi-line recur
+      }
+    }
+  }
+}
+
+fn main() {
+  println("{count(4)}")
+}

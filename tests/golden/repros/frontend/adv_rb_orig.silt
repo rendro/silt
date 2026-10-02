@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  [1, 2] |> list.each { v -> -- explain v
+    println("{v}")
+  } -- done
+}

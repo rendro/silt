@@ -1,0 +1,10 @@
+-- verdict: same
+type Fn { F }
+type Channel { C }
+type Map { M }
+fn g(f: Fn) -> Fn { f }
+fn main() {
+  println(g(F))
+  let m: Map = M
+  println(m)
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+type P { x: Int }
+trait Display for P {
+  fn display(self) -> String { "custom-P" }
+}
+fn main() {
+  let p = P { x: 1 }
+  println(p)
+  println("{p}")
+  println(p.display())
+}

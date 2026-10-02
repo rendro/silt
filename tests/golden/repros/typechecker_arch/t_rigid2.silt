@@ -1,0 +1,4 @@
+-- verdict: same
+fn f(x: a) -> a { x + 1 }
+fn g(y: b) -> b { f(y) }
+fn main() { println(g("s")) }

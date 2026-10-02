@@ -1,0 +1,12 @@
+-- verdict: same
+fn f(p) {
+  let (a, Some(b)) = p
+  a + b
+}
+fn g(xs) {
+  let [h, ..t] = xs
+  h
+}
+fn main() {
+  println(f((1, None)))
+}

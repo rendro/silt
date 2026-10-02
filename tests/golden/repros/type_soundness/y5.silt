@@ -1,0 +1,12 @@
+-- verdict: same
+-- descriptor of generic / builtin types
+trait Default { fn default() -> Self }
+trait Default for List(a) { fn default() -> Self { [] } }
+fn dflt(type a) -> a where a: Default { a.default() }
+fn main() {
+  let xs: List(Int) = dflt(List(Int))
+  println(xs)
+  let t = Int
+  let u = t
+  println(u)
+}

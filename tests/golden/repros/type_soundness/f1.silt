@@ -1,0 +1,7 @@
+-- verdict: same
+-- rigid type variables?
+fn f(x: a) -> a { 1 }
+fn main() {
+  let s: String = f("hello")
+  println(s)
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+fn f() -> Int { self + 1 }
+fn main() {
+  let n: Int = self
+  println(f())
+}

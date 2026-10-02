@@ -1,0 +1,11 @@
+-- verdict: same
+import parser
+type Node { Leaf(String), Nil }
+trait Display for Node {
+  fn display(self) -> String { "main-node" }
+}
+fn main() {
+  println(parser.count())
+  println(parser.render())
+  println("{Leaf("x")}")
+}

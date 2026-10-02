@@ -1,0 +1,13 @@
+-- verdict: known-divergent run
+type P { a: Int, b: Int }
+fn main() {
+  let p = P { a: 1, b: 2 }
+  let q = p.{ a: 5 }
+  let q2 = P { ...p, a: 5 }
+  let r = { a: 1, b: 2 }
+  let r1 = r.{ a: 5 }
+  let r2 = { ...r, c: 3 }
+  let r3 = { ...p, c: 3 }
+  println(q)
+  println(r1.a + r2.c + r3.c)
+}

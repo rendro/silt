@@ -1,0 +1,6 @@
+-- verdict: same
+fn f(x) { x.display() }
+fn main() {
+  let g = fn(x) { x }
+  println(g.display())
+}

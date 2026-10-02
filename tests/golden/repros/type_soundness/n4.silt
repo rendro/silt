@@ -1,0 +1,12 @@
+-- verdict: same
+-- ExtFloat laundering into Float via polymorphic fn
+fn mul(a, b) { a * b }
+fn idf(x: Float) -> Float { x }
+fn main() {
+  let inf = 1.0 / 0.0
+  let z = mul(inf, inf)
+  println(z)
+  let big = 1.0e308
+  let r = mul(big, big)
+  println(r)
+}

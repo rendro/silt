@@ -1,0 +1,9 @@
+-- verdict: same
+import channel
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 1)
+  let _ = channel.receive(ch)
+  let _ = channel.receive(ch)
+  println("unreachable")
+}

@@ -1,0 +1,14 @@
+-- verdict: same
+import list
+fn sum(xs) {
+  loop remaining = xs, total = 0 {
+    match remaining {
+      [] -> total
+      [head, ..tail] -> loop(tail, total + head)
+    }
+  }
+}
+fn main() {
+  let xs = list.map(1..5000) { x -> x }
+  println(sum(xs))
+}
