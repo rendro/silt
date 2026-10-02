@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: error[package]: dependency key `util` names two different packages in this graph: `u1` and `u2`
+-- stderr-contains: --> a/silt.toml:6:1
+-- stderr-contains: ::: silt.toml:6:1
+-- `a` must not silently get the root's `util`.
+import util
+import a
+fn main() {
+  println(util.who())
+  println(a.who())
+}
