@@ -567,31 +567,42 @@ fn write_snippet(
         c.cyan, c.reset, p.line, p.col
     );
     let full_col = p.col.saturating_sub(1);
-    let (shown, col) = excerpt_around(&p.line_text, full_col);
+    let excerpt = excerpt_around(&p.line_text, full_col);
+    let (shown, col) = (&excerpt.text, excerpt.col);
     let width = line_num_width(p.line);
     let _ = write!(out, "\n {}{:>width$} |{}", c.cyan, "", c.reset);
     let _ = write!(out, "\n {}{:>width$} |{} {shown}", c.cyan, p.line, c.reset);
-    let spacing = caret_spacing(&shown, col);
+    let spacing = caret_spacing(shown, col);
     // The marks cover the span on its first line: to its end, or to the
-    // end of the line when it goes on.
+    // end of the line when it goes on. They stop where the excerpt cuts
+    // the line: never under the `…`, never past the text shown.
     let shown_chars: Vec<char> = shown.chars().collect();
-    let span_chars = if p.end_line == p.line {
-        p.end_col.saturating_sub(p.col)
+    let visible = shown_chars.len() - usize::from(excerpt.cut_after);
+    let span_end = if p.end_line == p.line {
+        col + p.end_col.saturating_sub(p.col)
     } else {
-        shown_chars.len().saturating_sub(col)
+        visible
     };
-    let covered = shown_chars.iter().skip(col).take(span_chars);
-    let marks = mark_width(covered).max(1);
-    let _ = write!(
-        out,
-        "\n {}{:>width$} |{} {spacing}{mark_color}{}{} {text}{}",
-        c.cyan,
-        "",
-        c.reset,
-        c.bold,
-        mark.to_string().repeat(marks),
-        c.reset
-    );
+    let cut = excerpt.cut_after && span_end > visible;
+    let covered = shown_chars
+        .get(col..span_end.min(visible).max(col))
+        .unwrap_or_default();
+    let marks = mark_width(covered.iter()).max(1);
+    let marks = mark.to_string().repeat(marks);
+    let gutter = format!("\n {}{:>width$} |{} {spacing}", c.cyan, "", c.reset);
+    if cut {
+        // The span goes on past the cut: the marks end the line, and
+        // the text goes under their start, so the line of marks ends
+        // where the excerpt does.
+        let _ = write!(out, "{gutter}{mark_color}{}{marks}{}", c.bold, c.reset);
+        let _ = write!(out, "{gutter}{mark_color}{}{text}{}", c.bold, c.reset);
+    } else {
+        let _ = write!(
+            out,
+            "{gutter}{mark_color}{}{marks} {text}{}",
+            c.bold, c.reset
+        );
+    }
 }
 
 /// `= note: ...` / `= help: ...` below the snippet. A text of several
@@ -625,33 +636,53 @@ pub(crate) fn line_num_width(n: usize) -> usize {
     ((n as f64).log10().floor() as usize) + 1
 }
 
+/// The part of a source line shown above the marks.
+pub(crate) struct Excerpt {
+    /// The text shown, with `…` where text was left out.
+    pub(crate) text: String,
+    /// The caret's column in `text`, in chars.
+    pub(crate) col: usize,
+    /// Whether text after the excerpt was left out (`text` ends with the
+    /// `…` that says so).
+    pub(crate) cut_after: bool,
+}
+
 /// The part of `line` to show above the caret, and the caret's column in
 /// it. A line of at most `EXCERPT_CHARS` characters is shown whole; a
 /// longer one (a generated 8000-character expression, say) is cut to a
 /// window around `col`, with `…` where text was left out.
-pub(crate) fn excerpt_around(line: &str, col: usize) -> (String, usize) {
+pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
     const EXCERPT_CHARS: usize = 160;
     const BEFORE_CARET: usize = 60;
     let chars: Vec<char> = line.chars().collect();
     if chars.len() <= EXCERPT_CHARS {
-        return (line.to_string(), col);
+        return Excerpt {
+            text: line.to_string(),
+            col,
+            cut_after: false,
+        };
     }
     let col = col.min(chars.len());
     let start = col
         .saturating_sub(BEFORE_CARET)
         .min(chars.len() - EXCERPT_CHARS);
     let end = start + EXCERPT_CHARS;
-    let mut shown = String::new();
+    let mut text = String::new();
     let mut shown_col = col - start;
     if start > 0 {
-        shown.push('…');
+        text.push('…');
         shown_col += 1;
     }
-    shown.extend(&chars[start..end]);
-    if end < chars.len() {
-        shown.push('…');
+    text.extend(&chars[start..end]);
+    let cut_after = end < chars.len();
+    if cut_after {
+        text.push('…');
     }
-    (shown, shown_col)
+    Excerpt {
+        text,
+        col: shown_col,
+        cut_after,
+    }
 }
 
 /// The padding that puts a caret under the `col`-th char of `src_line`
@@ -851,18 +882,54 @@ mod tests {
     #[test]
     fn a_long_line_is_cut_to_a_window_around_the_caret() {
         let short = "let x = 1";
-        assert_eq!(excerpt_around(short, 4), (short.to_string(), 4));
+        let excerpt = excerpt_around(short, 4);
+        assert_eq!((excerpt.text.as_str(), excerpt.col), (short, 4));
+        assert!(!excerpt.cut_after);
 
         let long: String = "1 + ".repeat(2000);
-        let (shown, col) = excerpt_around(&long, 4000);
+        let excerpt = excerpt_around(&long, 4000);
+        let shown = &excerpt.text;
         assert!(shown.starts_with('…') && shown.ends_with('…'), "{shown}");
+        assert!(excerpt.cut_after);
         assert_eq!(shown.chars().count(), 162);
-        let caret_char = shown.chars().nth(col).unwrap();
+        let caret_char = shown.chars().nth(excerpt.col).unwrap();
         assert_eq!(caret_char, long.chars().nth(4000).unwrap());
 
-        let (shown, col) = excerpt_around(&long, 0);
-        assert!(!shown.starts_with('…') && shown.ends_with('…'));
-        assert_eq!(col, 0);
+        let excerpt = excerpt_around(&long, 0);
+        assert!(!excerpt.text.starts_with('…') && excerpt.cut_after);
+        assert_eq!(excerpt.col, 0);
+    }
+
+    #[test]
+    fn marks_stop_where_a_long_line_is_cut() {
+        // A span that runs past the excerpt: the marks end under its last
+        // char, not under the `…`, and the text goes on the next line.
+        let line = format!("let x = {}", "1 + ".repeat(100));
+        let map = sources(&line);
+        let d = Diagnostic::error(
+            Code::TypeMismatch,
+            span(8, line.len() as u32 - 3),
+            "too long",
+        );
+        let out = render_human(&map, &d);
+        let lines: Vec<&str> = out.lines().collect();
+        let source = lines[3];
+        let marks = lines[4];
+        assert!(source.ends_with('…'), "{out}");
+        assert_eq!(
+            marks.chars().count(),
+            source.chars().count() - 1,
+            "the marks end one column before the `…`:\n{out}"
+        );
+        assert!(marks.ends_with('^'), "{out}");
+        assert_eq!(
+            lines[5]
+                .trim_start_matches(' ')
+                .trim_start_matches('|')
+                .trim(),
+            "too long"
+        );
+        assert_eq!(lines[5].find('t'), marks.find('^'), "{out}");
     }
 
     #[test]
