@@ -114,6 +114,14 @@ External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url>`. After adding, imports from
 the dependency package work exactly like local modules.
 
+`import x` in a module of a package means, in this order: the builtin
+module `x`; the dependency whose key under `[dependencies]` in this
+package's `silt.toml` is `x` (its `src/lib.silt`); this package's own
+`src/x.silt`. A dependency's own dependencies are its own: to import one,
+declare it in your `silt.toml` too. A module file named like a builtin
+module (`src/list.silt`) is an error, because `import list` always means
+the builtin one.
+
 A package consumed as a dependency exposes `src/lib.silt` instead of
 `src/main.silt`. Such a library-only package has nothing to execute — `silt
 run` refuses it — but a bare `silt check` works, falling back to
