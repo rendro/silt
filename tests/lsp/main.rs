@@ -49,4 +49,5 @@ mod round84_lsp_selection_range_fn_body_tests;
 mod round86_lsp_code_action_diagnostic_wording_parity_tests;
 mod round87_lsp_folding_comment_string_skip_tests;
 mod round88_lsp_clean_shutdown_tests;
+mod stage5_session_tests;
 mod stage5_span_range_tests;

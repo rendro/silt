@@ -1,10 +1,10 @@
 //! Regression tests for three LSP GAPs:
 //!
-//! - **GAP A** (`src/lsp/diagnostics.rs`): the LSP must filter the
-//!   typechecker's "unknown module" warning (and cascade "undefined"
-//!   errors) for user-module imports so the editor Problems panel does
-//!   not surface noise the CLI already filters out. Mirrors (copy-paste)
-//!   the predicate in `src/cli/pipeline.rs::is_user_import_resolvable_error`.
+//! - **GAP A** (`src/lsp/diagnostics.rs`): an import of a user module
+//!   that cannot be loaded gives one error at the import and no
+//!   cascade: no "unknown module" warning and no "undefined" error for
+//!   each name used through it (the session poisons the module, as for
+//!   every front door).
 //!
 //! - **GAP B** (`src/lsp/completion.rs`): `extract_dot_prefix` must keep
 //!   walking past matched `()` / `[]` so chained method calls and index
@@ -50,21 +50,17 @@ fn diagnostic_messages(notif: &Value) -> Vec<String> {
 
 // ── GAP A ───────────────────────────────────────────────────────────
 //
-// LSP must filter user-import cascade warnings (the "unknown module"
-// warning and its follow-on "undefined variable" errors for every name
-// the import brings in). Mirrors the CLI filter.
+// An unloadable user import must not cascade: no "unknown module"
+// warning and no follow-on "undefined variable" error for every name
+// used through it.
 
 #[test]
 fn lsp_diagnostics_filters_user_import_cascade_warnings() {
     let mut client = LspClient::spawn();
 
     let uri = unique_uri("diag_a");
-    // `my_user_module` is a user-owned module the typechecker cannot
-    // resolve (no filesystem lookup in this harness). The checker would
-    // normally emit:
-    //   warning: unknown module 'my_user_module'; ...
-    //   error:   undefined variable <imported name>
-    // Both must be suppressed for LSP users since the CLI filters them.
+    // `my_user_module` has no file: the import is one "cannot load
+    // module" error, and the names used through it are not reported.
     let source = "import my_user_module\n\
                   fn main() { println(my_user_module.something()) }\n";
     let notif = client.did_open_and_wait(&uri, source);

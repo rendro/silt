@@ -1,7 +1,8 @@
 //! Workspace preloader: on initialize, scan the root for `.silt` files
-//! and feed them through `update_document` so cross-file features
+//! and index each (its declarations as parsed) so cross-file features
 //! (goto-def, references, rename, workspace/symbol) work for files the
-//! user hasn't explicitly opened.
+//! user hasn't explicitly opened. Indexing publishes nothing: a file has
+//! diagnostics once it is open or an open document imports it.
 //!
 //! The scan is best-effort: unreadable files, parse failures, and
 //! symlink loops never abort startup — they're logged to stderr and
@@ -61,7 +62,7 @@ const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
 const MAX_DEPTH: usize = 16;
 
 /// Recursively walk `root`, load every `.silt` file, and feed it
-/// through the normal `update_document` pipeline.
+/// as an indexed document.
 ///
 /// Skips `target/`, `.git/`, and any directory under `fuzz/corpus/`
 /// (the last of which would otherwise ingest tens of thousands of
@@ -133,7 +134,9 @@ fn load_file(server: &mut Server, path: &Path) {
         }
     };
 
-    let uri = match path_to_file_uri(path) {
+    // The URI spells the path as the client's root does (through a
+    // symbolic link, say), as the client names the documents it opens.
+    let uri = match file_uri(path) {
         Some(u) => u,
         None => {
             eprintln!(
@@ -144,9 +147,15 @@ fn load_file(server: &mut Server, path: &Path) {
         }
     };
 
-    // update_document handles parse/type errors internally and still
-    // stores a (possibly-degraded) Document entry.
-    server.update_document(uri, contents);
+    // Indexed, not analysed: a workspace file has no diagnostics until
+    // the editor opens it or an open document imports it.
+    if server.documents.get(&uri).is_none_or(|doc| !doc.open) {
+        let path = super::diagnostics::uri_to_path(&uri);
+        server.documents.insert(
+            uri,
+            super::diagnostics::indexed_document(path, contents.into()),
+        );
+    }
 }
 
 /// Build a `file://`-scheme `Uri` from an absolute filesystem path.
@@ -159,7 +168,11 @@ fn load_file(server: &mut Server, path: &Path) {
 /// containing a space or non-ASCII character, so preload silently
 /// skipped those files.
 pub fn path_to_file_uri(path: &Path) -> Option<Uri> {
-    let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    file_uri(&fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// The `file://` URI of the absolute path `abs`, spelled as given.
+fn file_uri(abs: &Path) -> Option<Uri> {
     let s = abs.to_str()?;
 
     // On Unix, absolute paths start with `/`; LSP wants `file:///path`.

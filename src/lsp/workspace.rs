@@ -1,16 +1,14 @@
 //! Workspace-wide queries over open documents.
 #![allow(deprecated)] // SymbolInformation.deprecated field is LSP-required
 //!
-//! Backs cross-file goto-definition, `textDocument/references`,
-//! `textDocument/rename`, and `workspace/symbol`. All queries iterate
-//! `self.documents`; there is no separate index structure. This is
+//! Backs the workspace fallback of goto-definition,
+//! `textDocument/references`, `textDocument/rename`, and
+//! `workspace/symbol`. All queries iterate `self.documents`: the open
+//! documents and the workspace files the preload indexed. This is
 //! O(docs × symbols) per query — fine for reasonable-size workspaces
-//! and trivially correct (no index to keep in sync).
-//!
-//! Scope limitation: only documents the editor has opened are visible.
-//! A silt package with many unopened files will not surface them until
-//! the user navigates to each. A workspace-root preload on initialize
-//! is a natural future extension.
+//! and trivially correct (no index to keep in sync). Names are matched
+//! by symbol; a member of an imported module is resolved through the
+//! session first (see `modules.rs`).
 
 use std::collections::HashSet;
 
@@ -28,7 +26,7 @@ use super::ast_walk::visit_expr_children;
 use super::conversions::span_to_range;
 
 impl Server {
-    /// Find every top-level definition of `name` across all open
+    /// Find every top-level definition of `name` across all
     /// documents. Returns `(uri, span)` per hit.
     pub(super) fn workspace_lookup_definition(&self, name: Symbol) -> Vec<(Uri, Span)> {
         let mut hits = Vec::new();
@@ -40,7 +38,7 @@ impl Server {
         hits
     }
 
-    /// Find every identifier reference to `name` across all open
+    /// Find every identifier reference to `name` across all
     /// documents. Returns `(uri, span)` per hit, including the
     /// definition site. For simplicity we match by `Symbol` equality —
     /// shadowing in inner scopes is not currently distinguished.

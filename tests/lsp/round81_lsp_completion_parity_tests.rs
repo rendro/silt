@@ -1,11 +1,11 @@
 //! Round 81 DX-LATENT-1 parity lock for `src/lsp/completion.rs`.
 //!
-//! The LSP's `auto_derived_methods_for` hardcodes which of the built-in
-//! trait methods (`equal`, `compare`, `hash`, `display`) each canonical
-//! type head offers after `v.`; the typechecker decides separately which
-//! of them a program may call (Tuple, Map and Set get no `compare`). If
-//! the two lists drift, completion offers a method that fails to
-//! typecheck, or hides one that works.
+//! Dot completion offers the methods the session's analysis of the
+//! module lists for the receiver's type (`ModuleAnalysis::methods`); the
+//! typechecker decides which of the built-in trait methods (`equal`,
+//! `compare`, `hash`, `display`) a program may call (Tuple, Map and Set
+//! get no `compare`). If the two disagree, completion offers a method
+//! that fails to typecheck, or hides one that works.
 //!
 //! The lock drives both sides: for every type head, dot-completion on a
 //! value of that type must offer exactly the trait methods the
@@ -14,9 +14,6 @@
 use serde_json::Value;
 
 use silt::diagnostic::Severity;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
 
 use crate::support::LspClient;
 
@@ -45,13 +42,7 @@ const TRAIT_METHODS: &[(&str, &str)] = &[
 fn typechecks(expr: &str, call: &str) -> bool {
     let src =
         format!("fn main() {{\n  let v = {expr}\n  let r = {call}\n  println(\"{{r}}\")\n}}\n");
-    let tokens = Lexer::new(silt::source::FileId::default(), &src)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, &src)
-        .parse_program()
-        .expect("parse error");
-    typechecker::check(&mut program)
+    silt::session::testing::check_str(&src)
         .iter()
         .all(|e| e.severity != Severity::Error)
 }
@@ -90,8 +81,7 @@ fn lsp_auto_derived_completions_match_typechecker() {
     client.shutdown();
     assert!(
         mismatches.is_empty(),
-        "LSP auto-derived completions (src/lsp/completion.rs::auto_derived_methods_for) \
-         disagree with the typechecker's auto-derived trait impls:\n{}",
+        "LSP dot completions disagree with the typechecker's auto-derived trait impls:\n{}",
         mismatches.join("\n")
     );
 }

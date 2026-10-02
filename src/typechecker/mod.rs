@@ -8447,6 +8447,13 @@ pub struct ModuleCheck {
     /// The inferred type of each top-level value the module binds by a
     /// declaration: its functions, its `let`s and the items it imports.
     pub top_level: HashMap<Symbol, Type>,
+    /// Every method a value has in the module, as (the canonical name of
+    /// the value's type, the method's name): declared, derived and
+    /// builtin.
+    pub methods: Vec<(Symbol, Symbol)>,
+    /// The fields of each record type the module sees, by the name it is
+    /// written with (`Pt`, `util.Pt`).
+    pub record_fields: HashMap<Symbol, Vec<(Symbol, Type)>>,
 }
 
 /// Check one module of a program. `package` is the package the module
@@ -8540,11 +8547,20 @@ fn check_module_with(
             }
         }
     }
+    let methods = checker.method_table.keys().copied().collect();
+    let record_fields = checker
+        .records
+        .iter()
+        .chain(&checker.qualified_records)
+        .map(|(name, info)| (*name, info.fields.clone()))
+        .collect();
     *resolver = checker.take_resolver();
     ModuleCheck {
         diagnostics: checker.errors,
         exports,
         top_level,
+        methods,
+        record_fields,
     }
 }
 

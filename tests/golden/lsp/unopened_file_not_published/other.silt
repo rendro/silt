@@ -1,0 +1,3 @@
+fn other() {
+  not_defined_anywhere
+}

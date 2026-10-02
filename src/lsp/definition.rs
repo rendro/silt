@@ -6,6 +6,7 @@ use super::Server;
 use super::ast_walk::find_ident_at_offset_with_source;
 use super::conversions::{offsets_to_range, position_to_offset, span_to_range};
 use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
+use super::modules::qualified_access_at;
 use super::state::LocalBinding;
 use crate::source::SourceFile;
 
@@ -38,6 +39,19 @@ impl Server {
             )));
         }
 
+        // A member of an imported module, `m.f`: its definition in that
+        // module's file, unless a local binding shadows `m`.
+        if let Some((module, member)) = qualified_access_at(program, cursor)
+            && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
+            && let Some(view) = self.imported_module(doc, module)
+            && let Some(def) = view.definitions.get(&member)
+        {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                view.uri.clone(),
+                span_to_range(&def.span, view.source),
+            )));
+        }
+
         // Source-aware so cursor on `fn`/`type` decl names resolves
         // (round-63 B2 — match rename/hover behaviour).
         let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text))?;
@@ -56,6 +70,16 @@ impl Server {
             return Some(GotoDefinitionResponse::Scalar(Location::new(
                 uri.clone(),
                 span_to_range(&def.span, &doc.source),
+            )));
+        }
+
+        // An item of `import m.{ f }`: its definition in `m`'s file.
+        if let Some(view) = self.item_module(doc, name)
+            && let Some(def) = view.definitions.get(&name)
+        {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                view.uri.clone(),
+                span_to_range(&def.span, view.source),
             )));
         }
 

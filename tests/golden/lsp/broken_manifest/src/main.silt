@@ -1,0 +1,10 @@
+-- cmd: lsp
+-- verdict: same
+-- A silt.toml that cannot be resolved: its error is published on
+-- silt.toml, and the document gets one note, not an error for each of
+-- its imports.
+import helper
+
+fn main() {
+  println("{helper.twice(2)}")
+}

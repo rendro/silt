@@ -812,6 +812,26 @@ pub fn to_lsp(
             None => Range::default(),
         }
     };
+    // Where the diagnostic and its labels are shown: a position past the
+    // last line (an error at the end of a file that ends with a line
+    // break) is shown at the end of the last line, as the CLI shows it.
+    let shown = |span: Span| -> Range {
+        let mut shown = range(span);
+        if let Some(file) = sources.get(span.file) {
+            let lines = file.text.lines().count() as u32;
+            for p in [&mut shown.start, &mut shown.end] {
+                if lines > 0 && p.line >= lines {
+                    let last = file.line_text(lines).unwrap_or("");
+                    let last = last.strip_suffix('\r').unwrap_or(last);
+                    *p = lsp_types::Position::new(
+                        lines - 1,
+                        last.chars().map(char::len_utf16).sum::<usize>() as u32,
+                    );
+                }
+            }
+        }
+        shown
+    };
     let mut message = d.message.clone();
     for note in &d.notes {
         message.push_str("\nnote: ");
@@ -826,7 +846,7 @@ pub fn to_lsp(
         .iter()
         .filter_map(|(span, label)| {
             Some(DiagnosticRelatedInformation {
-                location: Location::new(uri(span.file)?, range(*span)),
+                location: Location::new(uri(span.file)?, shown(*span)),
                 message: label.clone(),
             })
         })
@@ -844,7 +864,7 @@ pub fn to_lsp(
         })
         .collect();
     lsp_types::Diagnostic {
-        range: range(d.span),
+        range: shown(d.span),
         severity: Some(match d.severity {
             Severity::Error => DiagnosticSeverity::ERROR,
             Severity::Warning => DiagnosticSeverity::WARNING,

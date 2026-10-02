@@ -2,6 +2,8 @@
 //! source positions, used to power hover / goto-def on locally-bound
 //! identifiers. Every binder's position is its own span in the AST.
 
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
 use crate::types::Type;
@@ -17,18 +19,33 @@ use super::state::LocalBinding;
 /// scanning the source text between the enclosing scope start and a known
 /// reference offset (`(value.span.start as usize)` for lets, `(f.span.start as usize)` for
 /// params), which covers the common `let x = e` and `let x: T = e` cases.
-pub(super) fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> {
+///
+/// A top-level function's parameters have the types of the checker's
+/// type of the function (`top_level`), when there is one.
+pub(super) fn collect_local_bindings(
+    program: &Program,
+    source: &str,
+    top_level: Option<&HashMap<Symbol, Type>>,
+) -> Vec<LocalBinding> {
     let mut bindings: Vec<LocalBinding> = Vec::new();
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
                 let body_start = f.body.span.start as usize;
                 let body_end = f.body.span.end as usize;
+                let param_types = match top_level.and_then(|types| types.get(&f.name)) {
+                    Some(Type::Fun(params, _)) if params.len() == f.params.len() => {
+                        Some(params.as_slice())
+                    }
+                    _ => None,
+                };
                 // Function parameters, at their own spans.
-                for param in &f.params {
+                for (i, param) in f.params.iter().enumerate() {
                     if let PatternKind::Ident(name) = &param.pattern.kind {
-                        // Look up the param type from the typed body.
-                        let ty = find_param_type(&f.body, *name);
+                        let ty = match param_types {
+                            Some(types) => Some(types[i].clone()),
+                            None => find_param_type(&f.body, *name),
+                        };
                         bindings.push(LocalBinding {
                             name: *name,
                             binding_offset: param.pattern.span.start as usize,

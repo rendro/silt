@@ -1,0 +1,2 @@
+1:1 info this file is not checked: the project's silt.toml has errors (see silt.toml)
+silt.toml:6:8 error dependency `nope`: path `../does-not-exist` does not exist\nnote: the path is relative to the directory of this silt.toml and resolves to ../does-not-exist

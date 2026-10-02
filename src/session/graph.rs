@@ -56,6 +56,10 @@ pub struct Module {
     /// Why the module could not be read, its lex error, or its parse
     /// errors.
     pub problems: Vec<Diagnostic>,
+    /// Why the module's file could not be read (the kind and text of the
+    /// I/O error). Each import of the module reports it at its own span
+    /// ([`Import::problem`]).
+    pub load_error: Option<(std::io::ErrorKind, String)>,
     /// The import that first brought the module into the graph: the
     /// importing module, the name written and the span of the `import`.
     pub first_import: Option<(ModuleId, Symbol, Span)>,
@@ -93,6 +97,9 @@ pub struct Import {
     /// The span of the `import` declaration.
     pub span: Span,
     pub resolution: ImportResolution,
+    /// Why the module it names could not be read, at this import: each
+    /// importer gets its own error, made again when it is reparsed.
+    pub problem: Option<Diagnostic>,
 }
 
 /// What an `import` names.
@@ -108,6 +115,21 @@ pub enum ImportResolution {
     Cell(ModuleId),
     /// Nothing: the name resolves to no file. The diagnostic says why.
     Unresolved(Diagnostic),
+}
+
+/// The declarations of the module file `file`, whose text is `text`,
+/// with their doc comments, and its lex error or parse errors. A text
+/// that does not lex has no declarations.
+pub fn parse_text(file: FileId, text: &str) -> (Option<ast::Program>, Vec<Diagnostic>) {
+    match Lexer::new(file, text).tokenize() {
+        Ok(tokens) => {
+            let (program, errors) = Parser::new(tokens, text)
+                .with_docs()
+                .parse_program_recovering();
+            (Some(program), errors)
+        }
+        Err(e) => (None, vec![e]),
+    }
 }
 
 /// Every module a session has read.
@@ -178,6 +200,7 @@ impl ModuleGraph {
                     file: None,
                     ast: None,
                     problems: Vec::new(),
+                    load_error: None,
                     first_import: None,
                     imports: Vec::new(),
                     host: None,
@@ -222,6 +245,7 @@ impl ModuleGraph {
             file: None,
             ast: None,
             problems: Vec::new(),
+            load_error: None,
             first_import: None,
             imports: Vec::new(),
             host: Some(index),
@@ -380,22 +404,20 @@ impl ModuleGraph {
         let module = &mut self.modules[id.index()];
         module.file = Some(file);
         module.imports.clear();
-        module.problems.clear();
-        module.ast = None;
-        let tokens = match Lexer::new(file, text).tokenize() {
-            Ok(tokens) => tokens,
-            Err(e) => {
-                module.problems.push(e);
-                return;
-            }
+        module.load_error = None;
+        let (ast, problems) = match cell {
+            Some(n) => match Lexer::new(file, text).tokenize() {
+                Ok(tokens) => {
+                    let (program, errors) =
+                        Parser::new(tokens, text).parse_cell(intern(&cell_name(n)));
+                    (Some(program), errors)
+                }
+                Err(e) => (None, vec![e]),
+            },
+            None => parse_text(file, text),
         };
-        let mut parser = Parser::new(tokens, text);
-        let (program, errors) = match cell {
-            Some(n) => parser.parse_cell(intern(&cell_name(n))),
-            None => parser.parse_program_recovering(),
-        };
-        module.problems = errors;
-        module.ast = Some(program);
+        module.ast = ast;
+        module.problems = problems;
     }
 
     /// Resolve the imports of `entry` and of every module they reach,
@@ -453,6 +475,7 @@ impl ModuleGraph {
         let package = self.module(id).package;
         let mut imports = Vec::with_capacity(decls.len());
         for (name, span) in decls {
+            let mut problem = None;
             let resolution = if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
             } else if let Some(cell) = self.cell_module(name) {
@@ -478,14 +501,26 @@ impl ModuleGraph {
             } else {
                 match resolve_import(packages, package, name, span) {
                     Ok(target) => {
-                        let help = undeclared_dependency_help(packages, package, name);
-                        ImportResolution::Module(self.module_for(
-                            target,
-                            (id, name, span),
-                            help,
-                            overlays,
-                            sources,
-                        ))
+                        let target_id =
+                            self.module_for(target, (id, name, span), overlays, sources);
+                        let module = self.module(target_id);
+                        if let Some((kind, text)) = &module.load_error {
+                            let mut d = module::module_load_error(
+                                &resolve(name),
+                                &module.path,
+                                &crate::git::escape_for_display(&module_path_for_display(
+                                    &module.path,
+                                )),
+                                &std::io::Error::new(*kind, text.clone()),
+                                span,
+                            );
+                            if let Some(help) = undeclared_dependency_help(packages, package, name)
+                            {
+                                d.help.insert(0, help);
+                            }
+                            problem = Some(d);
+                        }
+                        ImportResolution::Module(target_id)
                     }
                     Err(d) => ImportResolution::Unresolved(d),
                 }
@@ -494,6 +529,7 @@ impl ModuleGraph {
                 name,
                 span,
                 resolution,
+                problem,
             });
         }
         self.modules[id.index()].imports = imports;
@@ -501,12 +537,12 @@ impl ModuleGraph {
 
     /// The module of the file `target` names, read and parsed if the
     /// graph does not have it yet. `import` is the import that reaches
-    /// it: a file that cannot be read is reported there.
+    /// it first. A file that cannot be read leaves the module's
+    /// `load_error`, which each import reports.
     fn module_for(
         &mut self,
         target: ImportedFile,
         import: (ModuleId, Symbol, Span),
-        help: Option<String>,
         overlays: &HashMap<PathBuf, String>,
         sources: &mut SourceMap,
     ) -> ModuleId {
@@ -522,6 +558,7 @@ impl ModuleGraph {
             file: None,
             ast: None,
             problems: Vec::new(),
+            load_error: None,
             first_import: Some(import),
             imports: Vec::new(),
             host: None,
@@ -547,17 +584,7 @@ impl ModuleGraph {
                     .collect();
             }
             Err(e) => {
-                let mut d = module::module_load_error(
-                    &resolve(name),
-                    &target.path,
-                    &crate::git::escape_for_display(&module_path_for_display(&target.path)),
-                    &e,
-                    span,
-                );
-                if let Some(help) = help {
-                    d.help.insert(0, help);
-                }
-                self.modules[id.index()].problems.push(d);
+                self.modules[id.index()].load_error = Some((e.kind(), e.to_string()));
             }
         }
         id

@@ -79,7 +79,10 @@ plays an editor: `initialize` with the copy as the workspace root
 loading the workspace has arrived; then `didOpen` of the entry file (the
 case file, `main.silt` of a directory case, `src/main.silt` of a package
 case), waits for a `publishDiagnostics` for it, does a second round trip,
-and ends with `shutdown` and `exit`. A missing publish for the entry file
+and ends with `shutdown` and `exit`. A case file `<name>.unsaved` (say
+`helper.silt.unsaved`) is an editor buffer: it is opened as the file
+`<name>`, with its text, just before the entry file, while `<name>` on
+disk keeps the saved text. A missing publish for the entry file
 within the timeout fails the case; it is not taken as an empty set. So
 does a server that does not exit after `exit`.
 

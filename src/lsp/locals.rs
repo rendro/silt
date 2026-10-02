@@ -246,23 +246,14 @@ fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals:
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse_and_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        program
-    }
+    use crate::lsp::testing::checked_program;
 
     // ── locals_at_offset ─────────────────────────────────────────
 
     #[test]
     fn test_locals_at_offset_params() {
         let source = "fn greet(name, age) { name }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, 22); // inside body
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -273,7 +264,7 @@ mod tests {
     #[test]
     fn test_locals_at_offset_let_binding() {
         let source = "fn main() {\n  let x = 10\n  let y = 20\n  x + y\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // After both let bindings
         let locals = locals_at_offset(&program, 40);
@@ -289,7 +280,7 @@ mod tests {
         // the AnonRecord arm destructured `{ fields, .. }` and dropped
         // the rest symbol, so completion never offered `rest`.
         let source = "fn f(p) {\n  when let {x, ...rest} = p else { return 0 }\n  0\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, source.len() - 2);
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -309,7 +300,7 @@ mod tests {
         // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to
         // the `_ => {}` catch-all so completion missed the binder.
         let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m { #{\"k\": v} -> v, _ -> 0 }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, source.len() - 2);
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -326,7 +317,7 @@ mod tests {
     #[test]
     fn test_locals_at_offset_empty_outside_fn() {
         let source = "let x = 42\nfn main() { 0 }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // Outside any function (offset 0)
         let locals = locals_at_offset(&program, 0);

@@ -39,7 +39,7 @@ pub use entry::{
     ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, selected_tests,
     test_functions, test_kind,
 };
-pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering};
+pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
 
@@ -99,6 +99,12 @@ pub struct ModuleAnalysis {
     pub exports: ModuleExports,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
+    /// Every method a value has in the module, as (canonical type name,
+    /// method name).
+    pub methods: Vec<(Symbol, Symbol)>,
+    /// The fields of each record type the module sees, by the name it is
+    /// written with.
+    pub record_fields: HashMap<Symbol, Vec<(Symbol, Type)>>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
     /// The type aliases and associated-type bindings the module sees:
@@ -432,6 +438,8 @@ impl Session {
                 ast: Arc::new(ast),
                 exports: check.exports,
                 top_level: check.top_level,
+                methods: check.methods,
+                record_fields: check.record_fields,
                 diagnostics: check.diagnostics,
                 resolver: Arc::new(resolver),
             };
@@ -492,6 +500,8 @@ impl Session {
             ast: Arc::new(ast),
             exports: check.exports,
             top_level: check.top_level,
+            methods: check.methods,
+            record_fields: check.record_fields,
             diagnostics: bugs.into_iter().chain(check.diagnostics).collect(),
             resolver: Arc::new(resolver),
         }
@@ -538,6 +548,16 @@ impl Session {
         for &id in ordering.modules.iter().filter(|&&id| id != entry) {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
+            }
+            // A module whose file could not be read: each import of it.
+            for &importer in &ordering.modules {
+                for import in &self.graph.module(importer).imports {
+                    if matches!(import.resolution, ImportResolution::Module(t) if t == id)
+                        && let Some(d) = &import.problem
+                    {
+                        push(d, &mut out);
+                    }
+                }
             }
         }
         for &id in &ordering.modules {

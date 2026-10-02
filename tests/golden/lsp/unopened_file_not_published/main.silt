@@ -1,0 +1,7 @@
+-- cmd: lsp
+-- verdict: same
+-- A workspace file that is neither open nor imported by the open file is
+-- indexed, not checked: nothing is published for it.
+fn main() {
+  println("hello")
+}

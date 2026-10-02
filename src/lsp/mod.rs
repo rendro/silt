@@ -4,12 +4,15 @@
 //! over the standard LSP JSON-RPC transport (stdin/stdout).
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
+use std::time::Instant;
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    Notification as _,
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
@@ -44,7 +47,9 @@ mod implementation;
 mod inlay_hints;
 mod local_bindings;
 mod locals;
+mod modules;
 mod preload;
+mod project;
 mod references;
 mod rename;
 mod selection_range;
@@ -94,10 +99,26 @@ struct Server {
     /// `env.define_with_doc` / `env.attach_doc` registration sites
     /// under `src/typechecker/builtins/`.
     builtin_docs: HashMap<String, String>,
-    /// Per-URI cache of the last computed diagnostics. Populated by
-    /// `update_document` so the pull-based `textDocument/diagnostic`
-    /// handler can answer without re-running the pipeline.
-    diagnostics_cache: HashMap<Uri, Vec<Diagnostic>>,
+    /// The projects of the open documents, by project directory, each
+    /// with its session.
+    projects: HashMap<PathBuf, project::Project>,
+    /// The documents changed or closed since the last analysis.
+    pending: HashSet<Uri>,
+    /// When the scheduled analysis runs, if one is scheduled.
+    deadline: Option<Instant>,
+    /// Whether the client reports file changes on disk
+    /// (`workspace/didChangeWatchedFiles`, registered at start-up).
+    /// Without it, the files the sessions read from disk are compared
+    /// with their stamps on each analysis.
+    watching: bool,
+    /// Files the client reported changed on disk since the last analysis.
+    disk_events: Vec<PathBuf>,
+    /// The workspace folder (as a file key), when the client gave one:
+    /// the files under it are the ones the client watches.
+    root: Option<PathBuf>,
+    /// The diagnostics last published, per URI. The pull-based
+    /// `textDocument/diagnostic` handler answers from it.
+    published: HashMap<Uri, Vec<Diagnostic>>,
 }
 
 impl Server {
@@ -108,12 +129,35 @@ impl Server {
             builtin_sigs: typechecker::builtin_type_signatures(),
             builtin_docs: typechecker::builtin_docs(),
             builtin_param_names: typechecker::builtin_param_names(),
-            diagnostics_cache: HashMap::new(),
+            projects: HashMap::new(),
+            pending: HashSet::new(),
+            deadline: None,
+            watching: false,
+            disk_events: Vec::new(),
+            root: None,
+            published: HashMap::new(),
         }
     }
 
     fn run(&mut self) {
-        while let Ok(msg) = self.connection.receiver.recv() {
+        loop {
+            let msg = match self.deadline {
+                Some(deadline) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    match self.connection.receiver.recv_timeout(left) {
+                        Ok(msg) => msg,
+                        Err(e) if e.is_timeout() => {
+                            self.analyse_pending();
+                            continue;
+                        }
+                        Err(_) => return,
+                    }
+                }
+                None => match self.connection.receiver.recv() {
+                    Ok(msg) => msg,
+                    Err(_) => return,
+                },
+            };
             match msg {
                 Message::Request(req) => {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
@@ -124,7 +168,15 @@ impl Server {
                 Message::Notification(notif) => {
                     self.guard_notification(notif, Self::handle_notification);
                 }
-                Message::Response(_) => {}
+                Message::Response(resp) => {
+                    // A client that refuses the file watchers reports no
+                    // changes; the stamps are compared instead.
+                    if resp.id == RequestId::from(WATCH_REGISTRATION.to_string())
+                        && resp.error.is_some()
+                    {
+                        self.watching = false;
+                    }
+                }
             }
         }
     }
@@ -135,10 +187,10 @@ impl Server {
     // runs inside `catch_unwind`; a panic is logged to stderr (next to the
     // report the panic hook prints) and the message loop goes on.
     //
-    // Carrying on is sound: request handlers only read the server state.
-    // Of the notification handlers, `didClose` only removes an entry, and
-    // `update_document` (`didOpen`, `didChange`) catches a panic of the
-    // analysis itself, so that the new text is stored in any case.
+    // Carrying on is sound: request handlers only read the server state,
+    // after the scheduled analysis, which catches its own panics (see
+    // `analyse_pending_with`). The notification handlers only store a
+    // text and schedule the analysis.
 
     /// Run `handler` on `req`. If it panics, answer the request with an
     /// `InternalError`, so the client is not left waiting for a response.
@@ -201,10 +253,23 @@ impl Server {
                     return;
                 };
                 let uri = params.text_document.uri;
+                // A change to a document the editor did not open is not
+                // one to keep.
+                if !self.documents.get(&uri).is_some_and(|doc| doc.open) {
+                    return;
+                }
                 // We use full sync, so the first content change is the full text.
                 if let Some(change) = params.content_changes.into_iter().next() {
                     self.update_document(uri, change.text);
                 }
+            }
+            DidChangeWatchedFiles::METHOD => {
+                let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(notif.params)
+                else {
+                    return;
+                };
+                self.files_changed_on_disk(params.changes);
             }
             DidCloseTextDocument::METHOD => {
                 let Ok(params) =
@@ -212,9 +277,7 @@ impl Server {
                 else {
                     return;
                 };
-                self.documents.remove(&params.text_document.uri);
-                // Clear diagnostics for closed file.
-                self.publish_diagnostics(params.text_document.uri, vec![]);
+                self.close_document(params.text_document.uri);
             }
             _ => {}
         }
@@ -223,6 +286,11 @@ impl Server {
     // ── Requests ───────────────────────────────────────────────────
 
     fn handle_request(&mut self, req: Request) {
+        // A request is answered from the current text and the current
+        // files: the scheduled analysis runs first, and one runs when a
+        // file a session read changed on disk.
+        self.check_disk();
+        self.analyse_pending();
         let resp = match req.method.as_str() {
             HoverRequest::METHOD => match extract_request::<HoverRequest>(req) {
                 Ok((id, params)) => {
@@ -383,6 +451,42 @@ impl Server {
     }
 }
 
+/// The id of the file-watcher registration, and of its request.
+const WATCH_REGISTRATION: &str = "silt-watched-files";
+
+impl Server {
+    /// Register for `workspace/didChangeWatchedFiles` on silt files and
+    /// project manifests. The client's answer is not waited for.
+    fn watch_files(&mut self) {
+        let watchers: Vec<lsp_types::FileSystemWatcher> =
+            ["**/*.silt", "**/silt.toml", "**/silt.lock"]
+                .iter()
+                .map(|glob| lsp_types::FileSystemWatcher {
+                    glob_pattern: lsp_types::GlobPattern::String((*glob).to_string()),
+                    kind: None,
+                })
+                .collect();
+        let params = lsp_types::RegistrationParams {
+            registrations: vec![lsp_types::Registration {
+                id: WATCH_REGISTRATION.to_string(),
+                method: DidChangeWatchedFiles::METHOD.to_string(),
+                register_options: serde_json::to_value(
+                    lsp_types::DidChangeWatchedFilesRegistrationOptions { watchers },
+                )
+                .ok(),
+            }],
+        };
+        let req = Request::new(
+            RequestId::from(WATCH_REGISTRATION.to_string()),
+            "client/registerCapability".to_string(),
+            params,
+        );
+        if self.connection.sender.send(Message::Request(req)).is_ok() {
+            self.watching = true;
+        }
+    }
+}
+
 /// Convert a `file://` URI from the initialize params into a native
 /// `PathBuf`. Handles Unix (`file:///home/klaus`) and Windows
 /// (`file:///C:/Users/...`) shapes; on Windows we strip the leading
@@ -536,6 +640,16 @@ pub fn run() {
 
     let mut server = Server::new(connection);
 
+    // Ask the client to report changes on disk of the files a session
+    // reads, when it can register for them.
+    if init_params
+        .pointer("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
+        server.watch_files();
+    }
+
     // Workspace preload: if the client supplied `rootUri` or
     // `workspaceFolders`, pre-index every `.silt` file under that root
     // so cross-file goto, references, rename, and workspace/symbol work
@@ -550,6 +664,7 @@ pub fn run() {
         })
         .and_then(file_uri_to_path);
     if let Some(root) = root_path {
+        server.root = Some(project::path_key(&root));
         preload::preload_workspace(&mut server, &root);
     }
 
@@ -564,6 +679,47 @@ pub fn run() {
     drop(server);
     if let Err(e) = io_threads.join() {
         eprintln!("silt-lsp: I/O thread error: {e}");
+    }
+}
+
+// ── Test helpers ──────────────────────────────────────────────────
+
+/// What the unit tests of the features read: a program as the session
+/// checks it, or as it parses.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::collections::HashMap;
+
+    use crate::ast::Program;
+    use crate::intern::Symbol;
+    use crate::types::Type;
+
+    /// `source` as the session checks it: the module with its types, and
+    /// the type of each top-level value.
+    pub(crate) fn checked(source: &str) -> (Program, HashMap<Symbol, Type>) {
+        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
+        session.analyze(file);
+        let module = session
+            .module_analysis(session.module_of(file))
+            .expect("the entry is analysed");
+        ((*module.ast).clone(), module.top_level.clone())
+    }
+
+    /// `source` as the session checks it.
+    pub(crate) fn checked_program(source: &str) -> Program {
+        checked(source).0
+    }
+
+    /// `source` as the session parses it.
+    pub(crate) fn parsed(source: &str) -> Program {
+        let mut sources = crate::source::SourceMap::new();
+        let file = sources.add(
+            crate::source::SourceName::Path("main.silt".into()),
+            source.into(),
+        );
+        crate::session::parse_text(file, source)
+            .0
+            .expect("the source lexes")
     }
 }
 
@@ -606,6 +762,7 @@ mod tests {
     fn open_document(server: &mut Server, source: &str) -> Uri {
         let uri = test_uri();
         server.update_document(uri.clone(), source.to_string());
+        server.analyse_pending();
         uri
     }
 
