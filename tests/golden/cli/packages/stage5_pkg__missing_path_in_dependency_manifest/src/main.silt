@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: error[package]: dependency `missing`: path `../does_not_exist` does not exist
+-- stderr-contains: --> deps/broken/silt.toml:6:11
+-- The missing path is reported in the manifest that names it.
+fn main() { println("unreachable") }

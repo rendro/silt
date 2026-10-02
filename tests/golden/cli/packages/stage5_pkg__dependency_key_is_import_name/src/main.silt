@@ -1,0 +1,4 @@
+-- The [dependencies] key, not the dependency's [package].name, is the
+-- name it is imported by.
+import foo
+fn main() { println(foo.hi()) }

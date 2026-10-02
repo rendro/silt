@@ -1,0 +1,6 @@
+[package]
+name = "broken"
+version = "0.1.0"
+
+[dependencies]
+missing = { path = "../does_not_exist" }

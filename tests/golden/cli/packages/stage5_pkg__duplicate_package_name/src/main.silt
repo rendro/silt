@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: error[package]: two different packages are named `x`
+-- stderr-contains: deps/a/silt.toml:6:1
+-- stderr-contains: deps/b/silt.toml:6:1
+-- stderr-contains: `a` depends on `x` here
+-- stderr-contains: `app` depends on `b` here
+-- stderr-contains: note: `x` from deps/x1
+-- stderr-contains: note: `x` from deps/x2
+-- Two different sources named `x` in one graph; the diamond is not
+-- resolved by accident.
+fn main() { println("unreachable") }
