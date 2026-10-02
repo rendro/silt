@@ -8,7 +8,6 @@ mod builtin_docs_frontmatter_tests;
 mod builtin_free_function_parity_tests;
 mod builtin_require_dedup_tests;
 mod builtin_types_authoritative_parity_tests;
-mod compiler_dedup_lock_tests;
 mod comprehensive_module_function_parity_tests;
 mod doc_builtin_shadow_snippet_lock_tests;
 mod docs_markdown_println_parity_tests;

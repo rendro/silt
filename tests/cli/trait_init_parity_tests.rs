@@ -1,47 +1,11 @@
-//! Parity test for the shared built-in trait init helper.
+//! Locks for the derive policy of the built-in traits: which built-in
+//! types `register_builtin_trait_impls` gives which trait impls.
 //!
-//! `check_program` (used by `silt check` / `silt run`) and
-//! `ReplTypeContext::new` (used by the REPL) must register the EXACT
-//! same set of built-in trait impls and auto-derived method entries.
-//!
-//! Historically each site carried its own copy of the registration
-//! logic with a comment "mirrors check_program init" — a classic drift
-//! trap. The logic now lives in `register_builtin_trait_impls` and both
-//! entrypoints delegate to it. This test locks that invariant: if
-//! someone re-introduces a second copy and it drifts, or forgets to
-//! call the helper from one entrypoint, this test fails.
-//!
-//! The two fingerprint functions used here are `#[doc(hidden)]` on the
-//! crate — they exist only so the test can reach into the otherwise
-//! `pub(super)` `trait_impl_set` / `method_table` state.
+//! The fingerprint function used here is `#[doc(hidden)]` on the crate —
+//! it exists only so the test can reach into the otherwise `pub(super)`
+//! `trait_impl_set` state.
 
-use silt::typechecker::{__trait_init_fingerprint_check_program, __trait_init_fingerprint_repl};
-
-#[test]
-fn check_program_and_repl_agree_on_trait_impls_for_empty_program() {
-    let (check_impls, check_methods) = __trait_init_fingerprint_check_program();
-    let (repl_impls, repl_methods) = __trait_init_fingerprint_repl();
-
-    assert_eq!(
-        check_impls,
-        repl_impls,
-        "trait_impl_set drift between check_program and ReplTypeContext::new\n\
-         only in check_program: {:?}\n\
-         only in repl:          {:?}",
-        check_impls.difference(&repl_impls).collect::<Vec<_>>(),
-        repl_impls.difference(&check_impls).collect::<Vec<_>>(),
-    );
-
-    assert_eq!(
-        check_methods,
-        repl_methods,
-        "method_table drift between check_program and ReplTypeContext::new\n\
-         only in check_program: {:?}\n\
-         only in repl:          {:?}",
-        check_methods.difference(&repl_methods).collect::<Vec<_>>(),
-        repl_methods.difference(&check_methods).collect::<Vec<_>>(),
-    );
-}
+use silt::typechecker::__trait_init_fingerprint_check_program;
 
 #[test]
 fn trait_impls_cover_every_builtin_trait_name() {

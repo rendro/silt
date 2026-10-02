@@ -223,7 +223,7 @@ pub(super) struct EnumInfo {
     /// sentinel `intern("__builtin__")`; user enums carry the
     /// `current_package` value at the time their decl was processed,
     /// or `intern("__builtin__")` when there is no enclosing package
-    /// (ad-hoc scripts, REPL).
+    /// (a check outside a session).
     pub(super) defined_in: Symbol,
 }
 
@@ -299,7 +299,7 @@ pub(super) struct TraitInfo {
     /// the sentinel `intern("__builtin__")`; user traits carry the
     /// `current_package` value at decl-processing time, or
     /// `intern("__builtin__")` when there is no enclosing package
-    /// (ad-hoc scripts, REPL).
+    /// (a check outside a session).
     pub(super) defined_in: Symbol,
 }
 
@@ -769,8 +769,8 @@ pub struct TypeChecker {
     /// of a program with) so per-package
     /// decls (traits/enums/records) are stamped with the right
     /// `defined_in`. (`check_with_package` is a test-only convenience
-    /// wrapper around the same plumbing.) `None` means "scratch /
-    /// REPL / ad-hoc script": treat every decl as local (sentinel
+    /// wrapper around the same plumbing.) `None` means "a check outside
+    /// a session": treat every decl as local (sentinel
     /// `__builtin__`) so the orphan rule never trips on a program that
     /// has no package context.
     pub(super) current_package: Option<Symbol>,
@@ -798,7 +798,7 @@ pub struct TypeChecker {
     /// it appears in `import` statements. Populated by callers (the
     /// compiler) before `check_program` runs so the import-decl loop
     /// can consult this map instead of emitting "unknown module"
-    /// warnings. Empty for ad-hoc scripts and the REPL.
+    /// warnings. Empty for a check outside a session.
     pub(super) module_exports: HashMap<Symbol, ModuleExports>,
     /// Import names of the modules that failed to load or parse. The
     /// failure is reported once, at the import; an import of such a
@@ -945,7 +945,7 @@ impl TypeChecker {
 
     /// Sentinel package symbol used as the `defined_in` for built-in
     /// trait/enum/record entries (and for user decls processed without
-    /// an enclosing package, i.e. ad-hoc scripts and the REPL). Distinct
+    /// an enclosing package, i.e. a check outside a session). Distinct
     /// from any real package name because user package names are
     /// validated against [a-z][a-z0-9_-]* by the manifest layer, so a
     /// double-underscore name cannot collide.
@@ -3285,8 +3285,7 @@ impl TypeChecker {
                     self.imported_modules.insert(*module);
                 } else {
                     // A user module the check was not given: a check
-                    // outside a session (the REPL, a one-file check)
-                    // cannot see user modules. Warn, and add a minimal
+                    // outside a session cannot see user modules. Warn, and add a minimal
                     // binding for the module name itself so downstream
                     // `module.foo(...)` calls don't cascade into
                     // "undefined variable" errors.
@@ -8076,10 +8075,9 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
 /// Register built-in trait declarations (Display/Compare/Equal/Hash/Error)
 /// and their auto-derived impls for primitives and builtin containers.
 ///
-/// This is the single source of truth for derive policy. Both
-/// `TypeChecker::check_program` and `ReplTypeContext::new` call it so
-/// `silt check` and the REPL never diverge on which types implement
-/// which traits.
+/// This is the single source of truth for derive policy. The builtin
+/// environment every check starts from is built with it, so no two
+/// checks diverge on which types implement which traits.
 ///
 /// Round 62 (item 3 of type-design improvements): the trait-decl
 /// registration step now flows through the same code path as user
@@ -8494,335 +8492,6 @@ impl TypeChecker {
     }
 }
 
-// ── Persistent REPL type context ───────────────────────────────────
-
-/// Persistent type-checking context for the REPL.
-///
-/// Holds a `TypeChecker` and its `TypeEnv` across REPL inputs so that
-/// previously defined names (variables, functions, types) remain visible
-/// to subsequent type-checking passes.
-pub struct ReplTypeContext {
-    checker: TypeChecker,
-    env: TypeEnv,
-}
-
-impl Default for ReplTypeContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ReplTypeContext {
-    /// Create a new REPL type context with builtins and built-in traits
-    /// already registered.
-    pub fn new() -> Self {
-        let (checker, env) = builtin_env().start();
-        Self { checker, env }
-    }
-
-    /// Type-check a REPL input (one or more declarations/expressions) against
-    /// the accumulated environment.  New bindings are persisted for future inputs.
-    /// Returns any type errors from this input.
-    pub fn check(&mut self, program: &mut Program) -> Vec<Diagnostic> {
-        // Clear errors from the previous input
-        self.checker.errors.clear();
-
-        // Process imports. Round 56 item 4: we do NOT clear
-        // `self.checker.imported_modules` here — REPL sessions
-        // accumulate imports across inputs, so `import list` typed in
-        // one input stays in scope for subsequent inputs.
-        for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*module);
-                    for (item, _) in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
-                            self.env.define(*item, scheme);
-                        }
-                    }
-                } else if self.checker.merge_imported_module_exports(
-                    *module,
-                    *module,
-                    *span,
-                    &mut self.env,
-                ) {
-                    // Round 75 DEAD-DRIFT: route through the same
-                    // helper as `check_program` so the REPL sees
-                    // producer-side exports for non-builtin modules
-                    // (the `module_exports` path used by cross-module
-                    // typecheck). Pre-fix, the REPL only honored the
-                    // bare-prefix env lookup, missing schemes registered
-                    // exclusively in `module_exports`.
-                    self.checker.imported_modules.insert(*module);
-                    for (item, _) in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
-                            self.env.define(*item, scheme);
-                        }
-                    }
-                } else {
-                    self.checker.warning(
-                        Code::UnknownModule,
-                        format!(
-                            "unknown module '{module_str}'; imported items will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias, _), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*alias);
-                    // See the parallel path in `check_program` (round 58)
-                    // for the rationale — we mirror every qualified
-                    // binding with the right prefix so methods registered
-                    // outside `builtin_module_functions` (e.g. `list.sum`)
-                    // are reachable under the alias.
-                    let alias_str = resolve(*alias);
-                    let prefix = format!("{module_str}.");
-                    let to_alias: Vec<(Symbol, Scheme)> = self
-                        .env
-                        .bindings_with_prefix(&prefix)
-                        .into_iter()
-                        .map(|(name, scheme)| {
-                            let suffix = &name[prefix.len()..];
-                            (intern(&format!("{alias_str}.{suffix}")), scheme)
-                        })
-                        .collect();
-                    for (aliased, scheme) in to_alias {
-                        self.env.define(aliased, scheme);
-                    }
-                } else if self.checker.merge_imported_module_exports(
-                    *module,
-                    *alias,
-                    *span,
-                    &mut self.env,
-                ) {
-                    // Round 75 DEAD-DRIFT: parallel REPL path —
-                    // schemes registered under `alias.name` matching
-                    // the user-written prefix.
-                    self.checker.imported_modules.insert(*alias);
-                } else {
-                    self.checker.warning(Code::UnknownModule,
-                        format!(
-                            "unknown module '{module_str}'; aliased imports will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*module);
-                } else if self.checker.merge_imported_module_exports(
-                    *module,
-                    *module,
-                    *span,
-                    &mut self.env,
-                ) {
-                    // Round 75 DEAD-DRIFT: parallel REPL path —
-                    // producer-side exports merged for non-builtin
-                    // bare-module imports.
-                    self.checker.imported_modules.insert(*module);
-                } else {
-                    self.checker.warning(Code::UnknownModule,
-                        format!(
-                            "unknown module '{module_str}'; imported module will not be type-checked"
-                        ),
-                        *span,
-                    );
-                    // Minimal binding so `module.foo(...)` calls don't cascade
-                    // into "undefined variable" errors downstream.
-                    let placeholder = self.checker.fresh_var();
-                    self.env.define(*module, Scheme::mono(placeholder));
-                }
-            }
-        }
-
-        // Register type declarations
-        for decl in &program.decls {
-            if let Decl::Type(td) = decl {
-                self.checker.register_type_decl(td, &mut self.env);
-            }
-        }
-
-        // Register trait declarations first so default-method synthesis
-        // sees every TraitInfo before any TraitImpl is processed.
-        for decl in &program.decls {
-            if let Decl::Trait(t) = decl {
-                self.checker.register_trait_decl_user(t);
-            }
-        }
-
-        // Synthesize default method bodies into impls that omitted them.
-        self.checker.synthesize_default_methods(&mut program.decls);
-
-        // Auto-derive Display/Compare/Equal/Hash for user types. See
-        // `check_program` for the rationale.
-        self.checker.reject_sealed_trait_impls(&mut program.decls);
-        self.checker
-            .synthesize_auto_derive_impls(&mut program.decls);
-
-        // Register fn signatures and trait impls.
-        for decl in &program.decls {
-            match decl {
-                Decl::Fn(f) => {
-                    self.checker.register_fn_decl(f, &mut self.env);
-                }
-                Decl::TraitImpl(ti) => {
-                    self.checker.register_trait_impl(ti, &mut self.env);
-                }
-                _ => {}
-            }
-        }
-
-        // Process top-level let bindings
-        for i in 0..program.decls.len() {
-            if let Decl::Let {
-                ref mut value,
-                ref pattern,
-                ref ty,
-                span,
-                ..
-            } = program.decls[i]
-            {
-                let is_value = inference::is_syntactic_value(&value.kind);
-                let val_ty = self.checker.infer_expr(value, &mut self.env);
-                if let Some(te) = ty {
-                    let declared = self
-                        .checker
-                        .resolve_type_expr(te, &mut std::collections::HashMap::new());
-                    self.checker.unify(&val_ty, &declared, span);
-                }
-                let scheme = if is_value {
-                    self.checker.generalize(&self.env, &val_ty)
-                } else {
-                    Scheme::mono(self.checker.apply(&val_ty))
-                };
-                if let PatternKind::Ident(name) = &pattern.kind {
-                    self.env.define(*name, scheme);
-                } else {
-                    // Same rule as `check_program`: a `let` pattern
-                    // must be irrefutable.
-                    self.checker.bind_irrefutable_pattern(
-                        pattern,
-                        &val_ty,
-                        &mut self.env,
-                        span,
-                        inference::BindingSite::Let,
-                    );
-                }
-            }
-        }
-
-        // Validate trait implementations
-        self.checker.validate_trait_impls();
-
-        // Check function and trait-impl method bodies.
-        self.checker
-            .check_decl_bodies(&mut program.decls, &self.env);
-
-        // Round 94 (REPL cross-turn persistence): re-generalize each
-        // top-level fn's scheme from its body-inferred type and re-define
-        // it in the persistent env. `register_fn_decl` generalizes the
-        // signature *before* the body runs, so an unannotated `fn f() { 9 }`
-        // persists as `forall a. () -> a` (the return var was fresh and got
-        // quantified). A later REPL turn's `let g = f()` then instantiates a
-        // fresh, unconstrained var and fails with "cannot infer the type of
-        // g". `check_program` fixes this in-pass via its pass-3 narrowing
-        // loop; the REPL needs the equivalent so the resolved type survives
-        // to the next turn. We mirror that loop's constraint
-        // preservation and skip annotated-recursive fns (whose authoritative
-        // polymorphic signature `check_program` deliberately leaves intact).
-        for i in 0..program.decls.len() {
-            let Decl::Fn(ref f) = program.decls[i] else {
-                continue;
-            };
-            if f.is_recovery_stub {
-                continue;
-            }
-            if self.checker.fully_annotated_fn_names.contains(&f.name)
-                && self.checker.recursive_fn_names.contains(&f.name)
-            {
-                continue;
-            }
-            let Some(constrained) = self.checker.fn_body_types.get(&f.name).cloned() else {
-                continue;
-            };
-            let new_scheme = self.checker.generalize(&self.env, &constrained);
-            let Some(original) = self.env.lookup(f.name).cloned() else {
-                continue;
-            };
-            if original.vars.len() == new_scheme.vars.len()
-                && !scheme_narrowed(&original.ty, &new_scheme.ty)
-            {
-                continue;
-            }
-            // Remap the original where-clause constraints through an
-            // old→new tyvar alignment (round-17 F1).
-            let mut final_scheme = new_scheme;
-            let remap = align_tyvars(&original.ty, &final_scheme.ty);
-            for (old_tv, trait_name) in &original.constraints {
-                if let Some(&new_tv) = remap.get(old_tv)
-                    && final_scheme.vars.contains(&new_tv)
-                    && !final_scheme.constraints.contains(&(new_tv, *trait_name))
-                {
-                    final_scheme.constraints.push((new_tv, *trait_name));
-                }
-            }
-            self.env.define(f.name, final_scheme);
-        }
-
-        // Resolve deferred checks before reporting unresolved types.
-        self.checker.finalize_deferred_checks();
-
-        // Detect unresolved type variables and resolve remaining types
-        self.checker.check_unresolved_let_types(program);
-        self.checker.resolve_all_types(program);
-
-        self.checker.drop_repeated_errors();
-        self.checker.errors.clone()
-    }
-
-    /// Derive the compiler's enum-variant lookup tables from the persistent
-    /// type context. A fresh per-turn `Compiler` only knows the builtin
-    /// enums plus the current input's own `type` decls, so a qualified
-    /// variant constructor for an enum declared in an EARLIER turn —
-    /// `type S { C(Int) }` (turn 1) then `let c = S.C(1)` (turn 2) —
-    /// failed to resolve and compiled `S.C` to `GetGlobal("S.C")`, dying at
-    /// runtime with `undefined global: S.C`. Seeding the compiler with these
-    /// tables (derived from the accumulated `enums`, which persist across
-    /// turns) lets the qualified-variant codegen path resolve `S.C` to the
-    /// bare global constructor `C`. The first map is enum name -> variant
-    /// names; the second is the set of nullary (unit) variant names, used
-    /// for the `Red.display()` value-method-dispatch rewrite.
-    pub fn enum_variant_tables(
-        &self,
-    ) -> (
-        std::collections::HashMap<String, std::collections::HashSet<String>>,
-        std::collections::HashSet<String>,
-    ) {
-        let mut enum_variants: std::collections::HashMap<
-            String,
-            std::collections::HashSet<String>,
-        > = std::collections::HashMap::new();
-        let mut unit_variants: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for (name, info) in &self.checker.enums {
-            let set = enum_variants.entry(resolve(*name)).or_default();
-            for v in &info.variants {
-                let vname = resolve(v.name);
-                if v.field_types.is_empty() {
-                    unit_variants.insert(vname.clone());
-                }
-                set.insert(vname);
-            }
-        }
-        (enum_variants, unit_variants)
-    }
-}
-
 /// Return a map of builtin qualified names to their type signature strings.
 /// Used by the LSP to show type info in completions.
 pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
@@ -9059,8 +8728,8 @@ pub fn iter_builtin_docs() -> Vec<(String, String)> {
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and
-/// method registrations produced by the two init paths so the parity
-/// test under `tests/cli/trait_init_parity_tests.rs` can assert they agree.
+/// method registrations of the builtin init, for the derive-policy locks
+/// in `tests/cli/trait_init_parity_tests.rs`.
 ///
 /// Returns `(trait_impls, method_keys)` where:
 /// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
@@ -9086,31 +8755,6 @@ pub fn __trait_init_fingerprint_check_program() -> (
         .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
         .collect();
     let method_keys: BTreeSet<String> = checker
-        .method_table
-        .keys()
-        .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
-        .collect();
-    (trait_impls, method_keys)
-}
-
-/// Test-only introspection: same as
-/// `__trait_init_fingerprint_check_program` but runs the REPL init path
-/// (`ReplTypeContext::new`).
-#[doc(hidden)]
-pub fn __trait_init_fingerprint_repl() -> (
-    std::collections::BTreeSet<String>,
-    std::collections::BTreeSet<String>,
-) {
-    use std::collections::BTreeSet;
-    let ctx = ReplTypeContext::new();
-    let trait_impls: BTreeSet<String> = ctx
-        .checker
-        .trait_impl_set
-        .iter()
-        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
-        .collect();
-    let method_keys: BTreeSet<String> = ctx
-        .checker
         .method_table
         .keys()
         .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
