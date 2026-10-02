@@ -154,6 +154,10 @@ The verdict cases run in their own tests, `verdict_shard_0` to
 `verdict_shard_7`, separate from the `golden_shard_*` tests, which ignore
 the mark. They need a build with every cargo feature (the marks are
 recorded against `--all-features`) and are skipped otherwise.
+`SILT_GOLDEN_SKIP_VERDICT=1` skips them too: the Windows CI jobs set it,
+because each verdict case starts four processes and Windows runners are
+too slow at that to fit the sample in their time cap. The verdicts do not
+depend on the platform, so Linux and macOS cover them.
 
 ### The repro corpus
 

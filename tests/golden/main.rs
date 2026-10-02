@@ -619,6 +619,10 @@ fn run_verdict_shard(shard: usize) {
         eprintln!("verdict cases skipped: they need a build with --all-features");
         return;
     }
+    if std::env::var_os("SILT_GOLDEN_SKIP_VERDICT").is_some_and(|v| v != "0") {
+        eprintln!("verdict cases skipped: SILT_GOLDEN_SKIP_VERDICT is set");
+        return;
+    }
     let bless = std::env::var_os("SILT_BLESS").is_some();
     run_cases(&shard_of(verdict_cases(), shard), "verdict", |case| {
         let Some(mark) = &case.directives.verdict else {

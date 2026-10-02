@@ -171,6 +171,9 @@ jobs:
         shell: pwsh
         run: |
           $env:CI = "1"
+          # The verdict shards start four processes per case; Windows is
+          # too slow at that for its cap, and verdicts are platform-independent.
+          $env:SILT_GOLDEN_SKIP_VERDICT = "1"
           $process = Start-Process -FilePath "bash" `
             -ArgumentList ".github/scripts/run-test-partition.sh","${{ matrix.partition }}" `
             -NoNewWindow -PassThru
