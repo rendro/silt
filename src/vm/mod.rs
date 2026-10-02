@@ -822,8 +822,8 @@ impl Vm {
                 // the call frame pushed above (and any frames the
                 // unwinding error left behind from nested calls)
                 // remain on the VM and leak into the next `run`'s
-                // call stack as phantom `-> main at <declaration>`
-                // entries.
+                // call stack as phantom frames (the REPL runs many
+                // scripts on one VM).
                 self.frames.truncate(saved_frames_len);
                 self.stack.truncate(saved_stack_len);
                 self.tco_elided.truncate(saved_tco_len);

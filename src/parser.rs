@@ -441,7 +441,7 @@ enum Segment {
 
 /// The names a top-level declaration binds, each with the span to report
 /// it at and a word for the kind of declaration.
-fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
+pub(crate) fn top_level_binders(decl: &Decl) -> Vec<(Symbol, Span, &'static str)> {
     match decl {
         // A recovery stub stands in for a broken declaration the user is
         // still fixing; it binds nothing of its own.
@@ -726,12 +726,53 @@ impl<'src> Parser<'src> {
         self
     }
 
-    /// A parser for a REPL entry: its top-level items are statements, so
-    /// two on one line get "each statement must start on its own line",
-    /// as inside a function body.
-    pub fn for_repl(mut self) -> Self {
+    /// Parse a REPL entry. One that starts with a declaration keyword is
+    /// declarations, parsed as a file is; any other is statements, parsed
+    /// as a function body is, and given as the body of a function named
+    /// `wrapper` (a name no program can write), whose value the REPL
+    /// shows. Either way the entry's top-level items are statements, so
+    /// two on one line get "each statement must start on its own line".
+    pub fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
         self.top_level_item = "statement";
-        self
+        self.skip_nl();
+        if matches!(
+            self.peek(),
+            Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                | Token::Mod
+        ) {
+            return self.parse_program_recovering();
+        }
+        let start = self.span();
+        let stmts = match self.parse_stmt_list(&Token::Eof) {
+            Ok(stmts) => stmts,
+            Err(e) => return (Program { decls: Vec::new() }, vec![e]),
+        };
+        let span = self.close(start);
+        let body = Expr::new(ExprKind::Block(stmts), span);
+        let wrapper = FnDecl {
+            name: wrapper,
+            params: Vec::new(),
+            return_type: None,
+            where_clauses: Vec::new(),
+            body,
+            is_pub: false,
+            span,
+            name_span: span,
+            is_recovery_stub: false,
+            is_signature_only: false,
+            doc: None,
+        };
+        (
+            Program {
+                decls: vec![Decl::Fn(wrapper)],
+            },
+            Vec::new(),
+        )
     }
 
     /// Delimiter depth of the token at `index` (see `delim_depth`).

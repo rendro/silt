@@ -179,6 +179,21 @@ impl ModuleGraph {
         id
     }
 
+    /// The REPL entry a session imports into each later entry by its
+    /// name, `<repl:n>`: a name no program can write.
+    fn cell_module(&self, name: Symbol) -> Option<ModuleId> {
+        let name = resolve(name);
+        if !name.starts_with("<repl:") {
+            return None;
+        }
+        self.module_at(Path::new(&name))
+    }
+
+    /// The declarations of module `id`, for the session to add to.
+    pub(super) fn ast_mut(&mut self, id: ModuleId) -> Option<&mut ast::Program> {
+        self.modules[id.index()].ast.as_mut()
+    }
+
     /// Add `module`, giving it the next id.
     fn push(&mut self, mut module: Module) -> ModuleId {
         let id = ModuleId(self.modules.len() as u32);
@@ -191,6 +206,10 @@ impl ModuleGraph {
     /// Register `text` as the file of module `id` and parse it. Its
     /// imports are left unresolved until [`ModuleGraph::load`].
     fn parse(&mut self, id: ModuleId, name: SourceName, text: &str, sources: &mut SourceMap) {
+        let cell = match name {
+            SourceName::Repl(n) => Some(n),
+            _ => None,
+        };
         let file = sources.add(name, text.into());
         let module = &mut self.modules[id.index()];
         module.file = Some(file);
@@ -204,7 +223,11 @@ impl ModuleGraph {
                 return;
             }
         };
-        let (program, errors) = Parser::new(tokens, text).parse_program_recovering();
+        let mut parser = Parser::new(tokens, text);
+        let (program, errors) = match cell {
+            Some(n) => parser.parse_cell(intern(&cell_name(n))),
+            None => parser.parse_program_recovering(),
+        };
         module.problems = errors;
         module.ast = Some(program);
     }
@@ -266,6 +289,8 @@ impl ModuleGraph {
         for (name, span) in decls {
             let resolution = if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
+            } else if let Some(cell) = self.cell_module(name) {
+                ImportResolution::Module(cell)
             } else {
                 match resolve_import(packages, package, name, span) {
                     Ok(target) => {
@@ -497,6 +522,12 @@ impl ModuleGraph {
         }
         found
     }
+}
+
+/// The name of the `n`th REPL entry: its module, its file, and the
+/// function that holds its statements.
+pub(super) fn cell_name(n: usize) -> String {
+    format!("<repl:{n}>")
 }
 
 /// The `import` declarations of `program`: the module name written and

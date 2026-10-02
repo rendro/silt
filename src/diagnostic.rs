@@ -369,7 +369,7 @@ pub fn source_name_for_display(name: &SourceName) -> Option<String> {
         SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
             Some(p.display().to_string())
         }
-        SourceName::Repl(_) => Some("<repl>".to_string()),
+        SourceName::Repl(n) => Some(format!("<repl:{n}>")),
         SourceName::Builtin => None,
     }
 }

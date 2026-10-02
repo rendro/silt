@@ -320,6 +320,28 @@ pub struct ModuleUnit {
 pub struct ProgramUnits {
     pub modules: Vec<ModuleUnit>,
     pub entry: usize,
+    /// For a REPL entry: what the earlier entries left in the VM. Empty
+    /// for any other program.
+    pub earlier: EarlierCells,
+}
+
+/// What the earlier entries of a REPL session installed, which the entry
+/// being compiled uses but does not install again.
+#[derive(Default)]
+pub struct EarlierCells {
+    /// Their declarations, oldest first: the entry knows their types.
+    pub programs: Vec<Arc<Program>>,
+    /// The top-level functions and `let`s of theirs the entry sees.
+    pub fns: HashSet<Symbol>,
+    pub lets: HashSet<Symbol>,
+    /// The global each top-level value of the entry is installed under,
+    /// its own and those it sees, where that is not its name: a name
+    /// defined again by a later entry gets a global of its own, so the
+    /// code of an earlier entry keeps the definition it was checked
+    /// against.
+    pub globals: HashMap<Symbol, String>,
+    /// The modules installed already: an import of one compiles nothing.
+    pub installed: HashSet<usize>,
 }
 
 pub struct Compiler {
@@ -327,8 +349,8 @@ pub struct Compiler {
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
     /// The modules of the program, from the session. Empty for a
-    /// compiler made with [`Compiler::new`] (the REPL), which can only
-    /// import builtin modules.
+    /// compiler made with [`Compiler::new`], which can only import
+    /// builtin modules.
     units: ProgramUnits,
     /// The modules being compiled, innermost last: the importing module
     /// of an `import` met now is the last one, or the entry module.
@@ -361,15 +383,6 @@ pub struct Compiler {
     /// exports. Populated during `compile_file_module_inner`; a name that
     /// is a key here is a module (see `names_function_value`).
     module_public_fns: HashMap<String, HashSet<String>>,
-    /// Whether this compiler is being used to compile a REPL entry. In REPL
-    /// mode, an unknown `name.field` where `name` is neither a local nor a
-    /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
-    /// so that a previously-bound REPL value (stored as a VM global) can have
-    /// its fields accessed. In non-REPL mode, unknown `name.field` is still
-    /// emitted as `GetGlobal("name.field")` so that foreign-function modules
-    /// (e.g. `mylib.double` registered via `register_fn1`) and file-module
-    /// aliases (`import string as s` → `s.split`) continue to work.
-    repl_mode: bool,
     /// Maps enum type name → set of variant names. Populated as `type`
     /// declarations are compiled. Used by `FieldAccess` codegen to
     /// rewrite `EnumName.Variant` into a bare `GetGlobal("Variant")`
@@ -429,7 +442,7 @@ pub struct Compiler {
     /// Type alias declarations, collected together with `record_decls`.
     alias_decls: HashMap<String, AliasDecl>,
     /// The alias / assoc-binding registries of a compiler with no
-    /// modules (the REPL); a module of a program uses its own (see
+    /// modules ([`Compiler::new`]); a module of a program uses its own (see
     /// [`Compiler::resolver`]). Read via
     /// [`crate::types::canonical::canonicalize_type_name`] when emitting
     /// trait-impl global keys, so registration and lookup keys agree
@@ -497,7 +510,6 @@ impl Compiler {
             in_tail_position: false,
             module_scope: None,
             module_public_fns: HashMap::new(),
-            repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
             top_level_value_globals: HashSet::new(),
@@ -530,47 +542,14 @@ impl Compiler {
         }
     }
 
-    /// Enable REPL mode. See the `repl_mode` field for semantics.
-    pub fn set_repl_mode(&mut self, enabled: bool) {
-        self.repl_mode = enabled;
-    }
-
-    /// Merge externally-supplied enum-variant lookup tables into this
-    /// compiler's builtin-seeded ones. The REPL calls this with tables
-    /// derived from its persistent type context (see
-    /// `ReplTypeContext::enum_variant_tables`) so a fresh per-turn compiler
-    /// can resolve qualified variant constructors (`EnumName.Variant`) and
-    /// unit-variant method dispatch for enums declared in earlier turns —
-    /// the compiler otherwise only knows builtins plus the current input's
-    /// own `type` decls. Merging (rather than replacing) keeps the
-    /// builtin entries and is idempotent with the current input's own
-    /// type-decl registration.
-    pub fn seed_known_variants(
-        &mut self,
-        enum_variants: &HashMap<String, HashSet<String>>,
-        unit_variants: &HashSet<String>,
-    ) {
-        for (enum_name, variants) in enum_variants {
-            let set = self
-                .known_enum_variants
-                .entry(enum_name.clone())
-                .or_default();
-            for v in variants {
-                set.insert(v.clone());
-            }
-        }
-        for v in unit_variants {
-            self.known_unit_variants.insert(v.clone());
-        }
-    }
-
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[Diagnostic] {
         &self.warnings
     }
 
-    /// Mark all builtin modules as imported (used by the REPL).
-    pub fn import_all_builtins(&mut self) {
+    /// Mark all builtin modules as imported, for the tests below.
+    #[cfg(test)]
+    fn import_all_builtins(&mut self) {
         for name in crate::module::BUILTIN_MODULES {
             self.imported_builtin_modules.insert(name.to_string());
         }
@@ -587,19 +566,9 @@ impl Compiler {
     }
 
     /// Compile a full program, dispatching `<script>` to call the global
-    /// named `entry_point` (instead of the default `"main"`).
-    ///
-    /// Round-74 BROKEN fix: the REPL's expression-eval path wraps user
-    /// input in a synthetic function so it can be compiled. Previously
-    /// that wrapper was named `main`, which meant a user-defined
-    /// `fn main()` would be silently shadowed by the wrapper on every
-    /// subsequent expression — and because the wrapper's body was the
-    /// user's input (e.g. `main()`), the wrapper would self-recurse
-    /// forever. The REPL now passes a unique synthetic name per
-    /// expression (`__repl_eval_<n>`) through this entry, so user code
-    /// can never collide with the wrapper. The non-REPL `silt run` path
-    /// still goes through `compile_program` and continues to require
-    /// `fn main`.
+    /// named `entry_point` (instead of the default `"main"`): a REPL
+    /// entry of statements calls the function that holds them, whose
+    /// name no program can write.
     pub fn compile_program_with_entry(
         &mut self,
         program: &Program,
@@ -613,6 +582,7 @@ impl Compiler {
         // access on them is compiled as field access even when the use
         // site is inside a fn that is compiled before the let decl is
         // reached. See `top_level_value_globals`.
+        self.absorb_earlier_cells();
         self.collect_top_level_value_globals(program);
         self.collect_type_decls(program);
 
@@ -665,6 +635,7 @@ impl Compiler {
             .push(CompileContext::new("<script>".into(), 0));
 
         // Round 94: same pre-pass as `compile_program_with_entry`.
+        self.absorb_earlier_cells();
         self.collect_top_level_value_globals(program);
         self.collect_type_decls(program);
 
@@ -726,6 +697,32 @@ impl Compiler {
             }
         }
         self.collect_selective_imports(program);
+    }
+
+    /// What the earlier entries of a REPL session declared, known before
+    /// the entry's code is compiled: their types, and which names are
+    /// their functions and their `let`s.
+    fn absorb_earlier_cells(&mut self) {
+        let programs = self.units.earlier.programs.clone();
+        for program in &programs {
+            self.collect_type_decls(program);
+        }
+        let earlier = &self.units.earlier;
+        self.top_level_fn_names
+            .extend(earlier.fns.iter().map(|name| resolve(*name)));
+        self.top_level_value_globals
+            .extend(earlier.lets.iter().map(|name| resolve(*name)));
+    }
+
+    /// The global the entry program's top-level value `name` is installed
+    /// under: its name, but for a REPL entry's value that a later entry
+    /// defines again (see [`EarlierCells::globals`]). A file module's
+    /// names are its own.
+    fn top_level_global(&self, name: Symbol) -> String {
+        match self.units.earlier.globals.get(&name) {
+            Some(global) if self.module_scope.is_none() => global.clone(),
+            _ => resolve(name),
+        }
     }
 
     /// Pre-pass recording the lowercase names `program` imports by name
@@ -920,7 +917,8 @@ impl Compiler {
                 let fi = self.add_constant(closure_val, span)?;
                 self.current_chunk().emit_op_u16(Op::Constant, fi, span);
 
-                let name_idx = self.add_constant(Value::String(resolve(fn_decl.name)), span)?;
+                let global = self.top_level_global(fn_decl.name);
+                let name_idx = self.add_constant(Value::String(global), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::SetGlobal, name_idx, span);
                 self.current_chunk().emit_op(Op::Pop, span);
@@ -939,7 +937,8 @@ impl Compiler {
 
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
-                        let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                        let global = self.top_level_global(*name);
+                        let name_idx = self.add_constant(Value::String(global), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -1214,7 +1213,8 @@ impl Compiler {
                         let qualified = format!("{mod_str}.{item_str}");
                         let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                        let bare_i = self.add_constant(Value::String(item_str), span)?;
+                        let bare_i =
+                            self.add_constant(Value::String(self.top_level_global(*item)), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, bare_i, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -1230,7 +1230,8 @@ impl Compiler {
                     let qualified = format!("{global}.{item_str}");
                     let qi = self.add_constant(Value::String(qualified), span)?;
                     self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                    let bare_i = self.add_constant(Value::String(item_str), span)?;
+                    let bare_i =
+                        self.add_constant(Value::String(self.top_level_global(*item)), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::SetGlobal, bare_i, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -1325,6 +1326,23 @@ impl Compiler {
         }
 
         let program = self.units.modules[target].program.clone();
+        if self.units.earlier.installed.contains(&target) {
+            // An earlier REPL entry installed it: only what the code that
+            // uses it needs to know is taken.
+            self.collect_type_decls(&program);
+            let public = program
+                .decls
+                .iter()
+                .filter_map(|decl| match decl {
+                    Decl::Fn(f) if f.is_pub => Some(resolve(f.name)),
+                    _ => None,
+                })
+                .collect();
+            self.module_public_fns
+                .insert(module_name.to_string(), public);
+            self.compiled_modules.insert(target);
+            return Ok(());
+        }
         let global = self.units.modules[target].global.clone();
         self.unit_stack.push(target);
         let result = self.compile_file_module_inner(module_name, &global, &program, span);
@@ -1845,7 +1863,7 @@ impl Compiler {
                             None => name_str,
                         }
                     } else {
-                        name_str
+                        self.top_level_global(*name)
                     };
                     let name_idx = self.add_constant(Value::String(resolved_name), span)?;
                     self.current_chunk()
@@ -1956,28 +1974,7 @@ impl Compiler {
                         self.current_chunk()
                             .emit_op_u16(Op::CallMethod, method_idx, span);
                         self.current_chunk().emit_u8(argc, span);
-                    } else if is_module_call
-                        && (!self.repl_mode
-                            || matches!(&receiver.kind, ExprKind::Ident(n)
-                                if module::is_builtin_module(&resolve(*n))))
-                    {
-                        // B8 (round 94): mirror the FieldAccess arm's REPL
-                        // guard. In the REPL a previously-bound value like
-                        // `p` is a VM global (from `eval_declaration`), not
-                        // a module, and is not in `top_level_value_globals`
-                        // because each REPL line compiles separately — so
-                        // `is_module_call` is spuriously true. When the
-                        // receiver is NOT a known builtin module, fall
-                        // through to the value method-call path below, which
-                        // emits `GetGlobal(p)` + `CallMethod("d", ..)`. The
-                        // VM's CallMethod resolves `d` against the record's
-                        // fields when no method/trait method matches, so a
-                        // field holding a callable is invoked correctly —
-                        // exactly as in file mode, where `p` is a local and
-                        // already takes this path. The enum-variant and
-                        // unit-variant calls above are checked first, so
-                        // `EnumName.Variant(..)` / `Red.display(..)` still
-                        // resolve in the REPL.
+                    } else if is_module_call {
                         if let ExprKind::Ident(module) = &receiver.kind {
                             // Gate: require import for builtin modules
                             let mod_str = resolve(*module);
@@ -2070,29 +2067,11 @@ impl Compiler {
                                 &format!("a use of the unimported module '{name}'"),
                             ));
                         }
-                        // B8: In REPL mode, a previously-bound value like `p`
-                        // is a VM global (created via `eval_declaration`), not
-                        // a module. When the identifier is NOT a known builtin
-                        // module name, fall through to the receiver-expression
-                        // path below, which emits `GetGlobal(name)` followed
-                        // by `GetField(field)`. That resolves `p.x` against
-                        // the stored record value.
-                        //
-                        // In non-REPL mode we preserve the long-standing
-                        // behaviour of emitting `GetGlobal("name.field")`,
-                        // which is how foreign-function modules registered
-                        // via `vm.register_fn1("mylib.double", ...)` and
-                        // file-module aliases like `import string as s` are
-                        // found (the alias path registers `s.split` as a
-                        // standalone global).
-                        if !self.repl_mode || module::is_builtin_module(&name_str) {
-                            let qualified = format!("{}.{field}", self.module_global(&name_str));
-                            let name_idx = self.add_constant(Value::String(qualified), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            return Ok(());
-                        }
-                        // REPL mode, non-module name — fall through.
+                        let qualified = format!("{}.{field}", self.module_global(&name_str));
+                        let name_idx = self.add_constant(Value::String(qualified), span)?;
+                        self.current_chunk()
+                            .emit_op_u16(Op::GetGlobal, name_idx, span);
+                        return Ok(());
                     }
                 }
                 let field_str = resolve(*field);
