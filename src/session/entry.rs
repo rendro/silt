@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{Decl, ExprKind, ImportTarget, PatternKind, Program};
+use crate::ast::{Decl, ExprKind, FnDecl, ImportTarget, PatternKind, Program};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, Span};
@@ -38,18 +38,30 @@ pub fn test_kind(name: &str) -> Option<TestKind> {
 
 /// The test functions that `program` declares, in source order.
 pub fn test_functions(program: &Program) -> Vec<(String, TestKind)> {
-    program
-        .decls
-        .iter()
-        .filter_map(|decl| match decl {
-            Decl::Fn(f) => {
-                let name = resolve(f.name);
-                let kind = test_kind(&name)?;
-                Some((name, kind))
-            }
-            _ => None,
-        })
+    selected_tests(program, None)
+        .map(|(_, name, kind)| (name, kind))
         .collect()
+}
+
+/// The test functions of `program` whose names contain `filter` (all of
+/// them without one), in source order. This is the one selection: the
+/// tests compiled for [`super::Entry::Tests`] are these, and `silt test
+/// --filter` leaves a file alone when it has none.
+pub fn selected_tests<'a>(
+    program: &'a Program,
+    filter: Option<&'a str>,
+) -> impl Iterator<Item = (&'a FnDecl, String, TestKind)> + 'a {
+    program.decls.iter().filter_map(move |decl| {
+        let Decl::Fn(f) = decl else {
+            return None;
+        };
+        let name = resolve(f.name);
+        let kind = test_kind(&name)?;
+        if filter.is_some_and(|pattern| !name.contains(pattern)) {
+            return None;
+        }
+        Some((f, name, kind))
+    })
 }
 
 /// Is `program` a test file: does it declare a test function, or import
@@ -157,17 +169,7 @@ pub(super) fn select_tests(
 ) -> (Vec<TestFn>, Vec<Diagnostic>) {
     let mut tests = Vec::new();
     let mut errors = Vec::new();
-    for decl in &program.decls {
-        let Decl::Fn(f) = decl else {
-            continue;
-        };
-        let name = resolve(f.name);
-        let Some(kind) = test_kind(&name) else {
-            continue;
-        };
-        if filter.is_some_and(|pattern| !name.contains(pattern)) {
-            continue;
-        }
+    for (f, name, kind) in selected_tests(program, filter) {
         if let Some(Type::Fun(params, _)) = top_level.get(&f.name)
             && !params.is_empty()
         {

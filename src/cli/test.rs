@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::scheduler::UnjoinedFailures;
-use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, test_functions};
+use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
 use silt::source::{FileId, SourceMap, Span};
 use silt::vm::Vm;
 
@@ -179,11 +179,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // left alone: it is not analysed, and nothing is reported for it.
         // A file that does not lex cannot be asked for its tests, so it
         // is kept and its error reported.
-        if let Some(pattern) = filter.as_deref()
+        if filter.is_some()
             && let Some(ast) = &session.graph().module(session.module_of(file)).ast
-            && !test_functions(ast)
-                .iter()
-                .any(|(name, _)| name.contains(pattern))
+            && selected_tests(ast, filter.as_deref()).next().is_none()
         {
             continue;
         }

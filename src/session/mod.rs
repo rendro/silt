@@ -33,8 +33,8 @@ use crate::types::Type;
 use crate::types::canonical::Resolver;
 
 pub use entry::{
-    ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, test_functions,
-    test_kind,
+    ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, selected_tests,
+    test_functions, test_kind,
 };
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
