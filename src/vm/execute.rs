@@ -24,8 +24,11 @@ const MAX_FRAMES: usize = 100_000;
 /// position" is not actionable advice for recursive trait methods.
 fn stack_overflow_error() -> VmError {
     VmError::new(format!(
-        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames (tip: tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame)"
+        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames"
     ))
+    .with_help(
+        "tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame",
+    )
 }
 
 /// Build the user-facing stack-overflow error reported when method calls
@@ -37,7 +40,10 @@ fn stack_overflow_error() -> VmError {
 fn native_stack_overflow_error() -> VmError {
     let limit = native_depth_limit();
     VmError::new(format!(
-        "stack overflow: recursion depth exceeded {limit} nested method or callback calls (tip: a method call, or a function passed to a builtin such as list.map, uses the host stack for every level of nesting; for deep recursion use a plain function call, which is limited to {MAX_FRAMES} frames, or a loop)"
+        "stack overflow: recursion depth exceeded {limit} nested method or callback calls"
+    ))
+    .with_help(format!(
+        "a method call, or a function passed to a builtin such as list.map, uses the host stack for every level of nesting; for deep recursion use a plain function call, which is limited to {MAX_FRAMES} frames, or a loop"
     ))
 }
 

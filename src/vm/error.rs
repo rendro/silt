@@ -6,6 +6,8 @@ use crate::source::Span;
 #[derive(Debug, Clone)]
 pub struct VmError {
     pub message: String,
+    /// What to do about it, one line each: the diagnostic's help.
+    pub help: Vec<String>,
     /// If true, this error signals a cooperative yield, not a real error.
     pub is_yield: bool,
     /// Source span where the error occurred (if available).
@@ -18,6 +20,7 @@ impl VmError {
     pub fn new(message: String) -> Self {
         VmError {
             message,
+            help: Vec::new(),
             is_yield: false,
             span: None,
             call_stack: Vec::new(),
@@ -27,47 +30,33 @@ impl VmError {
     pub(crate) fn yield_signal() -> Self {
         VmError {
             message: String::new(),
+            help: Vec::new(),
             is_yield: true,
             span: None,
             call_stack: Vec::new(),
         }
     }
-}
 
-impl VmError {
+    /// The error with `help` as a help line.
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help.push(help.into());
+        self
+    }
+
     /// The error as a diagnostic: the first line of the message is its
-    /// message; a later line that starts with `help: ` is help, and the
-    /// others are notes, a line continuing the note or help before it.
+    /// message, and the rest of the message, as it is (a `panic` text or
+    /// a builtin's report can go on for several lines), its one note.
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
     /// [`Span::BUILTIN`].
     pub fn to_diagnostic(&self) -> Diagnostic {
-        let mut lines = self.message.lines();
-        let head = lines.next().unwrap_or("");
+        let (head, rest) = match self.message.split_once('\n') {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (self.message.as_str(), None),
+        };
         let mut d = Diagnostic::error(Code::RuntimeError, self.span.unwrap_or(Span::BUILTIN), head);
-        // Which list the last body line went to.
-        let mut last_was_help = false;
-        let mut first = true;
-        for line in lines {
-            if let Some(help) = line.strip_prefix("help: ") {
-                d.help.push(help.to_string());
-                last_was_help = true;
-            } else if first {
-                d.notes.push(line.to_string());
-                last_was_help = false;
-            } else {
-                let last = if last_was_help {
-                    d.help.last_mut()
-                } else {
-                    d.notes.last_mut()
-                };
-                if let Some(last) = last {
-                    last.push('\n');
-                    last.push_str(line);
-                }
-            }
-            first = false;
-        }
+        d.notes.extend(rest.map(str::to_string));
+        d.help = self.help.clone();
         d.labels = self
             .call_stack
             .iter()

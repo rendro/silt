@@ -1683,29 +1683,40 @@ fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
 /// call reported, those that were counted but not kept included.
 ///
 /// The report has no file name and no source line: the scheduler knows
-/// neither. It shows what `VmError`'s own `Display` shows. A front end
+/// neither, so it renders through a source map with no files. A front end
 /// that knows the program's files collects the failures instead
 /// (`collect_unjoined_failures`) and renders them itself; the record of
 /// the scheduler stays empty then.
 fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
     let (handles, not_recorded) = inner.failed_tasks.lock().take();
+    // The scheduler knows no files: the diagnostics show no place.
+    let no_files = crate::source::SourceMap::new();
     let mut reported = 0;
     let mut report = String::new();
     for handle in &handles {
-        let Some(mut error) = handle.take_unjoined_failure() else {
+        let Some(error) = handle.take_unjoined_failure() else {
             continue;
         };
         reported += 1;
-        error.message = unjoined_failure_headline(handle.id, &error.message);
-        report.push_str(&format!("{error}\n  = help: {UNJOINED_FAILURE_HELP}\n"));
+        let failure = UnjoinedFailure {
+            task_id: handle.id,
+            owner: 0,
+            error,
+        };
+        let d = failure.report_error().to_diagnostic();
+        report.push_str(&crate::diagnostic::render_human(&no_files, &d));
+        report.push('\n');
     }
     let not_recorded: usize = not_recorded.values().sum();
     if not_recorded > 0 {
         reported += not_recorded;
-        report.push_str(&format!(
-            "error[runtime]: {}\n",
-            UnjoinedFailures::not_kept_message(not_recorded)
-        ));
+        let d = crate::diagnostic::Diagnostic::error(
+            crate::diagnostic::Code::UnjoinedTaskFailure,
+            crate::source::Span::BUILTIN,
+            UnjoinedFailures::not_kept_message(not_recorded),
+        );
+        report.push_str(&crate::diagnostic::render_human(&no_files, &d));
+        report.push('\n');
     }
     if !report.is_empty() {
         // A write error is ignored: there is nowhere left to report it.
@@ -1818,16 +1829,12 @@ pub struct UnjoinedFailure {
 
 impl UnjoinedFailure {
     /// The error to report: the task's error, with a message that names
-    /// the task and says what to do. The first line of the message is
-    /// the headline; the line after it is a `help:` note, as the
-    /// diagnostic renderers expect. Span and call stack are the task's.
+    /// the task and a help line that says what to do. Span and call
+    /// stack are the task's.
     pub fn report_error(&self) -> VmError {
         let mut error = self.error.clone();
-        error.message = format!(
-            "{}\nhelp: {UNJOINED_FAILURE_HELP}",
-            unjoined_failure_headline(self.task_id, &self.error.message)
-        );
-        error
+        error.message = unjoined_failure_headline(self.task_id, &self.error.message);
+        error.with_help(UNJOINED_FAILURE_HELP)
     }
 }
 
