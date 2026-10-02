@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type Box(a) { value: a }
 type P { x: Int }
 

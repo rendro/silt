@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn s(x: String, y: Int) -> Int {
   match (x, y) {
     ("a", _) -> 1

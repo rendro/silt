@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import list
 fn smallest(xs: List(a)) -> List(a) where a: Compare { list.sort(xs) }
 fn run(f, x) { f(x) }

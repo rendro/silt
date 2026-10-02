@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 -- lambda annotation with tyvar
 fn main() {
   let f = fn(x: a) -> a { 1 }

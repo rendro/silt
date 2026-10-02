@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn f(x) {
   let g = fn() { x }
   let a = g() + 1

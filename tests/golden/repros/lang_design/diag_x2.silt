@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import task
 fn main() {
   let h = task.spawn(fn() { 1 / 0 })

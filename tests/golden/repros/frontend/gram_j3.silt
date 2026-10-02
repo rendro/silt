@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn f(x: (Int)) = x
 fn g(x: (Int,)) = x
 fn main() {
