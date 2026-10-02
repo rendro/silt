@@ -1,0 +1,4 @@
+pub type Shape { Square(Int) }
+pub fn area(s: Shape) -> Int {
+  match s { Square(n) -> n * n
+}

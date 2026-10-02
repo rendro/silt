@@ -1,0 +1,10 @@
+-- cmd: test
+-- exit: 1
+-- A test is called with no arguments, so one that takes a parameter is
+-- an error before any test runs.
+-- stderr-contains: error[compile]: the test function 'test_takes_one' must take no parameters, but it declares 1 parameter
+import test
+
+fn test_takes_one(n: Int) {
+  test.assert_eq(n, 1)
+}

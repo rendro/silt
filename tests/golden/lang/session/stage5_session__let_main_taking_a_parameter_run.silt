@@ -1,0 +1,9 @@
+-- exit: 1
+-- `run` rejects it before anything runs.
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it takes 1 parameter
+-- stderr-not-contains: expects 1 arguments
+fn real(n: Int) {
+  println(n)
+}
+
+let main = real
