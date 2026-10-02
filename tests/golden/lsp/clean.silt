@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- verdict: same
+-- A file with nothing to report: the server publishes an empty list.
+
+fn main() {
+  let x = 1
+  println("{x}")
+}

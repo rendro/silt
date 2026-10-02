@@ -1,0 +1,7 @@
+-- cmd: lsp
+-- verdict: same
+-- A parse error is published like a type error.
+
+fn main() {
+  let x = (1 +
+}
