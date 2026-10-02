@@ -65,10 +65,15 @@ impl WatchProc {
     /// Spawn `silt run -w <file>` with piped stdout and start a reader
     /// thread that drains stdout into `self.stdout` until EOF.
     fn spawn(file: &Path) -> Self {
+        let dir = file.parent().expect("a file has a directory");
+        Self::spawn_with(&["run", "-w", &file.to_string_lossy()], dir)
+    }
+
+    /// Spawn `silt <args>` in the directory `cwd`.
+    fn spawn_with(args: &[&str], cwd: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("run")
-            .arg("-w")
-            .arg(file)
+            .args(args)
+            .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -310,7 +315,7 @@ fn watch_kills_a_running_program_on_change() {
     );
 }
 
-// ── 6. A change to an imported module, in another directory, reruns ─
+// ── 6. A change to an imported module reruns ─────────────────────
 
 #[test]
 fn watch_reruns_on_a_change_to_an_imported_module() {
@@ -342,7 +347,92 @@ fn watch_reruns_on_a_change_to_an_imported_module() {
     });
 }
 
-// ── 7. count_occurrences sanity check ──────────────────────────────
+// ── 7. `silt test --watch` reruns when a test file is added ──────────
+
+#[test]
+fn watch_test_reruns_when_a_test_file_is_added() {
+    let dir = TempDir::new("newtest");
+    fs::write(
+        dir.path().join("a_test.silt"),
+        "fn test_a() {\n  println(\"test-a-ran\")\n}\n",
+    )
+    .unwrap();
+
+    let proc = WatchProc::spawn_with(&["test", "-w"], dir.path());
+    proc.wait_until("first 'test-a-ran'", Duration::from_secs(10), |snap| {
+        snap.contains("test-a-ran")
+    });
+
+    fs::write(
+        dir.path().join("b_test.silt"),
+        "fn test_b() {\n  println(\"test-b-ran\")\n}\n",
+    )
+    .unwrap();
+    proc.wait_until(
+        "'test-b-ran' after b_test.silt was created",
+        Duration::from_secs(10),
+        |snap| snap.contains("test-b-ran"),
+    );
+}
+
+#[test]
+fn watch_test_in_a_directory_with_no_tests_wakes_for_the_first() {
+    let dir = TempDir::new("notests");
+    let proc = WatchProc::spawn_with(&["test", "-w"], dir.path());
+    // The first run finds no test files; then one is created.
+    thread::sleep(Duration::from_millis(500));
+    fs::write(
+        dir.path().join("a_test.silt"),
+        "fn test_a() {\n  println(\"first-test-ran\")\n}\n",
+    )
+    .unwrap();
+    proc.wait_until("'first-test-ran'", Duration::from_secs(10), |snap| {
+        snap.contains("first-test-ran")
+    });
+}
+
+// ── 8. One silt.toml edit reruns once ─────────────────────────────────
+
+#[test]
+fn watch_one_manifest_edit_reruns_once() {
+    let dir = TempDir::new("manifest");
+    let manifest = dir.path().join("silt.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    let main = src.join("main.silt");
+    fs::write(&main, endless_program_printing("manifest-run")).unwrap();
+
+    let proc = WatchProc::spawn(&main);
+    proc.wait_until("first 'manifest-run'", Duration::from_secs(10), |snap| {
+        snap.contains("manifest-run")
+    });
+
+    // A new version: the command rewrites silt.lock for it, and that
+    // rewrite must not count as a second change.
+    fs::write(
+        &manifest,
+        "[package]\nname = \"app\"\nversion = \"0.1.1\"\n",
+    )
+    .unwrap();
+    proc.wait_until("second 'manifest-run'", Duration::from_secs(10), |snap| {
+        count_occurrences(snap, "manifest-run") >= 2
+    });
+    thread::sleep(Duration::from_millis(1500));
+    let runs = count_occurrences(&proc.stdout_snapshot(), "manifest-run");
+    assert_eq!(
+        runs,
+        2,
+        "one manifest edit must rerun once:\n{}",
+        proc.stdout_snapshot()
+    );
+}
+
+// ── 9. count_occurrences sanity check ──────────────────────────────
 
 #[test]
 fn count_occurrences_helper_is_correct() {

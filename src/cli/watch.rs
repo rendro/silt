@@ -18,6 +18,10 @@ use crate::cli::help::{check_usage_banner, disasm_usage_banner, run_usage_banner
 use crate::cli::package::find_project_root;
 #[cfg(feature = "watch")]
 use crate::cli::paths::find_silt_files;
+#[cfg(feature = "watch")]
+use silt::session::LockPolicy;
+#[cfg(feature = "watch")]
+use silt::watch::Target;
 
 /// If `--watch` / `-w` is present in `args`, handle the watch loop and
 /// return `true`. Return `false` to let the caller proceed with normal
@@ -200,9 +204,26 @@ fn handle_watch(args: &[String]) {
         }
     }
 
-    let sub = sub.to_string();
     let positional = first_positional(&filtered);
-    silt::watch::watch_and_rerun(|| entries(&sub, positional.as_deref()), &filtered);
+    // `silt test` without a file finds its test files in a directory.
+    let discovery = match (sub, positional.as_deref()) {
+        ("test", None) => Some(env::current_dir().unwrap_or_else(|_| ".".into())),
+        ("test", Some(path)) if Path::new(path).is_dir() => Some(PathBuf::from(path)),
+        _ => None,
+    };
+    // `disasm` reads the lockfile; the others bring it up to date.
+    let lock = if sub == "disasm" {
+        LockPolicy::ReadOnly
+    } else {
+        LockPolicy::Update
+    };
+    let sub = sub.to_string();
+    let target = Target {
+        entries: Box::new(move || entries(&sub, positional.as_deref())),
+        discovery,
+        lock,
+    };
+    silt::watch::watch_and_rerun(target, &filtered);
 }
 
 /// The first positional argument of the subcommand in `args` (`args[0]`

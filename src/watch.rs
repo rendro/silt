@@ -9,9 +9,15 @@
 //! is still running, then runs the command again, so a program that
 //! never ends (a server) is reloaded too.
 //!
+//! For `silt test` over a directory, the directory is watched with its
+//! subdirectories too: a test file created or removed there is a change.
+//!
 //! A change is a change of content: an event for a watched file whose
 //! text is what it was when the command last started is ignored, and so
-//! is an event for any other file.
+//! is an event for any other file. The watcher resolves the packages
+//! under the command's lockfile policy before it reads the files, so the
+//! lockfile the command would rewrite is rewritten first and is not a
+//! change.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
@@ -23,6 +29,7 @@ use std::time::Duration;
 use notify::{RecursiveMode, Watcher};
 
 use crate::manifest::Manifest;
+use crate::package_graph::LockChange;
 use crate::session::{Config, LockPolicy, ProjectSetup, Session};
 
 /// Banner printed when the command has finished, so the user knows the
@@ -56,10 +63,13 @@ fn clear_screen_seq() -> &'static str {
 }
 
 /// The files of a program and what each held: a hash of its text, or
-/// `None` for a file that cannot be read (a missing module).
+/// `None` for a file that cannot be read (a missing module). For a
+/// command whose entries are discovered in a directory (`silt test`), the
+/// directory and the entries found there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WatchSet {
     files: BTreeMap<PathBuf, Option<u64>>,
+    discovery: Option<(PathBuf, BTreeSet<PathBuf>)>,
 }
 
 impl WatchSet {
@@ -73,13 +83,25 @@ impl WatchSet {
                     (path, content)
                 })
                 .collect(),
+            discovery: None,
         }
+    }
+
+    /// The set, with `entries` discovered in the directory `dir`: a
+    /// `.silt` file created or removed under it is looked at, and when
+    /// the entries found there are no longer `entries`, that is a change.
+    pub fn discovered_in(mut self, dir: PathBuf, entries: BTreeSet<PathBuf>) -> WatchSet {
+        self.discovery = Some((dir, entries));
+        self
     }
 
     /// The files of the programs that start at `entries`: the files of
     /// each one's analysis, and its project's `silt.toml` and
-    /// `silt.lock`.
-    pub fn for_entries(entries: &[PathBuf]) -> WatchSet {
+    /// `silt.lock`. Each program's packages are resolved under `lock`,
+    /// the policy of the command watched: a lockfile the command would
+    /// rewrite is rewritten here, before the files are read, so the
+    /// command's own rewrite is not a change.
+    pub fn for_entries(entries: &[PathBuf], lock: LockPolicy) -> WatchSet {
         let mut paths = BTreeSet::new();
         for entry in entries {
             let entry = absolute(entry);
@@ -89,9 +111,14 @@ impl WatchSet {
                 .unwrap_or_else(|| PathBuf::from("."));
             let mut session = Session::new(Config {
                 project: ProjectSetup::Discover(dir.clone()),
-                lock: LockPolicy::ReadOnly,
+                lock,
                 host: Vec::new(),
             });
+            if let Ok(packages) = session.packages()
+                && packages.lock == LockChange::Updated
+            {
+                eprintln!("Updating silt.lock for new dependencies in silt.toml");
+            }
             match session.open(&entry) {
                 Ok(file) => {
                     session.analyze(file);
@@ -114,25 +141,44 @@ impl WatchSet {
         self.files.keys().map(PathBuf::as_path)
     }
 
-    /// Whether `path` is a file of the set.
-    pub fn contains(&self, path: &Path) -> bool {
+    /// Whether an event for `path` is to be looked at: a file of the set,
+    /// or a `.silt` file under the discovery directory.
+    pub fn concerns(&self, path: &Path) -> bool {
         self.files.contains_key(path)
+            || self.discovery.as_ref().is_some_and(|(dir, _)| {
+                path.starts_with(dir) && path.extension().is_some_and(|ext| ext == "silt")
+            })
     }
 
-    /// Whether a file of the set holds something else now than it did.
-    pub fn changed(&self) -> bool {
+    /// Whether a file of the set holds something else now than it did,
+    /// or the entries discovered now (`entries()`) are others.
+    pub fn changed(&self, entries: impl FnOnce() -> BTreeSet<PathBuf>) -> bool {
         self.files
             .iter()
             .any(|(path, content)| content_hash(path) != *content)
+            || self
+                .discovery
+                .as_ref()
+                .is_some_and(|(_, found)| entries() != *found)
     }
 
-    /// The directories the files are in: what to watch, so a file that
-    /// an editor replaces (or that does not exist yet) is seen.
-    fn dirs(&self) -> BTreeSet<PathBuf> {
-        self.files
+    /// The directories to watch, and whether each is watched with its
+    /// subdirectories: the directories the files are in (so a file that
+    /// an editor replaces, or that does not exist yet, is seen), and the
+    /// discovery directory with its subdirectories.
+    fn watches(&self) -> BTreeSet<(PathBuf, bool)> {
+        let discovery = self.discovery.as_ref().map(|(dir, _)| dir);
+        let mut watches: BTreeSet<(PathBuf, bool)> = self
+            .files
             .keys()
-            .filter_map(|p| p.parent().map(Path::to_path_buf))
-            .collect()
+            .filter_map(|p| p.parent())
+            .filter(|dir| !discovery.is_some_and(|d| dir.starts_with(d)))
+            .map(|dir| (dir.to_path_buf(), false))
+            .collect();
+        if let Some(dir) = discovery {
+            watches.insert((dir.clone(), true));
+        }
+        watches
     }
 }
 
@@ -155,7 +201,15 @@ fn absolute(path: &Path) -> PathBuf {
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    path.canonicalize().unwrap_or(path)
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    // A file that does not exist (a missing module, a file just removed):
+    // its directory may.
+    match (path.parent().map(Path::canonicalize), path.file_name()) {
+        (Some(Ok(dir)), Some(name)) => dir.join(name),
+        _ => path,
+    }
 }
 
 /// The command a watcher runs and stops.
@@ -199,17 +253,45 @@ impl Runner for ChildRunner {
     }
 }
 
+/// What a watcher watches: the programs of a command.
+pub struct Target {
+    /// The entry files of the programs, found again before each run.
+    pub entries: Box<dyn Fn() -> Vec<PathBuf>>,
+    /// The directory the entries are discovered in, for `silt test`
+    /// given a directory or none: a test file created or removed there
+    /// is a change.
+    pub discovery: Option<PathBuf>,
+    /// The lockfile policy of the command.
+    pub lock: LockPolicy,
+}
+
+impl Target {
+    /// The entries, as absolute paths.
+    fn entry_set(&self) -> BTreeSet<PathBuf> {
+        (self.entries)().iter().map(|p| absolute(p)).collect()
+    }
+
+    /// The files of the programs now.
+    fn watch_set(&self) -> WatchSet {
+        let entries = self.entry_set();
+        let set = WatchSet::for_entries(&entries.iter().cloned().collect::<Vec<_>>(), self.lock);
+        match &self.discovery {
+            Some(dir) => set.discovered_in(absolute(dir), entries),
+            None => set,
+        }
+    }
+}
+
 /// Run `silt <args>` and run it again on every change to the files of
-/// the programs that start at `entries()`. `entries` is asked again
-/// before each run, so a new test file is found.
-pub fn watch_and_rerun(entries: impl Fn() -> Vec<PathBuf>, args: &[String]) {
+/// the programs of `target`.
+pub fn watch_and_rerun(target: Target, args: &[String]) {
     let (tx, rx) = mpsc::channel();
     // Creating the OS watcher can fail in restrictive environments: sandboxes
     // where inotify is disabled, read-only filesystems, containers that cap
     // file descriptors, or platforms where `notify`'s backend can't initialize.
     // Surface a helpful hint so users know they can fall back to a one-shot
     // compile instead of staring at a raw errno.
-    let watcher_failed = |e: notify::Error| -> ! {
+    let watcher_failed = |e: &dyn std::fmt::Display| -> ! {
         eprintln!(
             "error: failed to start file watcher: {e}. Try running without --watch to compile once."
         );
@@ -222,7 +304,7 @@ pub fn watch_and_rerun(entries: impl Fn() -> Vec<PathBuf>, args: &[String]) {
             }
             Err(e) => eprintln!("watch error: {e}"),
         })
-        .unwrap_or_else(|e| watcher_failed(e));
+        .unwrap_or_else(|e| watcher_failed(&e));
 
     let exe = std::env::current_exe().unwrap_or_else(|e| {
         eprintln!("error: failed to get executable path: {e}");
@@ -233,25 +315,41 @@ pub fn watch_and_rerun(entries: impl Fn() -> Vec<PathBuf>, args: &[String]) {
         args: args.to_vec(),
         child: None,
     };
-    let mut watched: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut watched: BTreeSet<(PathBuf, bool)> = BTreeSet::new();
+    let mut first = true;
     run(
         &rx,
-        || WatchSet::for_entries(&entries()),
+        || target.watch_set(),
+        || target.entry_set(),
         |set| {
-            let dirs = set.dirs();
-            for dir in watched.difference(&dirs) {
+            let watches = set.watches();
+            for (dir, _) in watched.difference(&watches) {
                 let _ = watcher.unwatch(dir);
             }
-            for dir in dirs.difference(&watched) {
-                if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
-                    // The first directory is the entry's: without it
-                    // there is nothing to watch.
-                    if watched.is_empty() {
-                        watcher_failed(e);
-                    }
+            let mut watching = watched.intersection(&watches).count();
+            let mut last_error = None;
+            for (dir, recursive) in watches.difference(&watched) {
+                let mode = if *recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                match watcher.watch(dir, mode) {
+                    Ok(()) => watching += 1,
+                    Err(e) => last_error = Some(e),
                 }
             }
-            watched = dirs;
+            // A directory that does not exist (that of a missing module)
+            // cannot be watched, but with nothing watched at all the
+            // watcher would never wake.
+            if first && watching == 0 {
+                match last_error {
+                    Some(e) => watcher_failed(&e),
+                    None => watcher_failed(&"there is no file to watch"),
+                }
+            }
+            first = false;
+            watched = watches;
         },
         &mut runner,
         SETTLE,
@@ -260,14 +358,15 @@ pub fn watch_and_rerun(entries: impl Fn() -> Vec<PathBuf>, args: &[String]) {
 
 /// The watch loop. Before each run it takes the program's files
 /// (`files`), has them watched (`watch`), and starts the command. Each
-/// item of `events` is the paths of one file event. An event for a file
-/// of the set, once `settle` has passed with no further event, is a
-/// change if the set's content changed: the command is stopped and run
-/// again. When `events` is closed, the command is stopped and the loop
-/// returns.
+/// item of `events` is the paths of one file event. An event the set
+/// concerns, once `settle` has passed with no further event, is a change
+/// if the set changed (`entries` gives the entries discovered now): the
+/// command is stopped and run again. When `events` is closed, the
+/// command is stopped and the loop returns.
 pub fn run(
     events: &Receiver<Vec<PathBuf>>,
     mut files: impl FnMut() -> WatchSet,
+    mut entries: impl FnMut() -> BTreeSet<PathBuf>,
     mut watch: impl FnMut(&WatchSet),
     runner: &mut impl Runner,
     settle: Duration,
@@ -301,7 +400,7 @@ pub fn run(
                     }
                 }
             };
-            if !paths.iter().any(|p| set.contains(&absolute(p))) {
+            if !paths.iter().any(|p| set.concerns(&absolute(p))) {
                 continue;
             }
             // Let the writes settle, then take what arrived meanwhile.
@@ -309,7 +408,7 @@ pub fn run(
                 std::thread::sleep(settle);
             }
             while events.try_recv().is_ok() {}
-            if set.changed() {
+            if set.changed(&mut entries) {
                 runner.stop();
                 break;
             }
@@ -377,6 +476,22 @@ mod tests {
     fn drive(
         paths: Vec<PathBuf>,
         last: usize,
+        step: impl FnMut(usize, &Sender<Vec<PathBuf>>) + 'static,
+    ) -> Vec<String> {
+        drive_with(
+            move || WatchSet::of(paths.clone()),
+            BTreeSet::new,
+            last,
+            step,
+        )
+    }
+
+    /// [`drive`] with the set taken by `files` and the entries
+    /// discovered now given by `entries`.
+    fn drive_with(
+        files: impl FnMut() -> WatchSet,
+        entries: impl FnMut() -> BTreeSet<PathBuf>,
+        last: usize,
         mut step: impl FnMut(usize, &Sender<Vec<PathBuf>>) + 'static,
     ) -> Vec<String> {
         let (tx, rx) = mpsc::channel();
@@ -394,13 +509,7 @@ mod tests {
                 }
             }),
         };
-        run(
-            &rx,
-            || WatchSet::of(paths.clone()),
-            |_| {},
-            &mut runner,
-            Duration::ZERO,
-        );
+        run(&rx, files, entries, |_| {}, &mut runner, Duration::ZERO);
         runner.log
     }
 
@@ -479,6 +588,7 @@ mod tests {
         run(
             &rx,
             || WatchSet::of(vec![main.clone()]),
+            BTreeSet::new,
             |_| {},
             &mut FinishingRunner {
                 inner: &mut runner,
@@ -535,7 +645,7 @@ mod tests {
         .unwrap();
         std::fs::write(src.join("util.silt"), "pub fn f() { 1 }\n").unwrap();
         std::fs::write(src.join("other.silt"), "pub fn g() { 1 }\n").unwrap();
-        let set = WatchSet::for_entries(&[src.join("main.silt")]);
+        let set = WatchSet::for_entries(&[src.join("main.silt")], LockPolicy::ReadOnly);
         let paths: Vec<&Path> = set.paths().collect();
         assert_eq!(
             paths,
@@ -547,5 +657,124 @@ mod tests {
                 src.join("util.silt").as_path(),
             ]
         );
+    }
+
+    /// The test files under `dir`, as `silt test` finds them.
+    fn test_files(dir: &Path) -> BTreeSet<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.to_string_lossy().ends_with("_test.silt"))
+            .collect()
+    }
+
+    /// The set of a `silt test` over `dir`: its test files, discovered.
+    fn test_set(dir: &Path) -> WatchSet {
+        let entries = test_files(dir);
+        WatchSet::of(entries.clone()).discovered_in(dir.to_path_buf(), entries)
+    }
+
+    #[test]
+    fn a_new_test_file_is_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let b = step_dir.join("b_test.silt");
+                    std::fs::write(&b, "fn test_b() { () }").unwrap();
+                    tx.send(vec![b]).unwrap();
+                }
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+    }
+
+    #[test]
+    fn a_removed_test_file_is_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        std::fs::write(dir.join("b_test.silt"), "fn test_b() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let b = step_dir.join("b_test.silt");
+                    std::fs::remove_file(&b).unwrap();
+                    tx.send(vec![b]).unwrap();
+                }
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+    }
+
+    #[test]
+    fn a_first_test_file_in_an_empty_directory_is_a_change() {
+        let dir = temp_dir();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let a = step_dir.join("a_test.silt");
+                    std::fs::write(&a, "fn test_a() { () }").unwrap();
+                    tx.send(vec![a]).unwrap();
+                }
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+        // And the empty directory is watched, so the event comes.
+        let watches = test_set(&temp_dir()).watches();
+        assert_eq!(watches.len(), 1);
+        assert!(watches.iter().all(|(_, recursive)| *recursive));
+    }
+
+    #[test]
+    fn a_new_silt_file_that_is_not_a_test_is_not_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            1,
+            move |_, tx| {
+                let helper = step_dir.join("helper.silt");
+                std::fs::write(&helper, "pub fn h() { 1 }").unwrap();
+                tx.send(vec![helper]).unwrap();
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1"]);
+    }
+
+    #[test]
+    fn the_lockfile_is_brought_up_to_date_before_the_files_are_read() {
+        let dir = temp_dir();
+        std::fs::write(
+            dir.join("silt.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("main.silt"), "fn main() { 1 }\n").unwrap();
+        let lock = dir.join("silt.lock");
+        assert!(!lock.exists());
+        // Under the policy of `run`, the watcher's analysis writes the
+        // lock the command would write, then reads the files: the
+        // command finds the lock up to date and the set unchanged.
+        let set = WatchSet::for_entries(&[src.join("main.silt")], LockPolicy::Update);
+        assert!(lock.exists(), "the watcher's analysis writes silt.lock");
+        assert!(set.paths().any(|p| p == lock));
+        assert!(!set.changed(BTreeSet::new));
     }
 }
