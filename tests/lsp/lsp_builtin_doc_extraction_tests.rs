@@ -139,11 +139,11 @@ fn hover_on_println_returns_globals_doc() {
 fn hover_on_io_error_variant_returns_errors_doc() {
     let mut client = LspClient::spawn();
     let uri = unique_uri();
-    let source = "import io\n\nfn main() {\n    let e = IoNotFound(\"x\")\n    e\n}\n";
+    let source = "import io\n\nfn main() {\n    let e = io.IoNotFound(\"x\")\n    e\n}\n";
     client.did_open_and_wait(&uri, source);
 
-    // Cursor on `IoNotFound` line 3 col 14.
-    let resp = client.hover(&uri, 3, 14);
+    // Cursor on `IoNotFound` line 3 col 17.
+    let resp = client.hover(&uri, 3, 17);
     let md = hover_markdown(&resp).expect("expected hover markdown for IoNotFound");
     // The IoError section in errors.md mentions the variant table.
     assert!(

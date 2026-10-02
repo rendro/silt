@@ -139,9 +139,18 @@ impl Server {
                     return Some(d.clone());
                 }
                 let (module, member) = qualified?;
-                self.builtin_docs
-                    .get(&format!("{}.{}", resolve(module), resolve(member)))
-                    .cloned()
+                let (module, member) = (resolve(module), resolve(member));
+                if let Some(d) = self.builtin_docs.get(&format!("{module}.{member}")) {
+                    return Some(d.clone());
+                }
+                // A builtin module's type or variant (`io.IoNotFound`,
+                // `time.Weekday`) is documented under its bare name.
+                let owner = crate::module::builtin_variant_module(&member)
+                    .or_else(|| crate::module::builtin_type_module(&member));
+                if owner == Some(module.as_str()) {
+                    return self.builtin_docs.get(&member).cloned();
+                }
+                None
             });
 
         // If neither a type nor a doc is available, no hover.
