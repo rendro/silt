@@ -100,6 +100,10 @@ pub enum ImportResolution {
     Builtin,
     /// A module of the graph.
     Module(ModuleId),
+    /// An earlier REPL cell (`<repl:k>`), which the session imports into
+    /// each later cell: checked already and installed, it is not an edge
+    /// of the graph, so a cell's graph does not grow with the session.
+    Cell(ModuleId),
     /// Nothing: the name resolves to no file. The diagnostic says why.
     Unresolved(Diagnostic),
 }
@@ -290,7 +294,7 @@ impl ModuleGraph {
             let resolution = if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
             } else if let Some(cell) = self.cell_module(name) {
-                ImportResolution::Module(cell)
+                ImportResolution::Cell(cell)
             } else {
                 match resolve_import(packages, package, name, span) {
                     Ok(target) => {

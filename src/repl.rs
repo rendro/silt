@@ -1057,6 +1057,10 @@ mod tests {
         value(&mut repl, r#"let x = "s""#);
         assert_eq!(value(&mut repl, "get_x() + 1"), "2");
         assert_eq!(value(&mut repl, "x"), "s");
+        // A `let` that binds a name again reads its old value.
+        value(&mut repl, "let n = 10");
+        value(&mut repl, "let n = n + 1");
+        assert_eq!(value(&mut repl, "n"), "11");
     }
 
     // ── DX2: completion filters on module prefix ──────────────────

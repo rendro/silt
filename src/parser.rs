@@ -669,7 +669,7 @@ pub struct Parser<'src> {
     current_trait_name: Option<Symbol>,
     /// What a top-level item is called in the same-line error: a
     /// "declaration" in a file, a "statement" in the REPL, whose entries
-    /// are statements (see `for_repl`).
+    /// are statements (see `parse_cell`).
     top_level_item: &'static str,
 }
 

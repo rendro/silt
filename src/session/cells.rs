@@ -1,8 +1,12 @@
 //! The entries of a REPL session ("cells"). Each is a module of its own,
 //! `<repl:n>`, checked and compiled like any module, that sees what the
-//! earlier cells that ran bind: the session imports each earlier cell
-//! into it (`import <repl:k>.{ ... }`, a name no program can write) and
-//! carries the earlier cells' own imports over.
+//! earlier cells that ran bind: the session imports into it the last
+//! committed cell (`import <repl:k>.{ ... }`, a name no program can
+//! write), which offers all it saw as well as all it declared (see
+//! `typechecker::check_cell`), and carries the earlier cells' own imports
+//! over. A cell therefore imports one cell however long the session is.
+//! Of two impls of one trait for one type the newer one is seen, as a
+//! written impl replaces the derived one in a file.
 //!
 //! A cell that is not committed (it had an error, or failed when it ran)
 //! is never imported, so it leaves the session as it was.
@@ -13,7 +17,8 @@
 //! was checked against. In the VM, a value whose name an earlier cell
 //! already installed a global under gets a global of its own,
 //! `<repl:n>.name`; the compiler installs and reads it under that global
-//! (see `EarlierCells::globals`).
+//! (see `EarlierCells::globals`). A `let` that binds a name again reads
+//! the old value in its initializer (`let x = x + 1`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -41,8 +46,6 @@ enum Kind {
 /// What binds a top-level name of the session now.
 #[derive(Clone)]
 struct Binder {
-    /// The cell whose declaration binds it.
-    cell: ModuleId,
     kind: Kind,
     /// Where it is bound: the name in the declaration.
     span: Span,
@@ -61,13 +64,16 @@ pub(super) struct CellInfo {
     /// How many declarations the session put before the cell's own: the
     /// imports of the earlier cells, then the earlier cells' imports.
     synthesized: usize,
-    /// How many of those are imports of earlier cells: the compiler does
-    /// not see them.
+    /// How many of those are imports of an earlier cell (none or one):
+    /// the compiler does not see them.
     cell_imports: usize,
     /// The names the cell binds, with what they are.
     own: Vec<(Symbol, Span, Kind, Option<(ImportTarget, Span)>)>,
     /// The global of each value the cell binds.
     globals: HashMap<Symbol, String>,
+    /// For each name a `let` of the cell binds again, the global of the
+    /// value it had: the `let`'s initializer reads that one.
+    previous: HashMap<Symbol, String>,
 }
 
 impl CellInfo {
@@ -92,15 +98,22 @@ pub(super) struct Cells {
     /// The number of cells added.
     pub count: usize,
     pub info: HashMap<ModuleId, CellInfo>,
-    /// The committed cells, oldest first, and the declarations of each
-    /// that are its own, as checked.
-    committed: Vec<(ModuleId, Arc<ast::Program>)>,
+    /// The committed cells, oldest first.
+    committed: Vec<Committed>,
     /// What binds each top-level name the committed cells bind.
     scope: HashMap<Symbol, Binder>,
     /// The VM globals the committed cells' values are installed under.
     taken: HashSet<String>,
     /// The modules (not cells) whose code the committed cells installed.
     installed: HashSet<ModuleId>,
+}
+
+/// A committed cell.
+struct Committed {
+    id: ModuleId,
+    /// Its type declarations, as checked, when it has any: a later cell's
+    /// code knows those types.
+    types: Option<Arc<ast::Program>>,
 }
 
 impl Cells {
@@ -146,9 +159,20 @@ impl Cells {
             .collect();
 
         // What the cell sees: each name bound by a committed cell that the
-        // cell does not bind again.
-        let own_names: HashSet<Symbol> = own.iter().map(|(name, ..)| *name).collect();
-        let mut by_cell: HashMap<ModuleId, Vec<(Symbol, Span)>> = HashMap::new();
+        // cell does not bind again, but for a `let`: its initializer reads
+        // the value the name had (`let x = x + 1`). A function sees
+        // itself, and so does a type.
+        let own_names: HashSet<Symbol> = own
+            .iter()
+            .filter(|(_, _, kind, _)| *kind != Kind::Let)
+            .map(|(name, ..)| *name)
+            .collect();
+        let previous = own
+            .iter()
+            .filter(|(_, _, kind, _)| *kind == Kind::Let)
+            .filter_map(|(name, ..)| Some((*name, self.scope.get(name)?.global.clone()?)))
+            .collect();
+        let mut seen: Vec<(Symbol, Span)> = Vec::new();
         let mut carried: Vec<Decl> = Vec::new();
         let mut items: BTreeMap<String, (Symbol, Span, Vec<(Symbol, Span)>)> = BTreeMap::new();
         let mut visible: Vec<(&Symbol, &Binder)> = self
@@ -169,10 +193,7 @@ impl Cells {
                         .2
                         .push((*name, binder.span));
                 }
-                _ => by_cell
-                    .entry(binder.cell)
-                    .or_default()
-                    .push((*name, binder.span)),
+                _ => seen.push((*name, binder.span)),
             }
         }
         carried.extend(
@@ -180,23 +201,19 @@ impl Cells {
                 Decl::Import(ImportTarget::Items(module, names), span)
             }),
         );
-        // Every committed cell is imported, the newest first, so that of
-        // two types of one name the newer is the one the cell sees; one
-        // that binds nothing the cell sees still brings its trait impls.
+        // The last committed cell offers every name of an earlier cell the
+        // cell sees, and every type, trait and impl.
         let mut synthesized: Vec<Decl> = self
             .committed
-            .iter()
-            .rev()
-            .map(|(cell, _)| {
-                let info = &self.info[cell];
+            .last()
+            .map(|cell| {
+                let info = &self.info[&cell.id];
                 Decl::Import(
-                    ImportTarget::Items(
-                        intern(&cell_name(info.n)),
-                        by_cell.remove(cell).unwrap_or_default(),
-                    ),
+                    ImportTarget::Items(intern(&cell_name(info.n)), seen),
                     Span::point(info.file, 0),
                 )
             })
+            .into_iter()
             .collect();
         let cell_imports = synthesized.len();
         synthesized.extend(carried);
@@ -212,6 +229,7 @@ impl Cells {
                 cell_imports,
                 own,
                 globals,
+                previous,
             },
         );
     }
@@ -225,9 +243,10 @@ impl Cells {
             programs: self
                 .committed
                 .iter()
-                .map(|(_, program)| program.clone())
+                .filter_map(|cell| cell.types.clone())
                 .collect(),
             globals: info.globals.clone(),
+            previous: info.previous.clone(),
             installed: self
                 .installed
                 .iter()
@@ -272,7 +291,6 @@ impl Cells {
             self.scope.insert(
                 *name,
                 Binder {
-                    cell: id,
                     kind: *kind,
                     span: *span,
                     import: import.clone(),
@@ -280,10 +298,16 @@ impl Cells {
                 },
             );
         }
-        let own = ast::Program {
-            decls: checked.decls[info.synthesized..].to_vec(),
-        };
-        self.committed.push((id, Arc::new(own)));
+        let own = &checked.decls[info.synthesized..];
+        let types: Vec<Decl> = own
+            .iter()
+            .filter(|decl| matches!(decl, Decl::Type(_)))
+            .cloned()
+            .collect();
+        self.committed.push(Committed {
+            id,
+            types: (!types.is_empty()).then(|| Arc::new(ast::Program { decls: types })),
+        });
         self.installed.extend(
             modules
                 .iter()

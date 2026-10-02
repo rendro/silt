@@ -3014,6 +3014,102 @@ impl TypeChecker {
         true
     }
 
+    /// Add to a REPL cell's `exports` what the cell sees and does not
+    /// declare: the values it imports from the earlier cells (written
+    /// `import <repl:k>.{ ... }` by the session), and the types, traits
+    /// and aliases of its package it knows. Its impls are exported
+    /// already, the imported ones too.
+    pub(super) fn reexport_scope(
+        &self,
+        program: &Program,
+        env: &TypeEnv,
+        exports: &mut ModuleExports,
+    ) {
+        let local = self.defining_package();
+        let mut values: std::collections::HashSet<Symbol> =
+            exports.schemes.iter().map(|(name, _)| *name).collect();
+        for decl in &program.decls {
+            let Decl::Import(ImportTarget::Items(module, items), _) = decl else {
+                continue;
+            };
+            if !resolve(*module).starts_with("<repl:") {
+                continue;
+            }
+            for (item, _) in items {
+                if values.insert(*item)
+                    && let Some(scheme) = env.lookup(*item)
+                {
+                    exports.schemes.push((*item, scheme.clone()));
+                }
+            }
+        }
+        let declared: std::collections::HashSet<Symbol> = exports
+            .enums
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(exports.records.iter().map(|(name, _)| *name))
+            .chain(exports.traits.iter().map(|(name, _)| *name))
+            .chain(exports.aliases.iter().copied())
+            .collect();
+        let mut enums: Vec<(&Symbol, &EnumInfo)> = self
+            .enums
+            .iter()
+            .filter(|(name, info)| info.defined_in == local && !declared.contains(*name))
+            .collect();
+        enums.sort_by_key(|(name, _)| resolve(**name));
+        for (name, info) in enums {
+            exports.enums.push((*name, info.clone()));
+            for variant in &info.variants {
+                exports.variant_to_enum.push((variant.name, *name));
+                if self.variant_to_enum.get(&variant.name) == Some(name)
+                    && let Some(scheme) = env.lookup(variant.name)
+                {
+                    exports.variant_schemes.push((variant.name, scheme.clone()));
+                }
+            }
+            if let Some(scheme) = env.lookup(*name) {
+                exports.type_name_schemes.push((*name, scheme.clone()));
+            }
+        }
+        let mut records: Vec<(&Symbol, &RecordInfo)> = self
+            .records
+            .iter()
+            .filter(|(name, info)| info.defined_in == local && !declared.contains(*name))
+            .collect();
+        records.sort_by_key(|(name, _)| resolve(**name));
+        for (name, info) in records {
+            exports.records.push((*name, info.clone()));
+            if let Some(ids) = self.record_param_var_ids.get(name) {
+                exports.record_param_var_ids.push((*name, ids.clone()));
+            }
+            if let Some(scheme) = env.lookup(*name) {
+                exports.type_name_schemes.push((*name, scheme.clone()));
+            }
+        }
+        let mut traits: Vec<(&Symbol, &TraitInfo)> = self
+            .traits
+            .iter()
+            .filter(|(name, info)| info.defined_in == local && !declared.contains(*name))
+            .collect();
+        traits.sort_by_key(|(name, _)| resolve(**name));
+        for (name, info) in traits {
+            exports.traits.push((*name, info.clone()));
+        }
+        let mut aliases: Vec<Symbol> = self
+            .type_aliases
+            .iter()
+            .filter(|name| !declared.contains(*name))
+            .copied()
+            .collect();
+        aliases.sort_by_key(|name| resolve(*name));
+        for name in aliases {
+            exports.aliases.push(name);
+            exports
+                .alias_arity
+                .push(self.type_alias_arity.get(&name).copied().unwrap_or(0));
+        }
+    }
+
     /// Helper: build a scheme from a method template type, generalizing
     /// over its free type variables. Used during cross-module merge to
     /// register method entries under their `Type.method` env keys.
@@ -4213,9 +4309,9 @@ impl TypeChecker {
                     //      `self.enums[td.name]` entry at this point; the
                     //      insert for the *current* td happens below, so
                     //      any existing key must be a prior registration.
-                    //      Two user decls never share a name (the parser
-                    //      rejects it), so anything we see here is a
-                    //      builtin shadow.
+                    //      Two decls of one file never share a name (the
+                    //      parser rejects it), so what we see here is a
+                    //      builtin's, or an earlier REPL cell's.
                     if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
                         if prev_owner != td.name {
                             self.shadowed_enums
@@ -4231,13 +4327,18 @@ impl TypeChecker {
                                 ),
                                 variant.name_span,
                             );
-                        } else if self.enums.contains_key(&td.name) {
-                            // Sub-case (b): user type shadowing a builtin
-                            // of the same name.
+                        } else if let Some(prior) = self.enums.get(&td.name) {
+                            // Sub-case (b): the type shadows a builtin of
+                            // the same name, or an earlier REPL cell's.
+                            let (whose, what) = if prior.defined_in == Self::builtin_pkg() {
+                                ("builtin enum", "builtin variant")
+                            } else {
+                                ("the earlier enum", "earlier variant")
+                            };
                             self.warning(Code::Shadowing,
                                 format!(
-                                    "variant '{}' of enum '{}' shadows same-named variant of builtin enum '{}'; \
-                                     builtin variant is no longer resolvable by bare name",
+                                    "variant '{}' of enum '{}' shadows same-named variant of {whose} '{}'; \
+                                     {what} is no longer resolvable by bare name",
                                     resolve(variant.name),
                                     resolve(td.name),
                                     resolve(prev_owner)
@@ -5629,6 +5730,18 @@ impl TypeChecker {
                 && ti.trait_name == display_sym
             {
                 user_display_impls.insert(canonicalize_type_name(&self.resolver, ti.target_type));
+            }
+        }
+        // And for the types whose written `Display` impl an import brought
+        // in (a module of the package, or an earlier REPL cell): deriving
+        // one again would clash with it.
+        let display_method = intern("display");
+        for ((type_name, method), entry) in &self.method_table {
+            if *method == display_method
+                && !entry.is_auto_derived
+                && entry.trait_name == Some(display_sym)
+            {
+                user_display_impls.insert(*type_name);
             }
         }
 
@@ -8345,12 +8458,40 @@ pub fn check_module(
     poisoned: std::collections::HashSet<Symbol>,
     resolver: &mut crate::types::canonical::Resolver,
 ) -> ModuleCheck {
+    check_module_exporting(program, package, imports, poisoned, resolver, false)
+}
+
+/// Check a REPL cell: [`check_module`], where what the cell offers the
+/// next cell is all it sees as well as all it declares (the values it
+/// imports from the earlier cells, and every type, trait and impl of
+/// its package it knows), so the next cell needs to import only it.
+pub fn check_cell(
+    program: &mut Program,
+    package: Option<Symbol>,
+    imports: HashMap<Symbol, ModuleExports>,
+    poisoned: std::collections::HashSet<Symbol>,
+    resolver: &mut crate::types::canonical::Resolver,
+) -> ModuleCheck {
+    check_module_exporting(program, package, imports, poisoned, resolver, true)
+}
+
+fn check_module_exporting(
+    program: &mut Program,
+    package: Option<Symbol>,
+    imports: HashMap<Symbol, ModuleExports>,
+    poisoned: std::collections::HashSet<Symbol>,
+    resolver: &mut crate::types::canonical::Resolver,
+    reexport: bool,
+) -> ModuleCheck {
     let mut checker = TypeChecker::with_resolver(std::mem::take(resolver));
     checker.current_package = package;
     checker.module_exports = imports;
     checker.poisoned_modules = poisoned;
     let env = checker.check_program_returning_env(program);
-    let exports = checker.collect_module_exports(program, &env);
+    let mut exports = checker.collect_module_exports(program, &env);
+    if reexport {
+        checker.reexport_scope(program, &env, &mut exports);
+    }
     let mut top_level = HashMap::new();
     for decl in &program.decls {
         let names: Vec<Symbol> = match decl {

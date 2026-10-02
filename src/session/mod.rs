@@ -419,6 +419,11 @@ impl Session {
         for import in &module.imports {
             match &import.resolution {
                 ImportResolution::Builtin => {}
+                ImportResolution::Cell(cell) => {
+                    let analysis = &self.analyses[cell];
+                    imports.insert(import.name, analysis.exports.clone());
+                    resolver.absorb(&analysis.resolver);
+                }
                 ImportResolution::Module(target) => match self.analyses.get(target) {
                     Some(analysis)
                         if !self.graph.module(*target).failed()
@@ -436,7 +441,12 @@ impl Session {
                 }
             }
         }
-        let check = typechecker::check_module(
+        let check_module = if self.cells.info.contains_key(&id) {
+            typechecker::check_cell
+        } else {
+            typechecker::check_module
+        };
+        let check = check_module(
             &mut ast,
             Some(module.package_name),
             imports,

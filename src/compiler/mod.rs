@@ -345,6 +345,9 @@ pub struct EarlierCells {
     /// code of an earlier entry keeps the definition it was checked
     /// against.
     pub globals: HashMap<Symbol, String>,
+    /// For each name a top-level `let` of the entry binds again, the
+    /// global of the value it had, which the `let`'s initializer reads.
+    pub previous: HashMap<Symbol, String>,
     /// The modules installed already: an import of one compiles nothing.
     pub installed: HashSet<usize>,
 }
@@ -453,6 +456,10 @@ pub struct Compiler {
     /// trait-impl global keys, so registration and lookup keys agree
     /// across the typecheck → compile boundary.
     resolver: Resolver,
+    /// The name the entry's top-level `let` being compiled binds: its
+    /// initializer reads the value the name had before (a REPL entry's
+    /// `let x = x + 1`).
+    initializing: Option<Symbol>,
 }
 
 /// Seed `known_enum_variants` with the builtin enums. Called from
@@ -523,6 +530,7 @@ impl Compiler {
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
             resolver,
+            initializing: None,
         }
     }
 
@@ -724,10 +732,15 @@ impl Compiler {
     /// defines again (see [`EarlierCells::globals`]). A file module's
     /// names are its own.
     fn top_level_global(&self, name: Symbol) -> String {
-        match self.units.earlier.globals.get(&name) {
-            Some(global) if self.module_scope.is_none() => global.clone(),
-            _ => resolve(name),
+        if self.module_scope.is_some() {
+            return resolve(name);
         }
+        let earlier = &self.units.earlier;
+        let global = match self.initializing {
+            Some(binder) if binder == name => earlier.previous.get(&name),
+            _ => earlier.globals.get(&name),
+        };
+        global.cloned().unwrap_or_else(|| resolve(name))
     }
 
     /// Pre-pass recording the lowercase names `program` imports by name
@@ -938,7 +951,14 @@ impl Compiler {
                 ..
             } => {
                 let span = *span;
-                self.compile_expr(value)?;
+                let binder = match &pattern.kind {
+                    PatternKind::Ident(name) if self.module_scope.is_none() => Some(*name),
+                    _ => None,
+                };
+                let outer = std::mem::replace(&mut self.initializing, binder);
+                let compiled = self.compile_expr(value);
+                self.initializing = outer;
+                compiled?;
 
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
