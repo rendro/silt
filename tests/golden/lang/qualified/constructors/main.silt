@@ -1,0 +1,15 @@
+-- Constructors reached through a module and their enum: `m.C.Red` and
+-- `m.Shape.Circle(2)`, besides `m.Red`.
+import colors
+
+fn main() {
+  let a = colors.C.Red
+  let b = colors.Blue
+  let c = colors.Shape.Circle(2)
+  println(a)
+  println(b)
+  println(c)
+  println(a == colors.Red)
+  let shapes = [colors.Shape.Square(1), colors.Shape.Circle(3)]
+  println(shapes)
+}

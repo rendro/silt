@@ -1,0 +1,56 @@
+-- The builtin enums outside the prelude are members of their modules:
+-- their types and variants are reached as `module.Name`, in expressions,
+-- patterns and types, also through an alias.
+import channel
+import http
+import io
+import list
+import time
+import time as t
+
+fn day_name(d: time.Weekday) -> String {
+  match d {
+    time.Monday -> "mon"
+    time.Weekday.Tuesday -> "tue"
+    t.Friday -> "fri"
+    _ -> "other"
+  }
+}
+
+fn verb(m: http.Method) -> String {
+  match m {
+    http.GET -> "get"
+    _ -> "not get"
+  }
+}
+
+fn io_message(e: io.IoError) -> String {
+  match e {
+    io.IoNotFound(path) -> "not found: {path}"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 5)
+  match channel.receive(ch) {
+    channel.Message(v) -> println(v)
+    channel.ChannelResult.Closed -> println("closed")
+    _ -> println("other")
+  }
+  println(channel.Message(3))
+  println(day_name(time.Monday))
+  println(day_name(time.Weekday.Tuesday))
+  println(day_name(t.Friday))
+  println(verb(http.GET))
+  println(verb(http.Method.POST))
+  println(io_message(io.IoNotFound("x.txt")))
+  let total = list.fold_until([1, 2, 3, 4], 0, { acc, n ->
+    match acc + n > 4 {
+      true -> list.Stop(acc)
+      false -> list.Step.Continue(acc + n)
+    }
+  })
+  println(total)
+}

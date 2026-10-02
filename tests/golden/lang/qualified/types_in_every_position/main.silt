@@ -1,0 +1,45 @@
+-- A module-qualified type name works in every type position.
+import list
+import shapes
+
+type Holder { shape: shapes.Shape, boxes: List(shapes.Box(Int)) }
+type Shapes = List(shapes.Shape)
+
+fn total(xs: Shapes) -> Int {
+  xs |> list.map(shapes.area) |> list.sum
+}
+
+fn first(xs: List(shapes.Shape)) -> Option(shapes.Shape) {
+  list.head(xs)
+}
+
+fn apply(f: Fn(shapes.Shape) -> Int, s: shapes.Shape) -> Int {
+  f(s)
+}
+
+fn unbox(b: shapes.Box(Int)) -> Int {
+  b.value
+}
+
+fn swap(p: shapes.Pair) -> shapes.Pair {
+  let (a, b) = p
+  (b, a)
+}
+
+fn nested(x: Option(List(shapes.Box(shapes.Shape)))) -> Int {
+  match x {
+    Some(boxes) -> boxes |> list.map({ b -> shapes.area(b.value) }) |> list.sum
+    None -> 0
+  }
+}
+
+fn main() {
+  let s: shapes.Shape = shapes.Circle(2)
+  let h = Holder { shape: s, boxes: [shapes.Box { value: 4 }] }
+  println(total([h.shape, shapes.Square(3)]))
+  println(first([s]))
+  println(apply(shapes.area, s))
+  println(unbox(shapes.Box { value: 7 }))
+  println(swap((1, 2)))
+  println(nested(Some([shapes.Box { value: shapes.Square(2) }])))
+}

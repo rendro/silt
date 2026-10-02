@@ -1,0 +1,22 @@
+-- Pattern heads reached through a module: `m.Variant`, `m.Enum.Variant`,
+-- the same through an alias, and a unit variant.
+import shapes
+import shapes as s
+
+fn describe(x: shapes.Shape) -> String {
+  match x {
+    shapes.Circle(r) -> "circle {r}"
+    shapes.Shape.Square(w) -> "square {w}"
+    s.Shape.Blank -> "blank"
+  }
+}
+
+fn main() {
+  println(describe(shapes.Circle(1)))
+  println(describe(shapes.Square(2)))
+  println(describe(shapes.Blank))
+  match s.Square(5) {
+    s.Square(w) -> println(w)
+    _ -> println("other")
+  }
+}

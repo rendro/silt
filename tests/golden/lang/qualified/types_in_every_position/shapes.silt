@@ -1,0 +1,10 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub type Box(a) { value: a }
+pub type Pair = (Int, Int)
+
+pub fn area(s: Shape) -> Int {
+  match s {
+    Shape.Circle(r) -> 3 * r * r
+    Shape.Square(w) -> w * w
+  }
+}

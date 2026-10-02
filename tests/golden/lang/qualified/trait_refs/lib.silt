@@ -1,0 +1,6 @@
+pub trait Describe {
+  fn describe(self) -> String
+}
+
+pub type Pt { x: Int, y: Int }
+pub type C { Red, Blue }

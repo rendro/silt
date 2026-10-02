@@ -1,0 +1,17 @@
+-- `import channel.{ Message }` binds the builtin variant by its bare name.
+import channel
+import channel.{ Message, ChannelResult }
+
+fn first(r: ChannelResult(Int)) -> Int {
+  match r {
+    Message(v) -> v
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(Message(3))
+  let ch = channel.new(1)
+  channel.send(ch, 7)
+  println(first(channel.receive(ch)))
+}
