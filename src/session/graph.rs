@@ -104,6 +104,21 @@ pub enum ImportResolution {
     Unresolved(Diagnostic),
 }
 
+/// The declarations of the module file `file`, whose text is `text`,
+/// with their doc comments, and its lex error or parse errors. A text
+/// that does not lex has no declarations.
+pub fn parse_text(file: FileId, text: &str) -> (Option<ast::Program>, Vec<Diagnostic>) {
+    match Lexer::new(file, text).tokenize() {
+        Ok(tokens) => {
+            let (program, errors) = Parser::new(tokens, text)
+                .with_docs()
+                .parse_program_recovering();
+            (Some(program), errors)
+        }
+        Err(e) => (None, vec![e]),
+    }
+}
+
 /// Every module a session has read.
 #[derive(Default)]
 pub struct ModuleGraph {
@@ -195,18 +210,9 @@ impl ModuleGraph {
         let module = &mut self.modules[id.index()];
         module.file = Some(file);
         module.imports.clear();
-        module.problems.clear();
-        module.ast = None;
-        let tokens = match Lexer::new(file, text).tokenize() {
-            Ok(tokens) => tokens,
-            Err(e) => {
-                module.problems.push(e);
-                return;
-            }
-        };
-        let (program, errors) = Parser::new(tokens, text).parse_program_recovering();
-        module.problems = errors;
-        module.ast = Some(program);
+        let (ast, problems) = parse_text(file, text);
+        module.ast = ast;
+        module.problems = problems;
     }
 
     /// Resolve the imports of `entry` and of every module they reach,
