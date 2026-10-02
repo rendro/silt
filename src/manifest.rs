@@ -206,13 +206,6 @@ impl Manifest {
         })
     }
 
-    /// The manifest's directory: the package root.
-    pub fn dir(&self) -> &Path {
-        self.manifest_path
-            .parent()
-            .expect("manifest path always has a parent")
-    }
-
     /// Walk up from `start` looking for `silt.toml`.
     ///
     /// Returns the directory containing the manifest, or `None` if no
@@ -250,13 +243,22 @@ impl Manifest {
 
 /// How a package file's path is shown: relative to the working
 /// directory, with `..` when the file is above it (`silt check main.silt`
-/// run in `src/` shows `../silt.toml`), else as it is.
+/// run in `src/` shows `../silt.toml`), else as it is. A path that does
+/// not exist (a missing dependency) is made relative lexically.
 pub fn display_path(path: &Path) -> PathBuf {
-    let (Ok(cwd), Ok(path)) = (
+    let (cwd, path) = match (
         std::env::current_dir().and_then(std::fs::canonicalize),
         std::fs::canonicalize(path),
-    ) else {
-        return path.to_path_buf();
+    ) {
+        (Ok(cwd), Ok(path)) => (cwd, path),
+        // The dependency's path is made from a canonical package root,
+        // so the working directory is made canonical too when it can be.
+        _ => {
+            match std::env::current_dir().and_then(|cwd| std::fs::canonicalize(&cwd).or(Ok(cwd))) {
+                Ok(cwd) => (cwd, absolutize(path)),
+                Err(_) => return path.to_path_buf(),
+            }
+        }
     };
     let common = cwd
         .components()

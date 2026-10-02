@@ -160,10 +160,10 @@ enum AddSource {
 /// (comments, blank lines, key ordering) is preserved.
 ///
 /// Validation order: argument shape → name → URL/path well-formedness
-/// → (git only) `verify_reachable` → (git only) `resolve_ref` → manifest
-/// write → lockfile regen. Both path and git deps now flow through the
-/// same lockfile-regen step (git deps fetch into `<silt-cache>/git/...`
-/// and pin the resolved SHA in `silt.lock`).
+/// → (git only) `verify_reachable` → manifest write → package graph
+/// resolution, which resolves the ref, fetches a git dep into
+/// `<silt-cache>/git/...` and rewrites `silt.lock`. If resolution fails,
+/// its diagnostics point at the new entry and silt.toml is restored.
 ///
 /// Errors are returned rather than printed so the caller can wrap them
 /// in the dispatch's standard "error: ..." prefix and exit code.
@@ -417,8 +417,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // manifest's tree (e.g. an absolute path under /opt) we
             // fall back to the absolute form because there's no clean
             // relative form to write.
-            let stored_path = relative_from(&root, &absolute_dep_path)
-                .map(|p| p.to_string_lossy().into_owned())
+            let stored_path = manifest_relative(&root, &absolute_dep_path)
                 .unwrap_or_else(|| absolute_dep_path.display().to_string());
             let mut inline = toml_edit::InlineTable::new();
             inline.insert(
@@ -475,18 +474,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             silt::git::verify_reachable(&url)
                 .map_err(|e| AddError::caused(format!("silt add: cannot reach `{url}`"), e))?;
 
-            // Ref existence: rejects `--branch nonexistent_xyz` etc.
-            // For Rev specs this is a no-op (offline shape check).
-            silt::git::resolve_ref(&url, &ref_spec).map_err(|e| {
-                AddError::caused(
-                    format!(
-                        "silt add: cannot resolve {} `{}` in `{url}`",
-                        ref_spec.kind(),
-                        ref_spec.as_ref_string()
-                    ),
-                    e,
-                )
-            })?;
+            // Whether the ref exists (`--branch nonexistent_xyz`) is
+            // found out when the graph is resolved below, as a
+            // diagnostic at the new entry in silt.toml.
 
             // Render the inline table. Key order is fixed (`git` first,
             // then the ref form) so manifests stay diffable across
@@ -555,31 +545,48 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     //
     // Resolve the package graph from the just-written manifest, which
     // validates it again and rewrites silt.lock. The pins of the other
-    // dependencies are kept.
+    // dependencies are kept. If it fails, silt.toml gets its old text
+    // back: a dependency that does not resolve is never left in it.
+    let mut sources = SourceMap::new();
+    if let Err(mut diagnostics) = resolve_packages(&root, LockPolicy::Update, &mut sources) {
+        fs::write(&manifest_path, &manifest_text)
+            .map_err(|e| format!("failed to restore {}: {e}", manifest_path.display()))?;
+        for d in &mut diagnostics {
+            d.notes
+                .push("silt add left silt.toml as it was".to_string());
+        }
+        return Err(AddError::Package(PackageFailure {
+            sources,
+            diagnostics,
+        }));
+    }
 
     // The summary quotes the path or the URL and the ref as they were
     // given on the command line.
     println!("{}", escape_for_display(&success_summary));
-
-    let mut sources = SourceMap::new();
-    resolve_packages(&root, LockPolicy::Update, &mut sources).map_err(|diagnostics| {
-        AddError::Package(PackageFailure {
-            sources,
-            diagnostics,
-        })
-    })?;
-
     Ok(())
 }
 
 /// The local git URL `url` (absolute) as silt.toml stores it: relative
-/// to the manifest's directory `root`, starting with `./` or `../` so
-/// that it is read as a local path, or absolute when there is no
-/// relative form.
+/// to the manifest's directory `root`, with `/` between its parts on
+/// every system and starting with `./` or `../`, so that it is read as
+/// a local path; or absolute when there is no relative form.
 fn manifest_relative_url(root: &Path, url: &Path) -> String {
-    match relative_from(root, url) {
-        Some(relative) if relative.starts_with("..") => relative.display().to_string(),
-        Some(relative) => format!("./{}", relative.display()),
+    match manifest_relative(root, url) {
+        Some(relative) if relative == ".." || relative.starts_with("../") => relative,
+        Some(relative) => format!("./{relative}"),
         None => url.display().to_string(),
     }
+}
+
+/// `target` relative to the manifest's directory `root`, with `/`
+/// between its parts on every system, so that silt.toml reads the same
+/// everywhere; `None` when there is no relative form.
+fn manifest_relative(root: &Path, target: &Path) -> Option<String> {
+    let relative = relative_from(root, target)?;
+    let parts: Vec<String> = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    Some(parts.join("/"))
 }

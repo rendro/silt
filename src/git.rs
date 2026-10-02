@@ -88,8 +88,9 @@ pub enum GitError {
     InvalidInput(String),
     /// A short `rev` is the prefix of several commits.
     AmbiguousRev { url: String, rev: String },
-    /// A checkout holds a symbolic link, at `path` (relative to the
-    /// checkout). A dependency's files must be its own.
+    /// A checkout's `silt.toml` or `src/` holds a symbolic link, at
+    /// `path` (relative to the checkout). A dependency's files must be
+    /// its own.
     Symlink { path: PathBuf },
 }
 
@@ -801,12 +802,13 @@ pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
 /// that happens to be named like the prefix is never taken for it, as
 /// `git checkout <prefix>` would. Exactly one commit must match.
 ///
-/// Idempotent: if the cache dir already exists with a `silt.toml` we
-/// take that as a sign the cache is populated and skip the fetch.
-/// Otherwise we clone into a sibling `.tmp` dir and atomically rename
-/// on success — this avoids leaving a half-populated cache after an
-/// interrupted clone. A checkout that holds a symbolic link (outside
-/// `.git`) is rejected and not cached.
+/// Idempotent and safe to run in several processes at once: the clone
+/// is made in a temporary directory of this process's own and renamed
+/// into place, so the checkout directory only ever appears complete. If
+/// it is already there (from an earlier run, or another process won the
+/// race), that one is used. A checkout whose `silt.toml` or `src/` holds
+/// a symbolic link is rejected and not cached (the rule of
+/// `lockfile::checksum_path_source`).
 pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
     check_url(url)?;
     if !is_valid_sha_shape(rev) {
@@ -818,7 +820,7 @@ pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
     let rev = rev.to_lowercase();
     if is_full_commit_id(&rev) {
         let dest = cache_for(url, &rev)?;
-        if dest.join("silt.toml").is_file() {
+        if dest.is_dir() {
             return Ok((rev, dest));
         }
     }
@@ -831,15 +833,10 @@ pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
         error: e,
     })?;
 
-    // Atomic-ish: clone into <url-hash>/<rev>.tmp, then rename.
-    let tmp = url_dir.join(format!("{rev}.tmp"));
-    if tmp.exists() {
-        // Stale tmp from a previous interrupted clone.
-        fs::remove_dir_all(&tmp).map_err(|e| GitError::Io {
-            context: format!("remove stale tmp dir {}", tmp.display()),
-            error: e,
-        })?;
-    }
+    // A name no other process uses: this process's id and a counter.
+    static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = url_dir.join(format!("{rev}.{}.{n}.tmp", std::process::id()));
     let tmp_str = tmp.to_str().ok_or_else(|| GitError::Io {
         context: "tmp path is not valid UTF-8".into(),
         error: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF-8 cache path"),
@@ -849,11 +846,11 @@ pub fn fetch_rev(url: &str, rev: &str) -> Result<(String, PathBuf), GitError> {
     // we don't know whether `--depth=1` would include it. `--` ends
     // option parsing so neither the URL nor the path can be read as an
     // option.
-    run_git(&["clone", "--quiet", "--", url, tmp_str])?;
-    let result = finish_checkout(url, &rev, &tmp, tmp_str);
-    if result.is_err() {
-        let _ = fs::remove_dir_all(&tmp);
-    }
+    let result = run_git(&["clone", "--quiet", "--", url, tmp_str])
+        .and_then(|_| finish_checkout(url, &rev, &tmp, tmp_str));
+    // Whatever happened, the temporary directory is this process's own:
+    // gone after a rename, removed otherwise.
+    let _ = fs::remove_dir_all(&tmp);
     result
 }
 
@@ -871,41 +868,37 @@ fn finish_checkout(
         commit_with_prefix(url, rev, tmp_str)?
     };
     let dest = cache_for(url, &commit)?;
-    if dest.join("silt.toml").is_file() {
-        let _ = fs::remove_dir_all(tmp);
+    if dest.is_dir() {
         return Ok((commit, dest));
     }
 
     // `commit` is a full id here, which git reads as an object id even
     // if a ref of the same name exists.
     run_git(&["-C", tmp_str, "checkout", "--quiet", "--detach", &commit])?;
-    if let Some(path) = find_symlink(tmp).map_err(|e| GitError::Io {
-        context: format!("scan checkout {}", tmp.display()),
-        error: e,
-    })? {
-        return Err(GitError::Symlink { path });
-    }
-
-    if dest.exists() {
-        // Race: another process populated the cache between our existence
-        // check and the rename. Discard our tmp and return the existing
-        // dir if it has a silt.toml; otherwise propagate as an Io error.
-        if dest.join("silt.toml").is_file() {
-            let _ = fs::remove_dir_all(tmp);
-            return Ok((commit, dest));
+    match crate::lockfile::checksum_path_source(tmp) {
+        Ok(_) => {}
+        Err(crate::lockfile::ChecksumError::Symlink(path)) => {
+            return Err(GitError::Symlink { path });
         }
-        fs::remove_dir_all(&dest).map_err(|e| GitError::Io {
-            context: format!("remove pre-existing cache leaf {}", dest.display()),
-            error: e,
-        })?;
+        Err(crate::lockfile::ChecksumError::Io(e)) => {
+            return Err(GitError::Io {
+                context: format!("read checkout {}", tmp.display()),
+                error: e,
+            });
+        }
     }
 
-    fs::rename(tmp, &dest).map_err(|e| GitError::Io {
-        context: format!("rename {} -> {}", tmp.display(), dest.display()),
-        error: e,
-    })?;
-
-    Ok((commit, dest))
+    // The rename is atomic. It fails if another process renamed its
+    // checkout of the same commit into place first: then that one is
+    // used.
+    match fs::rename(tmp, &dest) {
+        Ok(()) => Ok((commit, dest)),
+        Err(_) if dest.is_dir() => Ok((commit, dest)),
+        Err(e) => Err(GitError::Io {
+            context: format!("rename {} -> {}", tmp.display(), dest.display()),
+            error: e,
+        }),
+    }
 }
 
 /// The one commit of the clone at `repo` whose id starts with `prefix`.
@@ -934,33 +927,6 @@ fn commit_with_prefix(url: &str, prefix: &str, repo: &str) -> Result<String, Git
             rev: prefix.to_string(),
         }),
     }
-}
-
-/// The first symbolic link under `dir`, as a path relative to `dir`,
-/// not descending into a top-level `.git`. Nothing is followed: a link
-/// to a directory is reported, not walked.
-pub fn find_symlink(dir: &Path) -> std::io::Result<Option<PathBuf>> {
-    fn walk(base: &Path, dir: &Path) -> std::io::Result<Option<PathBuf>> {
-        let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let path = entry.path();
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                return Ok(Some(path.strip_prefix(base).unwrap_or(&path).to_path_buf()));
-            }
-            if kind.is_dir() {
-                if dir == base && entry.file_name() == ".git" {
-                    continue;
-                }
-                if let Some(found) = walk(base, &path)? {
-                    return Ok(Some(found));
-                }
-            }
-        }
-        Ok(None)
-    }
-    walk(dir, dir)
 }
 
 // ── Subprocess plumbing ────────────────────────────────────────────────

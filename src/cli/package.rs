@@ -90,7 +90,9 @@ const ANONYMOUS_LOCAL_PACKAGE: &str = "__local__";
 ///     `silt.lock` rewritten when it no longer pins the graph if
 ///     `auto_update_lock`, or only read otherwise. The local package is
 ///     registered under its `[package].name`; every dependency under
-///     the key that names it in `[dependencies]`, the root's keys first.
+///     the key that names it in `[dependencies]`. One flat map serves
+///     every package, so a key that names two different packages in the
+///     graph is an error.
 ///   - No manifest reachable: a single-root setup under
 ///     [`ANONYMOUS_LOCAL_PACKAGE`] mapped to the file's parent
 ///     directory, so `import foo` resolves to a sibling `foo.silt`.
@@ -131,18 +133,55 @@ pub(crate) fn package_setup_for_file(
         eprintln!("Updating silt.lock for new dependencies in silt.toml");
     }
     // The compiler knows one flat map from import name to source
-    // directory. The root's own keys win; a key of a dependency that the
-    // root does not use is added too, so a dependency's imports of its
-    // own dependencies resolve.
+    // directory, for every package at once. So one key may name only one
+    // package in the whole graph: a key that two packages use for two
+    // different packages is an error, never a silent pick of one.
     let root_node = graph.package(graph.root);
     let mut roots = HashMap::new();
     roots.insert(root_node.name, root_node.src.clone());
+    let mut named: HashMap<Symbol, (silt::package_graph::PackageId, silt::source::Span)> =
+        HashMap::new();
+    let mut diagnostics = Vec::new();
     for node in &graph.packages {
-        for (key, dep, _) in &node.deps {
-            roots
-                .entry(*key)
-                .or_insert_with(|| graph.package(*dep).src.clone());
+        for (key, dep, span) in &node.deps {
+            match named.get(key) {
+                Some((first, _)) if first == dep => {}
+                Some((first, first_span)) => diagnostics.push(
+                    Diagnostic::error(
+                        silt::diagnostic::Code::DependencyKeyCollision,
+                        *span,
+                        format!(
+                            "dependency key `{}` names two different packages in this graph: \
+                             `{}` and `{}`",
+                            intern::resolve(*key),
+                            intern::resolve(graph.package(*first).name),
+                            intern::resolve(graph.package(*dep).name),
+                        ),
+                    )
+                    .with_label(
+                        *first_span,
+                        format!(
+                            "`{}` is `{}` here",
+                            intern::resolve(*key),
+                            intern::resolve(graph.package(*first).name)
+                        ),
+                    )
+                    .with_help("give one of the two dependencies another key"),
+                ),
+                None => {
+                    named.insert(*key, (*dep, *span));
+                    roots
+                        .entry(*key)
+                        .or_insert_with(|| graph.package(*dep).src.clone());
+                }
+            }
         }
+    }
+    if !diagnostics.is_empty() {
+        die_on_manifest_error(PackageFailure {
+            sources,
+            diagnostics,
+        });
     }
     (root_node.name, roots)
 }

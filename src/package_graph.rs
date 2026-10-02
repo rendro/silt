@@ -58,7 +58,6 @@
 //! prints.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::{Code, Diagnostic};
@@ -148,9 +147,7 @@ pub fn resolve_packages(
     policy: LockPolicy,
     sources: &mut SourceMap,
 ) -> Result<PackageGraph, Vec<Diagnostic>> {
-    let root_dir = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
+    let root_dir = canonical(project_root);
     let manifest = Manifest::load(&root_dir.join("silt.toml"), sources).map_err(|d| vec![d])?;
     let lock_path = root_dir.join("silt.lock");
     let existing = match policy {
@@ -317,30 +314,20 @@ impl Resolver<'_> {
                     );
                     return None;
                 }
-                let manifest_path = dir.join("silt.toml");
-                match fs::symlink_metadata(&manifest_path) {
-                    Ok(meta) if meta.file_type().is_symlink() => {
-                        self.diagnostics.push(symlink_diagnostic(
-                            entry.value,
-                            &key_name,
-                            Path::new("silt.toml"),
-                        ));
-                        return None;
-                    }
-                    Ok(meta) if meta.is_file() => {}
-                    _ => {
-                        self.diagnostics.push(Diagnostic::error(
-                            Code::DependencyNotPackage,
-                            entry.value,
-                            format!(
-                                "dependency `{key_name}`: `{shown}` is not a silt package \
-                                 (no silt.toml found)"
-                            ),
-                        ));
-                        return None;
-                    }
+                // Followed: a link here is rejected with the package's
+                // other files, by the checksum walk.
+                if !dir.join("silt.toml").is_file() {
+                    self.diagnostics.push(Diagnostic::error(
+                        Code::DependencyNotPackage,
+                        entry.value,
+                        format!(
+                            "dependency `{key_name}`: `{shown}` is not a silt package \
+                             (no silt.toml found)"
+                        ),
+                    ));
+                    return None;
                 }
-                let root = dir.canonicalize().unwrap_or(dir);
+                let root = canonical(&dir);
                 let locked = LockedSource::Path { path: root.clone() };
                 self.enter(
                     SourceKey::Path(root.clone()),
@@ -378,7 +365,7 @@ impl Resolver<'_> {
                     },
                 };
                 let root = match git::fetch_to_cache(&url, &commit) {
-                    Ok(root) => root.canonicalize().unwrap_or(root),
+                    Ok(root) => canonical(&root),
                     Err(e) => {
                         let d = match &e {
                             GitError::Symlink { path } => {
@@ -430,14 +417,6 @@ impl Resolver<'_> {
         if self.failed.contains(&source) {
             return None;
         }
-        let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
-            Ok(manifest) => manifest,
-            Err(d) => {
-                self.diagnostics.push(d);
-                self.failed.insert(source);
-                return None;
-            }
-        };
         let checksum = match crate::lockfile::checksum_path_source(&root) {
             Ok(checksum) => checksum,
             Err(ChecksumError::Symlink(path)) => {
@@ -459,20 +438,28 @@ impl Resolver<'_> {
                 return None;
             }
         };
+        let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
+            Ok(manifest) => manifest,
+            Err(d) => {
+                self.diagnostics.push(d);
+                self.failed.insert(source);
+                return None;
+            }
+        };
         if self.policy == LockPolicy::ReadOnly
             && let Some(lock) = &self.existing
         {
             let name = intern::resolve(manifest.package.name);
-            if !lock
-                .packages
-                .iter()
-                .any(|p| p.name == name && p.source == locked)
-            {
-                self.diagnostics.push(stale_diagnostic(
-                    entry.value,
-                    key_name,
-                    "it pins another source than this one",
-                ));
+            let entries: Vec<&LockedPackage> =
+                lock.packages.iter().filter(|p| p.name == name).collect();
+            if !entries.iter().any(|p| p.source == locked) {
+                let reason = if entries.is_empty() {
+                    "it has no pin for this source"
+                } else {
+                    "it pins another source than this one"
+                };
+                self.diagnostics
+                    .push(stale_diagnostic(entry.value, key_name, reason));
                 self.failed.insert(source);
                 return None;
             }
@@ -514,16 +501,19 @@ impl Resolver<'_> {
         names.sort_by_key(|(_, ids)| ids[1]);
         for (name, ids) in names {
             let name = intern::resolve(name);
-            let (first, second) = (ids[0], ids[1]);
-            // The second is never the root, which is the first package.
-            let (_, at) = self.via[second.0 as usize].expect("only the root has no parent");
+            // The last is never the root, which is the first package.
+            let last = *ids.last().expect("two or more");
+            let (_, at) = self.via[last.0 as usize].expect("only the root has no parent");
             let mut d = Diagnostic::error(
                 Code::DuplicatePackage,
                 at,
-                format!("two different packages are named `{name}`"),
+                format!(
+                    "{} different packages are named `{name}`",
+                    count_word(ids.len())
+                ),
             );
-            for id in [first, second] {
-                // The last key of the second chain is the primary span.
+            for &id in &ids {
+                // The last key of the last chain is the primary span.
                 d.labels
                     .extend(self.chain(id).into_iter().filter(|(span, _)| *span != at));
                 d.notes.push(format!("`{name}` from {}", self.describe(id)));
@@ -625,6 +615,34 @@ impl Resolver<'_> {
             version: 1,
             packages,
         }
+    }
+}
+
+/// `n` as a word for a message: "two", "three", ... .
+fn count_word(n: usize) -> String {
+    match n {
+        2 => "two".into(),
+        3 => "three".into(),
+        4 => "four".into(),
+        n => n.to_string(),
+    }
+}
+
+/// `path` made canonical, without the `\\?\` prefix Windows gives a
+/// canonical path: that form is not what a user writes, and a git URL
+/// made from it would not pass the URL rule. A path that cannot be made
+/// canonical is returned as it is.
+fn canonical(path: &Path) -> PathBuf {
+    let Ok(canonical) = path.canonicalize() else {
+        return path.to_path_buf();
+    };
+    let text = canonical.to_string_lossy();
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(disk) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(disk)
+    } else {
+        canonical
     }
 }
 

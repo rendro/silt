@@ -210,10 +210,17 @@ pub enum ChecksumError {
 /// `.git/`. Sticking to `src/` makes the checksum mean exactly "the
 /// sources the compiler will see".
 ///
-/// A symbolic link anywhere under `src/` (or `src` itself being one) is
-/// an error, not followed: the sources of a dependency must be its own
-/// files, never a link to somewhere else on the machine.
+/// This walk is also the one symlink rule for a dependency, path or git
+/// alike: `silt.toml` and everything under `src/` (`src` itself
+/// included) must be the package's own files, never a link to somewhere
+/// else on the machine. A link there is an error, not followed. Links
+/// elsewhere in the package are never read and so are allowed, and so is
+/// a dependency root that is itself reached through a link
+/// (`dep = { path = "../dep" }` with `../dep` a link to a directory).
 pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
+    if fs::symlink_metadata(pkg_root.join("silt.toml")).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(ChecksumError::Symlink(PathBuf::from("silt.toml")));
+    }
     let src_root = pkg_root.join("src");
     let mut entries: Vec<(String, String)> = Vec::new();
     match fs::symlink_metadata(&src_root) {
@@ -439,6 +446,21 @@ fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
             .and_then(|doc| doc.get("package")?.as_array_of_tables()?.get(index)?.span())
             .map_or((0, 0), |r| (r.start, r.end))
     };
+    // The byte range of `key` in the `source` of the entry `index`, or
+    // of the entry when it has none.
+    let source_value_span = |index: usize, key: &str| {
+        doc.as_ref()
+            .and_then(|doc| {
+                doc.get("package")?
+                    .as_array_of_tables()?
+                    .get(index)?
+                    .get("source")?
+                    .as_inline_table()?
+                    .get(key)?
+                    .span()
+            })
+            .map_or_else(|| entry_span(index), |r| (r.start, r.end))
+    };
     // A schema message quotes keys and values of the file, so it is
     // escaped whole: one line, whatever they hold.
     let whole = |message: String| LockParseError {
@@ -519,10 +541,13 @@ fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
                         // an arbitrary directory, and a prefix could name
                         // a tag, so only a full commit id is accepted.
                         if !git::is_full_commit_id(&resolved_sha) {
-                            return Err(bad(format!(
-                                "[[package]] `{name}` git source has invalid `rev` `{resolved_sha}`: \
+                            return Err(LockParseError {
+                                span: source_value_span(index, "rev"),
+                                ..bad(format!(
+                                    "[[package]] `{name}` git source has invalid `rev` `{resolved_sha}`: \
                                  expected a full commit id of 40 or 64 hexadecimal characters"
-                            )));
+                                ))
+                            });
                         }
                         let branch = src_table.get("branch").and_then(|v| v.as_str());
                         let tag = src_table.get("tag").and_then(|v| v.as_str());
@@ -668,11 +693,8 @@ mod tests {
                         message.contains("`remote`") && message.contains("invalid `rev`"),
                         "unexpected message for rev {rev:?}: {message}"
                     );
-                    // The entry, not the start of the file.
-                    assert!(
-                        text[span.0..span.1].contains("[[package]]") || span.0 > 0,
-                        "{span:?}"
-                    );
+                    // The value of `rev`.
+                    assert_eq!(&text[span.0..span.1], format!("\"{rev}\""), "{span:?}");
                 }
                 other => panic!("rev {rev:?} must be a parse error, got {other:?}"),
             }
