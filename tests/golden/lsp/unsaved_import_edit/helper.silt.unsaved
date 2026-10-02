@@ -1,4 +1,4 @@
-pub fn twice(x: Int) -> Int {
+pub fn double(x: Int) -> Int {
   x * 2
 }
 

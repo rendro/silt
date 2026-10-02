@@ -265,7 +265,8 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
     let text = std::fs::read(&entry_path)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
-    let result = drive(&mut client, &root, &entry_uri, text);
+    let unsaved = unsaved_buffers(&root);
+    let result = drive(&mut client, &root, &entry_uri, text, &unsaved);
 
     // Close stdin so a server that ignored `exit` sees EOF, then give it
     // a moment before killing it.
@@ -344,8 +345,40 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
     }
 }
 
-/// The protocol exchange of [`session`].
-fn drive(client: &mut Client, root: &Path, entry_uri: &str, text: String) -> Result<(), String> {
+/// The editor buffers of a case: each file `<name>.unsaved` in `root`
+/// (at any depth) is the unsaved text of the file `<name>`, as
+/// (`file://` URI of `<name>`, text).
+fn unsaved_buffers(root: &Path) -> Vec<(String, String)> {
+    fn walk(dir: &Path, out: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "unsaved")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                out.push((file_uri(&path.with_extension("")), text));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
+/// The protocol exchange of [`session`]. The `unsaved` buffers are
+/// opened before the entry file.
+fn drive(
+    client: &mut Client,
+    root: &Path,
+    entry_uri: &str,
+    text: String,
+    unsaved: &[(String, String)],
+) -> Result<(), String> {
     let root_uri = file_uri(root);
     client.request(
         1,
@@ -364,6 +397,17 @@ fn drive(client: &mut Client, root: &Path, entry_uri: &str, text: String) -> Res
     client.request(2, "workspace/symbol", json!({"query": ""}))?;
     client.response(2, "the workspace/symbol response")?;
     client.published.remove(entry_uri);
+    for (uri, text) in unsaved {
+        client.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {
+                "uri": uri,
+                "languageId": "silt",
+                "version": 1,
+                "text": text,
+            }}),
+        )?;
+    }
     client.notify(
         "textDocument/didOpen",
         json!({"textDocument": {

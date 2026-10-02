@@ -1,2 +1,2 @@
-8:26 error undefined variable 'missing'
+9:13 error unknown function 'twice' on module 'helper'
 helper.silt:5:24 error type mismatch: expected Int, got String

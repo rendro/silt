@@ -1,9 +1,0 @@
--- cmd: lsp
--- verdict: same
--- The type error in the imported module is published on its own file,
--- next to the entry's.
-import helper
-
-fn main() {
-  println("{helper.twice(missing)}")
-}

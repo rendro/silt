@@ -1,0 +1,10 @@
+-- cmd: lsp
+-- The editor has helper.silt open with unsaved changes (helper.silt.unsaved):
+-- `twice` renamed to `double`, and a type error added. The importer is
+-- checked against the unsaved text: its use of `twice` is an error, and
+-- helper.silt's own error is published on its file.
+import helper
+
+fn main() {
+  println("{helper.twice(2)}")
+}
