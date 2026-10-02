@@ -1,0 +1,12 @@
+-- exit: 1
+-- A `main` bound by `let` that returns Err is reported at the start of
+-- the entry file, which has no function named `main` to point at; in a
+-- package that is src/main.silt, not silt.toml.
+-- stderr-contains: error[runtime]: main returned Err: boom
+-- stderr-contains: src/main.silt:1:1
+-- stderr-not-contains: silt.toml
+fn real() -> Result(Int, String) {
+  Err("boom")
+}
+
+let main = real

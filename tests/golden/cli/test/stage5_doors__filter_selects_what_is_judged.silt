@@ -1,0 +1,17 @@
+-- cmd: test --filter test_sum
+-- The tests come from what the session compiled for `--filter`: the
+-- selected test runs, and a test the filter leaves out is not judged, so
+-- its parameter is not an error here (`silt test` without a filter and
+-- `silt check` report it).
+-- stderr-contains: PASS stage5_doors__filter_selects_what_is_judged.silt::test_sum
+-- stderr-contains: 1 test: 1 passed, 0 failed, 0 skipped
+-- stderr-not-contains: must take no parameters
+import test
+
+fn test_sum() {
+  test.assert_eq(1 + 2, 3)
+}
+
+fn test_takes_one(n: Int) {
+  test.assert_eq(n, n)
+}
