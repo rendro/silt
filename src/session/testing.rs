@@ -12,19 +12,19 @@ use crate::diagnostic::Diagnostic;
 use crate::value::Value;
 use crate::vm::Vm;
 
-use super::{Config, Entry, LockPolicy, ProjectSetup, Session};
+use super::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
 
 /// The directory the in-memory files of a test program are in.
 const TEST_DIR: &str = "/silt-test";
 
 /// A session over the in-memory `files` (name, text), with the first one
-/// opened as the entry file.
-fn session(files: &[(&str, &str)]) -> (Session, crate::source::FileId) {
+/// opened as the entry file, and the host modules `host`.
+fn session(files: &[(&str, &str)], host: Vec<HostModule>) -> (Session, crate::source::FileId) {
     let dir = PathBuf::from(TEST_DIR);
     let mut session = Session::new(Config {
         project: ProjectSetup::Script(dir.clone()),
         lock: LockPolicy::ReadOnly,
-        host: Vec::new(),
+        host,
     });
     let mut entry = None;
     for (name, text) in files {
@@ -43,8 +43,16 @@ pub fn check_str(source: &str) -> Vec<Diagnostic> {
 
 /// [`check_str`] for a program of several files; the first is the entry.
 pub fn check_files(files: &[(&str, &str)]) -> Vec<Diagnostic> {
-    let (mut session, entry) = session(files);
+    check_with_host(files, Vec::new())
+}
+
+/// [`check_files`] with the host modules `host`.
+pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Diagnostic> {
+    let (mut session, entry) = session(files, host);
     let mut diagnostics = session.analyze(entry).diagnostics.clone();
+    if session.analyze(entry).has_errors() {
+        return diagnostics;
+    }
     match session.compile(entry, Entry::Tests { filter: None }) {
         Ok(program) => diagnostics.extend(program.warnings),
         Err(errors) => diagnostics.extend(errors),
@@ -61,7 +69,12 @@ pub fn run_str(source: &str) -> Result<Value, String> {
 
 /// [`run_str`] for a program of several files; the first is the entry.
 pub fn run_files(files: &[(&str, &str)]) -> Result<Value, String> {
-    let (mut session, entry) = session(files);
+    run_with_host(files, Vec::new())
+}
+
+/// [`run_files`] with the host modules `host`.
+pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Value, String> {
+    let (mut session, entry) = session(files, host);
     let analysis = session.analyze(entry);
     if let Some(error) = analysis.diagnostics.iter().find(|d| d.is_error()) {
         return Err(error.message.clone());
@@ -90,5 +103,5 @@ pub fn test_path(name: &str) -> PathBuf {
 /// A session over the in-memory `files`, the first opened as the entry,
 /// for a test that drives the session itself.
 pub fn session_with(files: &[(&str, &str)]) -> (Session, crate::source::FileId) {
-    session(files)
+    session(files, Vec::new())
 }

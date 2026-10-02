@@ -823,6 +823,7 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         // `tests/lang/round77_for_fn_builtinfn_dispatch_tests.rs`.
         Value::VmClosure(_) => Some("Fn".to_string()),
         Value::BuiltinFn(_) => Some("Fn".to_string()),
+        Value::HostFn(_) => Some("Fn".to_string()),
         Value::VariantConstructor(..) => Some("Fn".to_string()),
         Value::Unit => Some(canonical_name(&Type::Unit)),
 

@@ -5,7 +5,7 @@ use std::panic::AssertUnwindSafe;
 use super::{Vm, VmError};
 use crate::builtins;
 use crate::module;
-use crate::value::Value;
+use crate::value::{HostFn, Value};
 
 // ── Round-62 follow-up: dispatch arms for (Variant, Variant) /
 // (Record, Record) — and the corresponding entries in the hash
@@ -29,23 +29,38 @@ use crate::value::Value;
 // must produce the expected output, which it cannot do via the
 // catch-all error arm that remains in `dispatch_trait_method`.
 
-/// Invoke a registered foreign function while catching panics that escape it.
+/// Call the host function `host` while catching panics that escape it.
 ///
-/// A panicking foreign function would otherwise tear down the scheduler worker
-/// thread (or the main thread), leaving other tasks unable to progress. We
-/// instead convert a caught panic into a [`VmError`] whose message preserves
-/// the panic payload when it is a `&str` or `String`.
-fn invoke_foreign_fn(
-    name: &str,
-    f: &super::runtime::ForeignFn,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| f(args))) {
-        Ok(result) => result,
+/// A panicking host function would otherwise tear down the scheduler
+/// worker thread (or the main thread), leaving other tasks unable to
+/// progress. A caught panic becomes a [`VmError`] whose message preserves
+/// the panic payload when it is a `&str` or `String`. A result that is
+/// not of the type the signature returns is an error too. Every error
+/// names the function.
+pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| (host.call)(args))) {
+        Ok(Ok(value)) if host.returns.admits(&value) => Ok(value),
+        Ok(Ok(value)) => {
+            let mut shown = value.to_string();
+            if shown.chars().count() > 80 {
+                shown = shown.chars().take(77).collect::<String>() + "...";
+            }
+            Err(VmError::new(format!(
+                "{}: its signature returns {}, but it returned {} {shown}",
+                host.name,
+                host.returns,
+                builtins::value_kind(&value)
+            )))
+        }
+        Ok(Err(e)) => Err(VmError {
+            message: format!("{}: {}", host.name, e.message),
+            ..e
+        }),
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
             Err(VmError::new(format!(
-                "foreign function '{name}' panicked: {msg}"
+                "host function '{}' panicked: {msg}",
+                host.name
             )))
         }
     }
@@ -66,7 +81,7 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
 
 /// Run a builtin module dispatch arm under `catch_unwind`, converting any
 /// panic that escapes the builtin into a clean `VmError`. This mirrors
-/// [`invoke_foreign_fn`] for user-registered FFI — a panic in a builtin
+/// [`invoke_host_fn`] for host functions — a panic in a builtin
 /// would otherwise tear down the current scheduler worker thread.
 ///
 /// Intended to wrap each arm of the module-name match in `dispatch_builtin`.
@@ -195,7 +210,7 @@ impl Vm {
         // We also register declaration-order ordinals for every builtin
         // variant in the same loop. The typechecker registers ordinals
         // during `check_program`, but a Vm constructed without a
-        // preceding type-check pass (some unit tests, FFI use cases)
+        // preceding type-check pass (some unit tests)
         // still needs ordinals for `cmp_gen(Monday, Friday)` to honour
         // declaration order. The two registrations are idempotent —
         // re-registering the same (name, ordinal) is a no-op write.
@@ -544,15 +559,11 @@ impl Vm {
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
-        // Foreign functions take priority -- lets embedders override builtins.
-        if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-            return invoke_foreign_fn(name, &f, args);
-        }
         if let Some((module, func)) = name.split_once('.') {
             // Each arm is wrapped in `catch_builtin_panic` so that a panic
             // inside a builtin module becomes a clean `VmError` instead of
             // tearing down the current scheduler worker thread. Mirrors
-            // `invoke_foreign_fn` for user-registered FFI.
+            // `invoke_host_fn` for host functions.
             match module {
                 "list" => catch_builtin_panic(
                     "list",
@@ -699,8 +710,6 @@ impl Vm {
                 _ => {
                     if let Some(f) = error_trait_dispatch(module) {
                         catch_builtin_panic(module, AssertUnwindSafe(|| f(func, args)))
-                    } else if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        invoke_foreign_fn(name, &f, args)
                     } else {
                         // Round-64 LATENT fix: previously "unknown
                         // module: <X>". The trait-method dispatch path
@@ -744,31 +753,17 @@ impl Vm {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
                     Err(VmError::new(format!("panic: {msg}")))
                 }
-                _ => {
-                    if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        invoke_foreign_fn(name, &f, args)
-                    } else {
-                        Err(VmError::new(format!("unknown builtin: {name}")))
-                    }
-                }
+                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }
         }
     }
 
-    /// Get current epoch milliseconds. Uses `__wasm_epoch_ms` foreign function
-    /// if registered (WASM), otherwise falls back to `SystemTime`.
+    /// Get current epoch milliseconds.
     pub(crate) fn epoch_ms(&self) -> Result<i64, VmError> {
-        if let Some(f) = self.runtime.foreign_fns.get("__wasm_epoch_ms") {
-            match invoke_foreign_fn("__wasm_epoch_ms", f, &[])? {
-                Value::Int(ms) => Ok(ms),
-                _ => Err(VmError::new("__wasm_epoch_ms returned non-Int".into())),
-            }
-        } else {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let dur = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
-            Ok(dur.as_millis() as i64)
-        }
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dur = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
+        Ok(dur.as_millis() as i64)
     }
 }

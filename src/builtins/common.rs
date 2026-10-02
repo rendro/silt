@@ -99,6 +99,7 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
         // canonical dispatch name) — round 71 follow-up unification.
         Value::VmClosure(_) => "Fn",
         Value::BuiltinFn(_) => "BuiltinFn",
+        Value::HostFn(_) => "HostFn",
         Value::VariantConstructor(..) => "VariantConstructor",
         Value::TypeDescriptor(_) => "TypeDescriptor",
         Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",

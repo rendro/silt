@@ -78,7 +78,7 @@ use crate::builtins::data::FieldType;
 use crate::bytecode::{Function, VmClosure};
 use crate::scheduler::Scheduler;
 use crate::types::canonical::dispatch_name_for_value;
-use crate::value::{FromValue, IntoValue, IoCompletion, Value};
+use crate::value::{IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
 
 // ── Native stack budget ───────────────────────────────────────────
@@ -584,7 +584,6 @@ impl Vm {
     pub fn new() -> Self {
         let mut vm = Vm {
             runtime: Arc::new(Runtime {
-                foreign_fns: HashMap::new(),
                 scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
                 io_pool: IoPool::new(runtime::resolve_io_pool_size()),
@@ -611,112 +610,7 @@ impl Vm {
         vm
     }
 
-    // ── Foreign function registration ───────────────────────────
-
-    /// Register a foreign function callable from Silt.
-    ///
-    /// The function receives `&[Value]` and returns `Result<Value, VmError>`.
-    /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
-    ///
-    /// # Panics
-    /// Panics inside `func` are caught by the dispatcher via
-    /// `std::panic::catch_unwind` and converted into a `VmError` whose
-    /// message includes the panic payload when it is a `&str` or `String`.
-    /// The scheduler worker thread survives and other tasks continue to
-    /// run. Returning `Err(VmError)` for error conditions is still
-    /// strongly preferred — panics are only caught as a safety net.
-    ///
-    /// # Errors
-    /// Returns an error if the VM's runtime has already been shared (e.g. via
-    /// task spawning). All foreign functions must be registered before running
-    /// any Silt code that spawns tasks.
-    pub fn register_fn(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let name = name.into();
-        let runtime = Arc::get_mut(&mut self.runtime).ok_or_else(|| {
-            VmError::new(format!(
-                "cannot register function '{}': VM runtime has already been shared \
-                 (register all foreign functions before spawning tasks)",
-                name
-            ))
-        })?;
-        runtime.foreign_fns.insert(name.clone(), Arc::new(func));
-        self.globals.insert(name.clone(), Value::BuiltinFn(name));
-        Ok(())
-    }
-
-    /// Register a 0-argument foreign function with automatic marshalling.
-    pub fn register_fn0<R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn() -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if !args.is_empty() {
-                return Err(VmError::new(format!(
-                    "{n2} expects 0 arguments, got {}",
-                    args.len()
-                )));
-            }
-            func()
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
-    }
-
-    /// Register a 1-argument foreign function with automatic marshalling.
-    pub fn register_fn1<A: FromValue, R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(A) -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "{n2} expects 1 argument, got {}",
-                    args.len()
-                )));
-            }
-            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
-            func(a)
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
-    }
-
-    /// Register a 2-argument foreign function with automatic marshalling.
-    pub fn register_fn2<A: FromValue, B: FromValue, R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(A, B) -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if args.len() != 2 {
-                return Err(VmError::new(format!(
-                    "{n2} expects 2 arguments, got {}",
-                    args.len()
-                )));
-            }
-            let a =
-                A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
-            let b =
-                B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
-            func(a, b)
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
-    }
-
-    /// Create a child VM that shares runtime state (variant types, foreign functions)
+    /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
     /// via Arc and clones per-task state (globals, record types cache).
     /// Used for thread-per-task spawning.
     pub(crate) fn spawn_child(&self) -> Self {
@@ -1050,6 +944,7 @@ impl Vm {
             // `Function` / `Fun` / `Fn` on `"Fn"`.
             Value::VmClosure(_) => "Fn",
             Value::BuiltinFn(_) => "BuiltinFn",
+            Value::HostFn(_) => "HostFn",
             Value::VariantConstructor(..) => "VariantConstructor",
             Value::TypeDescriptor(_) => "TypeDescriptor",
             Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
@@ -1096,6 +991,7 @@ impl Vm {
             val,
             Value::VmClosure(_)
                 | Value::BuiltinFn(_)
+                | Value::HostFn(_)
                 | Value::VariantConstructor(..)
                 | Value::Channel(_)
                 | Value::Handle(_)
@@ -1146,7 +1042,10 @@ impl Vm {
         let mut pending = vec![val];
         while let Some(value) = pending.pop() {
             match value {
-                Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => {
+                Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..) => {
                     return true;
                 }
                 Value::List(items) => pending.extend(items.iter()),

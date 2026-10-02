@@ -19,7 +19,7 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::module;
 use crate::source::Span;
 use crate::types::canonical::{Resolver, canonicalize_type_name};
-use crate::value::Value;
+use crate::value::{HostFn, Value};
 
 mod patterns;
 
@@ -309,6 +309,9 @@ pub struct ModuleUnit {
     /// The module each `import` of this module names, by the module
     /// name written after `import`. Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
+    /// For a host module, the function each of its signatures declares,
+    /// by name: the module's globals are these functions.
+    pub host: HashMap<Symbol, Arc<HostFn>>,
     /// The module each name the module's imports bind stands for: `m`
     /// for `import m`, `n` for `import m as n` (an item import binds no
     /// module name). An alias may be named like another imported module:
@@ -1314,8 +1317,7 @@ impl Compiler {
 
     /// The prefix of the globals of the module the current module imports
     /// as `written`: the module's unique global prefix, or `written`
-    /// itself for anything else (a builtin module, an alias, a foreign
-    /// module an embedder registered).
+    /// itself for anything else (a builtin module, an alias).
     fn module_global(&self, written: &str) -> String {
         let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         self.units
@@ -1411,6 +1413,11 @@ impl Compiler {
             return Ok(());
         }
         let global = self.units.modules[target].global.clone();
+        if !self.units.modules[target].host.is_empty() {
+            let host = self.units.modules[target].host.clone();
+            self.compiled_modules.insert(target);
+            return self.compile_host_module(module_name, &global, &program, &host, span);
+        }
         self.unit_stack.push(target);
         let result = self.compile_file_module_inner(module_name, &global, &program, span);
         self.unit_stack.pop();
@@ -1418,6 +1425,41 @@ impl Compiler {
             self.compiled_modules.insert(target);
         }
         result
+    }
+
+    /// Install the functions of a host module as the globals
+    /// `<global>.<name>`, one per signature of `program`.
+    fn compile_host_module(
+        &mut self,
+        module_name: &str,
+        global: &str,
+        program: &Program,
+        host: &HashMap<Symbol, Arc<HostFn>>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let mut public_fns = HashSet::new();
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let Some(function) = host.get(&f.name) else {
+                return Err(checker_missed(
+                    span,
+                    &format!("a host signature without a function: '{}'", f.name),
+                ));
+            };
+            public_fns.insert(resolve(f.name));
+            let fi = self.add_constant(Value::HostFn(function.clone()), span)?;
+            self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+            let qualified = format!("{global}.{}", f.name);
+            let name_idx = self.add_constant(Value::String(qualified), span)?;
+            self.current_chunk()
+                .emit_op_u16(Op::SetGlobal, name_idx, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+        self.module_public_fns
+            .insert(module_name.to_string(), public_fns);
+        Ok(())
     }
 
     /// Inner implementation of file module compilation: the declarations

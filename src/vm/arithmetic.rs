@@ -198,7 +198,7 @@ impl Vm {
             Value::Channel(_) => 11,
             Value::Handle(_) => 12,
             Value::VmClosure(_) => 13,
-            Value::BuiltinFn(_) => 14,
+            Value::BuiltinFn(_) | Value::HostFn(_) => 14,
             Value::VariantConstructor(..) => 15,
             Value::TypeDescriptor(_) => 16,
             Value::PrimitiveDescriptor(_) => 17,

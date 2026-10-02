@@ -195,6 +195,11 @@ codes! {
     /// A module file named like a builtin module: `import` of the name
     /// always means the builtin one.
     ModuleNamedLikeBuiltin = "E0410", Compile;
+    /// A host module an embedder declared that a builtin module, a
+    /// dependency or a module file of the same name hides or is hidden by.
+    HostModuleCollision = "E0411", Compile;
+    /// A host function whose signature is not one `fn` header.
+    HostSignature = "E0412", Compile;
     // ── entry point ──
     MissingMain = "E0501", Compile;
     MainSignature = "E0502", Compile;
@@ -370,6 +375,7 @@ pub fn source_name_for_display(name: &SourceName) -> Option<String> {
             Some(p.display().to_string())
         }
         SourceName::Repl(n) => Some(format!("<repl:{n}>")),
+        SourceName::Host(name) => Some(format!("<host:{name}>")),
         SourceName::Builtin => None,
     }
 }

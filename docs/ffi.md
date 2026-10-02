@@ -2,72 +2,138 @@
 title: "FFI Guide"
 section: "Guide"
 order: 4
-description: "Embed silt in Rust applications. Register foreign functions, marshal values with FromValue and IntoValue traits."
+description: "Embed silt in Rust applications. Declare host modules of typed Rust functions, marshal values with FromValue and IntoValue traits."
 ---
 
 # Foreign Function Interface
 
-Silt can be embedded in Rust applications. The FFI lets you register Rust
-functions that are callable from silt code with the same syntax as builtins.
+Silt can be embedded in Rust applications. The embedder declares **host
+modules**: modules whose functions are Rust closures. A silt program
+imports a host module like any other module, and every call is
+typechecked against the signature the embedder declared.
 
 ## Quick Start
 
 ```rust
-use silt::{Vm, Value};
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::source::FileId;
+use std::path::Path;
+use std::sync::Arc;
 
-let mut vm = Vm::new();
+use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
+use silt::{Value, Vm};
 
-// Register a typed function (auto-marshalling)
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
+// 1. Declare the host module: each function by its silt signature.
+let mylib = HostModule::new("mylib").fn1("fn double(x: Int) -> Int", |x: i64| x * 2);
 
-// Compile and run silt code
-// The program is the only file, so it gets the first file id.
-let source = "fn main() { double(21) }";
-let tokens = Lexer::new(FileId::default(), source).tokenize().unwrap();
-let program = Parser::new(tokens, source).parse_program().unwrap();
-let mut compiler = Compiler::new();
-let functions = compiler.compile_program(&program).unwrap();
-let script = std::sync::Arc::new(functions.into_iter().next().unwrap());
+// 2. Open the program in a session that knows the module.
+let mut session = Session::new(Config {
+    project: ProjectSetup::None,
+    lock: LockPolicy::ReadOnly,
+    host: vec![mylib],
+});
+let source = "import mylib\nfn main() { mylib.double(21) }";
+let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
-let result = vm.run(script).unwrap();
+// 3. Check it. Every static error is in the analysis.
+let analysis = session.analyze(file);
+for d in &analysis.diagnostics {
+    eprintln!("{}", d.message);
+}
+assert!(!analysis.has_errors());
+
+// 4. Compile it and run it.
+let program = session.compile(file, Entry::Main).expect("compiles");
+let script = program.functions.into_iter().next().expect("a script");
+let result = Vm::new().run(Arc::new(script)).unwrap();
 assert_eq!(result, Value::Int(42));
 ```
 
-## Registration API
+## Declaring a host module
 
-### Raw registration
-
-Full control over arguments and return values:
-
-```rust
-vm.register_fn("my_func", |args: &[Value]| -> Result<Value, VmError> {
-    let Value::Int(n) = &args[0] else {
-        return Err(VmError::new("expected Int".into()));
-    };
-    Ok(Value::Int(n * 2))
-}).unwrap();
-```
-
-### Typed registration (auto-marshalling)
-
-The `register_fn0` through `register_fn2` methods handle argument extraction
-and type checking automatically:
+`HostModule::new(name)` starts a module. Each function is added with its
+signature: a silt `fn` header with no body, which declares the type of
+every parameter and the return type. The name in the signature is the
+function's name in the module.
 
 ```rust
-vm.register_fn0("answer", || -> i64 { 42 }).unwrap();
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
-vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b }).unwrap();
+let mylib = HostModule::new("mylib")
+    .fn0("fn answer() -> Int", || 42_i64)
+    .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
+    .fn2("fn add(a: Int, b: Int) -> Int", |a: i64, b: i64| a + b);
 ```
 
-Type mismatches produce clear errors:
+From silt (a program run in a session that declares `mylib`):
 
+```silt
+import mylib
+
+mylib.add(mylib.double(20), mylib.answer() - 40)   -- 42
 ```
-double: expected Int, got String
+
+The module is imported the usual ways: `import mylib`,
+`import mylib.{ double }`, `import mylib as m`. A program that does not
+import it cannot see it.
+
+### Typed functions
+
+`fn0`, `fn1` and `fn2` convert the arguments from silt values and the
+result back, through the `FromValue` and `IntoValue` traits. The Rust
+types must match the signature: `Int` is `i64`, `String` is `String`, and
+so on (see the table below). The signature must declare as many
+parameters as the closure takes: `.fn1("fn answer() -> Int", ..)` is an
+error.
+
+### Functions on values
+
+`function` takes the arguments as a `&[Value]` and returns
+`Result<Value, VmError>`. Use it for more arguments, or for a generic
+signature:
+
+```rust
+let lists = HostModule::new("lists").function(
+    "fn first(xs: List(a)) -> Option(a)",
+    |args: &[Value]| {
+        let Value::List(xs) = &args[0] else {
+            return Err(VmError::new("expected a list".into()));
+        };
+        xs.first().cloned().into_value().map_err(VmError::new)
+    },
+);
 ```
+
+The checker has already made sure the arguments have the declared types
+and number, so a function can rely on its signature. The result is
+checked against the signature's return type when the function returns:
+a `-> Int` function that returns a `String` is a runtime error that
+names it (`mylib.count: its signature returns Int, but it returned
+String "three"`).
+
+A host function cannot take or return a function (`fn f(g: Fn(Int) ->
+Int) -> Int` is an error): a host function has no way to call one.
+
+## Checking
+
+A host module is checked from its signatures, like a module's `pub fn`s:
+
+- A call with an argument of the wrong type is a type error before
+  anything runs (`mylib.double("hello")`: expected Int, got String).
+- A call with the wrong number of arguments is an error.
+- A function the module does not declare is an error
+  (`mylib.triple(3)`: unknown function 'triple' on module 'mylib').
+
+What is wrong with the module itself is reported in every analysis,
+whether or not the program imports it, at `<host:mylib>`:
+
+- a signature that is not one `fn` header without a body, or that
+  leaves a parameter or the return type untyped;
+- a signature that takes or returns a function;
+- a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
+  number of parameters;
+- a type the signature names that does not exist;
+- a host module whose name is not an identifier (`my-lib`), one named
+  like a builtin module (`list`), or two host modules with one name.
+
+An `import mylib` in a program whose package also has a `mylib.silt` or a
+dependency named `mylib` is an error at the import.
 
 ## Supported Types
 
@@ -77,125 +143,83 @@ silt types:
 | Rust type | Silt type | Notes |
 |-----------|-----------|-------|
 | `i64` | `Int` | |
-| `f64` | `Float` | Also accepts `Int` (coerces); returning NaN or an infinity raises a runtime error |
+| `f64` | `Float` | Returning NaN or an infinity raises a runtime error |
 | `bool` | `Bool` | |
 | `String` | `String` | |
-| `()` | `Unit` | |
+| `()` | `()` | |
 | `Value` | any | Passthrough, no conversion |
-| `Vec<Value>` | `List` | |
-| `Option<T>` | `Some(v)` / `None` | Return only |
-| `Result<T, String>` | `Ok(v)` / `Err(msg)` | Return only |
-
-## Return Values
-
-### Returning Option
+| `Vec<Value>` | `List(a)` | |
+| `Option<T>` | `Option(a)` | Return only |
+| `Result<T, String>` | `Result(a, String)` | Return only |
 
 ```rust
-vm.register_fn1("find_user", |id: i64| -> Option<String> {
-    if id == 1 { Some("alice".into()) } else { None }
-}).unwrap();
+let users = HostModule::new("users")
+    .fn1("fn find(id: Int) -> Option(String)", |id: i64| {
+        if id == 1 { Some("alice".to_string()) } else { None }
+    })
+    .fn1("fn parse_int(s: String) -> Result(Int, String)", |s: String| {
+        s.parse::<i64>().map_err(|e| e.to_string())
+    });
 ```
 
-From silt:
 ```silt
-match find_user(1) {
+import users
+
+match users.find(1) {
   Some(name) -> println("found: {name}")
   None -> println("not found")
 }
+let n = users.parse_int("42")?   -- propagates Err with ?
 ```
 
-### Returning Result
+## Functions as values
 
-```rust
-vm.register_fn1("parse_int", |s: String| -> Result<i64, String> {
-    s.parse::<i64>().map_err(|e| e.to_string())
-}).unwrap();
-```
-
-From silt:
-```silt
-let n = parse_int("42")?  -- propagates Err with ?
-```
-
-## Higher-Order Functions
-
-Foreign functions work as first-class values. They can be passed to
-`list.map`, `list.filter`, piped with `|>`, and stored in data structures:
-
-```rust
-vm.register_fn1("square", |x: i64| -> i64 { x * x }).unwrap();
-```
+A host function is a value like any other function: it can be passed to
+`list.map`, piped with `|>`, and stored in data structures.
 
 ```silt
-[1, 2, 3] |> list.map(square)   -- [1, 4, 9]
+import list
+import mylib
+
+[1, 2, 3] |> list.map(mylib.double)   -- [2, 4, 6]
 ```
 
 ## Thread Safety
 
-All registered functions must be `Send + Sync` since they may be called from
-any thread in the task scheduler's pool. This is enforced by the type system:
-
-```rust
-// This works:
-vm.register_fn1("pure", |x: i64| -> i64 { x * 2 }).unwrap();
-
-// This won't compile (captures non-Send state):
-// let cell = std::cell::RefCell::new(0);
-// vm.register_fn0("bad", move || { *cell.borrow() });
-```
-
-Use `Arc<Mutex<T>>` if you need shared mutable state in a foreign function.
+Host functions must be `Send + Sync`, since they may be called from any
+thread in the task scheduler's pool. The type system enforces this. Use
+`Arc<Mutex<T>>` for shared mutable state in a host function.
 
 ## Vm Lifecycle
 
-A `Vm` is a single interpreter instance. The typical embedding pattern is:
+A `Vm` is a single interpreter instance. `Vm::new().run(script)` runs a
+compiled program. The program carries its host functions: the `Vm` needs
+no set-up.
 
-```rust
-let mut vm = Vm::new();
-
-// 1. Register every foreign function up front.
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 })?;
-vm.register_fn1("fetch_user", |id: i64| -> Option<String> { ... })?;
-
-// 2. Compile the silt program.
-let script = compile("fn main() { ... }")?;
-
-// 3. Run it.
-let result = vm.run(script)?;
-```
-
-**Register before spawning.** Foreign-function registration mutates the
-shared runtime. Once silt code has spawned tasks — or anything else that
-clones the runtime `Arc` — `register_fn*` returns an `Err(VmError)`
-explaining that the runtime is already shared. Register every foreign
-function before the first `vm.run(...)` that might spawn.
-
-**Reusing a Vm.** You can call `vm.run(...)` multiple times with different
-scripts on the same `Vm`. Globals defined by one run persist into the next,
-which is useful for REPL-style embeddings. If you want hermetic runs,
-build a fresh `Vm::new()` per script.
+**Reusing a Vm.** You can call `vm.run(...)` several times with
+different scripts on the same `Vm`. Globals defined by one run persist
+into the next. For hermetic runs, build a fresh `Vm::new()` per script.
 
 **Thread safety.** A single `Vm` is **not** `Sync` and must be driven from
-one thread (the scheduler owns its own worker threads internally, which is
-separate from the embedding thread). If you need to run multiple scripts in
-parallel from Rust, create one `Vm` per thread.
+one thread (the scheduler owns its own worker threads internally). To run
+several scripts in parallel from Rust, create one `Vm` per thread.
 
 ## Error Surfacing
 
-`vm.run(script)` returns `Result<Value, VmError>`. `VmError` is the single
-channel through which every kind of silt runtime failure reaches Rust:
-
-- **Type errors** detected during compilation surface as a `VmError` from
-  the compile step, before `run` is called.
-- **Runtime errors** (overflow, out-of-bounds, failed `match`, unwrapped
-  `Err`/`None` that bubbled to the top) return as `Err(VmError)` from `run`.
+- **Static errors** (type errors, unknown names, bad host signatures)
+  are the diagnostics of `session.analyze(file)`. `session.compile`
+  returns them as its `Err` for a program that has them.
+- **Runtime errors** (overflow, out-of-bounds, an `Err` or `None` that
+  bubbled to the top) return as `Err(VmError)` from `vm.run`.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
-- **Panics inside a foreign function** are caught by
-  `std::panic::catch_unwind` inside the dispatcher and converted to a
-  `VmError`. The scheduler worker survives; other tasks keep running.
-  Returning `Err(VmError)` from a foreign function is still strongly
-  preferred — panics are a safety net, not an API.
+- **An `Err` from a host function** becomes a runtime error whose message
+  starts with the function's name: `mylib.parse: bad input`. So does a
+  result that is not of the type its signature returns.
+- **A panic inside a host function** is caught and becomes a runtime
+  error (`host function 'mylib.parse' panicked: ...`). The scheduler
+  worker survives and other tasks keep running. Returning `Err` is still
+  the way to fail; the catch is a safety net.
 
 ```rust
 match vm.run(script) {
@@ -204,8 +228,5 @@ match vm.run(script) {
 }
 ```
 
-Silt code has no access to the host filesystem, network, or environment
-beyond what the stdlib (or your registered foreign functions) provides.
-Calling an unknown function produces a compile-time error from the type
-checker, not a runtime surprise — build the compile pipeline with the
-checker in place when embedding untrusted code.
+Silt code has no access to the host filesystem, network or environment
+beyond what the stdlib and your host modules provide.

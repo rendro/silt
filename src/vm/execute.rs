@@ -7,6 +7,7 @@ use crate::bytecode::{ANON_RECORD_TAG, Op, VmClosure, record_tag_matches};
 use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
+use super::dispatch::invoke_host_fn;
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{NativeDepthGuard, Vm, VmError, native_depth_limit};
 
@@ -812,6 +813,13 @@ impl Vm {
                     }
                 }
             }
+            Value::HostFn(host) => {
+                let start = func_slot + 1;
+                let result = invoke_host_fn(&host, &self.stack[start..start + argc]);
+                self.stack.truncate(func_slot);
+                self.push(result?);
+                Ok(())
+            }
             Value::VariantConstructor(name, arity) => {
                 if argc != arity {
                     return Err(VmError::new(format!(
@@ -1095,6 +1103,7 @@ impl Vm {
                 }
             }
             Value::BuiltinFn(name) => self.invoke_builtin_value(name, args),
+            Value::HostFn(host) => invoke_host_fn(host, args),
             Value::VariantConstructor(name, arity) => {
                 if args.len() != *arity {
                     return Err(VmError::new(format!(
@@ -2465,7 +2474,7 @@ impl Vm {
                     // restores the suspended invoke state rather than
                     // re-running the method body from ip=0 — which would
                     // duplicate side effects like println, mutation, and
-                    // foreign-fn calls. The "original args" we re-push
+                    // host function calls. The "original args" we re-push
                     // on yield must reproduce the stack layout that
                     // `Op::CallMethod` will consume when this same
                     // instruction re-executes after resume: descriptor
