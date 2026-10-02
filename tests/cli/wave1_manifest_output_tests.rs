@@ -1294,8 +1294,12 @@ fn unaccepted_scheme_names_the_replacement() {
 
 // ── 3. git's own output ───────────────────────────────────────────────
 
-/// What every line of git's output starts with.
+/// What every line of git's output starts with, as a line of a message.
 const GIT_LINE: &str = "  git: ";
+
+/// What a line of git's output starts with as a diagnostic's note, after
+/// `= note: `: the mark without the indent.
+const GIT_NOTE: &str = "git: ";
 
 /// Assert that `stderr` is one line of silt's, starting with `first`
 /// and showing the git command as it was run, followed by at least two
@@ -1326,11 +1330,14 @@ fn assert_git_output_is_marked(out: &Outcome, first: &str, command: &str, contex
     };
     let mut marked = 0;
     for line in lines[1..].iter().filter(|l| !is_place(l)) {
-        let line = line.strip_prefix("  = note: ").unwrap_or(line);
         // An empty line of git's is the mark alone, without its
         // trailing space.
+        let mark = match line.strip_prefix("  = note: ") {
+            Some(note) => note.starts_with(GIT_NOTE) || note == GIT_NOTE.trim_end(),
+            None => line.starts_with(GIT_LINE) || *line == GIT_LINE.trim_end(),
+        };
         assert!(
-            line.starts_with(GIT_LINE) || line == GIT_LINE.trim_end(),
+            mark,
             "{context}: the line {line:?} of git's output is not marked; {out:?}"
         );
         marked += 1;

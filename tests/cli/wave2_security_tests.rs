@@ -365,7 +365,7 @@ fn an_empty_line_of_git_output_has_no_trailing_space() {
     assert!(notes.len() >= 2, "expected git's output; {out:?}");
     for line in notes {
         assert!(
-            line.starts_with("  git: ") || line == "  git:",
+            line.starts_with("git: ") || line == "git:",
             "the line {line:?} of git's output is not marked; {out:?}"
         );
     }
