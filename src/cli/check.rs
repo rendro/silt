@@ -1,16 +1,14 @@
-//! `silt check [--format json] <file>` — run the full compile pipeline
-//! without executing, reporting diagnostics.
+//! `silt check [--format json] <file>` — analyse and compile a program
+//! without executing it, reporting diagnostics.
 
 use std::process;
 
 use silt::diagnostic::{Diagnostic, SourceView};
+use silt::session::{Entry, LockPolicy, looks_like_library_module, looks_like_test_file};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
-use crate::cli::paths::ProgramFiles;
-use crate::cli::pipeline::{
-    Emit, pipeline_has_real_hard_errors, reportable_diagnostics, run_compile_pipeline,
-};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Output format for `silt check` — human-readable by default, or
 /// machine-readable JSON when `--format json` is passed.
@@ -115,31 +113,35 @@ pub(crate) fn dispatch(args: &[String]) {
 pub(crate) fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
     // `silt check` reports what `silt run` reports before it runs: the
-    // session's analysis and the compile step.
-    let result = run_compile_pipeline(path, Emit::Check, silt::session::LockPolicy::Update);
+    // session's analysis and the compile step. A library module or a
+    // test file has no `main` on purpose, so it is compiled for its tests
+    // and not asked for one.
+    let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
+    let target = match &session.graph().module(session.module_of(file)).ast {
+        Some(ast) if looks_like_library_module(ast) || looks_like_test_file(ast) => {
+            Entry::Tests { filter: None }
+        }
+        _ => Entry::Main,
+    };
+    let compiled = session.compile(file, target);
+    let errors = door_diagnostics(&mut session, file, &compiled);
 
-    // A program without `main` is reported by the session, which knows
-    // whether the file is a library module or a test file (those have no
-    // `main` on purpose and are not asked for one).
-    let errors: Vec<&Diagnostic> = reportable_diagnostics(&result);
-
-    let files = ProgramFiles::new(path, &result.sources);
+    let files = ProgramFiles::new(path, session.sources());
     if format == OutputFormat::Json {
         print_json_errors(&files, &errors);
     } else {
         // F14 (audit round 17): separate diagnostics with blank lines.
-        silt::diagnostic::eprint_all(&files, errors);
+        silt::diagnostic::eprint_all(&files, &errors);
     }
 
-    // The gate of `compile_file`: any error.
-    if pipeline_has_real_hard_errors(&result) {
+    if errors.iter().any(Diagnostic::is_error) {
         process::exit(1);
     }
 }
 
 /// `errors` as one JSON array on stdout (see `diagnostic::render_json`).
 /// Nothing in it is colored: the renderer writes no escape sequences.
-fn print_json_errors(files: &dyn SourceView, errors: &[&Diagnostic]) {
+fn print_json_errors(files: &dyn SourceView, errors: &[Diagnostic]) {
     let json_errors: Vec<serde_json::Value> = errors
         .iter()
         .map(|d| silt::diagnostic::render_json(files, d))

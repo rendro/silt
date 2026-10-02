@@ -2,24 +2,19 @@
 //! `test_*` functions.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 use std::process;
 use std::sync::Arc;
 
 use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::scheduler::UnjoinedFailures;
+use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, test_functions};
 use silt::source::{FileId, SourceMap, Span};
 use silt::vm::Vm;
 
 use crate::cli::help::test_usage_banner;
-use crate::cli::paths::{ProgramFiles, find_silt_files};
-use crate::cli::pipeline::{
-    CompilePipelineResult, Emit, analyse_parsed_entry_file, parse_entry_file,
-    pipeline_has_real_hard_errors, reportable_diagnostics,
-};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, find_silt_files, open_entry};
 use crate::cli::run::{render_runtime_error, returned_err};
-use crate::cli::source_scan::{TestKind, fn_name_span, test_functions};
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -103,16 +98,18 @@ fn find_test_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Print what the pipeline found in `path`, in the order and the form
-/// `silt check` prints it, warnings included. Returns `true` when the
-/// file failed to compile; a line that says so is printed last.
-fn report_diagnostics(path: &str, result: &CompilePipelineResult) -> bool {
-    let diagnostics = reportable_diagnostics(result);
-    silt::diagnostic::eprint_all(
-        &ProgramFiles::new(path, &result.sources),
-        diagnostics.iter().copied(),
-    );
-    if !pipeline_has_real_hard_errors(result) && result.functions.is_some() {
+/// Print what the session found in `path`, in the order and the form
+/// `silt check` prints it, warnings included. `compiled` says whether the
+/// file compiled. Returns `true` when the file failed to compile; a line
+/// that says so is printed last.
+fn report_diagnostics(
+    path: &str,
+    sources: &SourceMap,
+    diagnostics: &[Diagnostic],
+    compiled: bool,
+) -> bool {
+    silt::diagnostic::eprint_all(&ProgramFiles::new(path, sources), diagnostics);
+    if compiled && !diagnostics.iter().any(Diagnostic::is_error) {
         return false;
     }
     let mut kinds: Vec<&str> = Vec::new();
@@ -166,8 +163,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut owners = TaskOwners::default();
 
     for path in &paths {
-        let source = match fs::read_to_string(path) {
-            Ok(s) => s,
+        let (mut session, file) = match open_entry(path, LockPolicy::Update) {
+            Ok(opened) => opened,
             Err(e) => {
                 // An unreadable file cannot be asked for its tests, so
                 // `--filter` does not rule it out: the error is reported.
@@ -178,52 +175,47 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
         };
 
-        let parsed = parse_entry_file(path.as_str(), source, silt::session::LockPolicy::Update);
-
-        // The tests of this file that `--filter` selects, in source
-        // order. They are read from the parsed declarations, the same
-        // ones that are compiled and run below, so what is selected and
-        // what is run cannot differ.
-        let tests: Vec<(String, TestKind)> = match &parsed.program {
-            Some(program) => test_functions(program)
-                .into_iter()
-                .filter(|(name, _)| {
-                    filter
-                        .as_deref()
-                        .is_none_or(|pattern| name.contains(pattern))
-                })
-                .collect(),
-            None => Vec::new(),
-        };
-        // With a filter, a file without a selected test is left alone: it
-        // is not compiled, and nothing is reported for it. A file that
-        // does not lex cannot be asked for its tests either, so it is
-        // kept and its error reported.
-        if filter.is_some() && parsed.program.is_some() && tests.is_empty() {
+        // With a filter, a file without a test whose name it selects is
+        // left alone: it is not analysed, and nothing is reported for it.
+        // A file that does not lex cannot be asked for its tests, so it
+        // is kept and its error reported.
+        if let Some(pattern) = filter.as_deref()
+            && let Some(ast) = &session.graph().module(session.module_of(file)).ast
+            && !test_functions(ast)
+                .iter()
+                .any(|(name, _)| name.contains(pattern))
+        {
             continue;
         }
         files_considered += 1;
 
-        // Typecheck and compile through the pipeline that `silt check`
-        // and `silt run` use, with the options of `silt check`, so a test
+        // The session analyses the file as `silt check` does, so a test
         // file gets the diagnostics `silt check` gives it: the type
         // errors of the modules it imports, the compiler's warnings, the
-        // static checks against declared dependencies. The one
-        // difference is what is emitted: the declarations, without a
-        // call of `main`.
-        let result = analyse_parsed_entry_file(parsed, Emit::Declarations);
-        let failed_to_compile = report_diagnostics(path.as_str(), &result);
-        let program = result.program;
-        let (sources, functions) = match (failed_to_compile, result.functions) {
-            (false, Some(functions)) => (result.sources, functions),
+        // static checks against declared dependencies. It is compiled for
+        // its tests: the declarations, without a call of `main`, and the
+        // tests that the filter selects, in source order.
+        let compiled = session.compile(
+            file,
+            Entry::Tests {
+                filter: filter.clone(),
+            },
+        );
+        let diagnostics = door_diagnostics(&mut session, file, &compiled);
+        let failed_to_compile =
+            report_diagnostics(path, session.sources(), &diagnostics, compiled.is_ok());
+        let program = match compiled {
+            Ok(program) if !failed_to_compile => program,
             _ => {
                 counts.file_errors += 1;
                 continue;
             }
         };
-
-        // Run the setup script to register all globals in the VM
-        let Some(first) = functions.into_iter().next() else {
+        let EntryPoint::Tests(tests) = program.entry else {
+            unreachable!("a program compiled for its tests has tests as its entry point");
+        };
+        let sources = session.into_sources();
+        let Some(first) = program.functions.into_iter().next() else {
             eprintln!("{path}: internal error: no functions compiled");
             counts.file_errors += 1;
             continue;
@@ -232,6 +224,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let file_index = owners.add_file(TestFile {
             path: path.clone(),
             sources,
+            entry: file,
         });
         let setup_owner = owners.add_owner(file_index, None);
         silt::scheduler::set_task_owner(setup_owner);
@@ -255,9 +248,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
 
         // Run each selected test function
-        for (name, kind) in &tests {
+        for test in &tests {
+            let name = &test.name;
             total += 1;
-            if *kind == TestKind::Skip {
+            if test.kind == TestKind::Skip {
                 eprintln!("  SKIP {path}::{name}");
                 skipped += 1;
                 continue;
@@ -292,13 +286,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     // at the test's name.
                     Some(payload) => {
                         eprintln!("  FAIL {path}::{name}");
-                        let span = program
-                            .as_ref()
-                            .and_then(|program| fn_name_span(program, name))
-                            .unwrap_or(Span::point(FileId::default(), 0));
                         let d = Diagnostic::error(
                             Code::MainReturnedErr,
-                            span,
+                            test.span,
                             format!("{name} returned Err: {payload}"),
                         );
                         let files = ProgramFiles::new(path, &owners.files[file_index].sources);
@@ -390,6 +380,8 @@ struct TestFile {
     path: String,
     /// The text of the file and of every module file it imports.
     sources: SourceMap,
+    /// The file itself.
+    entry: FileId,
 }
 
 /// What spawned a task: a test, or the top-level code of a file.
@@ -470,7 +462,7 @@ impl TaskOwners {
                     &ProgramFiles::new(&file.path, &file.sources),
                     &Diagnostic::error(
                         Code::UnjoinedTaskFailure,
-                        Span::point(FileId::default(), 0),
+                        Span::point(file.entry, 0),
                         message,
                     ),
                 ),

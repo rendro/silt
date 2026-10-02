@@ -1,13 +1,20 @@
 //! Filesystem path helpers used across several CLI subcommands:
-//! recursive .silt discovery for `silt fmt`, and the path-relative
-//! helper that `silt add` uses when recording dependency paths in
-//! `silt.toml`. (Lexical `.`/`..` normalization is NOT defined here:
+//! recursive .silt discovery for `silt fmt`, the session of an entry
+//! file and how its files are named in diagnostics, and the
+//! path-relative helper that `silt add` uses when recording dependency
+//! paths in `silt.toml`. (Lexical `.`/`..` normalization is NOT defined here:
 //! `silt add` delegates to `silt::lockfile::normalize_path`, the
 //! single definition, so the manifest form and lockfile resolution
 //! can never normalize differently.)
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use silt::package_graph::LockChange;
+use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+use silt::source::FileId;
+
+use crate::cli::package::{PackageFailure, die_on_manifest_error};
 
 /// Recursively find all .silt files in a directory.
 ///
@@ -41,6 +48,70 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     }
     results.sort();
     results
+}
+
+/// A session for the entry file `path`, with the file opened in it. The
+/// project is found from the file's directory. When the packages are
+/// resolved, a rewritten `silt.lock` is announced; package errors are
+/// printed and the process exits. `Err` when the file cannot be read.
+pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Session, FileId)> {
+    let dir = Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let mut session = Session::new(Config {
+        project: ProjectSetup::Discover(dir),
+        lock,
+        host: Vec::new(),
+    });
+    let file = session.open(Path::new(path))?;
+    let failure = match session.packages() {
+        Ok(packages) => {
+            if packages.lock == LockChange::Updated {
+                eprintln!("Updating silt.lock for new dependencies in silt.toml");
+            }
+            None
+        }
+        Err(diagnostics) => Some(diagnostics.to_vec()),
+    };
+    if let Some(diagnostics) = failure {
+        die_on_manifest_error(PackageFailure {
+            sources: session.into_sources(),
+            diagnostics,
+        });
+    }
+    Ok((session, file))
+}
+
+/// [`open_entry`], where a file that cannot be read is reported and the
+/// process exits.
+pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, FileId) {
+    match open_entry(path, lock) {
+        Ok(opened) => opened,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Every diagnostic a door shows for the entry file `file`, in the order
+/// it prints them: the analysis's, then what compiling found (its errors,
+/// or the compiler's warnings). `compiled` is what
+/// [`Session::compile`] returned for it.
+pub(crate) fn door_diagnostics(
+    session: &mut Session,
+    file: FileId,
+    compiled: &Result<silt::session::Program, Vec<silt::diagnostic::Diagnostic>>,
+) -> Vec<silt::diagnostic::Diagnostic> {
+    let mut diagnostics = session.analyze(file).diagnostics.clone();
+    match compiled {
+        Ok(program) => diagnostics.extend(program.warnings.iter().cloned()),
+        Err(errors) => diagnostics.extend(errors.iter().cloned()),
+    }
+    diagnostics
 }
 
 /// How the files of a program are named in its diagnostics, static and

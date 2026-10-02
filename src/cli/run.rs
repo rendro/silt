@@ -5,15 +5,16 @@
 use std::process;
 use std::sync::Arc;
 
+use silt::ast::{Decl, Program};
 use silt::diagnostic::{Code, Diagnostic, render_human};
+use silt::intern::resolve;
+use silt::session::{Entry, LockPolicy};
 use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Vm, VmError};
 
 use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
-use crate::cli::paths::ProgramFiles;
-use crate::cli::pipeline::{CompiledFile, Emit, compile_file};
-use crate::cli::source_scan::fn_name_span;
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -173,17 +174,39 @@ pub(crate) fn returned_err(value: &silt::Value) -> Option<String> {
     })
 }
 
-/// Run a file using the bytecode VM (default path).
+/// The span of the name of the top-level function `name` of `program`.
+pub(crate) fn fn_name_span(program: &Program, name: &str) -> Option<Span> {
+    program.decls.iter().find_map(|decl| match decl {
+        Decl::Fn(f) if resolve(f.name) == name => Some(f.name_span),
+        _ => None,
+    })
+}
+
+/// Run a file using the bytecode VM (default path): the session analyses
+/// it and compiles it for `main`, and the VM runs what it compiled.
 pub(crate) fn vm_run_file(path: &str) {
     silt::intern::reset();
-    let CompiledFile {
-        functions,
-        sources,
-        program,
-        ..
-    } = compile_file(path, Emit::Program, silt::session::LockPolicy::Update);
+    let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
+    let compiled = session.compile(file, Entry::Main);
+    let diagnostics = door_diagnostics(&mut session, file, &compiled);
+    // F14 (audit round 17): print diagnostics with a blank line between
+    // consecutive errors so multi-error output doesn't form a solid wall
+    // of text. Matches rustc/gcc convention.
+    // Lock: tests/cli/cli_test_rendering_tests.rs
+    // `test_multiple_errors_render_with_blank_separator`.
+    silt::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
+    let program = match compiled {
+        Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
+        _ => process::exit(1),
+    };
+    let ast = session
+        .module_analysis(session.module_of(file))
+        .expect("a compiled module is analysed")
+        .ast
+        .clone();
+    let sources = session.into_sources();
 
-    let Some(script) = functions.into_iter().next() else {
+    let Some(script) = program.functions.into_iter().next() else {
         eprintln!("{path}: internal error: empty function list");
         process::exit(1);
     };
@@ -199,7 +222,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // nobody joined or cancelled are reported, and make the run fail. A
     // task that is still running is not a failure; if it fails later,
     // nobody takes its failure and it is not reported.
-    let tasks_failed = report_task_failures(path, &sources);
+    let tasks_failed = report_task_failures(path, &sources, file);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
     // `vm.run` (main's return value) was discarded wholesale, so
@@ -214,7 +237,7 @@ pub(crate) fn vm_run_file(path: &str) {
     if let Ok(value) = &run_result
         && let Some(payload) = returned_err(value)
     {
-        let span = fn_name_span(&program, "main").unwrap_or(Span::point(FileId::default(), 0));
+        let span = fn_name_span(&ast, "main").unwrap_or(Span::point(file, 0));
         let d = Diagnostic::error(
             Code::MainReturnedErr,
             span,
@@ -234,9 +257,9 @@ pub(crate) fn vm_run_file(path: &str) {
 
 /// Report on stderr the failures of tasks that nobody joined or
 /// cancelled and that have happened so far, each rendered like any other
-/// runtime error of the program at `path`. Returns true if there was
-/// one.
-fn report_task_failures(path: &str, sources: &SourceMap) -> bool {
+/// runtime error of the program at `path`, whose entry file is `entry`.
+/// Returns true if there was one.
+fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool {
     let failures = silt::scheduler::take_unjoined_failures();
     for failure in &failures.failures {
         eprintln!(
@@ -250,7 +273,7 @@ fn report_task_failures(path: &str, sources: &SourceMap) -> bool {
         // whole program, at the start of its entry file.
         let d = Diagnostic::error(
             Code::UnjoinedTaskFailure,
-            Span::point(FileId::default(), 0),
+            Span::point(entry, 0),
             silt::scheduler::UnjoinedFailures::not_kept_message(not_kept),
         );
         eprintln!("{}", render_human(&ProgramFiles::new(path, sources), &d));

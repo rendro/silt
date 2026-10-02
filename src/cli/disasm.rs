@@ -2,13 +2,14 @@
 
 use std::process;
 
+use silt::diagnostic::Diagnostic;
 use silt::disassemble::disassemble_function;
+use silt::intern::intern;
+use silt::session::{ENTRY_POINT, Entry, LockPolicy};
 
 use crate::cli::help::disasm_usage_banner;
 use crate::cli::package::resolve_package_entry_point;
-use silt::session::LockPolicy;
-
-use crate::cli::pipeline::{CompiledFile, Emit, compile_file};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt disasm [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -74,17 +75,29 @@ pub(crate) fn dispatch(args: &[String]) {
     disasm_file(&path);
 }
 
-/// Disassemble a file's bytecode without running it.
+/// Disassemble a file's bytecode without running it: the program that
+/// starts at `main` when the file binds one, otherwise its declarations.
 pub(crate) fn disasm_file(path: &str) {
     silt::intern::reset();
     // Read-only command — never mutates `silt.lock`. If the lock is
     // stale or missing we resolve in-memory and continue; the user
     // can still get a useful disassembly without a lockfile write.
-    let CompiledFile { functions, .. } =
-        compile_file(path, Emit::Disassemble, LockPolicy::ReadOnly);
+    let (mut session, file) = open_entry_or_exit(path, LockPolicy::ReadOnly);
+    session.analyze(file);
+    let binds_main = session
+        .module_analysis(session.module_of(file))
+        .is_some_and(|analysis| analysis.top_level.contains_key(&intern(ENTRY_POINT)));
+    let target = if binds_main { Entry::Main } else { Entry::Cell };
+    let compiled = session.compile(file, target);
+    let diagnostics = door_diagnostics(&mut session, file, &compiled);
+    silt::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
+    let program = match compiled {
+        Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
+        _ => process::exit(1),
+    };
 
     // Print disassembly of each function
-    for func in &functions {
+    for func in &program.functions {
         print!("{}", disassemble_function(func));
         println!();
     }
