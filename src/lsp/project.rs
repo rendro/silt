@@ -35,7 +35,6 @@ pub(super) fn path_key(path: &Path) -> PathBuf {
 
 /// One project and its session.
 pub(super) struct Project {
-    pub(super) config: Config,
     pub(super) session: Session,
     /// The modification time and size of the project's `silt.toml` and
     /// `silt.lock` when the session was made. The session resolves the
@@ -67,8 +66,7 @@ impl Project {
             host: Vec::new(),
         };
         Project {
-            session: Session::new(config.clone()),
-            config,
+            session: Session::new(config),
             stamps: stamps(dir),
             overlays: HashMap::new(),
             texts_given: 0,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, Documentation, MarkupContent,
-    MarkupKind, Position,
+    MarkupKind, Position, Uri,
 };
 
 use crate::ast::*;
@@ -20,42 +20,49 @@ use super::ast_walk::find_ident_type_by_name;
 use super::conversions::position_to_offset;
 use super::fields::{RecordFields, record_fields_from_type};
 use super::locals::locals_at_offset;
+use super::modules::MemberKind;
 use super::state::Document;
 
 impl Server {
     // ── Completion ─────────────────────────────────────────────────
 
     pub(super) fn completion(
-        &self,
+        &mut self,
         params: lsp_types::CompletionParams,
     ) -> Option<CompletionResponse> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
-        let doc = self.documents.get(uri);
-
         // Detect dot-completion context: extract the identifier before the `.`
-        if let Some(doc) = doc
-            && let Some(prefix) = extract_dot_prefix(&doc.source.text, &pos)
-        {
+        let prefix = self
+            .documents
+            .get(uri)
+            .and_then(|doc| extract_dot_prefix(&doc.source.text, &pos));
+        if let Some(prefix) = prefix {
+            let doc = self.documents.get(uri)?;
             let cursor = position_to_offset(&doc.source, &pos);
-            // Round 81: the cached `doc.program` was parsed from the
-            // user's exact source. A partial expression at the cursor
-            // (`xs.|`) is a parse error that the parser's recovery
-            // currently turns into an empty function-body stub — every
-            // earlier `let` inside that fn vanishes from `program.decls`,
-            // so `locals_at_offset` returns nothing and the
-            // type-narrowing path can't find the receiver's inferred
-            // type. Analyse a fix-up source where the partial dot is
-            // completed with a placeholder identifier so the surrounding
-            // statements (and the receiver's `let` binding) survive.
-            // Falls back to the document's analysis when the fix-up doesn't
-            // apply (no `.` right before the cursor).
-            let checked = self
-                .dot_completion_fixup(doc, &pos)
-                .or_else(|| self.checked_facts(doc));
+            // A module before the dot: its members.
+            if let Some(items) = self.module_member_completions(doc, &prefix, cursor) {
+                return Some(CompletionResponse::Array(items));
+            }
+            // Round 81: the document's program was parsed from the user's
+            // exact source. A partial expression at the cursor (`xs.|`)
+            // is a parse error that the parser's recovery currently turns
+            // into an empty function-body stub — every earlier `let`
+            // inside that fn vanishes from `program.decls`, so
+            // `locals_at_offset` returns nothing and the type-narrowing
+            // path can't find the receiver's inferred type. Analyse a
+            // fix-up source where the partial dot is completed with a
+            // placeholder identifier so the surrounding statements (and
+            // the receiver's `let` binding) survive. Falls back to the
+            // document's analysis when the fix-up doesn't apply (no `.`
+            // right before the cursor, or the text parses).
+            let fixed = self.dot_completion_fixup(uri, &pos);
+            let doc = self.documents.get(uri)?;
+            let checked = fixed.or_else(|| self.checked_facts(doc));
             let items = self.dot_completions(checked.as_ref(), &prefix, cursor);
             return Some(CompletionResponse::Array(items));
         }
+        let doc = self.documents.get(uri);
 
         let mut items: Vec<CompletionItem> = Vec::new();
 
@@ -308,8 +315,55 @@ impl Server {
         })
     }
 
-    /// Analyse the document with the partial dot expression at `pos`
-    /// completed by a placeholder identifier, so the surrounding
+    /// The members of the imported module `prefix` names (`geo.`, or
+    /// `g.` for `import geo as g`), unless a local binding of that name
+    /// shadows it.
+    fn module_member_completions(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let name = intern(prefix);
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        let view = self.imported_module(doc, name)?;
+        let mut items: Vec<CompletionItem> = view
+            .members
+            .iter()
+            .map(|(member, kind)| {
+                let def = view.definitions.get(member);
+                CompletionItem {
+                    label: resolve(*member),
+                    kind: Some(match kind {
+                        MemberKind::Function => CompletionItemKind::FUNCTION,
+                        MemberKind::Value => CompletionItemKind::VARIABLE,
+                        MemberKind::Type => CompletionItemKind::CLASS,
+                        MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
+                    }),
+                    detail: def.and_then(|d| d.ty.as_ref()).map(|t| format!("{t}")),
+                    documentation: def.and_then(|d| d.doc.clone()).map(|d| {
+                        Documentation::MarkupContent(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: d,
+                        })
+                    }),
+                    ..CompletionItem::default()
+                }
+            })
+            .collect();
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        items.dedup_by(|a, b| a.label == b.label);
+        Some(items)
+    }
+
+    /// Analyse the document `uri` with the partial dot expression at
+    /// `pos` completed by a placeholder identifier, so the surrounding
     /// statements survive parser recovery.
     ///
     /// Background (round 81 DX-G4): when the cursor sits at a partial
@@ -321,17 +375,19 @@ impl Server {
     /// `locals_at_offset` returns nothing for the receiver `xs` and the
     /// type-narrowing path can't pin down its type.
     ///
-    /// The fix-up analyses a one-token-edited copy of the source where
-    /// the partial dot is followed by a placeholder identifier
-    /// (`silt_lsp_completion_placeholder`), in a throwaway session over
-    /// the document's project (with the other open documents' texts), so
+    /// The fix-up gives the project's session, for a moment, a copy of
+    /// the text where the partial dot is followed by a placeholder
+    /// identifier (`silt_lsp_completion_placeholder`), so
     /// `let _ = xs.silt_lsp_completion_placeholder` parses as a normal
-    /// field access and the receiver keeps its type. Its diagnostics are
-    /// not used.
+    /// field access and the receiver keeps its type; the other modules
+    /// are the session's, unsaved texts included. The document's text is
+    /// given back and the open documents are analysed again (only the
+    /// document's module and its importers are checked again).
     ///
-    /// Returns `None` if there's no `.` immediately before the cursor
-    /// (so the document's own analysis is used).
-    fn dot_completion_fixup(&self, doc: &Document, pos: &Position) -> Option<Checked> {
+    /// Returns `None` if there's no `.` immediately before the cursor or
+    /// the document parses (its own analysis is used then).
+    fn dot_completion_fixup(&mut self, uri: &Uri, pos: &Position) -> Option<Checked> {
+        let doc = self.documents.get(uri)?;
         let cursor = position_to_offset(&doc.source, pos);
         // Sanity: the byte just before the cursor must be `.`. If not,
         // the dot-completion context was extracted from a different
@@ -344,6 +400,17 @@ impl Server {
         if bytes.get(cursor.checked_sub(1)?) != Some(&b'.') {
             return None;
         }
+        let module = doc.module.clone()?;
+        let project = self.projects.get_mut(&module.project)?;
+        if project
+            .session
+            .graph()
+            .module(module.id)
+            .problems
+            .is_empty()
+        {
+            return None;
+        }
         // The placeholder is intentionally long-and-prefixed so it can't
         // accidentally collide with a real user method name.
         const PLACEHOLDER: &str = "silt_lsp_completion_placeholder";
@@ -351,31 +418,29 @@ impl Server {
         fixed.push_str(&doc.source.text[..cursor]);
         fixed.push_str(PLACEHOLDER);
         fixed.push_str(&doc.source.text[cursor..]);
-
-        let config = self
-            .projects
-            .get(&doc.module.as_ref()?.project)?
-            .config
-            .clone();
-        let mut session = crate::session::Session::new(config);
-        for other in self
+        let original = doc.source.text.clone();
+        let path = doc.path.clone();
+        let open: Vec<_> = self
             .documents
             .values()
-            .filter(|d| d.open && d.path != doc.path)
-        {
-            if session.graph().module_at(&other.path).is_none() {
-                continue;
-            }
-            session.set_overlay(&other.path, other.source.text.to_string());
-        }
-        let file = session.set_overlay(&doc.path, fixed);
-        session.analyze(file);
-        let checked = session.module_analysis(session.module_of(file))?;
-        Some(Checked {
+            .filter_map(|d| d.module.as_ref().filter(|m| m.project == module.project))
+            .map(|m| m.id)
+            .collect();
+
+        let id = project.set_text(&path, &Arc::from(fixed))?;
+        let file = project.file(id);
+        project.session.analyze(file);
+        let checked = project.session.module_analysis(id).map(|checked| Checked {
             program: checked.ast.clone(),
             methods: checked.methods.clone(),
             record_fields: checked.record_fields.clone(),
-        })
+        });
+        project.set_text(&path, &original);
+        for id in open {
+            let file = project.file(id);
+            project.session.analyze(file);
+        }
+        checked
     }
 }
 

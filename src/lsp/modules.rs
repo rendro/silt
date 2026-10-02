@@ -23,6 +23,45 @@ pub(super) struct ModuleView<'a> {
     pub(super) source: &'a SourceFile,
     /// Its top-level definitions, with the checker's types.
     pub(super) definitions: HashMap<Symbol, DefInfo>,
+    /// What it exports, in declaration order: its `pub` functions,
+    /// `let`s and types, and the variants of its `pub` enums.
+    pub(super) members: Vec<(Symbol, MemberKind)>,
+}
+
+/// What an exported member of a module is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum MemberKind {
+    Function,
+    Value,
+    Type,
+    Variant,
+}
+
+/// The exported members of `program`.
+fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
+    let mut out = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) if f.is_pub => out.push((f.name, MemberKind::Function)),
+            Decl::Let {
+                pattern,
+                is_pub: true,
+                ..
+            } => {
+                if let crate::ast::PatternKind::Ident(name) = &pattern.kind {
+                    out.push((*name, MemberKind::Value));
+                }
+            }
+            Decl::Type(t) if t.is_pub => {
+                out.push((t.name, MemberKind::Type));
+                if let crate::ast::TypeBody::Enum(variants) = &t.body {
+                    out.extend(variants.iter().map(|v| (v.name, MemberKind::Variant)));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 impl Server {
@@ -83,14 +122,21 @@ impl Server {
                 })?;
         let target_module = graph.module(target);
         let source = session.sources().get(target_module.file?)?;
-        let definitions = match session.module_analysis(target) {
-            Some(checked) => build_definitions(&checked.ast, Some(&checked.top_level)),
-            None => build_definitions(target_module.ast.as_ref()?, None),
+        let (definitions, members) = match session.module_analysis(target) {
+            Some(checked) => (
+                build_definitions(&checked.ast, Some(&checked.top_level)),
+                members(&checked.ast),
+            ),
+            None => {
+                let ast = target_module.ast.as_ref()?;
+                (build_definitions(ast, None), members(ast))
+            }
         };
         Some(ModuleView {
             uri: self.uri_for_path(&target_module.path)?,
             source,
             definitions,
+            members,
         })
     }
 

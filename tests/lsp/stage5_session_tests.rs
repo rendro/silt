@@ -413,3 +413,79 @@ fn a_symlinked_workspace_publishes_to_the_open_uri() {
     let _ = fs::remove_file(&link);
     let _ = fs::remove_dir_all(&real);
 }
+
+fn completion_labels(result: &Value) -> Vec<String> {
+    result
+        .as_array()
+        .or_else(|| result["items"].as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|it| it["label"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Dot completion on a partial `p.` sees the unsaved text of an open
+/// imported module: a field added there and not saved is offered.
+#[test]
+fn dot_completion_sees_an_unsaved_imported_field() {
+    let shapes = "pub type Pt { x: Int, y: Int }\n";
+    let unsaved = "pub type Pt { x: Int, y: Int, z: Int }\n";
+    let main = "import shapes.{ Pt }\n\nfn show(p: Pt) -> Int {\n  let n = p.\n  n\n}\n\nfn main() {\n  println(\"{show(Pt { x: 1, y: 2 })}\")\n}\n";
+    let dir = project(
+        "unsaved_field",
+        &[("shapes.silt", shapes), ("main.silt", main)],
+    );
+    let main_uri = uri(&dir.join("main.silt"));
+    let shapes_uri = uri(&dir.join("shapes.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open_and_wait(&shapes_uri, shapes);
+    did_change(&mut client, &shapes_uri, 2, unsaved);
+    client.did_open_and_wait(&main_uri, main);
+
+    let at = position_of(main, "p.\n", 2);
+    let labels = completion_labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        at,
+    ));
+    for field in ["x", "y", "z"] {
+        assert!(labels.contains(&field.to_string()), "{field}: {labels:?}");
+    }
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Dot completion after a module name (`helper.`, or `h.` for
+/// `import helper as h`) offers the module's exported members.
+#[test]
+fn dot_completion_on_a_module_offers_its_members() {
+    let helper = "-- Doubles its argument.\npub fn twice(x: Int) -> Int {\n  x * 2\n}\n\nfn hidden() -> Int {\n  0\n}\n\npub let limit = 10\n\npub type Shape { Circle(Int), Square(Int) }\n";
+    let main = "import helper\nimport helper as h\n\nfn main() {\n  let a = helper.\n  let b = h.\n  println(\"{a} {b}\")\n}\n";
+    let dir = project("members", &[("helper.silt", helper), ("main.silt", main)]);
+    let main_uri = uri(&dir.join("main.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open_and_wait(&main_uri, main);
+    for needle in ["helper.\n", "h.\n"] {
+        let at = position_of(main, needle, needle.len() - 1);
+        let labels = completion_labels(&request_at(
+            &mut client,
+            "textDocument/completion",
+            &main_uri,
+            at,
+        ));
+        for member in ["twice", "limit", "Shape", "Circle", "Square"] {
+            assert!(
+                labels.contains(&member.to_string()),
+                "{needle:?} {member}: {labels:?}"
+            );
+        }
+        assert!(!labels.contains(&"hidden".to_string()), "{labels:?}");
+        assert!(!labels.contains(&"display".to_string()), "{labels:?}");
+    }
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
