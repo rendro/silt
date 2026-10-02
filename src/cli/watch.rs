@@ -1,12 +1,14 @@
 //! Watch-mode interceptor: when `--watch` (or `-w`) is present on the
 //! command line, strip the flag and hand off to `silt::watch` after
 //! doing a dry-validation pass so we don't enter the watch loop on
-//! inputs the underlying subcommand would refuse up front.
+//! inputs the underlying subcommand would refuse up front. The watcher
+//! is given the entry files of the programs the subcommand runs; it
+//! watches the files of their analysis.
 
 #[cfg(feature = "watch")]
 use std::env;
 #[cfg(feature = "watch")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(feature = "watch")]
 use std::process;
 
@@ -14,6 +16,8 @@ use std::process;
 use crate::cli::help::{check_usage_banner, disasm_usage_banner, run_usage_banner};
 #[cfg(feature = "watch")]
 use crate::cli::package::find_project_root;
+#[cfg(feature = "watch")]
+use crate::cli::paths::find_silt_files;
 
 /// If `--watch` / `-w` is present in `args`, handle the watch loop and
 /// return `true`. Return `false` to let the caller proceed with normal
@@ -174,26 +178,7 @@ fn handle_watch(args: &[String]) {
     // the list above — `silt test --watch` alone is legitimate
     // and means "watch the cwd and rerun auto-discovered tests".
     if requires_file {
-        // Find the first positional (non-flag) arg after the
-        // subcommand name. Flags like `--format json` consume a
-        // value; the simple scan below is good enough because
-        // our value-taking flags all start with `--`.
-        let mut has_positional = false;
-        let mut i = 1;
-        while i < filtered.len() {
-            let a = filtered[i].as_str();
-            if a == "--format" {
-                // Skip the flag and its value (if present).
-                i += 2;
-                continue;
-            }
-            if a.starts_with('-') {
-                i += 1;
-                continue;
-            }
-            has_positional = true;
-            break;
-        }
+        let has_positional = first_positional(&filtered).is_some();
         if !has_positional {
             // No positional path — only allowed if we're inside a
             // silt package (manifest reachable from cwd).
@@ -215,25 +200,65 @@ fn handle_watch(args: &[String]) {
         }
     }
 
-    let watch_dir = filtered
-        .iter()
-        .filter_map(|a| {
-            let path = Path::new(a.as_str());
-            if a.ends_with(".silt") {
-                let parent = path.parent().unwrap_or(Path::new("."));
-                Some(if parent.as_os_str().is_empty() {
-                    Path::new(".").to_path_buf()
-                } else {
-                    parent.to_path_buf()
-                })
-            } else if path.is_dir() {
-                Some(path.to_path_buf())
-            } else {
-                None
-            }
-        })
-        .next()
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| ".".into()));
+    let sub = sub.to_string();
+    let positional = first_positional(&filtered);
+    silt::watch::watch_and_rerun(|| entries(&sub, positional.as_deref()), &filtered);
+}
 
-    silt::watch::watch_and_rerun(&watch_dir, &filtered);
+/// The first positional argument of the subcommand in `args` (`args[0]`
+/// is the subcommand): its file or path. `--format` takes a value;
+/// everything from a `--` on is the program's.
+#[cfg(feature = "watch")]
+fn first_positional(args: &[String]) -> Option<String> {
+    let mut i = 1;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--" {
+            return None;
+        }
+        if a == "--format" || a == "--filter" {
+            i += 2;
+            continue;
+        }
+        if a.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        return Some(a.to_string());
+    }
+    None
+}
+
+/// The entry files of the programs `silt <sub> <positional>` runs: the
+/// file given; for `test`, the test files of the directory given or of
+/// the working directory; otherwise the package's `src/main.silt` (for
+/// `check`, its `src/lib.silt` when it has no main).
+#[cfg(feature = "watch")]
+fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
+    let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
+    if sub == "test" {
+        let dir = match positional {
+            Some(path) if !Path::new(path).is_dir() => return vec![PathBuf::from(path)],
+            Some(path) => PathBuf::from(path),
+            None => cwd,
+        };
+        return find_silt_files(&dir)
+            .into_iter()
+            .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
+            .map(PathBuf::from)
+            .collect();
+    }
+    if let Some(path) = positional {
+        return vec![PathBuf::from(path)];
+    }
+    let Ok(Some((root, _))) = find_project_root(&cwd) else {
+        return Vec::new();
+    };
+    let main = root.join("src").join("main.silt");
+    let lib = root.join("src").join("lib.silt");
+    if sub == "check" && !main.is_file() && lib.is_file() {
+        vec![lib]
+    } else {
+        vec![main]
+    }
 }

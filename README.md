@@ -187,7 +187,7 @@ silt add <name> --path <path>                             Add a path-based depen
 silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based dependency to silt.toml
 ```
 
-The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
+The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test`. It watches the files of the program (every module it imports, plus `silt.toml` and `silt.lock`) and re-runs the command when one changes, stopping the previous run first if it is still going.
 
 LSP server with diagnostics, hover types, go-to-definition, go-to-type-definition, go-to-implementation, completion, signature help, document symbols, workspace symbol search, formatting, find references, document highlight, rename, code actions, inlay hints, folding ranges, selection ranges, and semantic tokens. The prebuilt `silt` binary from the install script includes the LSP server — just run `silt lsp` and point your editor at it. Vim/Neovim syntax highlighting and editor setup ship in `editors/`.
 

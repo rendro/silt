@@ -222,7 +222,7 @@ silt add <name> --path <path>  -- add a path-based dependency to silt.toml
 silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dependency to silt.toml
 ```
 
-The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to automatically re-run on `.silt` file changes.
+The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-run the command when a file of the program (a module it imports, `silt.toml` or `silt.lock`) changes. A run that is still going, such as a server, is stopped first.
 
 ### Staying up to date
 
