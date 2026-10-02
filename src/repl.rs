@@ -554,6 +554,7 @@ fn eval_input(
 /// how a position in it is shown: in the coordinates of what the user
 /// typed. A declaration is compiled as typed; an expression is compiled
 /// wrapped in a function, whose header line comes before the input.
+#[derive(Clone, Copy)]
 struct ReplEntry<'a> {
     /// The compiled text: the input, or the input wrapped.
     file: FileId,
@@ -577,6 +578,25 @@ impl ReplEntry<'_> {
             input,
             wrapped,
         }
+    }
+
+    /// The entry of an earlier input, from its compiled text in the
+    /// session's source map: an expression input was compiled wrapped in
+    /// `fn __repl_eval_<n>() {` ... `}`, a declaration as typed.
+    fn earlier(sources: &SourceMap, file: FileId) -> Option<ReplEntry<'_>> {
+        let text: &str = &sources.get(file)?.text;
+        let wrapped = text
+            .split_once('\n')
+            .and_then(|(header, rest)| {
+                Some((header.strip_prefix("fn ")?.strip_suffix("() {")?, rest))
+            })
+            .filter(|(name, _)| is_repl_wrapper_frame(name))
+            .and_then(|(_, rest)| rest.strip_suffix("\n}"));
+        Some(ReplEntry {
+            file,
+            input: wrapped.unwrap_or(text),
+            wrapped: wrapped.is_some(),
+        })
     }
 
     /// The 1-based line and column in the input of byte `at` of the
@@ -878,16 +898,25 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
 ///     `error[runtime]:` header with no locator.
 fn render_repl_vm_error(e: &VmError, sources: &SourceMap, entry: &ReplEntry<'_>) {
     if let Some(span) = e.span {
-        if span.file == entry.file && entry.fits(entry.position(sources, span.start)) {
-            let source_err =
-                entry.error(sources, ErrorKind::Runtime, e.message.clone(), span, false);
-            eprintln!("{source_err}");
+        // The span is in this input, or in the earlier input whose code
+        // raised the error (a `fn` called from a later expression): the
+        // session's source map holds both.
+        let owner = if span.file == entry.file {
+            Some(*entry)
         } else {
-            // Out-of-range span (prior-entry chunk): render with the
-            // `<declaration>` locator and split multi-line messages
-            // into `= note:`/`= help:` continuation, matching the
+            ReplEntry::earlier(sources, span.file)
+        };
+        match owner {
+            Some(owner) if owner.fits(owner.position(sources, span.start)) => {
+                let source_err =
+                    owner.error(sources, ErrorKind::Runtime, e.message.clone(), span, false);
+                eprintln!("{source_err}");
+            }
+            // A span that does not fit its input: render with the
+            // `<declaration>` locator and split multi-line messages into
+            // `= note:`/`= help:` continuation, matching the
             // `SourceError::Display` shape. Round-59 GAP #5.
-            eprintln!("{}", render_runtime_error_without_source(&e.message, true));
+            _ => eprintln!("{}", render_runtime_error_without_source(&e.message, true)),
         }
         // Print the call stack for the non-synthetic frames, every frame
         // labelled `<declaration>`. The synthetic `__repl_eval_<n>`

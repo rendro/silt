@@ -1,8 +1,14 @@
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn err1(){1/0}
+   |           ^ division by zero
   -> err1  at <declaration>
   -> <repl>  at <declaration>
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn err2(){1/0}
+   |           ^ division by zero
   -> err2  at <declaration>
   -> <repl>  at <declaration>

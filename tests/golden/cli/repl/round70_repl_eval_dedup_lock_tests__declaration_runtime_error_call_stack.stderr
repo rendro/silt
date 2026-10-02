@@ -1,4 +1,7 @@
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn deep(){1/0}
+   |           ^ division by zero
   -> deep  at <declaration>
   -> shallow  at <declaration>

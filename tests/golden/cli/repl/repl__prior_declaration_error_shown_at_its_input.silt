@@ -1,2 +1,5 @@
 -- cmd: repl
 -- stdin: fn a() { 1 / 0 }\nfn b() { a() + 1 }\nfn c() { b() + 2 }\nc()\n:quit\n
+-- An error raised in code from an earlier input is shown at that input's
+-- line and column, with its text; the caret is never placed on the
+-- current input.

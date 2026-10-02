@@ -1,5 +1,8 @@
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:10
+   |
+ 1 | fn g() { 1 / 0 }
+   |          ^ division by zero
   -> g  at <declaration>
   -> f  at <declaration>
   -> <repl>  at <declaration>

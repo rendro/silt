@@ -1,20 +1,35 @@
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^ division by zero
   -> boom  at <declaration>
   -> <repl>  at <declaration>
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^ division by zero
   -> boom  at <declaration>
   -> <repl>  at <declaration>
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^ division by zero
   -> boom  at <declaration>
   -> <repl>  at <declaration>
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^ division by zero
   -> boom  at <declaration>
   -> <repl>  at <declaration>
 error[runtime]: division by zero
- --> <declaration>
+ --> <repl>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^ division by zero
   -> boom  at <declaration>
   -> <repl>  at <declaration>
