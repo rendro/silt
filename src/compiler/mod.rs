@@ -1575,8 +1575,28 @@ impl Compiler {
                 Decl::Trait(_) => {
                     // Skip.
                 }
-                Decl::Let { .. } => {
+                Decl::Let {
+                    pattern, is_pub, ..
+                } => {
                     self.compile_decl(decl)?;
+                    if *is_pub {
+                        // A `pub let` is exported: each name it binds is
+                        // also registered as "module.name", which is what
+                        // `m.name` and `import m.{ name }` read.
+                        let mut names = Vec::new();
+                        crate::parser::pattern_binders(pattern, &mut names);
+                        for (name, _) in names {
+                            let bare = resolve(name);
+                            let bare_idx = self.add_constant(Value::String(bare.clone()), span)?;
+                            self.current_chunk()
+                                .emit_op_u16(Op::GetGlobal, bare_idx, span);
+                            let qual = format!("{global}.{bare}");
+                            let qual_idx = self.add_constant(Value::String(qual), span)?;
+                            self.current_chunk()
+                                .emit_op_u16(Op::SetGlobal, qual_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+                        }
+                    }
                 }
             }
         }
