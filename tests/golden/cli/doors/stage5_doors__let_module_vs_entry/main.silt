@@ -1,0 +1,11 @@
+-- verdict: same
+-- A module function reads its module's pub let x, not main's let x = 99
+-- (it returned 99).
+import a.{ getx }
+
+let x = 99
+
+fn main() {
+  println(getx())
+  println(x)
+}

@@ -1,0 +1,13 @@
+-- verdict: same
+-- I2: main's `let limit = "ten"` and an imported module's private
+-- `let limit = 10` are two globals; the module compares against its own
+-- Int (it used to read main's String).
+import checks
+
+let limit = "ten"
+
+fn main() {
+  println(checks.over(11))
+  println(checks.over(3))
+  println(limit)
+}

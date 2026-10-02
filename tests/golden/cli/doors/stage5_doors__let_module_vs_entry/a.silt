@@ -1,0 +1,4 @@
+pub let x = 1
+pub fn getx() -> Int {
+  x
+}

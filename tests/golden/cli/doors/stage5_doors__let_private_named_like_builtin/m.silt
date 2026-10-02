@@ -1,0 +1,4 @@
+let println = 5
+pub fn f() -> Int {
+  println
+}

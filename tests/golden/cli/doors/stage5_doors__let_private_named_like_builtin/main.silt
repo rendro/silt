@@ -1,0 +1,8 @@
+-- verdict: same
+-- A module's private let println is the module's; the importer's
+-- println is still the builtin.
+import m
+
+fn main() {
+  println(m.f())
+}

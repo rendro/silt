@@ -1,0 +1,11 @@
+-- verdict: same
+-- A module's pub let lives under the module's own global: a.getx() reads
+-- a's x and the x imported from b is b's (it printed 2 and 2, and before
+-- the pub let fix failed with undefined global: b.x).
+import a
+import b.{ x }
+
+fn main() {
+  println(a.getx())
+  println(x)
+}
