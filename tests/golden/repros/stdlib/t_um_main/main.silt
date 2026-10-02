@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import util
 fn main() {
   let x: Int = util.add(1)

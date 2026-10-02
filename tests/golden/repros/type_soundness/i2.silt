@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import map
 import set
 type W(a) { W(a) }

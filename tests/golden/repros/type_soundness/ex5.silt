@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type R { a: Bool, b: Bool }
 fn r(x: R) -> Int {
   match x {

@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn f(x: Float) -> Int {
   match x {
     0.0 -> 0

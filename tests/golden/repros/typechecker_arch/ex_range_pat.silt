@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn f(n: Int) -> Int {
   match n {
     0..10 -> 1

@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import list
 import io
 -- declared pure, launders io through list.each + lambda

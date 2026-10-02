@@ -1,4 +1,4 @@
--- verdict: known-divergent run lsp
+-- verdict: same
 import channel
 import list
 import task

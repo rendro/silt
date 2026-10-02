@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type point { x: Int }
 fn main() {
   let p = point { x: 1 }

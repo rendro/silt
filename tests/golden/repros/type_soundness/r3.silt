@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type P { name: String, age: Int }
 fn idn(p: {name: String, ...r}) -> {name: String, ...r} = p
 fn ren(p: {name: String, ...r}) -> {name: String, ...r} = p.{ name: "renamed" }

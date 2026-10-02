@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn p(x: Int, o: Option(Int)) -> Int {
   match o {
     Some(^x) -> 1

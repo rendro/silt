@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import io
 type Ops { run: Fn() -> () }
 fn quiet(o: Ops) -> Int !{} {

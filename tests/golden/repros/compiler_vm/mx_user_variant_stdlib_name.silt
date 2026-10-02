@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 type Lookup { IoNotFound(String), Found(Int) }
 fn main() {
   let a = IoNotFound("key-7")

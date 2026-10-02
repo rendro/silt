@@ -1,4 +1,4 @@
--- verdict: known-divergent run lsp
+-- verdict: known-divergent lsp
 import Shape
 
 type Shape { sides: Int }

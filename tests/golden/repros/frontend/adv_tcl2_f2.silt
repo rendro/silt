@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn run(f) = f()
 
 fn app(f, x) = f(x)

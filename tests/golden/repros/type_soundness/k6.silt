@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn f(m: Map(String, Int)) -> Int {
   match m {
     #{ "a": a } -> a

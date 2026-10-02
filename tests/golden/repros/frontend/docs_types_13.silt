@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type Person { name: String, age: Int }
 
 fn name(p: {name: String, ...r}) -> String = p.name

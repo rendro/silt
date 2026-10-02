@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import list
 import map
 import regex

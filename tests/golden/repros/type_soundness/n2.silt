@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn main() {
   let e = 1.0 / 0.0
   let f = fn(a, b) { a + b }

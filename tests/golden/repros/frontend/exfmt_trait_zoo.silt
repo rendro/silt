@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import float
 import list
 import math

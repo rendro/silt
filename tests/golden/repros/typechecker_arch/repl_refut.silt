@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 type Shape { Circle(Int), Square(String) }
 let s = Circle(5)
 let Square(n) = s

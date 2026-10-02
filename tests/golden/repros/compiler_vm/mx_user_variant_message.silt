@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 type Event { Message(String), Closed, Opened }
 fn describe(e: Event) -> String {
   match e {

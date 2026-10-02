@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import io
 fn run(f: Fn() -> ()) -> Int !{} {
   f()

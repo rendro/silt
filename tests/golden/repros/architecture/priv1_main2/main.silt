@@ -1,4 +1,4 @@
--- verdict: same
+-- verdict: known-divergent lsp
 import a
 
 let secret = "main-secret"

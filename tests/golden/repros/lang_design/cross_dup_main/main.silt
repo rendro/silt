@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import m1
 import m2
 fn main() {

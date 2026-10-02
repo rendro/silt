@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 type Light { Stop, Go }
 fn main() {
   println(Stop < Go)

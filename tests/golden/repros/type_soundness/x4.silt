@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import io
 trait Act { fn act(self) -> Int }
 trait Act for Int { fn act(self) -> Int { println("effect in trait method") self } }

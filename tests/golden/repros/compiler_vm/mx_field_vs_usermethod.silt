@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type R { go: Fn(Int) -> Int, n: Int }
 trait Runner {
   fn go(self, x: Int) -> Int

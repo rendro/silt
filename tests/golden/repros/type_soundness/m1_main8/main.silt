@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import util
 fn area(p: Pt) -> Int { p.x * p.y }
 fn main() {

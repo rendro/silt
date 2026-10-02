@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import map
 fn put(m, k, v) { map.set(m, k, v) }
 fn mk(k) { #{ k: 1 } }

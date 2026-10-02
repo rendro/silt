@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import map
 fn main() {
   let f = fn(x) { x + 1 }

@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 type point {
   x: Int
 }

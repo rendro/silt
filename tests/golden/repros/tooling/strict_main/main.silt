@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 import util
 
 fn main() -> () !{io, fs, net, random, time} {

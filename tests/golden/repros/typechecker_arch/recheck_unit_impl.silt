@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 trait Foo { fn foo(self) -> Int }
 trait Foo for () {
   fn foo(self) -> Int { 1 + "x" }

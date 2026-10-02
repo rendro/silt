@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 let (a, b) = (1, 2)
 
 fn main() {

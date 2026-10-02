@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn id_name(p: {name: String, ...r}) -> {name: String, ...r} = p
 
 fn main() {

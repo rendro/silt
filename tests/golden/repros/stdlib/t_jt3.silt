@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 import json
 type Wrap(a) { value: a }
 fn main() {

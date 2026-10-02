@@ -1,4 +1,4 @@
--- verdict: known-divergent lsp
+-- verdict: same
 type Big {
   f0: Int,
   f1: Int,

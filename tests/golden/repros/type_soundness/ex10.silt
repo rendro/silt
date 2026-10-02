@@ -1,4 +1,4 @@
--- verdict: known-divergent run
+-- verdict: same
 fn h(r: {on: Bool, n: Int}) -> Int {
   match r {
     {on: true, n: n} -> n
