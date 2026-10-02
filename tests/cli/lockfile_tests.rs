@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use silt::git::GitRef;
 use silt::lockfile::{LockedPackage, LockedSource, Lockfile};
+use silt::source::SourceMap;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -532,8 +533,8 @@ fn test_lockfile_renders_git_source_with_rev() {
                 version: "0.1.0".into(),
                 source: LockedSource::Git {
                     url: "https://example.com/rev_dep.git".into(),
-                    ref_spec: GitRef::Rev("abc1234".into()),
-                    resolved_sha: "abc1234".into(),
+                    ref_spec: GitRef::Rev("abc1234abc1234abc1234abc1234abc1234abc12".into()),
+                    resolved_sha: "abc1234abc1234abc1234abc1234abc1234abc12".into(),
                 },
                 checksum: "sha256:deadbeef".into(),
             },
@@ -547,7 +548,7 @@ fn test_lockfile_renders_git_source_with_rev() {
         "lockfile missing git URL:\n{text}"
     );
     assert!(
-        text.contains("rev = \"abc1234\""),
+        text.contains("rev = \"abc1234abc1234abc1234abc1234abc1234abc12\""),
         "lockfile missing rev field:\n{text}"
     );
     assert!(
@@ -559,7 +560,9 @@ fn test_lockfile_renders_git_source_with_rev() {
         "rev form should not emit tag:\n{text}"
     );
 
-    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    let parsed = Lockfile::load(&lock_path, &mut SourceMap::new())
+        .expect("parse lockfile")
+        .expect("the lockfile exists");
     assert_eq!(parsed, lock, "git rev lockfile did not roundtrip");
 }
 
@@ -600,7 +603,9 @@ fn test_lockfile_renders_git_source_with_branch() {
         "branch form must pin resolved SHA:\n{text}"
     );
 
-    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    let parsed = Lockfile::load(&lock_path, &mut SourceMap::new())
+        .expect("parse lockfile")
+        .expect("the lockfile exists");
     assert_eq!(parsed, lock, "git branch lockfile did not roundtrip");
 }
 
@@ -641,16 +646,17 @@ fn test_lockfile_renders_git_source_with_tag() {
         "tag form must pin resolved SHA:\n{text}"
     );
 
-    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    let parsed = Lockfile::load(&lock_path, &mut SourceMap::new())
+        .expect("parse lockfile")
+        .expect("the lockfile exists");
     assert_eq!(parsed, lock, "git tag lockfile did not roundtrip");
 }
 
 #[test]
 fn test_lockfile_resolve_git_dep_validates_manifest() {
     // A git dep with a malformed Rev (not a hex SHA) must error
-    // at resolve time without ever contacting the network. Rev shape
-    // validation is offline; the failure is `LockfileError::GitOperation`
-    // wrapping `GitError::RefNotFound`.
+    // without ever contacting the network: the manifest rejects it, at
+    // the value.
     let ws = fresh_workspace("git_bad_rev");
     let app = ws.join("app");
     fs::create_dir_all(&app).unwrap();
@@ -673,8 +679,8 @@ fn test_lockfile_resolve_git_dep_validates_manifest() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("git dependency") && stderr.contains("https://example.com/broken.git"),
-        "expected git dependency error mentioning the URL; got: {stderr}"
+        stderr.contains("`rev` must be a commit id") && stderr.contains("--> silt.toml:6:"),
+        "expected a manifest error at the rev; got: {stderr}"
     );
 }
 

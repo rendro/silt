@@ -1,9 +1,13 @@
-//! Lock file (`silt.lock`) generation, parsing, and dep-tree resolution.
+//! Lock file (`silt.lock`) reading and writing.
 //!
 //! A silt lockfile pins each transitive dependency of the local package
 //! to a specific source location and a content checksum. The file lives
-//! next to `silt.toml` and is regenerated when the manifest changes
-//! (auto-update) or on demand via `silt update`.
+//! next to the `silt.toml` it belongs to and is regenerated when the
+//! manifest changes (auto-update) or on demand via `silt update`. The
+//! dependency graph itself is resolved in `package_graph`, always from
+//! the manifests: the lock only pins the commit a git branch or tag
+//! resolved to, and an entry that is not what the manifest resolves to
+//! is stale. It never decides where a package comes from.
 //!
 //! Supported source forms (as of v0.8): `LockedSource::Path` for path
 //! deps and `LockedSource::Git` for git deps (`{ url, ref_spec,
@@ -25,7 +29,7 @@
 //! [[package]]
 //! name = "calc"
 //! version = "0.1.0"
-//! source = { path = "/abs/path/to/calc" }
+//! source = { path = "/canonical/path/to/calc" }
 //! checksum = "sha256:..."
 //!
 //! [[package]]
@@ -51,16 +55,15 @@
 //!     to coax out of a generic serializer. The format is small enough
 //!     (≤6 fields per package) that the manual writer is trivial.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::git::{self, EscapedDisplay, EscapingWriter, GitError, GitRef};
-use crate::intern::{self, Symbol};
-use crate::manifest::{Dependency, Manifest, ManifestError, toml_error_message};
+use crate::diagnostic::{Code, Diagnostic};
+use crate::git::{self, GitRef};
+use crate::manifest::{display_path, toml_error_message};
+use crate::source::{SourceMap, SourceName, Span};
 
 // ── Public types ───────────────────────────────────────────────────────
 
@@ -98,13 +101,16 @@ pub enum LockedSource {
     /// Marker for the local (root) package — no `source` or `checksum`
     /// in the on-disk file.
     Local,
-    /// Path-style dependency. `path` is always absolute so the lockfile
-    /// is portable across cwd changes (you still pay the price of moving
-    /// the workspace, of course; that's a known limitation of path deps).
+    /// Path-style dependency. `path` is the canonical path of the
+    /// package root, so the lockfile is portable across cwd changes
+    /// (you still pay the price of moving the workspace, of course;
+    /// that's a known limitation of path deps).
     Path { path: PathBuf },
-    /// Git-style dependency. `url` and the user's chosen `ref_spec` are
-    /// preserved so `silt update` can re-resolve branch/tag deps;
-    /// `resolved_sha` is the concrete commit pinned at lock time.
+    /// Git-style dependency. `url` is the manifest's URL with a local
+    /// path made absolute against the manifest's directory; it and the
+    /// user's chosen `ref_spec` are preserved so `silt update` can
+    /// re-resolve branch/tag deps; `resolved_sha` is the full commit id
+    /// pinned at lock time.
     Git {
         url: String,
         ref_spec: GitRef,
@@ -113,225 +119,48 @@ pub enum LockedSource {
     // Future: Registry { name, version }.
 }
 
-// ── Errors ─────────────────────────────────────────────────────────────
-
-/// Errors produced while resolving, reading, or writing a lockfile.
-#[derive(Debug)]
-pub enum LockfileError {
-    /// I/O failure reading or writing the file.
-    Io(std::io::Error, PathBuf),
-    /// The file is not TOML.
-    Toml {
-        /// The position, then the TOML parser's message as
-        /// [`toml_error_message`] returns it: it is shown line by
-        /// line, so a line break in it must be the parser's own, never
-        /// one from a key or a value.
-        message: String,
-        path: PathBuf,
-    },
-    /// The file is TOML, but not a lockfile: schema mismatch.
-    Parse { message: String, path: PathBuf },
-    /// A `path = "..."` dep points at a directory that doesn't exist.
-    DepNotFound { name: String, path: PathBuf },
-    /// A `path = "..."` dep exists but the directory has no `silt.toml`,
-    /// so it isn't a silt package.
-    DepNotPackage { name: String, path: PathBuf },
-    /// The transitive manifest at one of the dep paths failed to load
-    /// or validate. Carries the underlying [`ManifestError`].
-    ManifestError(ManifestError),
-    /// A git operation (ref resolution or fetch-to-cache) failed while
-    /// resolving a git dependency. Carries the URL + the user's chosen
-    /// ref form so the diagnostic can point at the specific entry, and
-    /// the underlying [`GitError`] for the transport-level details.
-    GitOperation {
-        url: String,
-        ref_spec: GitRef,
-        source: GitError,
-    },
-}
-
-impl fmt::Display for LockfileError {
-    // Untrusted text, per variant:
-    //   - `Io`: the path is a dependency's directory when its sources
-    //     cannot be read, and that comes from a manifest's `path`.
-    //   - `Toml`: the message is the TOML parser's and quotes keys of
-    //     the lockfile. It is the one text that is shown on several
-    //     lines, see `toml_error_message`.
-    //   - `Parse`: the message quotes keys and values of the lockfile.
-    //   - `DepNotFound`, `DepNotPackage`: both fields are made from a
-    //     manifest's `path` value.
-    //   - `ManifestError`: a dependency's manifest, see that type.
-    //   - `GitOperation`: `url` and `ref_spec` come from a manifest;
-    //     for `source` see `GitError`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Shadows the formatter: nothing below can be written without
-        // going through the display rule.
-        let mut f = EscapingWriter::new(f);
-        match self {
-            LockfileError::Io(err, path) => {
-                write!(f, "lockfile I/O error at {}: {}", path.display(), err)
-            }
-            LockfileError::Toml { message, path } => {
-                write!(f, "invalid lockfile {}: ", path.display())?;
-                f.lines(message)
-            }
-            LockfileError::Parse { message, path } => {
-                write!(f, "invalid lockfile {}: {}", path.display(), message)
-            }
-            LockfileError::DepNotFound { name, path } => write!(
-                f,
-                "dependency `{name}` path does not exist: {}",
-                path.display()
-            ),
-            LockfileError::DepNotPackage { name, path } => write!(
-                f,
-                "dependency `{name}` at {} is not a silt package (no silt.toml found)",
-                path.display()
-            ),
-            LockfileError::ManifestError(err) => f.nested(err),
-            LockfileError::GitOperation {
-                url,
-                ref_spec,
-                source,
-            } => {
-                write!(
-                    f,
-                    "git dependency `{url}` ({} = `{}`): ",
-                    ref_spec.kind(),
-                    ref_spec.as_ref_string()
-                )?;
-                // git's own output follows on lines of its own.
-                f.nested(source)
-            }
-        }
-    }
-}
-
-impl EscapedDisplay for LockfileError {}
-
-impl std::error::Error for LockfileError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            LockfileError::Io(err, _) => Some(err),
-            LockfileError::ManifestError(err) => Some(err),
-            LockfileError::GitOperation { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<ManifestError> for LockfileError {
-    fn from(err: ManifestError) -> Self {
-        LockfileError::ManifestError(err)
-    }
-}
-
-// ── Resolution ─────────────────────────────────────────────────────────
-
 impl Lockfile {
-    /// Resolve a manifest's dependency tree into a [`Lockfile`].
-    ///
-    /// Walks the dep graph transitively: if dep A depends on dep B, B
-    /// is also locked. Cycles in the dep graph are tolerated — the
-    /// walker dedupes by absolute path, so `A -> B -> A` visits A
-    /// twice but only locks it once. (The compiler's existing module
-    /// cycle detection handles the runtime side; lockfile resolution
-    /// just needs to terminate.)
-    pub fn resolve(manifest: &Manifest) -> Result<Lockfile, LockfileError> {
-        let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
-        // Visited is keyed by the absolute path of the package root so
-        // a diamond dep graph (X -> A -> Z, X -> B -> Z) only locks Z
-        // once and a cycle (A -> B -> A) terminates cleanly. Git deps
-        // map to their per-(url, sha) cache directory which uniquely
-        // encodes the source — same git source = same cache path =
-        // single visited entry, so dedup-by-path keeps working without
-        // a separate (url, sha) key.
-        let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
-
-        // Root entry: no source / no checksum (it's not pinned by
-        // anything else; it pins everything else).
-        let root_dir = manifest_dir(manifest).to_path_buf();
-        visited.insert(root_dir.clone());
-        let root_name = intern::resolve(manifest.package.name).to_string();
-        packages.insert(
-            root_name.clone(),
-            LockedPackage {
-                name: root_name,
-                version: manifest.package.version.clone(),
-                source: LockedSource::Local,
-                checksum: String::new(),
-            },
+    /// Load the lockfile at `path`, adding its text to `sources`.
+    /// `Ok(None)` when there is no file. A file that is not a lockfile
+    /// is a diagnostic in it.
+    pub fn load(path: &Path, sources: &mut SourceMap) -> Result<Option<Lockfile>, Diagnostic> {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                let file = sources.add(SourceName::Manifest(display_path(path)), "".into());
+                return Err(Diagnostic::error(
+                    Code::PackageIo,
+                    Span::point(file, 0),
+                    format!(
+                        "cannot read lockfile: {}",
+                        git::escape_for_display(&e.to_string())
+                    ),
+                ));
+            }
+        };
+        // A lockfile is shown as a manifest is: its lines by the display
+        // rule, since it can be edited by hand.
+        let file = sources.add(
+            SourceName::Manifest(display_path(path)),
+            text.as_str().into(),
         );
-
-        // BFS over the manifest's direct deps, then their deps, etc.
-        // We read each transitive manifest fresh — the lockfile must
-        // reflect the on-disk state of every package in the graph.
-        // Each queue entry carries both the resolved root path (for
-        // recursion + dedup) and the constructed `LockedSource` (so the
-        // git arm can preserve the user's ref intent + the resolved SHA
-        // without re-resolving when we materialise the LockedPackage).
-        let mut queue: Vec<ResolvedDep> = Vec::new();
-        for (name, dep) in &manifest.dependencies {
-            let dep_name = intern::resolve(*name);
-            queue.push(resolve_dep_path(&dep_name, dep, &root_dir)?);
-        }
-
-        while let Some(resolved) = queue.pop() {
-            let dep_root = resolved.root_path.clone();
-            if !visited.insert(dep_root.clone()) {
-                continue;
-            }
-            let dep_manifest_path = dep_root.join("silt.toml");
-            // The manifest must exist *and* be a valid package; both
-            // failures are reported with paths so the user can find
-            // the offending dep.
-            if !dep_root.exists() {
-                return Err(LockfileError::DepNotFound {
-                    name: dep_root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| dep_root.display().to_string()),
-                    path: dep_root,
-                });
-            }
-            if !dep_manifest_path.is_file() {
-                return Err(LockfileError::DepNotPackage {
-                    name: dep_root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| dep_root.display().to_string()),
-                    path: dep_root,
-                });
-            }
-            let dep_manifest = Manifest::load(&dep_manifest_path)?;
-            let checksum = checksum_path_source(&dep_root)
-                .map_err(|e| LockfileError::Io(e, dep_root.clone()))?;
-            let pkg_name = intern::resolve(dep_manifest.package.name).to_string();
-            packages.entry(pkg_name.clone()).or_insert(LockedPackage {
-                name: pkg_name,
-                version: dep_manifest.package.version.clone(),
-                source: resolved.source,
-                checksum,
-            });
-            for (sub_name, sub_dep) in &dep_manifest.dependencies {
-                let sub = resolve_dep_path(&intern::resolve(*sub_name), sub_dep, &dep_root)?;
-                if !visited.contains(&sub.root_path) {
-                    queue.push(sub);
-                }
-            }
-        }
-
-        Ok(Lockfile {
-            version: 1,
-            packages: packages.into_values().collect(),
+        parse_lockfile(&text).map(Some).map_err(|e| {
+            let span = Span {
+                file,
+                start: e.span.0 as u32,
+                end: e.span.1 as u32,
+            };
+            let mut lines = e.message.lines().map(git::escape_for_display);
+            let head = lines.next().unwrap_or_default();
+            let mut d = Diagnostic::error(
+                Code::LockfileInvalid,
+                span,
+                format!("invalid lockfile: {head}"),
+            );
+            d.notes.extend(lines);
+            d.with_help("delete silt.lock and run `silt update` to write it again")
         })
-    }
-
-    /// Load and validate a lockfile from disk.
-    pub fn load(path: &Path) -> Result<Lockfile, LockfileError> {
-        let text =
-            fs::read_to_string(path).map_err(|e| LockfileError::Io(e, path.to_path_buf()))?;
-        parse_lockfile(&text, path)
     }
 
     /// Write the lockfile to disk in stable TOML format.
@@ -340,187 +169,33 @@ impl Lockfile {
     /// name, fixed key order within each entry. This makes lockfiles
     /// git-friendly — a no-op `silt update` produces a byte-identical
     /// file.
-    pub fn write(&self, path: &Path) -> Result<(), LockfileError> {
-        let rendered = render_lockfile(self);
-        fs::write(path, rendered).map_err(|e| LockfileError::Io(e, path.to_path_buf()))
+    pub fn write(&self, path: &Path) -> std::io::Result<()> {
+        fs::write(path, render_lockfile(self))
     }
 
-    /// Returns true if this lockfile fully matches `manifest`.
-    ///
-    /// Matching means the lockfile's package set equals the closure of
-    /// the manifest's transitive deps (plus the root). Used by the
-    /// auto-regenerate logic in `silt run` / `check` / `test`: if
-    /// `matches_manifest` is false the lockfile gets quietly rewritten
-    /// before compilation proceeds.
-    ///
-    /// We deliberately only compare *names* here, not checksums or
-    /// versions — content drift in a path dep is what `silt update`
-    /// is for; the auto-update path is just for "I added a new dep,
-    /// run silt run, it should Just Work".
-    ///
-    /// Cargo-style git semantics: this comparison does NOT contact the
-    /// network to see if a branch dep's HEAD has advanced upstream. A
-    /// lockfile pinning `branch = "main"` to SHA `abc...` stays valid
-    /// across `silt run` invocations even when `main` has new commits;
-    /// `silt update` is the explicit refresh trigger. The offline
-    /// resolution path is authoritative — it reuses the SHAs already
-    /// pinned in `self` for every git dep rather than calling
-    /// `git ls-remote`.
-    pub fn matches_manifest(&self, manifest: &Manifest) -> bool {
-        // Re-resolve the manifest to a fresh transitive set using the
-        // offline variant (reusing stored SHAs for git deps). Any failure
-        // means the lockfile is out of date (e.g. a new git dep without
-        // a matching lock entry, or a missing path dep); the explicit
-        // regenerate path then produces the real diagnostic.
-        let Ok(fresh) = Lockfile::resolve_offline(manifest, self) else {
-            return false;
+    /// Whether `self` pins what `other` pins: the same packages with
+    /// the same versions and sources. Checksums are not compared:
+    /// content drift in a path dep is what `silt update` is for.
+    pub fn same_pins(&self, other: &Lockfile) -> bool {
+        let key = |lock: &Lockfile| {
+            let mut entries: Vec<(String, String, LockedSource)> = lock
+                .packages
+                .iter()
+                .map(|p| (p.name.clone(), p.version.clone(), p.source.clone()))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries
         };
-        let mut a: Vec<&str> = self.packages.iter().map(|p| p.name.as_str()).collect();
-        let mut b: Vec<&str> = fresh.packages.iter().map(|p| p.name.as_str()).collect();
-        a.sort();
-        b.sort();
-        a == b
+        key(self) == key(other)
     }
+}
 
-    /// Offline variant of [`Lockfile::resolve`]: uses the stored
-    /// `resolved_sha` from `existing` for every git dep rather than
-    /// calling `git ls-remote`. Used by [`Lockfile::matches_manifest`]
-    /// to do the name-set comparison without network I/O.
-    ///
-    /// Returns `Err` if a git dep is present in `manifest` (directly or
-    /// transitively) but has no matching entry (by `url` + `ref_spec`)
-    /// in `existing` — this means the manifest has a new git dep and
-    /// the caller should regenerate the lockfile via the full
-    /// [`Lockfile::resolve`] path.
-    ///
-    /// Mirrors the BFS in `resolve` exactly, substituting
-    /// `resolve_dep_path_offline` for the network-bound `resolve_dep_path`.
-    fn resolve_offline(
-        manifest: &Manifest,
-        existing: &Lockfile,
-    ) -> Result<Lockfile, LockfileError> {
-        let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
-        let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
-
-        let root_dir = manifest_dir(manifest).to_path_buf();
-        visited.insert(root_dir.clone());
-        let root_name = intern::resolve(manifest.package.name).to_string();
-        packages.insert(
-            root_name.clone(),
-            LockedPackage {
-                name: root_name,
-                version: manifest.package.version.clone(),
-                source: LockedSource::Local,
-                checksum: String::new(),
-            },
-        );
-
-        let mut queue: Vec<ResolvedDep> = Vec::new();
-        for (name, dep) in &manifest.dependencies {
-            let dep_name = intern::resolve(*name);
-            queue.push(resolve_dep_path_offline(
-                &dep_name, dep, &root_dir, existing,
-            )?);
-        }
-
-        while let Some(resolved) = queue.pop() {
-            let dep_root = resolved.root_path.clone();
-            if !visited.insert(dep_root.clone()) {
-                continue;
-            }
-            let dep_manifest_path = dep_root.join("silt.toml");
-            if !dep_root.exists() {
-                return Err(LockfileError::DepNotFound {
-                    name: dep_root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| dep_root.display().to_string()),
-                    path: dep_root,
-                });
-            }
-            if !dep_manifest_path.is_file() {
-                return Err(LockfileError::DepNotPackage {
-                    name: dep_root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| dep_root.display().to_string()),
-                    path: dep_root,
-                });
-            }
-            let dep_manifest = Manifest::load(&dep_manifest_path)?;
-            let checksum = checksum_path_source(&dep_root)
-                .map_err(|e| LockfileError::Io(e, dep_root.clone()))?;
-            let pkg_name = intern::resolve(dep_manifest.package.name).to_string();
-            packages.entry(pkg_name.clone()).or_insert(LockedPackage {
-                name: pkg_name,
-                version: dep_manifest.package.version.clone(),
-                source: resolved.source,
-                checksum,
-            });
-            for (sub_name, sub_dep) in &dep_manifest.dependencies {
-                let sub = resolve_dep_path_offline(
-                    &intern::resolve(*sub_name),
-                    sub_dep,
-                    &dep_root,
-                    existing,
-                )?;
-                if !visited.contains(&sub.root_path) {
-                    queue.push(sub);
-                }
-            }
-        }
-
-        Ok(Lockfile {
-            version: 1,
-            packages: packages.into_values().collect(),
-        })
-    }
-
-    /// Build the `package_roots` map the compiler consumes from this
-    /// lockfile + the local manifest.
-    ///
-    /// Layout convention (per the v0.7 plan): each package's importable
-    /// source lives under `<pkg_root>/src/`. The local package's name
-    /// comes from `manifest`; transitive deps' names come from their
-    /// own lockfile entries.
-    ///
-    /// PR 5 (`silt add`) doesn't need to touch this — adding a dep to
-    /// the manifest invalidates `matches_manifest`, the next compile
-    /// regenerates the lock, and the new entry shows up here on the
-    /// next call.
-    pub fn package_roots(&self, manifest: &Manifest) -> std::collections::HashMap<Symbol, PathBuf> {
-        let mut roots = std::collections::HashMap::new();
-        let local_name = intern::resolve(manifest.package.name).to_string();
-        // Local package: derive src/ from the manifest's directory so
-        // we don't trust the lockfile to know the local checkout's
-        // location (the lockfile carries no Local-source path).
-        roots.insert(manifest.package.name, manifest_dir(manifest).join("src"));
-        for pkg in &self.packages {
-            if pkg.name == local_name {
-                continue;
-            }
-            match &pkg.source {
-                LockedSource::Path { path } => {
-                    roots.insert(intern::intern(&pkg.name), path.join("src"));
-                }
-                LockedSource::Git {
-                    url, resolved_sha, ..
-                } => {
-                    // The cache layout (`<silt-cache>/<url-hash>/<sha>/`)
-                    // is computed deterministically from (url, sha), so
-                    // we can resolve the import root without rereading
-                    // the lockfile or hitting the network. The cache
-                    // directory must already exist — `Lockfile::resolve`
-                    // populates it before writing the lockfile.
-                    if let Ok(cache_path) = git::cache_for(url, resolved_sha) {
-                        roots.insert(intern::intern(&pkg.name), cache_path.join("src"));
-                    }
-                }
-                LockedSource::Local => {}
-            }
-        }
-        roots
-    }
+/// Why the sources of a dependency cannot be checksummed.
+#[derive(Debug)]
+pub enum ChecksumError {
+    Io(std::io::Error),
+    /// A symbolic link at this path, relative to the package root.
+    Symlink(PathBuf),
 }
 
 /// Compute a content-hash over a path-dep's source tree.
@@ -534,11 +209,21 @@ impl Lockfile {
 /// Excluded by virtue of not walking them: `silt.lock`, `target/`,
 /// `.git/`. Sticking to `src/` makes the checksum mean exactly "the
 /// sources the compiler will see".
-pub(crate) fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::Error> {
+///
+/// A symbolic link anywhere under `src/` (or `src` itself being one) is
+/// an error, not followed: the sources of a dependency must be its own
+/// files, never a link to somewhere else on the machine.
+pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
     let src_root = pkg_root.join("src");
     let mut entries: Vec<(String, String)> = Vec::new();
-    if src_root.is_dir() {
-        collect_silt_files(&src_root, &src_root, &mut entries)?;
+    match fs::symlink_metadata(&src_root) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(ChecksumError::Symlink(PathBuf::from("src")));
+        }
+        Ok(meta) if meta.is_dir() => {
+            collect_silt_files(pkg_root, &src_root, &mut entries)?;
+        }
+        _ => {}
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -553,144 +238,6 @@ pub(crate) fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::E
 }
 
 // ── Internals ──────────────────────────────────────────────────────────
-
-/// One step of dep-graph resolution: the on-disk root the consumer's
-/// `Lockfile::resolve` BFS should walk into, plus the [`LockedSource`]
-/// that should land in the corresponding [`LockedPackage`].
-///
-/// Bundling these together lets the git arm pass the resolved SHA up
-/// to the BFS without re-running `git::resolve_ref`. For path deps
-/// the source is just `Path { path }`; for git deps it carries the
-/// user's ref intent and the network-resolved SHA.
-struct ResolvedDep {
-    root_path: PathBuf,
-    source: LockedSource,
-}
-
-/// Resolve a [`Dependency`] entry to the on-disk root the BFS should
-/// walk into, plus the [`LockedSource`] for the resulting lockfile entry.
-///
-/// Path deps lexically normalize relative to the consumer's manifest
-/// directory. Git deps run `git ls-remote` to convert branch/tag refs
-/// to a concrete SHA, then `git clone` (atomic via `<dir>.tmp` rename)
-/// into the per-(url, sha) cache directory and return that path.
-///
-/// The `name` is used only for future diagnostics — currently the
-/// caller materializes any `DepNotFound` / `DepNotPackage` errors with
-/// the directory name; git errors are tagged with their URL + ref.
-fn resolve_dep_path(
-    _name: &str,
-    dep: &Dependency,
-    parent_dir: &Path,
-) -> Result<ResolvedDep, LockfileError> {
-    match dep {
-        Dependency::Path { path } => {
-            let abs = normalize_path(&parent_dir.join(path));
-            Ok(ResolvedDep {
-                root_path: abs.clone(),
-                source: LockedSource::Path { path: abs },
-            })
-        }
-        Dependency::Git { url, ref_spec } => {
-            // Resolve user-specified ref (Rev/Branch/Tag) to a concrete
-            // commit SHA. For Rev this is offline; for Branch/Tag it
-            // hits the remote via `git ls-remote`.
-            let resolved_sha =
-                git::resolve_ref(url, ref_spec).map_err(|e| LockfileError::GitOperation {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                    source: e,
-                })?;
-            // Materialise the cache directory. Idempotent — a populated
-            // cache from a previous run is reused without re-cloning.
-            let cache_path = git::fetch_to_cache(url, &resolved_sha).map_err(|e| {
-                LockfileError::GitOperation {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                    source: e,
-                }
-            })?;
-            Ok(ResolvedDep {
-                root_path: cache_path,
-                source: LockedSource::Git {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                    resolved_sha,
-                },
-            })
-        }
-    }
-}
-
-/// Offline variant of [`resolve_dep_path`]: for git deps, looks up the
-/// matching `(url, ref_spec)` entry in `existing` and reuses its stored
-/// `resolved_sha` rather than calling `git ls-remote`. For path deps,
-/// behaves identically to `resolve_dep_path` (path deps are offline).
-///
-/// Returns a [`LockfileError::GitOperation`] wrapping [`GitError::RefNotFound`]
-/// when a git dep in the manifest has no matching entry in `existing`
-/// (by `url` and `ref_spec` equality) — the caller treats this as "lock
-/// is stale, regenerate via the full network path".
-///
-/// Also fails if the cache directory for the resolved SHA is missing its
-/// `silt.toml`: we cannot read the transitive manifest to recurse, so
-/// the offline comparison is incomplete and we fall back to the full
-/// regenerate. In practice `Lockfile::resolve` populates the cache on
-/// the first lock-write, so on steady-state `silt run` invocations the
-/// cache is always present.
-fn resolve_dep_path_offline(
-    _name: &str,
-    dep: &Dependency,
-    parent_dir: &Path,
-    existing: &Lockfile,
-) -> Result<ResolvedDep, LockfileError> {
-    match dep {
-        Dependency::Path { path } => {
-            let abs = normalize_path(&parent_dir.join(path));
-            Ok(ResolvedDep {
-                root_path: abs.clone(),
-                source: LockedSource::Path { path: abs },
-            })
-        }
-        Dependency::Git { url, ref_spec } => {
-            // Find the matching lockfile entry by (url, ref_spec).
-            let matching = existing.packages.iter().find_map(|pkg| match &pkg.source {
-                LockedSource::Git {
-                    url: lu,
-                    ref_spec: lr,
-                    resolved_sha,
-                } if lu == url && lr == ref_spec => Some(resolved_sha.clone()),
-                _ => None,
-            });
-            let resolved_sha = matching.ok_or_else(|| LockfileError::GitOperation {
-                url: url.clone(),
-                ref_spec: ref_spec.clone(),
-                source: GitError::RefNotFound {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                },
-            })?;
-            // Compute the cache path deterministically from (url, sha).
-            // The cache must already be populated — if not, the offline
-            // comparison cannot recurse into the git dep's manifest to
-            // gather transitive deps, so we bail out (caller regenerates).
-            let cache_path =
-                git::cache_for(url, &resolved_sha).map_err(|e| LockfileError::GitOperation {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                    source: e,
-                })?;
-            Ok(ResolvedDep {
-                root_path: cache_path,
-                source: LockedSource::Git {
-                    url: url.clone(),
-                    ref_spec: ref_spec.clone(),
-                    resolved_sha,
-                },
-            })
-        }
-    }
-}
 
 /// Lexically normalize a path: collapse `.` and `..` without touching
 /// the filesystem (we don't `canonicalize` because deps are loaded
@@ -728,23 +275,32 @@ pub fn normalize_path(p: &Path) -> PathBuf {
     out
 }
 
-fn manifest_dir(manifest: &Manifest) -> &Path {
-    manifest
-        .manifest_path
-        .parent()
-        .expect("manifest path always has a parent")
+impl From<std::io::Error> for ChecksumError {
+    fn from(e: std::io::Error) -> Self {
+        ChecksumError::Io(e)
+    }
 }
 
+/// Hash the `.silt` files under `dir` into `out`, keyed by their path
+/// relative to `pkg_root`'s `src/`. Nothing is followed: the kind of an
+/// entry is read from the entry itself, and a link is an error.
 fn collect_silt_files(
-    base: &Path,
+    pkg_root: &Path,
     dir: &Path,
     out: &mut Vec<(String, String)>,
-) -> Result<(), std::io::Error> {
+) -> Result<(), ChecksumError> {
+    let base = pkg_root.join("src");
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            collect_silt_files(base, &path, out)?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(ChecksumError::Symlink(
+                path.strip_prefix(pkg_root).unwrap_or(&path).to_path_buf(),
+            ));
+        }
+        if kind.is_dir() {
+            collect_silt_files(pkg_root, &path, out)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("silt") {
             let bytes = fs::read(&path)?;
             let mut hasher = Sha256::new();
@@ -754,7 +310,7 @@ fn collect_silt_files(
             // Otherwise checksums computed on Windows wouldn't match
             // those computed on Unix even for identical contents.
             let relpath = path
-                .strip_prefix(base)
+                .strip_prefix(&base)
                 .unwrap_or(&path)
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -853,182 +409,149 @@ fn toml_escape_str(s: &str) -> String {
     out
 }
 
-/// The line and the column of the byte offset `offset` in `text`, both
-/// counted from 1, the column in characters.
-fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
-    let mut end = offset.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let before = &text[..end];
-    let line = before.matches('\n').count() + 1;
-    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    let column = before[line_start..].chars().count() + 1;
-    (line, column)
+/// Why a text is not a lockfile: a message (the TOML parser's keeps its
+/// own line breaks, see [`toml_error_message`]) and the byte range it is
+/// about.
+#[derive(Debug)]
+struct LockParseError {
+    message: String,
+    span: (usize, usize),
 }
 
-fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
+fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
     // We use the toml crate's untyped Value API rather than a typed
     // serde derive because the serde + toml combination requires
     // pulling in additional features. The schema is small enough that
     // the manual extraction below is easy to follow and emits sharper
     // error messages.
     let value: toml::Value = toml::from_str(text).map_err(|e: toml::de::Error| {
-        // Only the parser's message and the position are kept. Its own
-        // rendering of the error quotes the offending line of the file.
-        let position = match e.span() {
-            Some(span) => {
-                let (line, column) = line_and_column(text, span.start);
-                format!("line {line}, column {column}: ")
-            }
-            None => String::new(),
-        };
-        LockfileError::Toml {
-            message: format!("{position}{}", toml_error_message(e.message(), text)),
-            path: path.to_path_buf(),
+        // Only the parser's message is kept. Its own rendering of the
+        // error quotes the offending line of the file.
+        LockParseError {
+            message: toml_error_message(e.message(), text),
+            span: e.span().map_or((0, 0), |r| (r.start, r.end)),
         }
     })?;
+    // The same text as a document, for the byte range of each entry.
+    let doc = toml_edit::ImDocument::parse(text).ok();
+    let entry_span = |index: usize| {
+        doc.as_ref()
+            .and_then(|doc| doc.get("package")?.as_array_of_tables()?.get(index)?.span())
+            .map_or((0, 0), |r| (r.start, r.end))
+    };
+    // A schema message quotes keys and values of the file, so it is
+    // escaped whole: one line, whatever they hold.
+    let whole = |message: String| LockParseError {
+        message: git::escape_for_display(&message),
+        span: (0, 0),
+    };
 
-    let table = value.as_table().ok_or_else(|| LockfileError::Parse {
-        message: "top-level must be a table".to_string(),
-        path: path.to_path_buf(),
-    })?;
+    let table = value
+        .as_table()
+        .ok_or_else(|| whole("top-level must be a table".to_string()))?;
 
     let version = table
         .get("version")
         .and_then(|v| v.as_integer())
-        .ok_or_else(|| LockfileError::Parse {
-            message: "missing or invalid `version`".to_string(),
-            path: path.to_path_buf(),
-        })?;
+        .ok_or_else(|| whole("missing or invalid `version`".to_string()))?;
     if version != 1 {
-        return Err(LockfileError::Parse {
-            message: format!(
-                "unsupported lockfile version {version} (this binary supports version 1)"
-            ),
-            path: path.to_path_buf(),
-        });
+        return Err(whole(format!(
+            "unsupported lockfile version {version} (this binary supports version 1)"
+        )));
     }
 
     let mut packages = Vec::new();
     if let Some(arr) = table.get("package") {
-        let arr = arr.as_array().ok_or_else(|| LockfileError::Parse {
-            message: "`package` must be an array of tables".to_string(),
-            path: path.to_path_buf(),
-        })?;
-        for entry in arr {
-            let entry = entry.as_table().ok_or_else(|| LockfileError::Parse {
-                message: "each [[package]] must be a table".to_string(),
-                path: path.to_path_buf(),
-            })?;
+        let arr = arr
+            .as_array()
+            .ok_or_else(|| whole("`package` must be an array of tables".to_string()))?;
+        for (index, entry) in arr.iter().enumerate() {
+            let bad = |message: String| LockParseError {
+                message: git::escape_for_display(&message),
+                span: entry_span(index),
+            };
+            let entry = entry
+                .as_table()
+                .ok_or_else(|| bad("each [[package]] must be a table".to_string()))?;
             let name = entry
                 .get("name")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| LockfileError::Parse {
-                    message: "[[package]] missing `name`".to_string(),
-                    path: path.to_path_buf(),
-                })?
+                .ok_or_else(|| bad("[[package]] missing `name`".to_string()))?
                 .to_string();
             let version_str = entry
                 .get("version")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| LockfileError::Parse {
-                    message: format!("[[package]] `{name}` missing `version`"),
-                    path: path.to_path_buf(),
-                })?
+                .ok_or_else(|| bad(format!("[[package]] `{name}` missing `version`")))?
                 .to_string();
-            let (source, checksum) = match entry.get("source") {
-                None => (LockedSource::Local, String::new()),
+            let checksum = || {
+                entry
+                    .get("checksum")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .ok_or_else(|| bad(format!("[[package]] `{name}` has source but no checksum")))
+            };
+            let source = match entry.get("source") {
+                None => LockedSource::Local,
                 Some(src) => {
-                    let src_table = src.as_table().ok_or_else(|| LockfileError::Parse {
-                        message: format!("[[package]] `{name}` `source` must be a table"),
-                        path: path.to_path_buf(),
+                    let src_table = src.as_table().ok_or_else(|| {
+                        bad(format!("[[package]] `{name}` `source` must be a table"))
                     })?;
                     if let Some(p) = src_table.get("path").and_then(|v| v.as_str()) {
-                        let checksum = entry
-                            .get("checksum")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| LockfileError::Parse {
-                                message: format!("[[package]] `{name}` has source but no checksum"),
-                                path: path.to_path_buf(),
-                            })?
-                            .to_string();
-                        (
-                            LockedSource::Path {
-                                path: PathBuf::from(p),
-                            },
-                            checksum,
-                        )
+                        LockedSource::Path {
+                            path: PathBuf::from(p),
+                        }
                     } else if let Some(url) = src_table.get("git").and_then(|v| v.as_str()) {
-                        // Required: `rev` (always the resolved SHA).
+                        // Required: `rev` (always the resolved commit).
                         // Optional: at most one of `branch` or `tag` to
                         // recover the user's original ref intent.
                         let resolved_sha = src_table
                             .get("rev")
                             .and_then(|v| v.as_str())
-                            .ok_or_else(|| LockfileError::Parse {
-                                message: format!(
-                                    "[[package]] `{name}` git source missing `rev` (the resolved SHA)"
-                                ),
-                                path: path.to_path_buf(),
+                            .ok_or_else(|| {
+                                bad(format!(
+                                    "[[package]] `{name}` git source missing `rev` (the resolved commit id)"
+                                ))
                             })?
                             .to_string();
                         // `rev` names the cache directory the package is
                         // loaded from. A hand-edited value such as
                         // `../../../../x` would make silt load code from
-                        // an arbitrary directory, so only a plain
-                        // hexadecimal commit id is accepted.
-                        if !git::is_valid_sha_shape(&resolved_sha) {
-                            return Err(LockfileError::Parse {
-                                message: format!(
-                                    "[[package]] `{name}` git source has invalid `rev` `{}`: \
-                                     expected a commit SHA of 7 to 64 hexadecimal characters",
-                                    git::escape_for_display(&resolved_sha)
-                                ),
-                                path: path.to_path_buf(),
-                            });
+                        // an arbitrary directory, and a prefix could name
+                        // a tag, so only a full commit id is accepted.
+                        if !git::is_full_commit_id(&resolved_sha) {
+                            return Err(bad(format!(
+                                "[[package]] `{name}` git source has invalid `rev` `{resolved_sha}`: \
+                                 expected a full commit id of 40 or 64 hexadecimal characters"
+                            )));
                         }
                         let branch = src_table.get("branch").and_then(|v| v.as_str());
                         let tag = src_table.get("tag").and_then(|v| v.as_str());
                         let ref_spec = match (branch, tag) {
                             (Some(_), Some(_)) => {
-                                return Err(LockfileError::Parse {
-                                    message: format!(
-                                        "[[package]] `{name}` git source has both `branch` and \
-                                         `tag` (only one is allowed)"
-                                    ),
-                                    path: path.to_path_buf(),
-                                });
+                                return Err(bad(format!(
+                                    "[[package]] `{name}` git source has both `branch` and \
+                                     `tag` (only one is allowed)"
+                                )));
                             }
                             (Some(b), None) => GitRef::Branch(b.to_string()),
                             (None, Some(t)) => GitRef::Tag(t.to_string()),
                             (None, None) => GitRef::Rev(resolved_sha.clone()),
                         };
-                        let checksum = entry
-                            .get("checksum")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| LockfileError::Parse {
-                                message: format!("[[package]] `{name}` has source but no checksum"),
-                                path: path.to_path_buf(),
-                            })?
-                            .to_string();
-                        (
-                            LockedSource::Git {
-                                url: url.to_string(),
-                                ref_spec,
-                                resolved_sha,
-                            },
-                            checksum,
-                        )
+                        LockedSource::Git {
+                            url: url.to_string(),
+                            ref_spec,
+                            resolved_sha,
+                        }
                     } else {
-                        return Err(LockfileError::Parse {
-                            message: format!(
-                                "[[package]] `{name}` source is unrecognized (expected `path` or `git`)"
-                            ),
-                            path: path.to_path_buf(),
-                        });
+                        return Err(bad(format!(
+                            "[[package]] `{name}` source is unrecognized (expected `path` or `git`)"
+                        )));
                     }
                 }
+            };
+            let checksum = match source {
+                LockedSource::Local => String::new(),
+                _ => checksum()?,
             };
             packages.push(LockedPackage {
                 name,
@@ -1074,7 +597,7 @@ mod tests {
         let text = render_lockfile(&lock);
         assert!(text.starts_with(LOCKFILE_HEADER));
         assert!(text.contains("[[package]]"));
-        let parsed = parse_lockfile(&text, Path::new("test.lock")).unwrap();
+        let parsed = parse_lockfile(&text).unwrap();
         assert_eq!(parsed, lock);
     }
 
@@ -1108,8 +631,11 @@ mod tests {
     #[test]
     fn rejects_unknown_version() {
         let bad = "version = 999\n";
-        let err = parse_lockfile(bad, Path::new("x.lock")).unwrap_err();
-        assert!(matches!(err, LockfileError::Parse { .. }));
+        let err = parse_lockfile(bad).unwrap_err();
+        assert!(
+            err.message.contains("unsupported lockfile version"),
+            "{err:?}"
+        );
     }
 
     /// A lockfile with one git package whose `rev` is `rev`.
@@ -1123,156 +649,85 @@ mod tests {
     }
 
     #[test]
-    fn rejects_git_rev_that_is_not_a_commit_id() {
+    fn rejects_git_rev_that_is_not_a_full_commit_id() {
         // `rev` names the cache directory a package is loaded from, so
-        // a path-shaped value must never survive parsing.
-        for rev in ["../../../../x", "abc1234/../x", "-abc1234", "main", ""] {
+        // a path-shaped value must never survive parsing, and a prefix
+        // (which could name a tag) is not a pin.
+        for rev in [
+            "../../../../x",
+            "abc1234/../x",
+            "-abc1234",
+            "main",
+            "",
+            "abc1234",
+        ] {
             let text = lockfile_with_git_rev(rev);
-            match parse_lockfile(&text, Path::new("x.lock")) {
-                Err(LockfileError::Parse { message, .. }) => assert!(
-                    message.contains("`remote`") && message.contains("invalid `rev`"),
-                    "unexpected message for rev {rev:?}: {message}"
-                ),
+            match parse_lockfile(&text) {
+                Err(LockParseError { message, span }) => {
+                    assert!(
+                        message.contains("`remote`") && message.contains("invalid `rev`"),
+                        "unexpected message for rev {rev:?}: {message}"
+                    );
+                    // The entry, not the start of the file.
+                    assert!(
+                        text[span.0..span.1].contains("[[package]]") || span.0 > 0,
+                        "{span:?}"
+                    );
+                }
                 other => panic!("rev {rev:?} must be a parse error, got {other:?}"),
             }
         }
     }
 
-    #[test]
-    fn git_operation_error_escapes_the_url_and_the_ref() {
-        let hostile = "main\nFORGED\u{1b}[2K\u{202e}";
-        let escaped = "main\\nFORGED\\u{1b}[2K\\u{202e}";
-        for ref_spec in [
-            GitRef::Branch(hostile.into()),
-            GitRef::Tag(hostile.into()),
-            GitRef::Rev(hostile.into()),
-        ] {
-            let rendered = LockfileError::GitOperation {
-                url: format!("https://example.com/{hostile}"),
-                ref_spec: ref_spec.clone(),
-                source: GitError::RefNotFound {
-                    url: "https://example.com/pkg.git".into(),
-                    ref_spec,
-                },
-            }
-            .to_string();
-            assert!(
-                rendered.is_ascii() && !rendered.chars().any(|c| c.is_control()),
-                "the rendered error must be one printable line: {rendered:?}"
-            );
-            // Once for the URL, once for the ref, once in the source.
-            assert_eq!(rendered.matches(escaped).count(), 3, "{rendered}");
-        }
-    }
-
-    const HOSTILE: &str = "x\nerror: FORGED\u{1b}[2K\u{202e}";
     const HOSTILE_ESCAPED: &str = "x\\nerror: FORGED\\u{1b}[2K\\u{202e}";
 
-    #[test]
-    fn every_error_variant_escapes_its_whole_message() {
-        let path = PathBuf::from(format!("/srv/{HOSTILE}"));
-        // The file the parser's message is about: it holds the value
-        // as an escape sequence.
-        let source = "\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n";
-        let errors = [
-            LockfileError::Io(
-                std::io::Error::new(std::io::ErrorKind::NotFound, HOSTILE),
-                path.clone(),
-            ),
-            LockfileError::Toml {
-                message: toml_error_message(&format!("duplicate key `{HOSTILE}`"), source),
-                path: path.clone(),
-            },
-            LockfileError::Parse {
-                message: format!("[[package]] `{HOSTILE}` missing `version`"),
-                path: path.clone(),
-            },
-            LockfileError::DepNotFound {
-                name: HOSTILE.into(),
-                path: path.clone(),
-            },
-            LockfileError::DepNotPackage {
-                name: HOSTILE.into(),
-                path: path.clone(),
-            },
-            LockfileError::ManifestError(ManifestError::Validation {
-                message: format!("invalid package version `{HOSTILE}`"),
-                path,
-                span: None,
-            }),
-        ];
-        for err in errors {
-            let rendered = err.to_string();
-            assert!(
-                !rendered.chars().any(git::needs_escape),
-                "the message must be one printable line: {rendered:?}"
-            );
-            // Once in the path, once in the rest of the message.
-            assert_eq!(rendered.matches(HOSTILE_ESCAPED).count(), 2, "{rendered}");
-        }
+    /// The diagnostic of loading `text` as a lockfile.
+    fn load_error(tag: &str, text: &str) -> Diagnostic {
+        let dir = std::env::temp_dir().join(format!("silt_lock_unit_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("silt.lock");
+        fs::write(&path, text).unwrap();
+        let mut sources = SourceMap::new();
+        let d = Lockfile::load(&path, &mut sources).expect_err("the lockfile must be rejected");
+        let _ = fs::remove_dir_all(&dir);
+        d
     }
 
     #[test]
-    fn git_operation_error_keeps_the_lines_of_git_output_marked() {
-        let rendered = LockfileError::GitOperation {
-            url: "file:///srv/r.git".into(),
-            ref_spec: GitRef::Branch("main".into()),
-            source: GitError::CommandFailed {
-                command: "git ls-remote".into(),
-                stderr: format!("fatal: no\nremote: {HOSTILE}\n"),
-                exit_code: Some(128),
-            },
-        }
-        .to_string();
-        let lines: Vec<&str> = rendered.lines().collect();
-        assert_eq!(
-            lines,
-            [
-                "git dependency `file:///srv/r.git` (branch = `main`): \
-                 git command failed (exit 128): `git ls-remote`",
-                "  git: fatal: no",
-                "  git: remote: x",
-                "  git: error: FORGED\\u{1b}[2K\\u{202e}",
-            ]
+    fn load_error_is_a_printable_diagnostic() {
+        let d = load_error(
+            "name",
+            "version = 1\n\n[[package]]\nname = \"x\\nerror: FORGED\\u001b[2K\\u202e\"\n",
         );
+        assert_eq!(d.code, Code::LockfileInvalid);
+        assert!(d.message.contains(HOSTILE_ESCAPED), "{d:?}");
+        for line in std::iter::once(&d.message).chain(&d.notes) {
+            assert!(!line.chars().any(git::needs_escape), "{line:?}");
+        }
     }
 
     #[test]
     fn toml_parse_error_has_a_position_and_the_lines_of_the_parser() {
         // The offending line holds an escape character and U+202E; the
         // parser's own rendering would quote it. The file holds no
-        // escape sequence, so the parser's two lines are kept.
+        // escape sequence, so the parser's lines are kept.
         let text = "version = 1\n\n[[package]]\nname = oops\u{1b}[2K\u{202e} error: FORGED\n";
-        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
-        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
-        let rendered = err.to_string();
-        let lines: Vec<&str> = rendered.lines().collect();
-        assert_eq!(lines.len(), 2, "{rendered:?}");
-        assert!(
-            lines[0].starts_with("invalid lockfile x.lock: line 4, column 8: invalid "),
-            "{rendered}"
-        );
-        assert!(lines[1].starts_with("expected "), "{rendered}");
-        assert!(
-            !rendered.chars().any(|c| c != '\n' && git::needs_escape(c))
-                && !rendered.contains("FORGED"),
-            "{rendered:?}"
-        );
+        let err = parse_lockfile(text).unwrap_err();
+        assert!(err.message.lines().count() >= 2, "{err:?}");
+        assert!(!err.message.contains("FORGED"), "{err:?}");
+        // On the fourth line, at `oops`.
+        assert_eq!(&text[err.span.0..err.span.0 + 4], "oops", "{err:?}");
 
         // A key is quoted in the parser's message, and the key holds a
         // line break: one line.
         let text = "version = 1\n\"x\\nerror: FORGED\\u001b[2K\\u202e\" = 1\n\
                     \"x\\nerror: FORGED\\u001b[2K\\u202e\" = 2\n";
-        let err = parse_lockfile(text, Path::new("x.lock")).unwrap_err();
-        assert!(matches!(err, LockfileError::Toml { .. }), "{err:?}");
-        let rendered = err.to_string();
+        let d = load_error("dupkey", text);
+        assert!(d.notes.is_empty(), "{d:?}");
         assert!(
-            rendered.starts_with("invalid lockfile x.lock: line 3, column 1: "),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains(HOSTILE_ESCAPED) && !rendered.chars().any(git::needs_escape),
-            "{rendered:?}"
+            d.message.contains(HOSTILE_ESCAPED) && !d.message.chars().any(git::needs_escape),
+            "{d:?}"
         );
     }
 
@@ -1305,23 +760,10 @@ mod tests {
     }
 
     #[test]
-    fn line_and_column_count_from_one_in_characters() {
-        let text = "ab\n\u{e9}\u{65e5}c\n";
-        assert_eq!(line_and_column(text, 0), (1, 1));
-        assert_eq!(line_and_column(text, 2), (1, 3));
-        assert_eq!(line_and_column(text, 3), (2, 1));
-        // `c` follows a two-byte and a three-byte character.
-        assert_eq!(line_and_column(text, 8), (2, 3));
-        // Inside a character, and past the end.
-        assert_eq!(line_and_column(text, 4), (2, 1));
-        assert_eq!(line_and_column(text, 99), (3, 1));
-    }
-
-    #[test]
     fn accepts_git_rev_of_either_hash_width() {
-        for rev in ["abc1234".to_string(), "a".repeat(40), "b".repeat(64)] {
+        for rev in ["a".repeat(40), "b".repeat(64)] {
             let text = lockfile_with_git_rev(&rev);
-            let lock = parse_lockfile(&text, Path::new("x.lock")).expect("valid rev parses");
+            let lock = parse_lockfile(&text).expect("valid rev parses");
             assert_eq!(
                 lock.packages[0].source,
                 LockedSource::Git {
@@ -1331,6 +773,31 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checksum_rejects_a_symlink_in_the_sources() {
+        let dir = std::env::temp_dir().join(format!("silt_lockfile_link_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pkg/src/inner")).unwrap();
+        fs::write(dir.join("outside.silt"), b"pub fn f() { 1 }\n").unwrap();
+        std::os::unix::fs::symlink(dir.join("outside.silt"), dir.join("pkg/src/inner/lib.silt"))
+            .unwrap();
+        match checksum_path_source(&dir.join("pkg")) {
+            Err(ChecksumError::Symlink(path)) => {
+                assert_eq!(path, Path::new("src/inner/lib.silt"));
+            }
+            other => panic!("a link in src/ must be rejected, got {other:?}"),
+        }
+        // `src` itself a link.
+        fs::create_dir_all(dir.join("pkg2")).unwrap();
+        std::os::unix::fs::symlink(dir.join("pkg/src"), dir.join("pkg2/src")).unwrap();
+        assert!(matches!(
+            checksum_path_source(&dir.join("pkg2")),
+            Err(ChecksumError::Symlink(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

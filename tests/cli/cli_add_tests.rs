@@ -694,9 +694,9 @@ fn test_add_git_nonexistent_branch_errors() {
     );
 }
 
-/// Real repo + real branch — the actual happy path. PR 3 wires git
-/// resolution into `Lockfile::resolve`, so `silt add --git --branch`
-/// now writes both the manifest AND a complete `silt.lock` containing
+/// Real repo + real branch — the actual happy path. `silt add --git
+/// --branch` resolves the package graph, so it writes both the
+/// manifest AND a complete `silt.lock` containing
 /// the resolved SHA. We point at a local bare git repo (built on the
 /// fly) holding a tiny silt package so the test stays self-contained.
 #[test]

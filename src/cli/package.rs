@@ -9,136 +9,76 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use silt::diagnostic::Diagnostic;
 use silt::intern::{self, Symbol};
-use silt::lockfile::{Lockfile, LockfileError};
-use silt::manifest::{Manifest, ManifestError};
+use silt::manifest::Manifest;
+use silt::package_graph::{LockChange, LockPolicy, resolve_packages};
+use silt::source::SourceMap;
+
+/// Package diagnostics and the source map holding the manifests and
+/// lockfile they point into.
+pub(crate) struct PackageFailure {
+    pub(crate) sources: SourceMap,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+}
 
 /// Walk up from `start` looking for the nearest `silt.toml`. Returns the
 /// project root directory and the loaded `Manifest` if found, or `None`
 /// if no manifest is reachable before the filesystem root.
 ///
-/// Replaces the heuristic `project_anchor()` which looked for `silt.toml`
-/// OR `.git`. With first-class manifest support, only `silt.toml` matters
-/// for project boundaries.
-pub fn find_project_root(start: &Path) -> Result<Option<(PathBuf, Manifest)>, ManifestError> {
+/// Only `silt.toml` marks a project boundary.
+pub(crate) fn find_project_root(
+    start: &Path,
+) -> Result<Option<(PathBuf, Manifest)>, PackageFailure> {
     match Manifest::find(start) {
         Some(dir) => {
-            let manifest = Manifest::load(&dir.join("silt.toml"))?;
-            Ok(Some((dir, manifest)))
+            let mut sources = SourceMap::new();
+            match Manifest::load(&dir.join("silt.toml"), &mut sources) {
+                Ok(manifest) => Ok(Some((dir, manifest))),
+                Err(d) => Err(PackageFailure {
+                    sources,
+                    diagnostics: vec![d],
+                }),
+            }
         }
         None => Ok(None),
     }
 }
 
-/// Print a manifest error to stderr and exit. Used by callers that need
-/// the manifest to proceed (e.g. `silt run` resolving the entry point).
-/// An error at a place in `silt.toml` is shown there, like any other
-/// diagnostic; one that has no place (the file cannot be read) is a
-/// line of its own.
-pub(crate) fn die_on_manifest_error(err: ManifestError) -> ! {
-    match manifest_diagnostic(&err) {
-        Some((sources, d)) if MANIFEST_ERRORS_AS_JSON.load(Ordering::Relaxed) => {
-            let json = serde_json::Value::Array(vec![silt::diagnostic::render_json(&sources, &d)]);
-            println!("{json}");
-        }
-        Some((sources, d)) => eprintln!("{}", silt::diagnostic::render_human(&sources, &d)),
-        None => eprintln!("error: {err}"),
+/// Print package diagnostics to stderr (or as JSON on stdout, see
+/// [`print_manifest_errors_as_json`]) and exit 1. Used by callers that
+/// need the manifest or the package graph to proceed.
+pub(crate) fn die_on_manifest_error(failure: PackageFailure) -> ! {
+    let PackageFailure {
+        sources,
+        diagnostics,
+    } = failure;
+    if MANIFEST_ERRORS_AS_JSON.load(Ordering::Relaxed) {
+        let json = serde_json::Value::Array(
+            diagnostics
+                .iter()
+                .map(|d| silt::diagnostic::render_json(&sources, d))
+                .collect(),
+        );
+        println!("{json}");
+    } else {
+        silt::diagnostic::eprint_all(&sources, &diagnostics);
     }
     process::exit(1);
 }
 
-/// Whether a manifest error is printed as `silt check --format json`
+/// Whether package errors are printed as `silt check --format json`
 /// prints its diagnostics, on stdout. Set by `silt check --format json`.
 static MANIFEST_ERRORS_AS_JSON: AtomicBool = AtomicBool::new(false);
 
-/// Print manifest errors as JSON on stdout from now on.
+/// Print package errors as JSON on stdout from now on.
 pub(crate) fn print_manifest_errors_as_json() {
     MANIFEST_ERRORS_AS_JSON.store(true, Ordering::Relaxed);
 }
 
-/// How a manifest's path is shown: relative to the working directory,
-/// with `..` when the manifest is above it (`silt check main.silt` run in
-/// `src/` shows `../silt.toml`), else as it is.
-fn manifest_path_for_display(path: &Path) -> PathBuf {
-    let (Ok(cwd), Ok(path)) = (
-        std::env::current_dir().and_then(std::fs::canonicalize),
-        std::fs::canonicalize(path),
-    ) else {
-        return path.to_path_buf();
-    };
-    let common = cwd
-        .components()
-        .zip(path.components())
-        .take_while(|(a, b)| a == b)
-        .count();
-    // Only the root in common: the absolute path says more.
-    if common <= 1 {
-        return path;
-    }
-    let mut shown = PathBuf::new();
-    for _ in cwd.components().skip(common) {
-        shown.push("..");
-    }
-    shown.extend(path.components().skip(common));
-    shown
-}
-
-/// The diagnostic for `err` and the source map holding the manifest it
-/// points into, when the error has a place in a file that can be read.
-/// The message names no path: the `-->` line does. Like every manifest
-/// text, it is shown by the display rule.
-fn manifest_diagnostic(
-    err: &ManifestError,
-) -> Option<(silt::source::SourceMap, silt::diagnostic::Diagnostic)> {
-    use silt::diagnostic::{Code, Diagnostic};
-    use silt::source::{SourceMap, SourceName, Span};
-    // The TOML parser's message is shown line by line, as
-    // `manifest::toml_error_message` prepares it; a validation message is
-    // one line, whatever the values it quotes hold.
-    let (lines, path, (start, end)): (Vec<String>, _, _) = match err {
-        ManifestError::Parse {
-            message,
-            path,
-            span: Some(span),
-        } => (
-            message.lines().map(silt::git::escape_for_display).collect(),
-            path,
-            *span,
-        ),
-        ManifestError::Validation {
-            message,
-            path,
-            span: Some(span),
-        } => (vec![silt::git::escape_for_display(message)], path, *span),
-        _ => return None,
-    };
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut sources = SourceMap::new();
-    let file = sources.add(
-        SourceName::Manifest(manifest_path_for_display(path)),
-        text.into(),
-    );
-    let mut lines = lines.into_iter();
-    let head = lines.next().unwrap_or_default();
-    let span = Span {
-        file,
-        start: start as u32,
-        end: end as u32,
-    };
-    let mut d = Diagnostic::error(
-        Code::ManifestInvalid,
-        span,
-        format!("invalid manifest: {head}"),
-    );
-    d.notes.extend(lines);
-    Some((sources, d))
-}
-
 /// Synthetic package name used when compiling a `.silt` file outside any
-/// silt package (REPL-style invocations, ad-hoc scripts, the
-/// `silt run script.silt` legacy path). Matches what
-/// `Compiler::with_project_root` used internally pre-PR-4 so any
-/// downstream code keying on the local package name keeps working.
+/// silt package (ad-hoc scripts): `import foo` resolves to a sibling
+/// `foo.silt`.
 const ANONYMOUS_LOCAL_PACKAGE: &str = "__local__";
 
 /// Derive the package_roots map and local-package symbol the compiler
@@ -146,26 +86,20 @@ const ANONYMOUS_LOCAL_PACKAGE: &str = "__local__";
 ///
 /// Two modes:
 ///   - `path` lives inside a silt package (manifest reachable above its
-///     parent): we resolve the dep tree from `silt.lock`, optionally
-///     auto-regenerating the lock if it's missing or stale (controlled
-///     by `auto_update_lock`). The local package is registered under
-///     its real name from `silt.toml`; deps are registered under the
-///     names from their respective manifests.
-///   - No manifest reachable: we synthesise a single-root setup under
+///     parent): the package graph is resolved (`package_graph`), with
+///     `silt.lock` rewritten when it no longer pins the graph if
+///     `auto_update_lock`, or only read otherwise. The local package is
+///     registered under its `[package].name`; every dependency under
+///     the key that names it in `[dependencies]`, the root's keys first.
+///   - No manifest reachable: a single-root setup under
 ///     [`ANONYMOUS_LOCAL_PACKAGE`] mapped to the file's parent
-///     directory. This preserves the legacy "ad-hoc script" behavior
-///     where `import foo` resolves to a sibling `foo.silt`.
+///     directory, so `import foo` resolves to a sibling `foo.silt`.
 ///
 /// `auto_update_lock = false` is what `silt fmt` and `silt disasm` use:
-/// they should never mutate the lockfile (read-only operations); if
-/// the lock is missing or stale they just resolve from the existing
-/// (possibly empty) lockfile, which is fine because the local package
-/// always loads regardless and missing deps surface naturally as
-/// import errors.
+/// they never write the lockfile.
 ///
-/// Manifest or lockfile errors are fatal — they're rendered to stderr
-/// and the process exits with code 1. Run/check/test paths can't
-/// proceed without a coherent dep graph.
+/// Package errors are fatal: they're rendered and the process exits
+/// with code 1. Run/check/test can't proceed without a coherent graph.
 pub(crate) fn package_setup_for_file(
     path: &str,
     auto_update_lock: bool,
@@ -177,89 +111,50 @@ pub(crate) fn package_setup_for_file(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
-    match find_project_root(&file_parent) {
-        Ok(Some((root, manifest))) => {
-            let lockfile_path = root.join("silt.lock");
-            let lockfile = if auto_update_lock {
-                ensure_fresh_lockfile(&manifest, &lockfile_path)
-            } else {
-                load_or_resolve_lockfile(&manifest, &lockfile_path)
-            };
-            let package_roots = lockfile.package_roots(&manifest);
-            (manifest.package.name, package_roots)
-        }
-        Ok(None) => fallback_package_setup(&file_parent),
-        Err(e) => die_on_manifest_error(e),
+    let Some(root) = Manifest::find(&file_parent) else {
+        return fallback_package_setup(&file_parent);
+    };
+    let policy = if auto_update_lock {
+        LockPolicy::Update
+    } else {
+        LockPolicy::ReadOnly
+    };
+    let mut sources = SourceMap::new();
+    let graph = match resolve_packages(&root, policy, &mut sources) {
+        Ok(graph) => graph,
+        Err(diagnostics) => die_on_manifest_error(PackageFailure {
+            sources,
+            diagnostics,
+        }),
+    };
+    if graph.lock == LockChange::Updated {
+        eprintln!("Updating silt.lock for new dependencies in silt.toml");
     }
+    // The compiler knows one flat map from import name to source
+    // directory. The root's own keys win; a key of a dependency that the
+    // root does not use is added too, so a dependency's imports of its
+    // own dependencies resolve.
+    let root_node = graph.package(graph.root);
+    let mut roots = HashMap::new();
+    roots.insert(root_node.name, root_node.src.clone());
+    for node in &graph.packages {
+        for (key, dep, _) in &node.deps {
+            roots
+                .entry(*key)
+                .or_insert_with(|| graph.package(*dep).src.clone());
+        }
+    }
+    (root_node.name, roots)
 }
 
 /// Construct the no-package fallback: synthetic local package name
-/// mapped to `dir` so legacy ad-hoc scripts continue to resolve
-/// `import foo` against sibling files.
+/// mapped to `dir` so ad-hoc scripts resolve `import foo` against
+/// sibling files.
 fn fallback_package_setup(dir: &Path) -> (Symbol, HashMap<Symbol, PathBuf>) {
     let local = intern::intern(ANONYMOUS_LOCAL_PACKAGE);
     let mut roots = HashMap::new();
     roots.insert(local, dir.to_path_buf());
     (local, roots)
-}
-
-/// Auto-update path: regenerate `silt.lock` if it's missing or stale
-/// relative to `manifest`. Prints a single notice line to stderr when
-/// a regeneration happens so the user knows the file changed.
-///
-/// Any lockfile error (resolve, parse, write) is fatal. We deliberately
-/// don't fall back silently — a half-resolved lockfile is worse than
-/// no lockfile because it would let imports succeed against stale
-/// content checksums.
-fn ensure_fresh_lockfile(manifest: &Manifest, lockfile_path: &Path) -> Lockfile {
-    let existing = match Lockfile::load(lockfile_path) {
-        Ok(lock) => Some(lock),
-        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => die_on_lockfile_error(e),
-    };
-    let needs_refresh = match &existing {
-        None => true,
-        Some(lock) => !lock.matches_manifest(manifest),
-    };
-    if !needs_refresh {
-        return existing.expect("checked above");
-    }
-    if existing.is_some() {
-        eprintln!("Updating silt.lock for new dependencies in silt.toml");
-    }
-    let fresh = match Lockfile::resolve(manifest) {
-        Ok(l) => l,
-        Err(e) => die_on_lockfile_error(e),
-    };
-    if let Err(e) = fresh.write(lockfile_path) {
-        die_on_lockfile_error(e);
-    }
-    fresh
-}
-
-/// Read-only path: load `silt.lock` if it exists, otherwise resolve
-/// from the manifest in-memory without writing. Used by `silt fmt`
-/// and `silt disasm`, which shouldn't touch the lockfile.
-fn load_or_resolve_lockfile(manifest: &Manifest, lockfile_path: &Path) -> Lockfile {
-    match Lockfile::load(lockfile_path) {
-        Ok(lock) => lock,
-        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => {
-            // No lockfile on disk, but we still need *some* dep map for
-            // the compiler. Resolve in-memory; if that fails the user
-            // gets a clear error (and can run `silt update` to write a
-            // real lock and see the same diagnostic).
-            match Lockfile::resolve(manifest) {
-                Ok(l) => l,
-                Err(e) => die_on_lockfile_error(e),
-            }
-        }
-        Err(e) => die_on_lockfile_error(e),
-    }
-}
-
-pub(crate) fn die_on_lockfile_error(err: LockfileError) -> ! {
-    eprintln!("error: {err}");
-    process::exit(1);
 }
 
 /// What the caller intends to do with the resolved entry point.

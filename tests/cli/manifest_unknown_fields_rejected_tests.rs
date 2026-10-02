@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use silt::manifest::{Manifest, ManifestError};
+use silt::diagnostic::Diagnostic;
+use silt::manifest::Manifest;
+use silt::source::SourceMap;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -34,10 +36,10 @@ fn write_manifest(dir: &Path, contents: &str) -> PathBuf {
     path
 }
 
-fn parse_manifest_str(contents: &str) -> Result<Manifest, ManifestError> {
+fn parse_manifest_str(contents: &str) -> Result<Manifest, Diagnostic> {
     let dir = tempdir();
     let path = write_manifest(&dir, contents);
-    Manifest::load(&path)
+    Manifest::load(&path, &mut SourceMap::new())
 }
 
 #[test]

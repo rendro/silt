@@ -5,15 +5,16 @@
 
 use std::fmt::{self, Write as _};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use silt::git::{EscapedDisplay, EscapingWriter, escape_for_display};
 use silt::intern;
-use silt::lockfile::{Lockfile, normalize_path};
-use silt::manifest::{Manifest, ManifestError, toml_error_message};
+use silt::lockfile::normalize_path;
+use silt::package_graph::{LockPolicy, resolve_packages};
+use silt::source::SourceMap;
 
-use crate::cli::package::find_project_root;
+use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 use crate::cli::paths::relative_from;
 
 /// Why `silt add` failed.
@@ -28,13 +29,14 @@ enum AddError {
     Message(String),
     /// A usage error: the message, then a line pointing at `--help`.
     Usage(String),
-    /// A failure reported by the manifest, the lockfile or git: the
-    /// context (empty for none), then that error's own message, which
-    /// can run over several lines.
+    /// A failure reported by git: the context, then that error's own
+    /// message, which can run over several lines.
     Caused {
         context: String,
         cause: Box<dyn EscapedDisplay>,
     },
+    /// Diagnostics in the manifests or the lockfile.
+    Package(PackageFailure),
 }
 
 impl AddError {
@@ -59,10 +61,12 @@ impl fmt::Display for AddError {
                 write!(f, "Run 'silt add --help' for usage.")
             }
             AddError::Caused { context, cause } => {
-                if !context.is_empty() {
-                    write!(f, "{context}: ")?;
-                }
+                write!(f, "{context}: ")?;
                 f.nested(cause.as_ref())
+            }
+            // Rendered as diagnostics by `dispatch`, never through here.
+            AddError::Package(failure) => {
+                write!(f, "{} package diagnostics", failure.diagnostics.len())
             }
         }
     }
@@ -80,9 +84,9 @@ impl From<&str> for AddError {
     }
 }
 
-impl From<ManifestError> for AddError {
-    fn from(err: ManifestError) -> Self {
-        AddError::caused(String::new(), err)
+impl From<PackageFailure> for AddError {
+    fn from(failure: PackageFailure) -> Self {
+        AddError::Package(failure)
     }
 }
 
@@ -102,11 +106,17 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("                     Must be a valid silt identifier and must not");
         println!("                     collide with a builtin module.");
         println!("  --path <path>      Path to the dep's package root (the directory");
-        println!("                     containing its silt.toml).");
+        println!("                     containing its silt.toml). A relative path is");
+        println!("                     relative to the working directory here and is");
+        println!("                     stored relative to silt.toml.");
         println!("  --git <url>        URL of a git repository hosting a silt package.");
+        println!("                     A local path starting with ./ or ../ is stored");
+        println!("                     relative to silt.toml, like --path.");
         println!("                     Must be paired with exactly one of");
         println!("                     --rev, --branch, or --tag.");
-        println!("  --rev <sha>        Pin to a specific commit SHA (7-64 hex chars).");
+        println!("  --rev <sha>        Pin to a commit: its full id, or a prefix of at");
+        println!("                     least 7 hex chars, which must name exactly one");
+        println!("                     commit (never a tag); silt.lock stores the full id.");
         println!("  --branch <name>    Track a branch; resolved to the current HEAD SHA");
         println!("                     and re-resolved on each `silt update`.");
         println!("  --tag <name>       Track a tag; resolved at lock time and");
@@ -119,9 +129,13 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("  silt add calc --git https://github.com/foo/calc --rev abc1234");
         process::exit(0);
     }
-    if let Err(e) = run_add_command(&args[2..]) {
-        eprintln!("error: {e}");
-        process::exit(1);
+    match run_add_command(&args[2..]) {
+        Ok(()) => {}
+        Err(AddError::Package(failure)) => die_on_manifest_error(failure),
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
     }
 }
 
@@ -417,6 +431,16 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             )
         }
         AddSource::Git { url, ref_spec } => {
+            // A relative local path is relative to the working directory
+            // on the command line, and to the manifest's directory in
+            // silt.toml: it is made absolute here and stored relative to
+            // the manifest below.
+            let local_relative = url.starts_with("./") || url.starts_with("../");
+            let url = if local_relative {
+                normalize_path(&cwd.join(&url)).display().to_string()
+            } else {
+                url
+            };
             // Shape check first, with the same rule `Manifest::load`
             // applies to every `git = "..."` entry. It rejects malformed
             // input ("not a url") without paying for an `ls-remote`
@@ -467,8 +491,16 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // Render the inline table. Key order is fixed (`git` first,
             // then the ref form) so manifests stay diffable across
             // different runs and machines.
+            let stored_url = if local_relative {
+                manifest_relative_url(&root, Path::new(&url))
+            } else {
+                url.clone()
+            };
             let mut inline = toml_edit::InlineTable::new();
-            inline.insert("git", toml_edit::value(url.clone()).into_value().unwrap());
+            inline.insert(
+                "git",
+                toml_edit::value(stored_url.clone()).into_value().unwrap(),
+            );
             let ref_value = ref_spec.as_ref_string().to_string();
             inline.insert(
                 ref_spec.kind(),
@@ -476,7 +508,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             );
             (
                 format!(
-                    "Added dependency '{name}' (git = \"{url}\", {} = \"{ref_value}\")",
+                    "Added dependency '{name}' (git = \"{stored_url}\", {} = \"{ref_value}\")",
                     ref_spec.kind()
                 ),
                 inline,
@@ -498,11 +530,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // file.
     let mut doc = manifest_text
         .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| ManifestError::Parse {
-            message: toml_error_message(e.message(), &manifest_text),
-            path: manifest_path.clone(),
-            span: e.span().map(|range| (range.start, range.end)),
-        })?;
+        .map_err(|e| format!("silt.toml is not TOML: {}", e.message()))?;
 
     // Ensure a `[dependencies]` table exists. If it's missing entirely
     // we create one as an explicit table (so it renders as the
@@ -525,24 +553,33 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
 
     // ── Lockfile regeneration ──────────────────────────────────────────
     //
-    // Re-load the just-written manifest and resolve the lockfile from
-    // it. We deliberately don't reuse the `manifest` we loaded earlier
-    // — toml_edit just rewrote the file, and any future validation
-    // tightening should run against the on-disk form, not a stale
-    // in-memory copy.
-    let updated = Manifest::load(&manifest_path)
-        .map_err(|e| AddError::caused("manifest re-validation failed after edit".to_string(), e))?;
+    // Resolve the package graph from the just-written manifest, which
+    // validates it again and rewrites silt.lock. The pins of the other
+    // dependencies are kept.
 
     // The summary quotes the path or the URL and the ref as they were
     // given on the command line.
     println!("{}", escape_for_display(&success_summary));
 
-    let lockfile = Lockfile::resolve(&updated)
-        .map_err(|e| AddError::caused("failed to resolve dependencies".to_string(), e))?;
-    let lock_path = root.join("silt.lock");
-    lockfile
-        .write(&lock_path)
-        .map_err(|e| AddError::caused(format!("failed to write {}", lock_path.display()), e))?;
+    let mut sources = SourceMap::new();
+    resolve_packages(&root, LockPolicy::Update, &mut sources).map_err(|diagnostics| {
+        AddError::Package(PackageFailure {
+            sources,
+            diagnostics,
+        })
+    })?;
 
     Ok(())
+}
+
+/// The local git URL `url` (absolute) as silt.toml stores it: relative
+/// to the manifest's directory `root`, starting with `./` or `../` so
+/// that it is read as a local path, or absolute when there is no
+/// relative form.
+fn manifest_relative_url(root: &Path, url: &Path) -> String {
+    match relative_from(root, url) {
+        Some(relative) if relative.starts_with("..") => relative.display().to_string(),
+        Some(relative) => format!("./{}", relative.display()),
+        None => url.display().to_string(),
+    }
 }
