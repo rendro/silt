@@ -1385,8 +1385,8 @@ impl Compiler {
         let init_name = format!("<module:{module_name}>");
         self.contexts.push(CompileContext::new(init_name, 0));
 
-        self.collect_type_decls(&program);
-        self.collect_selective_imports(&program);
+        self.collect_type_decls(program);
+        self.collect_selective_imports(program);
 
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
