@@ -13,6 +13,7 @@
 //! compile(file, Entry::Main) -> Program       entry point checked by its type
 //! ```
 
+mod cells;
 mod entry;
 mod graph;
 mod packages;
@@ -24,8 +25,8 @@ use std::sync::Arc;
 
 use crate::ast;
 use crate::bytecode::Function;
-use crate::compiler::{Compiler, ModuleUnit, ProgramUnits};
-use crate::diagnostic::Diagnostic;
+use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::{self, ModuleExports};
@@ -62,7 +63,10 @@ pub enum Entry {
     /// `filter`, each of the type `() -> a`. The program calls nothing;
     /// the test runner calls each test.
     Tests { filter: Option<String> },
-    /// A REPL entry: the declarations, with nothing called.
+    /// A REPL cell, added by [`Session::add_cell`]: its declarations are
+    /// installed, and a cell of statements runs them; the script returns
+    /// their value. Any other file: its declarations, with nothing
+    /// called.
     Cell,
 }
 
@@ -176,8 +180,8 @@ pub struct Session {
     analyses: HashMap<ModuleId, ModuleAnalysis>,
     /// The analysis of each entry asked for, until anything changes.
     results: HashMap<ModuleId, Analysis>,
-    /// The number of REPL cells added.
-    cells: usize,
+    /// The REPL cells added.
+    cells: cells::Cells,
     /// The module files of the project's packages named like builtin
     /// modules, found when the packages are resolved.
     module_name_problems: Vec<Diagnostic>,
@@ -196,7 +200,7 @@ impl Session {
             entry_paths: HashMap::new(),
             analyses: HashMap::new(),
             results: HashMap::new(),
-            cells: 0,
+            cells: cells::Cells::default(),
             module_name_problems: Vec::new(),
         }
     }
@@ -273,15 +277,47 @@ impl Session {
         self.enter_text(path, SourceName::Overlay(path.to_path_buf()), &text)
     }
 
-    /// Add a REPL entry as a file of its own, `<repl:n>`.
+    /// Add a REPL entry as a file of its own, `<repl:n>`: declarations,
+    /// or statements whose value [`Entry::Cell`] returns. It sees what
+    /// the committed cells bind (see [`Session::commit_cell`]).
     pub fn add_cell(&mut self, text: String) -> FileId {
-        self.cells += 1;
-        let n = self.cells;
-        self.enter_text(
-            &PathBuf::from(format!("<repl:{n}>")),
+        self.cells.count += 1;
+        let n = self.cells.count;
+        let file = self.enter_text(
+            &PathBuf::from(graph::cell_name(n)),
             SourceName::Repl(n),
             &text,
-        )
+        );
+        let id = self.module_of(file);
+        if let Some(program) = self.graph.ast_mut(id) {
+            self.cells.prepare(id, n, file, program);
+        }
+        file
+    }
+
+    /// Commit the REPL cell `file`, compiled and run: every cell added
+    /// after it sees what it binds, and the modules it imported are
+    /// installed. A cell that is not committed leaves the session as it
+    /// was.
+    pub fn commit_cell(&mut self, file: FileId) {
+        let id = self.module_of(file);
+        let (Some(analysis), Some(result)) = (self.analyses.get(&id), self.results.get(&id)) else {
+            return;
+        };
+        self.cells.commit(id, &analysis.ast, &result.modules);
+    }
+
+    /// The problems of the project the session is in: its manifests and
+    /// lockfile, and its module files named like builtin modules. Every
+    /// analysis reports them, but a REPL cell's: the REPL shows them
+    /// once, when it starts.
+    pub fn project_problems(&mut self) -> Vec<Diagnostic> {
+        let mut problems = match self.packages() {
+            Ok(_) => Vec::new(),
+            Err(diagnostics) => diagnostics.to_vec(),
+        };
+        problems.extend(self.module_name_problems.iter().cloned());
+        problems
     }
 
     /// Register `text` as the file at `path` and parse it, as an entry
@@ -373,10 +409,27 @@ impl Session {
             .unwrap_or(ast::Program { decls: Vec::new() });
         let mut imports = HashMap::new();
         let mut poisoned = HashSet::new();
+        let mut bugs = Vec::new();
         let mut resolver = Resolver::new();
         for import in &module.imports {
             match &import.resolution {
                 ImportResolution::Builtin => {}
+                ImportResolution::Cell(cell) => match self.analyses.get(cell) {
+                    Some(analysis) => {
+                        imports.insert(import.name, analysis.exports.clone());
+                        resolver.absorb(&analysis.resolver);
+                    }
+                    // A committed cell is checked; this is a bug of the
+                    // session, reported rather than a panic of the REPL.
+                    None => {
+                        poisoned.insert(import.name);
+                        bugs.push(Diagnostic::error(
+                            Code::CompilerBug,
+                            import.span,
+                            format!("silt bug: the REPL entry {} is not checked", import.name),
+                        ));
+                    }
+                },
                 ImportResolution::Module(target) => match self.analyses.get(target) {
                     Some(analysis)
                         if !self.graph.module(*target).failed()
@@ -394,7 +447,12 @@ impl Session {
                 }
             }
         }
-        let check = typechecker::check_module(
+        let check_module = if self.cells.info.contains_key(&id) {
+            typechecker::check_cell
+        } else {
+            typechecker::check_module
+        };
+        let check = check_module(
             &mut ast,
             Some(module.package_name),
             imports,
@@ -405,7 +463,7 @@ impl Session {
             ast: Arc::new(ast),
             exports: check.exports,
             top_level: check.top_level,
-            diagnostics: check.diagnostics,
+            diagnostics: bugs.into_iter().chain(check.diagnostics).collect(),
             resolver: Arc::new(resolver),
         }
     }
@@ -420,13 +478,15 @@ impl Session {
                 out.push(d.clone());
             }
         };
-        if let Some(Err(diagnostics)) = &self.packages {
-            for d in diagnostics {
+        if !self.cells.info.contains_key(&entry) {
+            if let Some(Err(diagnostics)) = &self.packages {
+                for d in diagnostics {
+                    push(d, &mut out);
+                }
+            }
+            for d in &self.module_name_problems {
                 push(d, &mut out);
             }
-        }
-        for d in &self.module_name_problems {
-            push(d, &mut out);
         }
         // The entry's own parse errors, then why an import failed (a
         // module that cannot be read or parsed, a name that resolves to
@@ -541,7 +601,12 @@ impl Session {
                 globals.insert(target, global);
             }
         }
+        let earlier = match target {
+            Entry::Cell if self.cells.info.contains_key(&id) => self.cells.earlier(id, &index),
+            _ => EarlierCells::default(),
+        };
         let units = ProgramUnits {
+            earlier,
             modules: modules
                 .iter()
                 .map(|m| {
@@ -566,7 +631,24 @@ impl Session {
         let mut compiler = Compiler::for_program(units);
         let compiled = match target {
             Entry::Main => compiler.compile_program(&program),
-            Entry::Tests { .. } | Entry::Cell => compiler.compile_declarations(&program),
+            Entry::Tests { .. } => compiler.compile_declarations(&program),
+            Entry::Cell if !self.cells.info.contains_key(&id) => {
+                compiler.compile_declarations(&program)
+            }
+            Entry::Cell => {
+                let cell = &self.cells.info[&id];
+                let program = cell.compiled(&program);
+                let wrapper = cell.wrapper();
+                let statements = program
+                    .decls
+                    .iter()
+                    .any(|decl| matches!(decl, ast::Decl::Fn(f) if resolve(f.name) == wrapper));
+                if statements {
+                    compiler.compile_program_with_entry(&program, &wrapper)
+                } else {
+                    compiler.compile_declarations(&program)
+                }
+            }
         };
         match compiled {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),

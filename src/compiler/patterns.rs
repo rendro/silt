@@ -402,7 +402,8 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                    let global = self.top_level_global(*name);
+                    let name_idx = self.add_constant(Value::String(global), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::GetGlobal, name_idx, span);
                 }
@@ -519,7 +520,8 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                    let global = self.top_level_global(*name);
+                    let name_idx = self.add_constant(Value::String(global), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::GetGlobal, name_idx, span);
                 }

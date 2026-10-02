@@ -81,17 +81,13 @@ impl std::error::Error for VmError {}
 /// (`<script>`, `<call:...>`) are dropped, but `<module:...>` frames are
 /// kept because they carry useful provenance for module-init errors —
 /// the call site that triggered the module's load and the source file
-/// that owns the failing top-level statement.  `<repl>` frames are kept
-/// for the same reason: the REPL relabels its synthetic `__repl_eval_<n>`
-/// expression wrapper to `<repl>` (src/repl.rs::repl_call_stack_lines)
-/// so the frame still marks the top-level REPL call site without leaking
-/// the internal wrapper name.  Each returned line is already prefixed
-/// with "  -> " and has no trailing newline.
+/// that owns the failing top-level statement.  `<repl:n>` frames are kept
+/// for the same reason: the function that holds the statements of the
+/// REPL's `n`th entry marks the call site the user typed.  Each returned
+/// line is already prefixed with "  -> " and has no trailing newline.
 ///
 /// `format_frame` turns a (name, span) pair into its location string —
-/// callers pass the exact formatting they want (e.g. `file:line:col` for
-/// `silt run`, `<declaration>` for REPL frames whose line numbers would
-/// be misleading after span adjustment).
+/// callers pass the exact formatting they want (e.g. `file:line:col`).
 ///
 /// Returns an empty vec when the filtered stack is too short to be
 /// informative (a single-frame stack would just restate the error site).
@@ -102,7 +98,7 @@ where
     let meaningful: Vec<&(String, Span)> = call_stack
         .iter()
         .filter(|(name, _)| {
-            !name.starts_with('<') || name.starts_with("<module:") || name == "<repl>"
+            !name.starts_with('<') || name.starts_with("<module:") || name.starts_with("<repl:")
         })
         .collect();
     let any_real_span = meaningful.iter().any(|(_, s)| s.is_in_source());

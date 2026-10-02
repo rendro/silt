@@ -25,7 +25,6 @@ mod manifest_unknown_fields_rejected_tests;
 mod package_graph_lock_tests;
 mod repl_completion_short_commands_tests;
 mod repl_error_render_and_keywords_tests;
-mod repl_is_declaration_mod_tests;
 mod repl_keyword_parity_with_lexer_tests;
 mod round73_cli_help_gaps_tests;
 mod round75_silt_init_builtin_collision_tests;

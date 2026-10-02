@@ -1,0 +1,12 @@
+-- verdict: same
+-- A type imported from a module that writes its Display impl: the
+-- importer does not derive Display for it again (it used to fail with
+-- "duplicate implementation of trait 'Display' for type 'Tag'"), and the
+-- written impl is the one called.
+import types.{ Tag }
+
+fn main() {
+  let t = Tag { name: "silt" }
+  println(t.display())
+  println("{t.display()}")
+}

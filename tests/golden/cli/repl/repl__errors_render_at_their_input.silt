@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: let a = 1\nfn k() {\n  let s: String = a\n  s\n}\n1 +\nfn d(n) {\n  10 / n\n}\nd(a - 1)\n:quit\n
+-- Each input is a file of its own, `<repl:n>`: a diagnostic is shown at
+-- the line and column of the input it is in, the current one or an
+-- earlier one, and so is each frame of a call stack.
