@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::ast;
 use crate::bytecode::Function;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::{self, ModuleExports};
@@ -415,15 +415,27 @@ impl Session {
             .unwrap_or(ast::Program { decls: Vec::new() });
         let mut imports = HashMap::new();
         let mut poisoned = HashSet::new();
+        let mut bugs = Vec::new();
         let mut resolver = Resolver::new();
         for import in &module.imports {
             match &import.resolution {
                 ImportResolution::Builtin => {}
-                ImportResolution::Cell(cell) => {
-                    let analysis = &self.analyses[cell];
-                    imports.insert(import.name, analysis.exports.clone());
-                    resolver.absorb(&analysis.resolver);
-                }
+                ImportResolution::Cell(cell) => match self.analyses.get(cell) {
+                    Some(analysis) => {
+                        imports.insert(import.name, analysis.exports.clone());
+                        resolver.absorb(&analysis.resolver);
+                    }
+                    // A committed cell is checked; this is a bug of the
+                    // session, reported rather than a panic of the REPL.
+                    None => {
+                        poisoned.insert(import.name);
+                        bugs.push(Diagnostic::error(
+                            Code::CompilerBug,
+                            import.span,
+                            format!("silt bug: the REPL entry {} is not checked", import.name),
+                        ));
+                    }
+                },
                 ImportResolution::Module(target) => match self.analyses.get(target) {
                     Some(analysis)
                         if !self.graph.module(*target).failed()
@@ -457,7 +469,7 @@ impl Session {
             ast: Arc::new(ast),
             exports: check.exports,
             top_level: check.top_level,
-            diagnostics: check.diagnostics,
+            diagnostics: bugs.into_iter().chain(check.diagnostics).collect(),
             resolver: Arc::new(resolver),
         }
     }
