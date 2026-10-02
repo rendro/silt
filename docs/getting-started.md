@@ -224,6 +224,8 @@ silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dep
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to automatically re-run on `.silt` file changes.
 
+`silt repl` checks each input as `silt check` checks a file, and runs it. It sees the directory it was started in as a script does: `import shapes` loads `shapes.silt` beside it, or `src/shapes.silt` and the dependencies of the package there. An input sees what the inputs before it define; an input with an error is dropped and changes nothing. Defining a function or a `let` again makes a new definition for the inputs after it: code from earlier inputs keeps the definition it was written against. Errors are shown at `<repl:n>:line:col`, the `n`th input.
+
 ### Staying up to date
 
 Run `silt self-update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.

@@ -442,11 +442,10 @@ forbidden. Auto-derived synthetic impls are exempt: the synth pass
 specialises stdlib impls to user-supplied type parameters and never
 races with another package.
 
-The rule is **disabled** in the REPL — anything typechecked without a
-current package treats every decl as local — so quick experiments at the
-prompt aren't punished. The CLI still enforces the rule on every file
-it loads (stand-alone scripts run under a synthetic `__local__`
-package).
+The rule applies to every file silt loads; a stand-alone script is in a
+synthetic `__local__` package. Each REPL input belongs to the package of
+the directory the REPL was started in (or to `__local__`), so the rule
+applies there too.
 
 ### Allowed: at least one local anchor
 
