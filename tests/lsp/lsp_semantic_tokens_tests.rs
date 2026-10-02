@@ -52,7 +52,7 @@ fn semantic_tokens_full_returns_classified_tokens() {
     let mut abs_line = 0i64;
     let mut abs_start = 0i64;
     let mut types: Vec<u64> = Vec::new();
-    for chunk in data.chunks_exact(5) {
+    for chunk in data.as_chunks::<5>().0 {
         let dl = chunk[0].as_i64().expect("deltaLine u32");
         let ds = chunk[1].as_i64().expect("deltaStart u32");
         let len = chunk[2].as_i64().expect("length u32");

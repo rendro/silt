@@ -1,7 +1,6 @@
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::types::Severity;
 use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
@@ -30,29 +29,6 @@ fn run_err(input: &str) -> String {
     let mut vm = Vm::new();
     let err = vm.run(script).expect_err("expected runtime error");
     format!("{err}")
-}
-
-/// Like `run`, but asserts that the typechecker produces no hard errors
-/// (warnings are allowed). This catches typechecker regressions that would
-/// incorrectly reject valid code.
-fn run_typed(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let type_errors = silt::typechecker::check(&mut program);
-    let hard_errors: Vec<_> = type_errors
-        .iter()
-        .filter(|e| e.severity == Severity::Error)
-        .collect();
-    assert!(
-        hard_errors.is_empty(),
-        "expected no type errors, got: {:?}",
-        hard_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
-    );
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
 }
 
 // ── Spread in list literals ─────────────────────────────────────────
