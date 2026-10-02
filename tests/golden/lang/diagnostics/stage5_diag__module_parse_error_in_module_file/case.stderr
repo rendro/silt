@@ -1,0 +1,9 @@
+error[parse]: expected expression, found }
+ --> broken.silt:3:1
+   |
+ 3 | }
+   | ^ expected expression, found }
+ ::: main.silt:5:1
+   |
+ 5 | import broken
+   | ------------- module 'broken' is imported here

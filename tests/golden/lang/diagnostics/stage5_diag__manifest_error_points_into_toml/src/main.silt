@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- An invalid manifest is reported at the value in silt.toml.
+fn main() { println("hi") }
