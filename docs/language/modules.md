@@ -45,7 +45,16 @@ pub type Shape {                     -- exports the type and all variants
 ```
 
 When a `pub type` declares enum variants, all constructors are exported with
-it.
+it. A trait is exported with `pub trait`:
+
+```silt
+pub trait Describe {
+  fn describe(self) -> String
+}
+```
+
+An impl is never exported or imported: `trait Describe for Point { ... }`
+applies wherever the trait and the type are used.
 
 ## Imports
 
@@ -57,15 +66,26 @@ import geometry.{ add, Point }    -- direct:     add(1, 2)
 import geometry as g              -- aliased:    g.add(1, 2)
 ```
 
-`import geometry.{ add }` brings only `add` into scope. To also use other
-items as `geometry.sub`, add a separate `import geometry`.
+`import geometry` binds one name, `geometry`, and every member of the
+module is reached through it, in every position:
 
-Qualified paths cover **types** as well as functions: enum constructors
-(`geometry.Circle(2.0)`), record literals (`geometry.Point { x: 1, y: 2 }`),
-and patterns (`geometry.Circle(r) ->`, `geometry.Point { x, .. } ->`) all
-accept the `module.Name` spelling. The qualified and bare forms build and
-match exactly the same values; qualification is how you disambiguate when
-two imported modules export the same type name.
+- functions and values: `geometry.add(1, 2)`;
+- constructors and record literals: `geometry.Circle(2.0)`,
+  `geometry.Shape.Circle(2.0)`, `geometry.Point { x: 1, y: 2 }`;
+- patterns: `geometry.Circle(r) ->`, `geometry.Shape.Circle(r) ->`,
+  `geometry.Point { x, .. } ->`;
+- types: `fn area(s: geometry.Shape)`, `List(geometry.Point)`,
+  `Fn(geometry.Point) -> Int`, `type Shapes = List(geometry.Shape)`;
+- traits: `trait geometry.Describe for Local`, `trait Display for geometry.Point`,
+  `where a: geometry.Describe`, `trait Loud: geometry.Describe`.
+
+`geometry.Circle` works when `Circle` is the only variant of that name
+among the module's exports; `geometry.Shape.Circle` always works.
+
+`import geometry.{ add, Shape }` binds exactly `add` and `Shape`. An enum
+imported this way does not bring its variants: write `Shape.Circle(2.0)`,
+or list `Circle` as well. To also use other items as `geometry.sub`, add a
+separate `import geometry`.
 
 ## Module names and shadowing
 
@@ -172,6 +192,13 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `tcp` | TCP listener and stream primitives |
 | `stream` | Lazy iterators backed by tasks and channels |
 | `uuid` | UUID generation and parsing |
+
+The types and enums of a built-in module are its members like any
+other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
+`channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
+`io.IoNotFound(path)`, `list.Stop(acc)`. Only `Option`, `Result`, `Some`,
+`None`, `Ok` and `Err` need no import. A selective import works for them
+too: `import channel.{ Message }`.
 
 The order of rows matches the order of entries in `BUILTIN_MODULES`; a
 parity-lock test in `tests/meta/round74_modules_doc_lists_all_builtins_tests.rs`

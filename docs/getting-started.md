@@ -160,7 +160,7 @@ anything else:
 ```silt
 match io.read_file("app.json") {
   Ok(content) -> println("loaded {string.length(content)} bytes")
-  Err(IoNotFound(path)) -> println("file does not exist: {path}")
+  Err(io.IoNotFound(path)) -> println("file does not exist: {path}")
   Err(e) -> println("error: {e.message()}")
 }
 ```

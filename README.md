@@ -79,7 +79,7 @@ fn main() {
       Ok(cfg) -> println("loaded: {cfg.name}")
       Err(e) -> println("parse error: {e.message()}")
     }
-    Err(IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
+    Err(io.IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
     Err(e) -> println("read error: {e.message()}")
   }
 }
@@ -100,20 +100,20 @@ type Todo { id: Int, title: String, done: Bool }
 fn main() {
   http.serve(8080, { req ->
     match (req.method, http.segments(req.path)) {
-      (GET, ["todos"]) -> {
+      (http.GET, ["todos"]) -> {
         let todos = [
           Todo { id: 1, title: "Learn silt", done: true },
           Todo { id: 2, title: "Build an API", done: false },
         ]
-        Response { status: 200, body: json.stringify(todos), headers: #{} }
+        http.Response { status: 200, body: json.stringify(todos), headers: #{} }
       }
-      (POST, ["todos"]) ->
+      (http.POST, ["todos"]) ->
         match json.parse(req.body, Todo) {
-          Ok(todo) -> Response { status: 201, body: json.stringify(todo), headers: #{} }
-          Err(e) -> Response { status: 400, body: e.message(), headers: #{} }
+          Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
         }
       _ ->
-        Response { status: 404, body: "Not found", headers: #{} }
+        http.Response { status: 404, body: "Not found", headers: #{} }
     }
   })
 }

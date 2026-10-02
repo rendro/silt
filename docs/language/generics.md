@@ -165,7 +165,7 @@ fn default(type a) -> a where a: Default {
   a.default()
 }
 
-fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode {
+fn parse(body: String, type a) -> Result(a, int.ParseError) where a: Decode {
   a.decode(body)
 }
 
@@ -201,12 +201,12 @@ are grouped contiguously when there are multiple:
 
 ```silt
 -- Correct
-fn parse(body: String, type a) -> Result(a, ParseError)
+fn parse(body: String, type a) -> Result(a, int.ParseError)
 fn cast(x: a, type b) -> b
 fn convert(x: a, type b, type c) -> (b, c)
 
 -- Incorrect — type param before data, won't parse
-fn broken(type a, body: String) -> Result(a, ParseError)
+fn broken(type a, body: String) -> Result(a, int.ParseError)
 ```
 
 The reason is **pipe ergonomics**. Silt's `|>` operator inserts the
@@ -275,7 +275,7 @@ let todo: Todo = json.parse(body, Todo)
 `as`:
 
 ```silt
-let r = (int.parse("42") as Result(Int, ParseError))?
+let r = (int.parse("42") as Result(Int, int.ParseError))?
 [] as List(Int)
 ```
 
@@ -294,8 +294,8 @@ compose naturally:
 -- `json.parse` returns `Result(_, JsonError)`. Wrap each step's error
 -- in a shared enum so the chain composes through `?`:
 type LoadError {
-  Decode(BytesError),
-  Parse(JsonError),
+  Decode(bytes.BytesError),
+  Parse(json.JsonError),
 }
 
 fn load_config(raw_bytes) -> Result(Config, LoadError) {
@@ -673,8 +673,8 @@ fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f)
 ### Type-directed decoding
 
 ```silt
-fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode
-fn from_toml(content: String, type a) -> Result(a, ParseError) where a: Decode
+fn parse(body: String, type a) -> Result(a, int.ParseError) where a: Decode
+fn from_toml(content: String, type a) -> Result(a, int.ParseError) where a: Decode
 
 -- call sites
 let config = from_toml(raw, AppConfig)?

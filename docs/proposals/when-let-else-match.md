@@ -152,7 +152,7 @@ a warning (dead arm).
 
 ```silt
 when let Ok(data) = load() else match load_result {
-  Err(IoNotFound(path)) -> create_default(path)
+  Err(io.IoNotFound(path)) -> create_default(path)
   Err(other) -> panic("load failed: {other.message()}")
 }
 ```
@@ -326,7 +326,7 @@ Arms in the else-match may use `when` guards as in regular match:
 
 ```silt
 when let Ok(n) = parse(s) else match parse(s) {
-  Err(e) when e == ParseEmpty -> return Err("empty input")
+  Err(e) when e == int.ParseEmpty -> return Err("empty input")
   Err(other) -> return Err("bad: {other.message()}")
 }
 ```
@@ -478,11 +478,11 @@ form:
 when let Ok(n) = res else Err(e) -> panic(e.message())
 
 -- Parse error: guards not allowed in short form
-when let Ok(n) = res else Err(e) when e == ParseEmpty -> handle_empty()
+when let Ok(n) = res else Err(e) when e == int.ParseEmpty -> handle_empty()
 
 -- OK (long form with guards)
 when let Ok(n) = res else match res {
-  Err(e) when e == ParseEmpty -> handle_empty()
+  Err(e) when e == int.ParseEmpty -> handle_empty()
   Err(other) -> panic(other.message())
 }
 ```
