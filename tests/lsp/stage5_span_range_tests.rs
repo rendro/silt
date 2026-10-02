@@ -97,3 +97,36 @@ fn wrap_in_ok_wraps_the_whole_expression() {
     assert_eq!(new_text, "Ok(compute(1, 2) + 3)");
     client.shutdown();
 }
+
+/// On the head of an arm's constructor pattern the innermost node with a
+/// type is the scrutinee: hover shows `Shape` and typeDefinition jumps to
+/// `type Shape`, not to the type of the whole match (`Float`).
+#[test]
+fn a_pattern_head_has_the_scrutinee_type() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_stage5_pattern_head.silt";
+    let source = "type Shape { Circle(Float), Square(Float) }\n\
+                  fn area(s: Shape) -> Float {\n  match s {\n    Circle(r) -> r * r\n    Square(w) -> w * w\n  }\n}\n\
+                  fn main() { println(area(Circle(1.0))) }\n";
+    client.did_open_and_wait(uri, source);
+
+    let result = hover(&mut client, uri, 3, 6);
+    let value = result
+        .pointer("/contents/value")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("hover on `Circle` has a result: {result}"));
+    assert!(value.contains("Shape"), "hover on `Circle`: {value}");
+
+    let resp = client.request(
+        "textDocument/typeDefinition",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 3, "character": 6 }
+        }),
+    );
+    let line = resp
+        .pointer("/result/range/start/line")
+        .unwrap_or_else(|| panic!("typeDefinition on `Circle` has a location: {resp}"));
+    assert_eq!(line, 0, "jumps to `type Shape`: {resp}");
+    client.shutdown();
+}
