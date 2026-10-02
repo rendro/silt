@@ -3322,6 +3322,10 @@ mod self_check {
             }
         }
 
+        fn qualifier(&mut self, module: Option<Qualifier>) {
+            self.opt_sym(module.map(|m| m.name));
+        }
+
         fn text(&mut self, text: &str) {
             let _ = write!(self.out, " {text:?}");
         }
@@ -3380,6 +3384,7 @@ mod self_check {
                 }
                 Decl::Trait(t) => {
                     self.open("trait");
+                    self.flag(t.is_pub);
                     self.sym(t.name);
                     self.open("params");
                     for param in &t.params {
@@ -3387,8 +3392,8 @@ mod self_check {
                     }
                     self.close();
                     self.open("supertraits");
-                    for (name, args, _) in &t.supertraits {
-                        self.bound(*name, args);
+                    for r in &t.supertraits {
+                        self.bound(r.module, r.name, &r.args);
                     }
                     self.close();
                     self.where_clauses(&t.param_where_clauses);
@@ -3396,8 +3401,8 @@ mod self_check {
                     for assoc in &t.assoc_types {
                         self.open("type");
                         self.sym(assoc.name);
-                        for (name, args) in &assoc.bounds {
-                            self.bound(*name, args);
+                        for r in &assoc.bounds {
+                            self.bound(r.module, r.name, &r.args);
                         }
                         self.close();
                     }
@@ -3411,8 +3416,9 @@ mod self_check {
                 }
                 Decl::TraitImpl(t) => {
                     self.open("impl");
-                    self.bound(t.trait_name, &t.trait_args);
+                    self.bound(t.trait_module, t.trait_name, &t.trait_args);
                     self.open("for");
+                    self.qualifier(t.target_module);
                     self.sym(t.target_type);
                     for arg in &t.target_type_args {
                         self.type_expr(arg);
@@ -3502,8 +3508,9 @@ mod self_check {
         }
 
         /// A trait with its arguments: `Display`, `TryInto(Int)`.
-        fn bound(&mut self, name: Symbol, args: &[TypeExpr]) {
+        fn bound(&mut self, module: Option<Qualifier>, name: Symbol, args: &[TypeExpr]) {
             self.open("bound");
+            self.qualifier(module);
             self.sym(name);
             for arg in args {
                 self.type_expr(arg);
@@ -3525,7 +3532,7 @@ mod self_check {
                 self.open("var");
                 self.sym(variable);
                 for clause in clauses.iter().filter(|c| c.type_param == variable) {
-                    self.bound(clause.trait_name, &clause.trait_args);
+                    self.bound(clause.trait_module, clause.trait_name, &clause.trait_args);
                 }
                 self.close();
             }
@@ -3541,12 +3548,16 @@ mod self_check {
 
         fn type_expr(&mut self, ty: &TypeExpr) {
             match &ty.kind {
-                TypeExprKind::Named(name) => {
+                TypeExprKind::Named { module, name, .. } => {
                     self.open("named");
+                    self.qualifier(*module);
                     self.sym(*name);
                 }
-                TypeExprKind::Generic(name, args) => {
+                TypeExprKind::Generic {
+                    module, name, args, ..
+                } => {
                     self.open("generic");
+                    self.qualifier(*module);
                     self.sym(*name);
                     for arg in args {
                         self.type_expr(arg);
@@ -3570,11 +3581,13 @@ mod self_check {
                 TypeExprKind::SelfType => self.open("self"),
                 TypeExprKind::AssocProj {
                     receiver,
+                    trait_module,
                     trait_name,
                     assoc_name,
                 } => {
                     self.open("projection");
                     self.type_expr(receiver);
+                    self.qualifier(*trait_module);
                     self.sym(*trait_name);
                     self.sym(*assoc_name);
                 }
@@ -3647,9 +3660,18 @@ mod self_check {
                         self.pattern(elem);
                     }
                 }
-                PatternKind::Constructor { module, name, args } => {
+                PatternKind::Constructor {
+                    qualifier,
+                    name,
+                    args,
+                    ..
+                } => {
                     self.open("constructor");
-                    self.opt_sym(*module);
+                    self.open("qualifier");
+                    for segment in qualifier {
+                        self.sym(segment.name);
+                    }
+                    self.close();
                     self.sym(*name);
                     for arg in args {
                         self.pattern(arg);
@@ -3660,9 +3682,10 @@ mod self_check {
                     name,
                     fields,
                     has_rest,
+                    ..
                 } => {
                     self.open("record");
-                    self.opt_sym(*module);
+                    self.qualifier(*module);
                     self.opt_sym(*name);
                     self.flag(*has_rest);
                     self.field_patterns(fields);
@@ -3896,9 +3919,10 @@ mod self_check {
                     module,
                     name,
                     fields,
+                    ..
                 } => {
                     self.open("record");
-                    self.opt_sym(*module);
+                    self.qualifier(*module);
                     self.sym(*name);
                     self.field_values(fields);
                 }
@@ -4825,14 +4849,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
         for wc in &f.where_clauses {
             let name = &wc.type_param;
-            let trait_name = &wc.trait_name;
-            let trait_args = &wc.trait_args;
-            let rendered = if trait_args.is_empty() {
-                format!("{trait_name}")
-            } else {
-                let args: Vec<String> = trait_args.iter().map(format_type_expr).collect();
-                format!("{trait_name}({})", args.join(", "))
-            };
+            let rendered = format_trait_ref(wc.trait_module, wc.trait_name, &wc.trait_args);
             if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
                 entry.1.push(rendered);
             } else {
@@ -5236,12 +5253,7 @@ fn format_where_clauses(clauses: &[crate::ast::WhereClause]) -> String {
     }
     let mut grouped: Vec<(crate::intern::Symbol, Vec<String>)> = Vec::new();
     for wc in clauses {
-        let rendered = if wc.trait_args.is_empty() {
-            format!("{}", wc.trait_name)
-        } else {
-            let args: Vec<String> = wc.trait_args.iter().map(format_type_expr).collect();
-            format!("{}({})", wc.trait_name, args.join(", "))
-        };
+        let rendered = format_trait_ref(wc.trait_module, wc.trait_name, &wc.trait_args);
         if let Some(entry) = grouped.iter_mut().find(|(n, _)| *n == wc.type_param) {
             entry.1.push(rendered);
         } else {
@@ -5255,8 +5267,20 @@ fn format_where_clauses(clauses: &[crate::ast::WhereClause]) -> String {
     format!(" where {}", parts.join(", "))
 }
 
+/// A trait reference as written: `Display`, `m.Describe`, `TryInto(Int)`.
+fn format_trait_ref(module: Option<Qualifier>, name: Symbol, args: &[TypeExpr]) -> String {
+    let head = Qualifier::written(module, name);
+    if args.is_empty() {
+        head
+    } else {
+        let rendered: Vec<String> = args.iter().map(format_type_expr).collect();
+        format!("{head}({})", rendered.join(", "))
+    }
+}
+
 fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
+    let pub_prefix = if t.is_pub { "pub " } else { "" };
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
     let params = if t.params.is_empty() {
@@ -5272,14 +5296,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
             ": {}",
             t.supertraits
                 .iter()
-                .map(|(name, args, _)| {
-                    if args.is_empty() {
-                        name.to_string()
-                    } else {
-                        let rendered: Vec<String> = args.iter().map(format_type_expr).collect();
-                        format!("{name}({})", rendered.join(", "))
-                    }
-                })
+                .map(|r| format_trait_ref(r.module, r.name, &r.args))
                 .collect::<Vec<_>>()
                 .join(" + ")
         )
@@ -5304,15 +5321,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
                         ": {}",
                         a.bounds
                             .iter()
-                            .map(|(n, args)| {
-                                if args.is_empty() {
-                                    resolve(*n)
-                                } else {
-                                    let rendered: Vec<String> =
-                                        args.iter().map(format_type_expr).collect();
-                                    format!("{}({})", resolve(*n), rendered.join(", "))
-                                }
-                            })
+                            .map(|r| format_trait_ref(r.module, r.name, &r.args))
                             .collect::<Vec<_>>()
                             .join(" + ")
                     )
@@ -5323,12 +5332,12 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     };
     if assoc_lines.is_empty() {
         format!(
-            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}\n{prefix}}}",
+            "{prefix}{pub_prefix}trait {}{params}{supers}{where_clause} {{\n{}\n{prefix}}}",
             t.name, body
         )
     } else {
         format!(
-            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}{}\n{prefix}}}",
+            "{prefix}{pub_prefix}trait {}{params}{supers}{where_clause} {{\n{}{}\n{prefix}}}",
             t.name, assoc_lines, body
         )
     }
@@ -5349,8 +5358,10 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     // just `Head`. Reuses format_type_expr so nested tuple/fn/generic
     // targets (unreachable today per parser rules but cheap future-proof)
     // all render consistently with the rest of the formatter's type path.
+    let target_head = Qualifier::written(t.target_module, t.target_type);
+    let trait_head = Qualifier::written(t.trait_module, t.trait_name);
     let target = if t.target_type_args.is_empty() {
-        t.target_type.to_string()
+        target_head
     } else {
         let args = t
             .target_type_args
@@ -5358,7 +5369,7 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
             .map(format_type_expr)
             .collect::<Vec<_>>()
             .join(", ");
-        format!("{}({args})", t.target_type)
+        format!("{target_head}({args})")
     };
     let assoc_lines = if t.assoc_type_bindings.is_empty() {
         String::new()
@@ -5379,12 +5390,12 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     if assoc_lines.is_empty() {
         format!(
             "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}\n{prefix}}}",
-            t.trait_name, body
+            trait_head, body
         )
     } else {
         format!(
             "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}{}\n{prefix}}}",
-            t.trait_name, assoc_lines, body
+            trait_head, assoc_lines, body
         )
     }
 }
@@ -5848,16 +5859,14 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         module,
         name,
         fields,
+        ..
     } = &expr.kind
     else {
         return None;
     };
     // Qualified head (`util.Pt { ... }`) renders the module prefix the
     // user wrote; the literal is otherwise identical to the bare form.
-    let head = match module {
-        Some(m) => format!("{m}.{name}"),
-        None => format!("{name}"),
-    };
+    let head = Qualifier::written(*module, *name);
     if fields.is_empty() {
         return None;
     }
@@ -6716,6 +6725,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             module,
             name,
             fields,
+            ..
         } => {
             let field_strs: Vec<String> = fields
                 .iter()
@@ -6727,10 +6737,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
                 ""
             };
             // Round 94: preserve the module qualifier the user wrote.
-            let head = match module {
-                Some(m) => format!("{m}.{name}"),
-                None => format!("{name}"),
-            };
+            let head = Qualifier::written(*module, *name);
             format!("{head} {{ {}{trailing} }}", field_strs.join(", "))
         }
 
@@ -6920,16 +6927,22 @@ fn format_pattern(pattern: &Pattern) -> String {
                 format!("({})", items.join(", "))
             }
         }
-        PatternKind::Constructor { module, name, args } => {
+        PatternKind::Constructor {
+            qualifier,
+            name,
+            args,
+            ..
+        } => {
             // Round 94: preserve the qualifier spelling (`Shape.Circle(r)`
-            // / `shapes.Circle(r)`); it round-trips through the parser and
-            // is validated by the typechecker, so dropping it here would
-            // reformat working code into a different (though equivalent)
-            // spelling.
-            let head = match module {
-                Some(m) => format!("{m}.{name}"),
-                None => resolve(*name),
-            };
+            // / `shapes.Circle(r)` / `shapes.Shape.Circle(r)`); it
+            // round-trips through the parser and is validated by the
+            // typechecker, so dropping it here would reformat working code
+            // into a different (though equivalent) spelling.
+            let mut head = String::new();
+            for segment in qualifier {
+                head.push_str(&format!("{}.", segment.name));
+            }
+            head.push_str(&resolve(*name));
             if args.is_empty() {
                 head
             } else {
@@ -6942,6 +6955,7 @@ fn format_pattern(pattern: &Pattern) -> String {
             name,
             fields,
             has_rest,
+            ..
         } => {
             let field_strs: Vec<String> = fields
                 .iter()
@@ -6955,7 +6969,9 @@ fn format_pattern(pattern: &Pattern) -> String {
                 .collect();
             let rest = if *has_rest { ", .." } else { "" };
             match (module, name) {
-                (Some(m), Some(n)) => format!("{m}.{n} {{ {}{rest} }}", field_strs.join(", ")),
+                (Some(m), Some(n)) => {
+                    format!("{}.{n} {{ {}{rest} }}", m.name, field_strs.join(", "))
+                }
                 (_, Some(n)) => format!("{n} {{ {}{rest} }}", field_strs.join(", ")),
                 (_, None) => format!("{{ {}{rest} }}", field_strs.join(", ")),
             }
@@ -7002,10 +7018,16 @@ fn format_pattern(pattern: &Pattern) -> String {
 
 pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
     match &ty.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
+        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => {
             let arg_strs: Vec<String> = args.iter().map(format_type_expr).collect();
-            format!("{name}({})", arg_strs.join(", "))
+            format!(
+                "{}({})",
+                Qualifier::written(*module, *name),
+                arg_strs.join(", ")
+            )
         }
         TypeExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(format_type_expr).collect();
@@ -7018,6 +7040,7 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
         TypeExprKind::SelfType => "Self".to_string(),
         TypeExprKind::AssocProj {
             receiver,
+            trait_module,
             trait_name,
             assoc_name,
         } => {
@@ -7031,7 +7054,7 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
                 format!(
                     "<{} as {}>::{}",
                     format_type_expr(receiver),
-                    resolve(*trait_name),
+                    Qualifier::written(*trait_module, *trait_name),
                     resolve(*assoc_name)
                 )
             }

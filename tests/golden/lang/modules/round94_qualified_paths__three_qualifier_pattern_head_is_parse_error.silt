@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: a pattern head has at most two qualifiers
+fn main() {
+  let m = match 1 {
+    a.b.B.Circle(r) -> 1,
+    _ -> 2,
+  }
+  print(m)
+}

@@ -132,7 +132,9 @@ impl HostModule {
 pub(super) fn shape(ty: &TypeExpr) -> HostShape {
     let boxed = |ty: &TypeExpr| Box::new(shape(ty));
     match &ty.kind {
-        TypeExprKind::Named(name) => match resolve(*name).as_str() {
+        TypeExprKind::Named {
+            module: None, name, ..
+        } => match resolve(*name).as_str() {
             "Int" => HostShape::Int,
             "Float" => HostShape::Float,
             "Bool" => HostShape::Bool,
@@ -140,7 +142,12 @@ pub(super) fn shape(ty: &TypeExpr) -> HostShape {
             "Bytes" => HostShape::Bytes,
             _ => HostShape::Any,
         },
-        TypeExprKind::Generic(name, args) => match (resolve(*name).as_str(), args.as_slice()) {
+        TypeExprKind::Generic {
+            module: None,
+            name,
+            args,
+            ..
+        } => match (resolve(*name).as_str(), args.as_slice()) {
             ("List", [item]) => HostShape::List(boxed(item)),
             ("Set", [item]) => HostShape::Set(boxed(item)),
             ("Map", [k, v]) => HostShape::Map(boxed(k), boxed(v)),
@@ -160,14 +167,14 @@ pub(super) fn shape(ty: &TypeExpr) -> HostShape {
 pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
     match &ty.kind {
         TypeExprKind::Function(..) => true,
-        TypeExprKind::Generic(_, args) | TypeExprKind::Tuple(args) => {
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
             args.iter().any(mentions_function)
         }
         TypeExprKind::AnonRecord { fields, .. } => {
             fields.iter().any(|(_, ty)| mentions_function(ty))
         }
         TypeExprKind::AssocProj { receiver, .. } => mentions_function(receiver),
-        TypeExprKind::Named(_) | TypeExprKind::SelfType => false,
+        TypeExprKind::Named { .. } | TypeExprKind::SelfType => false,
     }
 }
 

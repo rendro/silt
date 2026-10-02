@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
-    RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
+    Qualifier, RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
@@ -92,9 +92,15 @@ fn render_type_expr(te: &TypeExpr) -> String {
             .join(", ")
     }
     match &te.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
-            format!("{}({})", resolve(*name), render_list(args))
+        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => {
+            format!(
+                "{}({})",
+                Qualifier::written(*module, *name),
+                render_list(args)
+            )
         }
         TypeExprKind::Tuple(elems) => format!("({})", render_list(elems)),
         TypeExprKind::Function(params, ret) => {
@@ -103,12 +109,13 @@ fn render_type_expr(te: &TypeExpr) -> String {
         TypeExprKind::SelfType => "Self".to_string(),
         TypeExprKind::AssocProj {
             receiver,
+            trait_module,
             trait_name,
             assoc_name,
         } => format!(
             "<{} as {}>::{}",
             render_type_expr(receiver),
-            resolve(*trait_name),
+            Qualifier::written(*trait_module, *trait_name),
             resolve(*assoc_name)
         ),
         TypeExprKind::AnonRecord { fields, tail } => {
@@ -130,13 +137,24 @@ fn render_type_expr(te: &TypeExpr) -> String {
 fn substitute_type_params(te: &TypeExpr, params: &[Symbol], args: &[TypeExpr]) -> TypeExpr {
     let subst = |t: &TypeExpr| substitute_type_params(t, params, args);
     let kind = match &te.kind {
-        TypeExprKind::Named(name) => match params.iter().position(|p| p == name) {
-            Some(i) => return args[i].clone(),
-            None => TypeExprKind::Named(*name),
-        },
-        TypeExprKind::Generic(name, type_args) => {
-            TypeExprKind::Generic(*name, type_args.iter().map(subst).collect())
+        TypeExprKind::Named {
+            module: None, name, ..
+        } if params.contains(name) => {
+            let i = params.iter().position(|p| p == name).expect("contained");
+            return args[i].clone();
         }
+        TypeExprKind::Named { .. } => te.kind.clone(),
+        TypeExprKind::Generic {
+            module,
+            name,
+            name_span,
+            args: type_args,
+        } => TypeExprKind::Generic {
+            module: *module,
+            name: *name,
+            name_span: *name_span,
+            args: type_args.iter().map(subst).collect(),
+        },
         TypeExprKind::Tuple(elems) => TypeExprKind::Tuple(elems.iter().map(subst).collect()),
         TypeExprKind::Function(fn_params, ret) => TypeExprKind::Function(
             fn_params.iter().map(subst).collect(),
@@ -145,10 +163,12 @@ fn substitute_type_params(te: &TypeExpr, params: &[Symbol], args: &[TypeExpr]) -
         TypeExprKind::SelfType => TypeExprKind::SelfType,
         TypeExprKind::AssocProj {
             receiver,
+            trait_module,
             trait_name,
             assoc_name,
         } => TypeExprKind::AssocProj {
             receiver: Box::new(substitute_type_params(receiver, params, args)),
+            trait_module: *trait_module,
             trait_name: *trait_name,
             assoc_name: *assoc_name,
         },
@@ -1235,9 +1255,16 @@ impl Compiler {
                 let mod_str = resolve(*module_name);
                 if module::is_builtin_module(&mod_str) {
                     self.imported_builtin_modules.insert(mod_str.clone());
-                    // For builtin modules, create aliases: bare "item" -> "module.item"
+                    // For builtin modules, create aliases: bare "item" -> "module.item".
+                    // A variant is a global by its bare name already, and a
+                    // type has no value at run time.
                     for (item, _) in items {
                         let item_str = resolve(*item);
+                        if module::gated_constructor_module(&item_str) == Some(mod_str.as_str())
+                            || module::builtin_type_module(&item_str) == Some(mod_str.as_str())
+                        {
+                            continue;
+                        }
                         let qualified = format!("{mod_str}.{item_str}");
                         let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
@@ -2041,7 +2068,9 @@ impl Compiler {
                     ));
                 }
                 // Check if this is a module-qualified builtin call like list.map(...)
-                if let Some(builtin_name) = self.extract_builtin_name(callee)? {
+                if self.qualified_variant(callee).is_none()
+                    && let Some(builtin_name) = self.extract_builtin_name(callee)?
+                {
                     self.check_decode_target(&builtin_name, args.last(), span)?;
                     // Emit arguments first
                     self.compile_operands(args)?;
@@ -2067,23 +2096,12 @@ impl Compiler {
                     } else {
                         false
                     };
-                    // Qualified variant call: `EnumName.Variant(args)`
-                    // resolves to the variant's bare global constructor.
-                    // Checked before the module-call path so enum names
-                    // aren't confused with missing module imports.
-                    let qualified_variant_global = if let ExprKind::Ident(name) = &receiver.kind
-                        && is_module_call
-                    {
-                        let name_str = resolve(*name);
-                        let method_str = resolve(*method);
-                        self.known_enum_variants
-                            .get(&name_str)
-                            .filter(|vs| vs.contains(&method_str))
-                            .map(|_| method_str)
-                    } else {
-                        None
-                    };
-                    if let Some(variant_name) = qualified_variant_global {
+                    // Qualified variant call: `EnumName.Variant(args)`,
+                    // `channel.Message(v)`, `m.Shape.Circle(r)` resolve to
+                    // the variant's bare global constructor. Checked
+                    // before the module-call path so enum names aren't
+                    // confused with missing module imports.
+                    if let Some(variant_name) = self.qualified_variant(callee) {
                         let name_idx = self.add_constant(Value::String(variant_name), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::GetGlobal, name_idx, span);
@@ -2180,6 +2198,16 @@ impl Compiler {
                 }
             }
 
+            // Qualified variant access: `EnumName.Variant`, `time.Monday`,
+            // `m.Color.Red` resolve to the variant's bare global
+            // registration. Checked ahead of the builtin-module gate so
+            // enum names aren't mistaken for missing module imports.
+            ExprKind::FieldAccess(..) if let Some(variant) = self.qualified_variant(expr) => {
+                let name_idx = self.add_constant(Value::String(variant), span)?;
+                self.current_chunk()
+                    .emit_op_u16(Op::GetGlobal, name_idx, span);
+            }
+
             ExprKind::FieldAccess(expr, field, _) => {
                 // Check if this is a module-qualified name like list.map
                 // But only if the identifier is NOT a known local or upvalue.
@@ -2192,21 +2220,6 @@ impl Compiler {
                         || self.top_level_value_globals.contains(&resolve(*name));
                     if !is_local {
                         let name_str = resolve(*name);
-                        // Qualified variant access: `EnumName.Variant`
-                        // resolves to the variant's bare global
-                        // registration. Checked ahead of the builtin-
-                        // module gate so enum names aren't mistaken for
-                        // missing module imports.
-                        let field_str_early = resolve(*field);
-                        if let Some(variants) = self.known_enum_variants.get(&name_str)
-                            && variants.contains(&field_str_early)
-                        {
-                            let name_idx =
-                                self.add_constant(Value::String(field_str_early), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            return Ok(());
-                        }
                         // Gate: require import for builtin modules.
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
@@ -2535,6 +2548,7 @@ impl Compiler {
             // same trait dispatch, same `==`.
             ExprKind::RecordCreate {
                 module: _,
+                name_span: _,
                 name,
                 fields,
             } => {
@@ -2971,6 +2985,61 @@ impl Compiler {
         self.end_scope_with_result(false, span)
     }
 
+    // ── Helper: qualified variants ───────────────────────────────
+
+    /// The bare global of the variant a qualified expression names, or
+    /// `None` if it names none: `Shape.Circle` (a known enum's variant),
+    /// `channel.Message` / `time.Monday` (a variant of a builtin enum,
+    /// through its module or an alias of it) and `m.Shape.Circle` (an
+    /// enum reached through a module). Variants are globals by bare name.
+    fn qualified_variant(&self, expr: &Expr) -> Option<String> {
+        let ExprKind::FieldAccess(qualifier, variant, _) = &expr.kind else {
+            return None;
+        };
+        let variant = resolve(*variant);
+        let is_enum_variant = |enum_name: Symbol| {
+            self.known_enum_variants
+                .get(&resolve(enum_name))
+                .is_some_and(|variants| variants.contains(&variant))
+        };
+        match &qualifier.kind {
+            ExprKind::Ident(name) if self.names_global_scope(*name) => {
+                if is_enum_variant(*name) {
+                    return Some(variant);
+                }
+                let name_str = resolve(*name);
+                let module = if module::is_builtin_module(&name_str) {
+                    Some(name_str.as_str())
+                } else {
+                    self.imported_builtin_module_aliases
+                        .get(&name_str)
+                        .map(String::as_str)
+                };
+                module
+                    .filter(|module| self.imported_builtin_modules.contains(*module))
+                    .filter(|module| module::gated_constructor_module(&variant) == Some(module))
+                    .map(|_| variant.clone())
+            }
+            ExprKind::FieldAccess(module, enum_name, _) => match &module.kind {
+                ExprKind::Ident(module) if self.names_global_scope(*module) => {
+                    is_enum_variant(*enum_name).then_some(variant)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether the identifier `name` names something of the global scope
+    /// (a module or a type) rather than a local, an upvalue, a top-level
+    /// `let`, or a function value.
+    fn names_global_scope(&self, name: Symbol) -> bool {
+        self.resolve_local(name).is_none()
+            && self.resolve_upvalue_peek(name).is_none()
+            && !self.top_level_value_globals.contains(&resolve(name))
+            && !self.names_function_value(name)
+    }
+
     // ── Helper: extract builtin name ─────────────────────────────
 
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
@@ -3040,8 +3109,9 @@ impl Compiler {
     ) -> Result<String, String> {
         const NO_ARGS: &[TypeExpr] = &[];
         let (name, args): (Symbol, &[TypeExpr]) = match &te.kind {
-            TypeExprKind::Named(name) => (*name, NO_ARGS),
-            TypeExprKind::Generic(name, args) => (*name, args.as_slice()),
+            // Types live in one namespace at run time: `m.Pt` is `Pt`.
+            TypeExprKind::Named { name, .. } => (*name, NO_ARGS),
+            TypeExprKind::Generic { name, args, .. } => (*name, args.as_slice()),
             TypeExprKind::Tuple(elems) if !elems.is_empty() => {
                 let mut parts = Vec::with_capacity(elems.len());
                 for elem in elems {

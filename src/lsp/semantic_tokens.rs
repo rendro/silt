@@ -285,19 +285,14 @@ fn emit_expr_tokens(
             }
         }
         ExprKind::RecordCreate {
-            module,
             name,
+            name_span,
             fields,
+            ..
         } => {
-            // Record constructor: the name is a TYPE. For the qualified
-            // form (`util.Pt { ... }`) the expr span points at the module
-            // ident, not the type name, so emitting the type token at
-            // `(span.start as usize)` would mislabel the module segment — skip the
-            // head token there (the fields still get their tokens).
-            if module.is_none() {
-                let name_str = resolve(*name);
-                push_token_at_offset(source, expr.span.start as usize, &name_str, TT_TYPE, out);
-            }
+            // Record constructor: the name is a TYPE.
+            let name_str = resolve(*name);
+            push_token_at_offset(source, name_span.start as usize, &name_str, TT_TYPE, out);
             for (_, v) in fields {
                 emit_expr_tokens(v, source, doc, server, out);
             }

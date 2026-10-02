@@ -119,6 +119,43 @@ pub fn feature_gated_stdlib_type(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The builtin module that declares the stdlib type `name` (an enum or a
+/// record of [`BUILTIN_STDLIB_TYPE_NAMES`], or one of the non-error
+/// enums `Step`, `ChannelResult` and `ChannelOp`): `time` for `Weekday`,
+/// `http` for `Request`. `None` for the prelude types and for any other
+/// name. A module's types are reached as `time.Weekday`; their variants
+/// as `time.Monday` (see [`gated_constructor_module`]).
+pub fn builtin_type_module(name: &str) -> Option<&'static str> {
+    match name {
+        "Step" => Some("list"),
+        "ChannelResult" | "ChannelOp" | "ChannelError" => Some("channel"),
+        "Instant" | "Date" | "Time" | "DateTime" | "Duration" | "Weekday" | "TimeError" => {
+            Some("time")
+        }
+        "Method" | "Response" | "Request" | "HttpError" => Some("http"),
+        "FileStat" => Some("fs"),
+        "IoError" => Some("io"),
+        "JsonError" => Some("json"),
+        "TomlError" => Some("toml"),
+        "ParseError" => Some("int"),
+        "RegexError" => Some("regex"),
+        "BytesError" => Some("bytes"),
+        "PgError" => Some("postgres"),
+        "TcpError" => Some("tcp"),
+        _ => None,
+    }
+}
+
+/// The stdlib types the builtin module `module` declares (see
+/// [`builtin_type_module`]), including the feature-gated ones.
+pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static str> + '_ {
+    BUILTIN_STDLIB_TYPE_NAMES
+        .iter()
+        .copied()
+        .chain(["Step", "ChannelResult", "ChannelOp"])
+        .filter(move |name| builtin_type_module(name) == Some(module))
+}
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

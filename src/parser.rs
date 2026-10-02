@@ -888,6 +888,11 @@ impl<'src> Parser<'src> {
         &self.tokens[self.pos].0
     }
 
+    /// The token `n` places after the current one, if any.
+    fn peek_at(&self, n: usize) -> Option<&Token> {
+        self.tokens.get(self.pos + n).map(|(t, _)| t)
+    }
+
     fn at(&self, tok: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(tok)
     }
@@ -1366,10 +1371,26 @@ impl<'src> Parser<'src> {
                             _ => unreachable!("parse_let_decl always returns Decl::Let"),
                         }
                     }
+                    Token::Trait => match self.parse_trait_or_impl()? {
+                        Decl::Trait(mut t) => {
+                            t.is_pub = true;
+                            t.span = span.to(t.span);
+                            if pub_doc.is_some() {
+                                t.doc = pub_doc;
+                            }
+                            Ok(Decl::Trait(t))
+                        }
+                        _ => Err(Diagnostic::error(
+                            Code::ExpectedDeclaration,
+                            span,
+                            "an impl is not exported: `pub` goes on the trait declaration, \
+                             and impls apply wherever the type and the trait are visible",
+                        )),
+                    },
                     _ => Err(Diagnostic::error(
                         Code::ExpectedDeclaration,
                         self.span(),
-                        "expected fn, type, or let after pub",
+                        "expected fn, type, trait, or let after pub",
                     )),
                 }
             }
@@ -1536,22 +1557,10 @@ impl<'src> Parser<'src> {
                     self.skip_nl();
                     let (type_param, _) = self.expect_ident()?;
                     self.expect(&Token::Colon)?;
-                    let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
-                    clauses.push(WhereClause {
-                        type_param,
-                        trait_name,
-                        trait_args,
-                        trait_name_span,
-                    });
+                    clauses.push(self.parse_trait_ref()?.bound_on(type_param));
                     while self.at(&Token::Plus) {
                         self.advance();
-                        let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
-                        clauses.push(WhereClause {
-                            type_param,
-                            trait_name,
-                            trait_args,
-                            trait_name_span,
-                        });
+                        clauses.push(self.parse_trait_ref()?.bound_on(type_param));
                     }
                     self.skip_nl();
                     if self.at(&Token::Comma) {
@@ -1911,23 +1920,11 @@ impl<'src> Parser<'src> {
             self.skip_nl();
             let (type_param, _) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
-            let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
-            clauses.push(WhereClause {
-                type_param,
-                trait_name,
-                trait_args,
-                trait_name_span,
-            });
+            clauses.push(self.parse_trait_ref()?.bound_on(type_param));
             // Multi-trait bounds: `where a: Equal + Hash`
             while self.at(&Token::Plus) {
                 self.advance();
-                let (trait_name, trait_args, trait_name_span) = self.parse_trait_ref()?;
-                clauses.push(WhereClause {
-                    type_param,
-                    trait_name,
-                    trait_args,
-                    trait_name_span,
-                });
+                clauses.push(self.parse_trait_ref()?.bound_on(type_param));
             }
             self.skip_nl();
             if self.at(&Token::Comma) {
@@ -1939,11 +1936,41 @@ impl<'src> Parser<'src> {
         Ok(clauses)
     }
 
-    /// Parse a trait reference inside a where clause: either a bare
-    /// identifier (`Display`) or a parameterized form
-    /// (`TryInto(Int)`, `Convert(a, b)`).
-    fn parse_trait_ref(&mut self) -> Result<(Symbol, Vec<TypeExpr>, Span)> {
+    /// Parse a name that may carry one module qualifier: `Shape` or
+    /// `m.Shape`. Returns the qualifier, the name and the name's span.
+    /// `what` names the thing for the error about a second qualifier
+    /// (module paths have one segment).
+    fn parse_qualified_name(&mut self, what: &str) -> Result<(Option<Qualifier>, Symbol, Span)> {
+        let (first, first_span) = self.expect_ident()?;
+        if !self.at(&Token::Dot) || !matches!(self.peek_at(1), Some(Token::Ident(_))) {
+            return Ok((None, first, first_span));
+        }
+        self.advance();
         let (name, name_span) = self.expect_ident()?;
+        if self.at(&Token::Dot) && matches!(self.peek_at(1), Some(Token::Ident(_))) {
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                format!(
+                    "a {what} has at most one qualifier: '{}.{}.' has more than one segment",
+                    intern::resolve(first),
+                    intern::resolve(name)
+                ),
+            ));
+        }
+        let module = Qualifier {
+            name: first,
+            span: first_span,
+        };
+        Ok((Some(module), name, name_span))
+    }
+
+    /// Parse a trait reference in a where clause, a supertrait list or
+    /// an associated-type bound: a bare or qualified name (`Display`,
+    /// `m.Describe`) with an optional argument list (`TryInto(Int)`,
+    /// `Convert(a, b)`).
+    fn parse_trait_ref(&mut self) -> Result<TraitRef> {
+        let (module, name, name_span) = self.parse_qualified_name("trait name")?;
         let args = if self.at(&Token::LParen) {
             self.advance();
             let mut args = Vec::new();
@@ -1957,14 +1984,21 @@ impl<'src> Parser<'src> {
         } else {
             Vec::new()
         };
-        Ok((name, args, name_span))
+        Ok(TraitRef {
+            module,
+            name,
+            args,
+            span: name_span,
+        })
     }
 
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Trait)?;
-        let (name, name_span) = self.expect_ident()?;
+        // `trait m.Describe for T` names an imported trait; a declaration's
+        // name has no qualifier (checked below, once the form is known).
+        let (trait_module, name, name_span) = self.parse_qualified_name("trait name")?;
 
         // Parse optional trait-level parameters: `trait Foo(a, b) { ... }`
         // on the declaration side, or `trait Foo(Int, String) for T { ... }`
@@ -1993,15 +2027,12 @@ impl<'src> Parser<'src> {
         // or parameterized forms `trait Sub(a): Super(a) + Other(Int)`.
         // Disambiguation: `:` after the trait name is unambiguous because impls
         // use `for` and decls use `{` or `fn`.
-        let supertraits: Vec<(Symbol, Vec<TypeExpr>, Span)> = if self.at(&Token::Colon) {
+        let supertraits: Vec<TraitRef> = if self.at(&Token::Colon) {
             self.advance();
-            let mut traits = Vec::new();
-            let (t, args, t_span) = self.parse_trait_ref()?;
-            traits.push((t, args, t_span));
+            let mut traits = vec![self.parse_trait_ref()?];
             while self.at(&Token::Plus) {
                 self.advance();
-                let (t, args, t_span) = self.parse_trait_ref()?;
-                traits.push((t, args, t_span));
+                traits.push(self.parse_trait_ref()?);
             }
             traits
         } else {
@@ -2016,13 +2047,31 @@ impl<'src> Parser<'src> {
         if self.at(&Token::Fn) || self.at(&Token::LBrace) || self.at(&Token::Where) {
             // Trait declaration. For the decl form, `trait_args` holds the
             // trait's type parameters; they must be lowercase idents.
+            // Reported once the declaration is parsed, so that parsing
+            // resumes after it.
+            let qualified_name_error = trait_module.map(|module| {
+                Diagnostic::error(
+                    Code::InvalidDeclaration,
+                    module.span,
+                    format!(
+                        "a trait declaration's name has no qualifier: declare `trait {}` \
+                         in its own module",
+                        intern::resolve(name)
+                    ),
+                )
+            });
             let mut params: Vec<Symbol> = Vec::new();
             for arg in &trait_args {
                 // Round-52 deferred item 2: point the caret at the
                 // offending argument's own span, not the enclosing
                 // `trait` keyword. Each arg carries its own span now.
                 let arg_span = arg.span;
-                let TypeExprKind::Named(arg_sym) = &arg.kind else {
+                let TypeExprKind::Named {
+                    module: None,
+                    name: arg_sym,
+                    ..
+                } = &arg.kind
+                else {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,
                         arg_span,
@@ -2077,6 +2126,9 @@ impl<'src> Parser<'src> {
             }
             self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
+            if let Some(error) = qualified_name_error {
+                return Err(error);
+            }
             Ok(Decl::Trait(TraitDecl {
                 name,
                 name_span,
@@ -2085,6 +2137,7 @@ impl<'src> Parser<'src> {
                 param_where_clauses,
                 methods,
                 assoc_types,
+                is_pub: false,
                 span: self.close(span),
                 doc,
             }))
@@ -2103,18 +2156,25 @@ impl<'src> Parser<'src> {
             self.expect(&Token::Ident(intern::intern("for")))?;
             let target_span = self.span();
             let target_te = self.parse_type_expr()?;
-            // The target's head-name span: for `for Int` it's `Int`'s
-            // span; for `for Box(a)` it's `Box`'s span. `parse_type_expr`
-            // records the head name's span as the TypeExpr's overall span.
-            let target_type_span = target_te.span;
 
             // Accept only `Named(head)` or `Generic(head, args)` as the
             // impl target. Reject tuple/fn/Unit targets — those have no
             // stable "head symbol" for method_table keying or for the
             // compiler's `TypeName.method_name` qualified-name form.
-            let (target, target_type_args) = match target_te.kind {
-                TypeExprKind::Named(sym) => (sym, Vec::new()),
-                TypeExprKind::Generic(sym, args) => (sym, args),
+            // The head-name span: for `for Int` it's `Int`'s span; for
+            // `for m.Box(a)` it's `Box`'s span.
+            let (target_module, target, target_type_span, target_type_args) = match target_te.kind {
+                TypeExprKind::Named {
+                    module,
+                    name,
+                    name_span,
+                } => (module, name, name_span, Vec::new()),
+                TypeExprKind::Generic {
+                    module,
+                    name,
+                    name_span,
+                    args,
+                } => (module, name, name_span, args),
                 _ => {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,
@@ -2132,7 +2192,12 @@ impl<'src> Parser<'src> {
             //   2. Binders must be distinct (no `Pair(a, a)` shadowing).
             let mut target_param_names: Vec<Symbol> = Vec::new();
             for arg in &target_type_args {
-                let TypeExprKind::Named(arg_sym) = &arg.kind else {
+                let TypeExprKind::Named {
+                    module: None,
+                    name: arg_sym,
+                    ..
+                } = &arg.kind
+                else {
                     return Err(Diagnostic::error(
                         Code::UnsupportedSyntax,
                         target_span,
@@ -2195,9 +2260,11 @@ impl<'src> Parser<'src> {
             self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
             Ok(Decl::TraitImpl(TraitImpl {
+                trait_module,
                 trait_name: name,
                 trait_name_span: name_span,
                 trait_args,
+                target_module,
                 target_type: target,
                 target_type_span,
                 target_type_args,
@@ -2264,15 +2331,13 @@ impl<'src> Parser<'src> {
         let span = self.span();
         self.expect(&Token::Type)?;
         let (name, _) = self.expect_ident()?;
-        let mut bounds: Vec<(Symbol, Vec<TypeExpr>)> = Vec::new();
+        let mut bounds: Vec<TraitRef> = Vec::new();
         if self.at(&Token::Colon) {
             self.advance();
-            let (tn, args, _) = self.parse_trait_ref()?;
-            bounds.push((tn, args));
+            bounds.push(self.parse_trait_ref()?);
             while self.at(&Token::Plus) {
                 self.advance();
-                let (tn, args, _) = self.parse_trait_ref()?;
-                bounds.push((tn, args));
+                bounds.push(self.parse_trait_ref()?);
             }
         }
         if self.at(&Token::Eq) {
@@ -2358,7 +2423,7 @@ impl<'src> Parser<'src> {
             let receiver = self.parse_type_expr()?;
             self.skip_nl();
             self.expect(&Token::As)?;
-            let (trait_name, _) = self.expect_ident()?;
+            let (trait_module, trait_name, _) = self.parse_qualified_name("trait name")?;
             self.skip_nl();
             self.expect(&Token::Gt)?;
             self.expect(&Token::ColonColon)?;
@@ -2366,6 +2431,7 @@ impl<'src> Parser<'src> {
             return Ok(self.mk_type(
                 TypeExprKind::AssocProj {
                     receiver: Box::new(receiver),
+                    trait_module,
                     trait_name,
                     assoc_name,
                 },
@@ -2459,13 +2525,13 @@ impl<'src> Parser<'src> {
             self.expect(&Token::RBrace)?;
             return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
-        let (name, _) = self.expect_ident()?;
+        let (module, name, name_span) = self.parse_qualified_name("type name")?;
         // `Self::Item` — sugar for `<Self as <enclosing_trait>>::Item`.
         // The trait name is supplied by the parser's enclosing-trait
         // context (set by parse_trait_or_impl on entry to the body).
         // Outside a trait/impl body the projection is an error; it is
         // caught by the typechecker (current_trait_name absent).
-        if name == intern::intern("Self") {
+        if module.is_none() && name == intern::intern("Self") {
             if self.at(&Token::ColonColon) {
                 self.advance();
                 let (assoc_name, _) = self.expect_ident()?;
@@ -2481,6 +2547,7 @@ impl<'src> Parser<'src> {
                 return Ok(self.mk_type(
                     TypeExprKind::AssocProj {
                         receiver: Box::new(recv),
+                        trait_module: None,
                         trait_name,
                         assoc_name,
                     },
@@ -2498,9 +2565,24 @@ impl<'src> Parser<'src> {
                 self.expect_list_sep("generic type argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
-            Ok(self.mk_type(TypeExprKind::Generic(name, args), start))
+            Ok(self.mk_type(
+                TypeExprKind::Generic {
+                    module,
+                    name,
+                    name_span,
+                    args,
+                },
+                start,
+            ))
         } else {
-            Ok(self.mk_type(TypeExprKind::Named(name), start))
+            Ok(self.mk_type(
+                TypeExprKind::Named {
+                    module,
+                    name,
+                    name_span,
+                },
+                start,
+            ))
         }
     }
 
@@ -3015,7 +3097,10 @@ impl<'src> Parser<'src> {
                                 && (!self.lbrace_may_be_header_block()
                                     || self.scrutinee_lbrace_is_record_literal())
                             {
-                                let module = *module;
+                                let module = Qualifier {
+                                    name: *module,
+                                    span: left.span,
+                                };
                                 self.advance(); // {
                                 let fields = self.parse_record_fields()?;
                                 self.expect(&Token::RBrace)?;
@@ -3024,6 +3109,7 @@ impl<'src> Parser<'src> {
                                     ExprKind::RecordCreate {
                                         module: Some(module),
                                         name: field,
+                                        name_span: field_span,
                                         fields,
                                     },
                                     span,
@@ -3281,6 +3367,7 @@ impl<'src> Parser<'src> {
                         ExprKind::RecordCreate {
                             module: None,
                             name,
+                            name_span: span,
                             fields,
                         },
                         span,
@@ -4235,33 +4322,6 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Reject a second `.` after an already-qualified pattern head:
-    /// imports take a single module ident, so `a.b.Circle(r)` can never
-    /// resolve. Erroring here (instead of letting the pattern parser
-    /// die on the dot with a generic "expected ->") names the supported
-    /// shape. `module`/`name` are the segments consumed so far.
-    fn reject_nested_pattern_qualifier(
-        &mut self,
-        module: Option<Symbol>,
-        name: Symbol,
-    ) -> Result<()> {
-        if self.at(&Token::Dot) {
-            let head = match module {
-                Some(m) => format!("{}.{}", intern::resolve(m), intern::resolve(name)),
-                None => intern::resolve(name),
-            };
-            return Err(Diagnostic::error(
-                Code::UnsupportedSyntax,
-                self.span(),
-                format!(
-                    "nested qualifiers are not supported in patterns ('{head}.' has more than one segment); \
-                     use a single 'module.Name' qualifier"
-                ),
-            ));
-        }
-        Ok(())
-    }
-
     /// Shared tail for (possibly qualified) constructor-shaped patterns,
     /// entered after the head segments are consumed. Three shapes:
     /// `Name(args)` → constructor, `Name { fields }` → record pattern,
@@ -4270,11 +4330,11 @@ impl<'src> Parser<'src> {
     /// round-94 module-qualified head (`shapes.Circle(..)`).
     fn parse_constructor_pattern_tail(
         &mut self,
-        module: Option<Symbol>,
-        name: Symbol,
+        qualifier: Vec<Qualifier>,
+        head: Qualifier,
         start: Span,
     ) -> Result<Pattern> {
-        let mut pattern = self.parse_constructor_pattern_tail_open(module, name, start)?;
+        let mut pattern = self.parse_constructor_pattern_tail_open(qualifier, head, start)?;
         pattern.span = self.close(pattern.span);
         Ok(pattern)
     }
@@ -4283,11 +4343,15 @@ impl<'src> Parser<'src> {
     /// closed.
     fn parse_constructor_pattern_tail_open(
         &mut self,
-        module: Option<Symbol>,
-        name: Symbol,
+        qualifier: Vec<Qualifier>,
+        head: Qualifier,
         start: Span,
     ) -> Result<Pattern> {
         let mk = |kind: PatternKind| Pattern::new(kind, start);
+        let Qualifier {
+            name,
+            span: name_span,
+        } = head;
         // Constructor pattern: Some(x), Ok(value), Rect(w, h)
         if self.at(&Token::LParen) {
             self.advance();
@@ -4299,8 +4363,9 @@ impl<'src> Parser<'src> {
             }
             self.expect(&Token::RParen)?;
             Ok(mk(PatternKind::Constructor {
-                module,
+                qualifier,
                 name,
+                name_span,
                 args: pats,
             }))
         } else if self.at(&Token::LBrace) {
@@ -4329,16 +4394,30 @@ impl<'src> Parser<'src> {
                 self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
             }
             self.expect(&Token::RBrace)?;
+            // A record type is reached through at most its module.
+            if qualifier.len() > 1 {
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    qualifier[1].span,
+                    format!(
+                        "a record pattern has at most one qualifier, its module: write '{}.{} {{ ... }}'",
+                        intern::resolve(qualifier[0].name),
+                        intern::resolve(name)
+                    ),
+                ));
+            }
             Ok(mk(PatternKind::Record {
-                module,
+                module: qualifier.first().copied(),
                 name: Some(name),
+                name_span,
                 fields,
                 has_rest,
             }))
         } else {
             Ok(mk(PatternKind::Constructor {
-                module,
+                qualifier,
                 name,
+                name_span,
                 args: Vec::new(),
             }))
         }
@@ -4360,65 +4439,59 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(mk(PatternKind::Wildcard))
             }
-            Token::Ident(ref name) if is_constructor(*name) => {
-                let mut name = *name;
-                let mut module: Option<Symbol> = None;
-                self.advance();
-                // Qualified variant pattern: `EnumName.Variant(args)` or
-                // `EnumName.Variant { fields }` or bare `EnumName.Variant`.
-                // Silt's variants resolve by bare name globally (see
-                // `variant_to_enum`), so the qualifier is disambiguation
-                // only — it is carried on the pattern node and validated
-                // by the typechecker (round 94; previously it was
-                // silently discarded here, so a wrong-enum qualifier
-                // never errored).
-                if self.at(&Token::Dot) {
-                    self.advance();
-                    let (variant, variant_span) = self.expect_ident()?;
-                    if !is_constructor(variant) {
-                        return Err(Diagnostic::error(
-                            Code::ExpectedIdentifier,
-                            variant_span,
-                            format!(
-                                "expected a variant name after '{}.', found '{}'",
-                                intern::resolve(name),
-                                intern::resolve(variant)
-                            ),
-                        ));
-                    }
-                    module = Some(name);
-                    name = variant;
-                    self.reject_nested_pattern_qualifier(module, name)?;
-                }
-                self.parse_constructor_pattern_tail(module, name, start)
-            }
             Token::Ident(name) => {
-                self.advance();
-                // Round 94: module-qualified pattern — `shapes.Circle(r)`,
-                // `util.Pt { x }`, or a bare qualified unit variant
-                // `color.Red`. A lowercase ident followed by `.` was
-                // previously ALWAYS a parse error in pattern position
-                // ("expected ->, found ."), so consuming the dot here
-                // cannot change the meaning of any accepted program.
-                if self.at(&Token::Dot) {
+                let (_, name_span) = self.advance();
+                // A lowercase name not followed by `.` binds a variable.
+                if !is_constructor(name) && !self.at(&Token::Dot) {
+                    return Ok(mk(PatternKind::Ident(name)));
+                }
+                // A constructor or record head, with up to two segments
+                // before it: the owning enum (`Shape.Circle(r)`), an
+                // imported module or alias (`shapes.Circle(r)`,
+                // `util.Pt { x }`, the unit variant `color.Red`), or both
+                // (`shapes.Shape.Circle(r)`). Variants resolve by bare name,
+                // so the qualifier is carried on the pattern node and
+                // validated by the typechecker.
+                let mut segments = vec![Qualifier {
+                    name,
+                    span: name_span,
+                }];
+                while self.at(&Token::Dot) {
                     self.advance();
-                    let (type_name, type_name_span) = self.expect_ident()?;
-                    if !is_constructor(type_name) {
+                    let (segment, segment_span) = self.expect_ident()?;
+                    if !is_constructor(segment) {
+                        let written: Vec<String> =
+                            segments.iter().map(|q| intern::resolve(q.name)).collect();
                         return Err(Diagnostic::error(
                             Code::ExpectedIdentifier,
-                            type_name_span,
+                            segment_span,
                             format!(
                                 "expected a type or variant name after '{}.' in pattern, found '{}'",
-                                intern::resolve(name),
-                                intern::resolve(type_name)
+                                written.join("."),
+                                intern::resolve(segment)
                             ),
                         ));
                     }
-                    let module = Some(name);
-                    self.reject_nested_pattern_qualifier(module, type_name)?;
-                    return self.parse_constructor_pattern_tail(module, type_name, start);
+                    segments.push(Qualifier {
+                        name: segment,
+                        span: segment_span,
+                    });
                 }
-                Ok(mk(PatternKind::Ident(name)))
+                if segments.len() > 3 {
+                    let written: Vec<String> =
+                        segments.iter().map(|q| intern::resolve(q.name)).collect();
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        segments[3].span,
+                        format!(
+                            "a pattern head has at most two qualifiers ('{}' has more); \
+                             write 'module.Variant', 'Enum.Variant' or 'module.Enum.Variant'",
+                            written.join(".")
+                        ),
+                    ));
+                }
+                let head = segments.pop().expect("one segment at least");
+                self.parse_constructor_pattern_tail(segments, head, start)
             }
             Token::Int(n) => {
                 self.advance();

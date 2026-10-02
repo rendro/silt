@@ -59,17 +59,16 @@ pub enum ExprKind {
 
     // Records
     RecordCreate {
-        /// Optional single module qualifier: `util.Pt { x: 1 }` carries
-        /// `Some(util)`. Round 94: qualified type paths work in every
-        /// position, so the record literal accepts the same `mod.Type`
-        /// spelling that enum-constructor calls (`shapes.Circle(2.0)`)
-        /// already support. The qualifier selects WHICH module's record
-        /// declaration the literal is checked against (two imported
-        /// modules may export same-named types); the constructed value
-        /// is identical to the bare `Pt { ... }` form — codegen keys on
-        /// `name` only, mirroring how variants resolve by bare name.
-        module: Option<Symbol>,
+        /// The module qualifier of `util.Pt { x: 1 }`. It selects WHICH
+        /// module's record declaration the literal is checked against
+        /// (two imported modules may export same-named types); the
+        /// constructed value is identical to the bare `Pt { ... }` form —
+        /// codegen keys on `name` only, mirroring how variants resolve by
+        /// bare name.
+        module: Option<Qualifier>,
         name: Symbol,
+        /// Span of the type name itself (the `Pt` of `util.Pt { .. }`).
+        name_span: Span,
         fields: Vec<(Symbol, Expr)>,
     },
     RecordUpdate {
@@ -206,25 +205,29 @@ pub enum PatternKind {
     /// Enum-constructor pattern: `Some(x)`, `Rect(w, h)`, or a bare
     /// unit variant `Red`.
     Constructor {
-        /// Optional single qualifier segment, two accepted spellings:
-        /// the owning enum (`Shape.Circle(r)`) or an imported module /
-        /// alias (`shapes.Circle(r)`). Round 94: the qualifier is
-        /// validated and (for module qualifiers) used to pick the right
-        /// enum when two modules export same-named types — but match
-        /// IDENTITY stays the bare `name`: variants resolve globally by
-        /// bare name, so exhaustiveness, duplicate-arm analysis, and
-        /// codegen all treat `shapes.Circle(r)` and `Circle(r)` as the
-        /// SAME constructor and ignore this field.
-        module: Option<Symbol>,
+        /// The segments before the variant name, at most two: the owning
+        /// enum (`Shape.Circle(r)`), an imported module or alias
+        /// (`shapes.Circle(r)`), or both (`shapes.Shape.Circle(r)`). The
+        /// qualifier is validated and (for module qualifiers) used to
+        /// pick the right enum when two modules export same-named types —
+        /// but match IDENTITY stays the bare `name`: variants resolve
+        /// globally by bare name, so exhaustiveness, duplicate-arm
+        /// analysis, and codegen all treat `shapes.Circle(r)` and
+        /// `Circle(r)` as the SAME constructor and ignore this field.
+        qualifier: Vec<Qualifier>,
         name: Symbol,
+        /// Span of the variant name itself.
+        name_span: Span,
         args: Vec<Pattern>,
     },
     Record {
-        /// Optional single module qualifier (`util.Pt { x }`); same
-        /// contract as [`PatternKind::Constructor::module`] — checked by
-        /// the typechecker, invisible to exhaustiveness and codegen.
-        module: Option<Symbol>,
+        /// The module qualifier of `util.Pt { x }`; same contract as
+        /// [`PatternKind::Constructor::qualifier`] — checked by the
+        /// typechecker, invisible to exhaustiveness and codegen.
+        module: Option<Qualifier>,
         name: Option<Symbol>,
+        /// Span of the type name itself.
+        name_span: Span,
         /// Each field's name, the span of the name, and its sub-pattern;
         /// `None` for the shorthand `{ x }`, which binds `x`.
         fields: Vec<(Symbol, Span, Option<Pattern>)>,
@@ -292,10 +295,41 @@ impl TypeExpr {
     }
 }
 
+/// A segment written before a name, with its span: the `m` of `m.Shape`,
+/// or each of `m` and `Shape` in the pattern `m.Shape.Circle(r)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Qualifier {
+    pub name: Symbol,
+    pub span: Span,
+}
+
+impl Qualifier {
+    /// `name` as written after the optional qualifier `module`: `Shape`
+    /// or `m.Shape`.
+    pub fn written(module: Option<Qualifier>, name: Symbol) -> String {
+        match module {
+            Some(m) => format!("{}.{}", m.name, name),
+            None => name.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
-    Named(Symbol),
-    Generic(Symbol, Vec<TypeExpr>),
+    /// A type name, `Shape` or `m.Shape`. `name_span` is the span of the
+    /// name itself; the type expression's span covers the qualifier too.
+    Named {
+        module: Option<Qualifier>,
+        name: Symbol,
+        name_span: Span,
+    },
+    /// An applied type, `Box(Int)` or `m.Box(Int)`; as [`Self::Named`].
+    Generic {
+        module: Option<Qualifier>,
+        name: Symbol,
+        name_span: Span,
+        args: Vec<TypeExpr>,
+    },
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
@@ -315,6 +349,8 @@ pub enum TypeExprKind {
     /// concrete and stays abstract on a type variable.
     AssocProj {
         receiver: Box<TypeExpr>,
+        /// The module qualifier of the trait: `<T as m.Iter>::Item`.
+        trait_module: Option<Qualifier>,
         trait_name: Symbol,
         assoc_name: Symbol,
     },
@@ -366,6 +402,8 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub struct WhereClause {
     pub type_param: Symbol,
+    /// The trait's module qualifier: `where a: m.Describe`.
+    pub trait_module: Option<Qualifier>,
     pub trait_name: Symbol,
     pub trait_args: Vec<TypeExpr>,
     pub trait_name_span: Span,
@@ -382,10 +420,10 @@ pub struct WhereClause {
 pub struct AssocTypeDecl {
     pub name: Symbol,
     /// Declared trait bounds, e.g. `[Compare, Hash]` for
-    /// `type Item: Compare + Hash`. Each entry is a trait name plus
-    /// any trait args (parameterized traits like `TryInto(Int)`).
+    /// `type Item: Compare + Hash`, with any trait args
+    /// (parameterized traits like `TryInto(Int)`).
     /// Empty for unbounded `type Item`.
-    pub bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+    pub bounds: Vec<TraitRef>,
     pub span: Span,
 }
 
@@ -503,6 +541,30 @@ pub struct TypeDecl {
     pub doc: Option<String>,
 }
 
+/// A reference to a trait in a supertrait list or an associated-type
+/// bound: `Equal`, `m.Describe`, `TryInto(Int)`. `span` is the span of
+/// the trait name itself.
+#[derive(Debug, Clone)]
+pub struct TraitRef {
+    pub module: Option<Qualifier>,
+    pub name: Symbol,
+    pub args: Vec<TypeExpr>,
+    pub span: Span,
+}
+
+impl TraitRef {
+    /// The where-clause `type_param: <self>`.
+    pub fn bound_on(self, type_param: Symbol) -> WhereClause {
+        WhereClause {
+            type_param,
+            trait_module: self.module,
+            trait_name: self.name,
+            trait_args: self.args,
+            trait_name_span: self.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: Symbol,
@@ -519,16 +581,15 @@ pub struct TraitDecl {
     /// Empty for parameter-less traits (the common case).
     pub params: Vec<Symbol>,
     /// Supertrait references (e.g. `trait Ordered: Equal + Hash` yields
-    /// `[(Equal, [], <span>), (Hash, [], <span>)]`). Implementing this
-    /// trait on a type requires the type to also implement every
-    /// supertrait. Inside a `where a: Ordered` context, methods from
-    /// supertraits are also callable on `a`. Parameterized supertraits
-    /// carry type expressions that may reference the enclosing trait's
-    /// own params: `trait Sub(a): Super(a)` yields
-    /// `[(Super, [TypeExpr::Named("a")], <span>)]`. The trailing `Span`
-    /// points at the supertrait-name identifier in source so LSP rename
-    /// / references can edit the supertrait reference (round-75 DX-4).
-    pub supertraits: Vec<(Symbol, Vec<TypeExpr>, Span)>,
+    /// `Equal` and `Hash`). Implementing this trait on a type requires
+    /// the type to also implement every supertrait. Inside a
+    /// `where a: Ordered` context, methods from supertraits are also
+    /// callable on `a`. Parameterized supertraits carry type expressions
+    /// that may reference the enclosing trait's own params:
+    /// `trait Sub(a): Super(a)`. Each reference's span points at the
+    /// supertrait-name identifier in source so LSP rename / references
+    /// can edit the supertrait reference (round-75 DX-4).
+    pub supertraits: Vec<TraitRef>,
     /// Where bounds on the trait's own type parameters, e.g.
     /// `trait HashTable(k) where k: Hash + Equal { ... }`. Every impl
     /// is required to supply type args that satisfy each bound;
@@ -540,6 +601,8 @@ pub struct TraitDecl {
     /// Each entry's bounds must be satisfied by the impl-supplied type;
     /// every entry must have a corresponding binding in every impl.
     pub assoc_types: Vec<AssocTypeDecl>,
+    /// True for `pub trait`.
+    pub is_pub: bool,
     pub span: Span,
     /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.
     pub doc: Option<String>,
@@ -547,6 +610,8 @@ pub struct TraitDecl {
 
 #[derive(Debug, Clone)]
 pub struct TraitImpl {
+    /// The trait's module qualifier: `trait m.Describe for T`.
+    pub trait_module: Option<Qualifier>,
     pub trait_name: Symbol,
     /// Span of the trait-name identifier in `trait <Name> for ...`.
     /// Used by LSP rename / references so cursor on the impl's trait
@@ -557,6 +622,8 @@ pub struct TraitImpl {
     /// `trait TryInto(Int) for String { ... }` yields `[Int]`.
     /// Empty for traits declared without parameters.
     pub trait_args: Vec<TypeExpr>,
+    /// The target's module qualifier: `trait Display for m.Pt`.
+    pub target_module: Option<Qualifier>,
     /// Head symbol of the impl target. For `trait X for Box(a)` this is
     /// `Box`; for the bare-target form `trait X for Int` it is `Int`.
     /// Kept as a Symbol so method_table keys, qualified-name emission in

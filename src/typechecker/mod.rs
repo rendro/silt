@@ -814,6 +814,10 @@ pub struct TypeChecker {
     /// For each name an imported user module is reached by (its name or
     /// alias), the module and the functions it declares without `pub`.
     pub(super) imported_private_fns: HashMap<Symbol, (Symbol, Vec<Symbol>)>,
+    /// For each name an imported module is reached by in a qualified
+    /// type, trait or pattern head (its name or alias), the module.
+    /// Builtin and user modules alike; cleared with `imported_modules`.
+    pub(super) module_prefixes: HashMap<Symbol, Symbol>,
     /// The builtin types whose derived impls the builtin environment
     /// holds already, so a check does not derive them again.
     pub(super) builtin_derived: std::collections::HashSet<Symbol>,
@@ -922,6 +926,7 @@ impl TypeChecker {
             poisoned_names: std::collections::HashSet::new(),
             signatures_only: false,
             imported_private_fns: HashMap::new(),
+            module_prefixes: HashMap::new(),
             builtin_derived: std::collections::HashSet::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
@@ -2673,6 +2678,205 @@ impl TypeChecker {
         env.define(item, Scheme::mono(Type::Error));
     }
 
+    // ── Qualified names: members of an imported module ──────────────
+
+    /// Bind the types and variants of the builtin module `module`,
+    /// imported under `prefix` (its name or alias): `time.Monday` and
+    /// `channel.Message` as values, and the qualified mirrors that
+    /// patterns (`channel.Message(v)`), record literals
+    /// (`http.Response { .. }`) and type positions (`time.Weekday`) read.
+    fn import_builtin_module_members(&mut self, module: Symbol, prefix: Symbol, env: &mut TypeEnv) {
+        self.module_prefixes.insert(prefix, module);
+        let qualified = |name: Symbol| intern(&format!("{prefix}.{name}"));
+        let module_str = resolve(module);
+        for ty in crate::module::builtin_module_type_names(&module_str).map(intern) {
+            if let Some(scheme) = env.lookup(ty).cloned() {
+                env.define(qualified(ty), scheme);
+            }
+            if let Some(info) = self.enums.get(&ty).cloned() {
+                for variant in &info.variants {
+                    if let Some(scheme) = env.lookup(variant.name).cloned() {
+                        env.define(qualified(variant.name), scheme);
+                    }
+                    self.qualified_variant_to_enum
+                        .insert(qualified(variant.name), ty);
+                }
+                self.qualified_enums.insert(qualified(ty), info);
+            }
+            if let Some(info) = self.records.get(&ty).cloned() {
+                self.qualified_records.insert(qualified(ty), info);
+                if let Some(ids) = self.record_param_var_ids.get(&ty).cloned() {
+                    self.qualified_record_param_var_ids
+                        .insert(qualified(ty), ids);
+                }
+            }
+        }
+    }
+
+    /// The types (enums, records and aliases) or the traits the imported
+    /// module `module` declares.
+    fn module_members(&self, module: Symbol, traits: bool) -> Vec<Symbol> {
+        let module_str = resolve(module);
+        if crate::module::is_builtin_module(&module_str) {
+            if traits {
+                return Vec::new();
+            }
+            return crate::module::builtin_module_type_names(&module_str)
+                .map(intern)
+                .filter(|ty| self.enums.contains_key(ty) || self.records.contains_key(ty))
+                .collect();
+        }
+        let Some(exports) = self.module_exports.get(&module) else {
+            return Vec::new();
+        };
+        if traits {
+            return exports.traits.iter().map(|(name, _)| *name).collect();
+        }
+        exports
+            .enums
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(exports.records.iter().map(|(name, _)| *name))
+            .chain(exports.aliases.iter().copied())
+            .collect()
+    }
+
+    /// Check the qualifier of the type `module.name` written in a type
+    /// position or as an impl target: `module` must be an imported module
+    /// (or alias) that declares a type `name`. Reports and returns false
+    /// otherwise; a module that failed to load reports nothing more. The
+    /// type is then the one its bare name names.
+    pub(super) fn check_qualified_type(
+        &mut self,
+        module: Qualifier,
+        name: Symbol,
+        name_span: Span,
+    ) -> bool {
+        self.check_qualified_member(module, name, name_span, false)
+    }
+
+    /// [`Self::check_qualified_type`] for a trait: `trait m.Describe for T`,
+    /// `where a: m.Describe`, a supertrait or an associated-type bound.
+    pub(super) fn check_qualified_trait(
+        &mut self,
+        module: Qualifier,
+        name: Symbol,
+        name_span: Span,
+    ) -> bool {
+        self.check_qualified_member(module, name, name_span, true)
+    }
+
+    fn check_qualified_member(
+        &mut self,
+        module: Qualifier,
+        name: Symbol,
+        name_span: Span,
+        trait_member: bool,
+    ) -> bool {
+        if self.poisoned_names.contains(&module.name) {
+            return false;
+        }
+        let what = if trait_member { "trait" } else { "type" };
+        let Some(target) = self.module_prefixes.get(&module.name).copied() else {
+            let module_str = resolve(module.name);
+            if crate::module::is_builtin_module(&module_str) {
+                self.error_help(
+                    Code::ModuleNotImported,
+                    (
+                        format!("module '{module_str}' is not imported"),
+                        Some(format!("add `import {module_str}` at the top of the file")),
+                    ),
+                    module.span,
+                );
+            } else {
+                let code = if trait_member {
+                    Code::UnknownTrait
+                } else {
+                    Code::UndefinedType
+                };
+                self.error(
+                    code,
+                    format!(
+                        "undefined {what} '{module_str}.{name}' — no module '{module_str}' in \
+                         scope; import it with `import {module_str}`"
+                    ),
+                    module.span,
+                );
+            }
+            return false;
+        };
+        let members = self.module_members(target, trait_member);
+        if members.contains(&name) {
+            return true;
+        }
+        // A trait no module declares is reported where the trait is used,
+        // by its bare name.
+        if trait_member && !self.traits.contains_key(&name) {
+            return false;
+        }
+        let candidates: Vec<String> = members.iter().map(|m| resolve(*m)).collect();
+        let help = suggest::suggest_similar(&resolve(name), candidates.iter())
+            .map(|cand| format!("did you mean `{cand}`?"));
+        self.error_help(
+            Code::UnknownModuleMember,
+            (
+                format!("module '{}' has no {what} '{name}'", module.name),
+                help,
+            ),
+            name_span,
+        );
+        false
+    }
+
+    /// Check the module qualifiers of the trait references and impl
+    /// targets of `program` (types inside them are checked where they are
+    /// resolved). A qualified name means the same as its bare name.
+    pub(super) fn check_qualified_trait_refs(&mut self, program: &Program) {
+        fn where_refs(
+            clauses: &[WhereClause],
+        ) -> impl Iterator<Item = (Option<Qualifier>, Symbol, Span)> + '_ {
+            clauses
+                .iter()
+                .map(|wc| (wc.trait_module, wc.trait_name, wc.trait_name_span))
+        }
+        let mut traits: Vec<(Option<Qualifier>, Symbol, Span)> = Vec::new();
+        let mut types: Vec<(Qualifier, Symbol, Span)> = Vec::new();
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) => traits.extend(where_refs(&f.where_clauses)),
+                Decl::Trait(t) => {
+                    traits.extend(t.supertraits.iter().map(|r| (r.module, r.name, r.span)));
+                    for assoc in &t.assoc_types {
+                        traits.extend(assoc.bounds.iter().map(|r| (r.module, r.name, r.span)));
+                    }
+                    traits.extend(where_refs(&t.param_where_clauses));
+                    for m in &t.methods {
+                        traits.extend(where_refs(&m.where_clauses));
+                    }
+                }
+                Decl::TraitImpl(ti) => {
+                    traits.push((ti.trait_module, ti.trait_name, ti.trait_name_span));
+                    if let Some(module) = ti.target_module {
+                        types.push((module, ti.target_type, ti.target_type_span));
+                    }
+                    traits.extend(where_refs(&ti.where_clauses));
+                    for m in &ti.methods {
+                        traits.extend(where_refs(&m.where_clauses));
+                    }
+                }
+                Decl::Type(_) | Decl::Import(..) | Decl::Let { .. } => {}
+            }
+        }
+        for (module, name, span) in traits {
+            if let Some(module) = module {
+                self.check_qualified_trait(module, name, span);
+            }
+        }
+        for (module, name, span) in types {
+            self.check_qualified_type(module, name, span);
+        }
+    }
+
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
 
     /// Merge the producer-side snapshot for `module_sym` into this
@@ -3278,6 +3482,7 @@ impl TypeChecker {
         self.imported_modules.clear();
         self.poisoned_names.clear();
         self.imported_private_fns.clear();
+        self.module_prefixes.clear();
         // Round 94: the qualified type mirrors share the import set's
         // lifecycle — they are rebuilt from the imports processed below.
         self.qualified_records.clear();
@@ -3291,13 +3496,12 @@ impl TypeChecker {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.imported_modules.insert(*module);
+                    self.import_builtin_module_members(*module, *module, &mut env);
                     for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = env.lookup(qualified).cloned() {
                             env.define(*item, scheme);
                         }
-                        // Gated constructors (like Monday, GET) are already
-                        // registered under their bare name — no alias needed.
                     }
                 } else if self.poisoned_modules.contains(module) {
                     // The module's name binds nothing here, but a use of
@@ -3313,6 +3517,7 @@ impl TypeChecker {
                     // under `module.name`. Also alias each requested
                     // selective `item` to the bare name in env.
                     self.imported_modules.insert(*module);
+                    self.module_prefixes.insert(*module, *module);
                     for (item, _) in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = env.lookup(qualified).cloned() {
@@ -3335,6 +3540,7 @@ impl TypeChecker {
                     // user chose to rename the module, so the original
                     // symbol is no longer in scope under its bare name.
                     self.imported_modules.insert(*alias);
+                    self.import_builtin_module_members(*module, *alias, &mut env);
                     // Mirror every qualified `{module}.{suffix}` binding
                     // under the alias. Before round 58, this loop iterated
                     // `builtin_module_functions(module_str)` and copied
@@ -3367,6 +3573,7 @@ impl TypeChecker {
                     // `alias.name` (matching the aliased prefix the
                     // user wrote).
                     self.imported_modules.insert(*alias);
+                    self.module_prefixes.insert(*alias, *module);
                 } else {
                     self.warning(Code::UnknownModule,
                         format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
@@ -3377,15 +3584,17 @@ impl TypeChecker {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.imported_modules.insert(*module);
-                    // Built-in module names are already bound via register_builtins
-                    // under their `module.func` qualified form — no additional
-                    // action required here.
+                    // Built-in module functions are already bound via
+                    // register_builtins under their `module.func` qualified
+                    // form; the module's types and variants are bound here.
+                    self.import_builtin_module_members(*module, *module, &mut env);
                 } else if self.poisoned_modules.contains(module) {
                     self.imported_modules.insert(*module);
                     self.poisoned_names.insert(*module);
                 } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
                     // Round 64 item 6A: producer-side exports merged.
                     self.imported_modules.insert(*module);
+                    self.module_prefixes.insert(*module, *module);
                 } else {
                     // A user module the check was not given: a check
                     // outside a session cannot see user modules. Warn, and add a minimal
@@ -3405,6 +3614,8 @@ impl TypeChecker {
                 }
             }
         }
+
+        self.check_qualified_trait_refs(program);
 
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.
@@ -4851,9 +5062,19 @@ impl TypeChecker {
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
         match &te.kind {
-            TypeExprKind::Named(name) => {
-                // Check if it's a type param variable
-                if let Some(tv) = param_vars.get(name) {
+            TypeExprKind::Named {
+                module,
+                name,
+                name_span,
+            } => {
+                // `m.Shape` is the type `Shape` of module `m`: types are
+                // keyed by their bare name.
+                if let Some(module) = module {
+                    if !self.check_qualified_type(*module, *name, *name_span) {
+                        return Type::Error;
+                    }
+                } else if let Some(tv) = param_vars.get(name) {
+                    // A type parameter variable.
                     return tv.clone();
                 }
                 if self.poisoned_names.contains(name) {
@@ -4976,10 +5197,18 @@ impl TypeChecker {
                     }
                 }
             }
-            TypeExprKind::Generic(name, args) => {
+            TypeExprKind::Generic {
+                module,
+                name,
+                name_span,
+                args,
+            } => {
                 // A type imported from a module that failed to load takes
-                // any arguments; nothing is known about it.
-                if self.poisoned_names.contains(name) {
+                // any arguments; nothing is known about it. So does a
+                // qualified type the module does not have (reported here).
+                if self.poisoned_names.contains(name)
+                    || module.is_some_and(|m| !self.check_qualified_type(m, *name, *name_span))
+                {
                     for arg in args {
                         let _ = self.resolve_type_expr_inner(arg, param_vars);
                     }
@@ -5144,9 +5373,15 @@ impl TypeChecker {
             }
             TypeExprKind::AssocProj {
                 receiver,
+                trait_module,
                 trait_name,
                 assoc_name,
             } => {
+                if let Some(module) = trait_module
+                    && !self.check_qualified_trait(*module, *trait_name, te.span)
+                {
+                    return Type::Error;
+                }
                 // Build a `Type::AssocProj` whose receiver is the
                 // resolved receiver type. The canonicaliser at
                 // `resolve_type_expr`'s wrapper layer reduces it to
@@ -5475,11 +5710,11 @@ impl TypeChecker {
             .iter()
             .map(|a| AssocTypeInfo {
                 name: a.name,
-                bounds: a.bounds.clone(),
+                bounds: a.bounds.iter().map(|b| (b.name, b.args.clone())).collect(),
                 span: a.span,
             })
             .collect();
-        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
+        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|r| r.name).collect();
         let pkg = self.defining_package();
         self.traits.insert(
             t.name,
@@ -5587,9 +5822,9 @@ impl TypeChecker {
             .map(|wc| (wc.type_param, wc.trait_name))
             .collect();
 
-        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
+        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|r| r.name).collect();
         let supertrait_args: Vec<Vec<TypeExpr>> =
-            t.supertraits.iter().map(|(_, a, _)| a.clone()).collect();
+            t.supertraits.iter().map(|r| r.args.clone()).collect();
 
         // Reject duplicate assoc-type names within the same trait.
         // Mirrors the duplicate-method check above.
@@ -5612,7 +5847,7 @@ impl TypeChecker {
             .iter()
             .map(|a| AssocTypeInfo {
                 name: a.name,
-                bounds: a.bounds.clone(),
+                bounds: a.bounds.iter().map(|b| (b.name, b.args.clone())).collect(),
                 span: a.span,
             })
             .collect();
@@ -6055,7 +6290,11 @@ impl TypeChecker {
                                 .iter()
                                 .map(|_| {
                                     TypeExpr::new(
-                                        TypeExprKind::Named(intern("__synth_placeholder__")),
+                                        TypeExprKind::Named {
+                                            module: None,
+                                            name: intern("__synth_placeholder__"),
+                                            name_span: decl_span,
+                                        },
                                         decl_span,
                                     )
                                 })
@@ -6101,7 +6340,11 @@ impl TypeChecker {
                             name: *name,
                             name_span: decl_span,
                             ty: TypeExpr::new(
-                                TypeExprKind::Named(intern("__synth_placeholder__")),
+                                TypeExprKind::Named {
+                                    module: None,
+                                    name: intern("__synth_placeholder__"),
+                                    name_span: decl_span,
+                                },
                                 decl_span,
                             ),
                         })
@@ -8062,7 +8305,14 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         Expr::new(ExprKind::Unit, span)
     }
     fn named_ret(name: &str, span: Span) -> Option<TypeExpr> {
-        Some(TypeExpr::new(TypeExprKind::Named(intern(name)), span))
+        Some(TypeExpr::new(
+            TypeExprKind::Named {
+                module: None,
+                name: intern(name),
+                name_span: span,
+            },
+            span,
+        ))
     }
     fn sig_only_method(name: &str, params: Vec<Param>, ret: &str, span: Span) -> FnDecl {
         FnDecl {
@@ -8123,6 +8373,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -8143,6 +8394,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -8163,6 +8415,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -8180,6 +8433,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -8188,10 +8442,16 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             name: intern("Error"),
             name_span: dummy_span,
             params: Vec::new(),
-            supertraits: vec![(intern("Display"), Vec::new(), dummy_span)],
+            supertraits: vec![TraitRef {
+                module: None,
+                name: intern("Display"),
+                args: Vec::new(),
+                span: dummy_span,
+            }],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },

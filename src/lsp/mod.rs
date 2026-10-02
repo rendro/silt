@@ -56,7 +56,6 @@ mod selection_range;
 mod semantic_tokens;
 mod signature_help;
 mod state;
-mod text_utils;
 mod type_definition;
 mod workspace;
 mod workspace_symbol;

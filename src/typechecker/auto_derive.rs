@@ -90,8 +90,9 @@ impl Derive {
     fn ctor_pat(&self, name: Symbol, args: Vec<Pattern>) -> Pattern {
         Pattern::new(
             PatternKind::Constructor {
-                module: None,
+                qualifier: Vec::new(),
                 name,
+                name_span: self.span,
                 args,
             },
             self.span,
@@ -337,7 +338,14 @@ impl Derive {
     }
 
     fn named_te(&self, name: Symbol) -> TypeExpr {
-        TypeExpr::new(TypeExprKind::Named(name), self.span)
+        TypeExpr::new(
+            TypeExprKind::Named {
+                module: None,
+                name,
+                name_span: self.span,
+            },
+            self.span,
+        )
     }
 
     /// Build a `TypeExpr` for the (possibly generic) type being derived.
@@ -348,7 +356,15 @@ impl Derive {
             self.named_te(name)
         } else {
             let args: Vec<TypeExpr> = params.iter().map(|p| self.named_te(*p)).collect();
-            TypeExpr::new(TypeExprKind::Generic(name, args), self.span)
+            TypeExpr::new(
+                TypeExprKind::Generic {
+                    module: None,
+                    name,
+                    name_span: self.span,
+                    args,
+                },
+                self.span,
+            )
         }
     }
 
@@ -412,15 +428,18 @@ impl Derive {
             .iter()
             .map(|p| WhereClause {
                 type_param: *p,
+                trait_module: None,
                 trait_name,
                 trait_args: Vec::new(),
                 trait_name_span: self.span,
             })
             .collect();
         TraitImpl {
+            trait_module: None,
             trait_name,
             trait_name_span: self.span,
             trait_args: Vec::new(),
+            target_module: None,
             target_type: type_name,
             target_type_span: self.span,
             target_type_args,

@@ -107,7 +107,7 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push(')');
         }
         ExprKind::Ascription(ex, ty) => {
-            out.push_str(&format!("Asc(ty={:?},", ty.kind));
+            out.push_str(&format!("Asc(ty={},", type_dbg(ty)));
             expr_dbg(ex, out);
             out.push(')');
         }
@@ -144,6 +144,30 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push_str("])");
         }
         other => out.push_str(&format!("{other:?}")),
+    }
+}
+
+/// A type expression without its source positions.
+fn type_dbg(ty: &silt::ast::TypeExpr) -> String {
+    use silt::ast::TypeExprKind;
+    let list =
+        |items: &[silt::ast::TypeExpr]| items.iter().map(type_dbg).collect::<Vec<_>>().join(",");
+    match &ty.kind {
+        TypeExprKind::Named { module, name, .. } => {
+            format!("Named({:?},{name:?})", module.map(|m| m.name))
+        }
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => format!(
+            "Generic({:?},{name:?},[{}])",
+            module.map(|m| m.name),
+            list(args)
+        ),
+        TypeExprKind::Tuple(elems) => format!("Tuple([{}])", list(elems)),
+        TypeExprKind::Function(params, ret) => {
+            format!("Fn([{}],{})", list(params), type_dbg(ret))
+        }
+        other => format!("{other:?}"),
     }
 }
 

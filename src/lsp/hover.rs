@@ -5,7 +5,7 @@ use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 use super::Server;
 use crate::intern::resolve;
 
-use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars};
+use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_vars};
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
@@ -101,8 +101,7 @@ impl Server {
         // type so hover on `fn foo` shows `foo`'s signature. Otherwise use
         // the expression-walk result, falling back to the definition type
         // when the expression type still has unresolved variables.
-        let ident_at_cursor =
-            find_ident_at_offset_with_source(program, cursor, Some(&doc.source.text));
+        let ident_at_cursor = find_ident_at_offset(program, cursor);
         let def_entry = ident_at_cursor.and_then(|name| doc.definitions.get(&name));
 
         let ty = {

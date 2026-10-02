@@ -43,19 +43,27 @@ fn pattern_shell(pattern: &Pattern) -> Pattern {
     let wild = || Pattern::new(PatternKind::Wildcard, pattern.span);
     let kind = match &pattern.kind {
         PatternKind::Tuple(ps) => PatternKind::Tuple(ps.iter().map(|_| wild()).collect()),
-        PatternKind::Constructor { module, name, args } => PatternKind::Constructor {
-            module: *module,
+        PatternKind::Constructor {
+            qualifier,
+            name,
+            name_span,
+            args,
+        } => PatternKind::Constructor {
+            qualifier: qualifier.clone(),
             name: *name,
+            name_span: *name_span,
             args: args.iter().map(|_| wild()).collect(),
         },
         PatternKind::Record {
             module,
             name,
+            name_span,
             fields,
             has_rest,
         } => PatternKind::Record {
             module: *module,
             name: *name,
+            name_span: *name_span,
             fields: fields
                 .iter()
                 .map(|(f, s, _)| (*f, *s, Some(wild())))
@@ -359,17 +367,16 @@ impl TypeChecker {
     /// mirror is consulted when the bare name is not registered.
     pub(super) fn pattern_constructor_enum(
         &self,
-        module: Option<Symbol>,
+        qualifier: &[Qualifier],
         name: Symbol,
     ) -> Option<(Symbol, &EnumInfo)> {
+        let module = qualifier.first().map(|q| q.name);
         let enum_name = self.variant_to_enum.get(&name).copied().or_else(|| {
-            let qualifier = module?;
-            let key = intern(&format!("{}.{}", resolve(qualifier), resolve(name)));
+            let key = intern(&format!("{}.{}", resolve(module?), resolve(name)));
             self.qualified_variant_to_enum.get(&key).copied()
         })?;
         let info = self.enums.get(&enum_name).or_else(|| {
-            let qualifier = module?;
-            let key = intern(&format!("{}.{}", resolve(qualifier), resolve(enum_name)));
+            let key = intern(&format!("{}.{}", resolve(module?), resolve(enum_name)));
             self.qualified_enums.get(&key)
         })?;
         Some((enum_name, info))
@@ -394,24 +401,28 @@ impl TypeChecker {
                     .collect(),
                 None => vec![pat.clone()],
             },
-            PatternKind::Constructor { module, name, args } if !args.is_empty() => {
-                match Self::cartesian_expand(args) {
-                    Some(rows) => rows
-                        .into_iter()
-                        .map(|a| {
-                            Self::synth_at(
-                                pat.span,
-                                PatternKind::Constructor {
-                                    module: *module,
-                                    name: *name,
-                                    args: a,
-                                },
-                            )
-                        })
-                        .collect(),
-                    None => vec![pat.clone()],
-                }
-            }
+            PatternKind::Constructor {
+                qualifier,
+                name,
+                name_span,
+                args,
+            } if !args.is_empty() => match Self::cartesian_expand(args) {
+                Some(rows) => rows
+                    .into_iter()
+                    .map(|a| {
+                        Self::synth_at(
+                            pat.span,
+                            PatternKind::Constructor {
+                                qualifier: qualifier.clone(),
+                                name: *name,
+                                name_span: *name_span,
+                                args: a,
+                            },
+                        )
+                    })
+                    .collect(),
+                None => vec![pat.clone()],
+            },
             PatternKind::List(elems, rest) if !elems.is_empty() => {
                 match Self::cartesian_expand(elems) {
                     Some(rows) => rows
@@ -424,6 +435,7 @@ impl TypeChecker {
             PatternKind::Record {
                 module,
                 name,
+                name_span,
                 fields,
                 has_rest,
             } => match Self::expand_opt_fields(fields) {
@@ -435,6 +447,7 @@ impl TypeChecker {
                             PatternKind::Record {
                                 module: *module,
                                 name: *name,
+                                name_span: *name_span,
                                 fields: f,
                                 has_rest: *has_rest,
                             },
@@ -556,8 +569,9 @@ impl TypeChecker {
                             .map(|_| self.synth(PatternKind::Wildcard))
                             .collect();
                         let ctor = self.synth(PatternKind::Constructor {
-                            module: None,
+                            qualifier: Vec::new(),
                             name: variant.name,
+                            name_span: self.exhaustiveness_span.get(),
                             args: sub_pats.clone(),
                         });
                         if self.is_useful(matrix, &ctor, ty, depth + 1) {
@@ -1409,8 +1423,13 @@ impl TypeChecker {
                 })
             }
             PatternKind::Tuple(ps) => ps.iter().all(|p| self.is_fully_covering_pattern(p)),
-            PatternKind::Constructor { module, name, args } => {
-                self.pattern_constructor_enum(*module, *name)
+            PatternKind::Constructor {
+                qualifier,
+                name,
+                args,
+                ..
+            } => {
+                self.pattern_constructor_enum(qualifier, *name)
                     .is_some_and(|(_, info)| info.variants.len() == 1)
                     && args.iter().all(|p| self.is_fully_covering_pattern(p))
             }
@@ -1565,8 +1584,9 @@ impl TypeChecker {
                                         .map(|_| self.synth(PatternKind::Wildcard))
                                         .collect();
                                     self.synth(PatternKind::Constructor {
-                                        module: None,
+                                        qualifier: Vec::new(),
                                         name: v.name,
+                                        name_span: self.exhaustiveness_span.get(),
                                         args: sub_pats,
                                     })
                                 })
@@ -1725,8 +1745,9 @@ impl TypeChecker {
                             .map(|_| self.synth(PatternKind::Wildcard))
                             .collect();
                         let ctor = self.synth(PatternKind::Constructor {
-                            module: None,
+                            qualifier: Vec::new(),
                             name: variant.name,
+                            name_span: self.exhaustiveness_span.get(),
                             args: sub_pats,
                         });
                         if self.is_useful(patterns, &ctor, ty, 0) {
@@ -2155,8 +2176,9 @@ fn main() { area(Circle(1.0)) }
             MatchArm {
                 pattern: Pattern::new(
                     PatternKind::Constructor {
-                        module: None,
+                        qualifier: Vec::new(),
                         name: leaf_name,
+                        name_span: span,
                         args: vec![wild()],
                     },
                     span,
@@ -2167,8 +2189,9 @@ fn main() { area(Circle(1.0)) }
             MatchArm {
                 pattern: Pattern::new(
                     PatternKind::Constructor {
-                        module: None,
+                        qualifier: Vec::new(),
                         name: pair_name,
+                        name_span: span,
                         args: vec![wild(), wild()],
                     },
                     span,

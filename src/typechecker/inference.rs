@@ -1315,17 +1315,17 @@ impl TypeChecker {
     /// can fail to match.
     fn refutable_part_reason(&self, part: &Pattern, ty: &Type) -> String {
         match &part.kind {
-            PatternKind::Constructor { module, name, .. } => {
-                match self.pattern_constructor_enum(*module, *name) {
-                    Some((enum_name, info)) => format!(
-                        "constructor '{}' is only one of {} variants of enum '{}'",
-                        name,
-                        info.variants.len(),
-                        enum_name
-                    ),
-                    None => self.refutable_type_reason(ty),
-                }
-            }
+            PatternKind::Constructor {
+                qualifier, name, ..
+            } => match self.pattern_constructor_enum(qualifier, *name) {
+                Some((enum_name, info)) => format!(
+                    "constructor '{}' is only one of {} variants of enum '{}'",
+                    name,
+                    info.variants.len(),
+                    enum_name
+                ),
+                None => self.refutable_type_reason(ty),
+            },
             PatternKind::List(..) => "list patterns can fail to match".to_string(),
             PatternKind::Int(_) => {
                 "integer literal patterns test a runtime value and can fail to match".to_string()
@@ -1729,6 +1729,34 @@ impl TypeChecker {
         None
     }
 
+    /// The type of `module.enum_name.variant` in an expression, where
+    /// `enum_name` is an enum of `module`: the variant's constructor, if
+    /// `variant` is one of its variants. Reports and returns a fresh type
+    /// otherwise.
+    fn infer_module_enum_variant(
+        &mut self,
+        module: Symbol,
+        enum_name: Symbol,
+        variant: Symbol,
+        span: Span,
+        env: &TypeEnv,
+    ) -> Type {
+        let key = |name: Symbol| intern(&format!("{module}.{name}"));
+        let owner = self.qualified_variant_to_enum.get(&key(variant)).copied();
+        if owner == Some(enum_name)
+            && let Some(scheme) = env.lookup(key(variant)).cloned()
+        {
+            let ty = self.instantiate(&scheme);
+            return self.apply(&ty);
+        }
+        self.error(
+            Code::NoSuchVariant,
+            format!("enum '{module}.{enum_name}' has no variant '{variant}'"),
+            span,
+        );
+        self.fresh_var()
+    }
+
     /// Validate + resolve a constructor pattern's qualifier. Two
     /// accepted spellings (mirroring expression-side `EnumName.Variant`
     /// / `module.Variant` resolution in the `FieldAccess` arm):
@@ -1740,6 +1768,63 @@ impl TypeChecker {
     ///     is used even under bare-name conflicts.
     /// On failure, EMITS the diagnostic and returns `Invalid`.
     fn resolve_pattern_ctor_qualifier(
+        &mut self,
+        qualifier: &[Qualifier],
+        name: Symbol,
+        span: Span,
+        env: &TypeEnv,
+    ) -> CtorQualifierResolution {
+        let [module, enum_name] = qualifier else {
+            return self.resolve_pattern_ctor_segment(qualifier[0].name, name, span, env);
+        };
+        // `m.Shape.Circle(r)`: the variant of `m` must belong to `Shape`.
+        if !self.module_prefixes.contains_key(&module.name) {
+            if !self.poisoned_names.contains(&module.name) {
+                self.error(
+                    Code::UndefinedConstructor,
+                    format!(
+                        "undefined constructor '{}.{}.{name}' in pattern — '{}' is not an \
+                         imported module",
+                        module.name, enum_name.name, module.name
+                    ),
+                    span,
+                );
+            }
+            return CtorQualifierResolution::Invalid;
+        }
+        let resolution = self.resolve_pattern_ctor_segment(module.name, name, span, env);
+        match &resolution {
+            CtorQualifierResolution::Module(owner, _) if *owner == enum_name.name => resolution,
+            CtorQualifierResolution::Module(owner, _) => {
+                self.error(
+                    Code::NoSuchVariant,
+                    format!(
+                        "'{name}' is not a variant of enum '{m}.{e}' (it belongs to '{m}.{owner}')",
+                        m = module.name,
+                        e = enum_name.name,
+                    ),
+                    span,
+                );
+                CtorQualifierResolution::Invalid
+            }
+            CtorQualifierResolution::EnumOwned => {
+                self.error(
+                    Code::UndefinedConstructor,
+                    format!(
+                        "undefined constructor '{}.{}.{name}' in pattern — '{}' is an enum type, \
+                         not a module",
+                        module.name, enum_name.name, module.name
+                    ),
+                    span,
+                );
+                CtorQualifierResolution::Invalid
+            }
+            CtorQualifierResolution::Invalid => resolution,
+        }
+    }
+
+    /// [`Self::resolve_pattern_ctor_qualifier`] for one qualifier segment.
+    fn resolve_pattern_ctor_segment(
         &mut self,
         qualifier: Symbol,
         name: Symbol,
@@ -1979,39 +2064,35 @@ impl TypeChecker {
                 }
             }
             PatternKind::Constructor {
-                module,
+                qualifier,
                 name,
                 args: sub_pats,
+                ..
             } => {
                 // Round 94: validate/resolve the qualifier first. A
                 // module qualifier picks the producer module's enum
                 // (disambiguating bare-name conflicts); an enum-name
                 // qualifier (or none) resolves by bare name as before.
-                let resolved: Option<(Symbol, EnumInfo)> = match module {
-                    Some(q) => {
-                        match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span, env) {
-                            CtorQualifierResolution::Module(enum_name, info) => {
-                                Some((enum_name, info))
-                            }
-                            CtorQualifierResolution::EnumOwned => self
-                                .variant_to_enum
-                                .get(name)
-                                .copied()
-                                .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
-                            CtorQualifierResolution::Invalid => {
-                                for sp in sub_pats {
-                                    let tv = self.fresh_var();
-                                    self.bind_pattern(sp, &tv, env, span);
-                                }
-                                return;
-                            }
-                        }
-                    }
-                    None => self
-                        .variant_to_enum
+                let by_bare_name = |tc: &Self| {
+                    tc.variant_to_enum
                         .get(name)
                         .copied()
-                        .and_then(|e| self.enums.get(&e).cloned().map(|i| (e, i))),
+                        .and_then(|e| tc.enums.get(&e).cloned().map(|i| (e, i)))
+                };
+                let resolved: Option<(Symbol, EnumInfo)> = if qualifier.is_empty() {
+                    by_bare_name(self)
+                } else {
+                    match self.resolve_pattern_ctor_qualifier(qualifier, *name, pattern.span, env) {
+                        CtorQualifierResolution::Module(enum_name, info) => Some((enum_name, info)),
+                        CtorQualifierResolution::EnumOwned => by_bare_name(self),
+                        CtorQualifierResolution::Invalid => {
+                            for sp in sub_pats {
+                                let tv = self.fresh_var();
+                                self.bind_pattern(sp, &tv, env, span);
+                            }
+                            return;
+                        }
+                    }
                 };
                 // Look up the constructor to find inner types
                 if let Some((enum_name, enum_info)) = resolved
@@ -2127,7 +2208,7 @@ impl TypeChecker {
                 let resolved = self.apply(ty);
                 let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match (name, module) {
                     (Some(rec_name), Some(q)) => {
-                        self.lookup_qualified_record(*q, *rec_name, pattern.span, true, env)
+                        self.lookup_qualified_record(q.name, *rec_name, pattern.span, true, env)
                     }
                     (Some(rec_name), None) => match self.records.get(rec_name).cloned() {
                         Some(info) => {
@@ -2762,6 +2843,20 @@ impl TypeChecker {
             ExprKind::FieldAccess(obj, field, _) => {
                 self.last_field_access_was_method = false;
                 let field = *field;
+                // `m.Shape.Circle`: a variant of an enum reached through
+                // its module.
+                if let ExprKind::FieldAccess(head, enum_name, _) = &obj.kind
+                    && let ExprKind::Ident(module) = &head.kind
+                    && self.module_prefixes.contains_key(module)
+                    && !self.value_binding_shadows_module(env, *module)
+                    && self
+                        .qualified_enums
+                        .contains_key(&intern(&format!("{module}.{enum_name}")))
+                {
+                    let ty = self.infer_module_enum_variant(*module, *enum_name, field, span, env);
+                    expr.ty = Some(ty.clone());
+                    return ty;
+                }
                 // Capture module name before mutable borrow for inference
                 let module_name = if let ExprKind::Ident(n) = &obj.kind {
                     Some(*n)
@@ -4247,8 +4342,9 @@ impl TypeChecker {
                 module,
                 name,
                 fields,
+                ..
             } => {
-                let module = *module;
+                let module = module.map(|q| q.name);
                 let name = *name;
                 // GAP (round 35 F4): duplicate fields in a record literal
                 // (e.g. `User { name: "a", name: "b" }`) used to slip past
@@ -5274,9 +5370,10 @@ impl TypeChecker {
                 }
             }
             PatternKind::Constructor {
-                module,
+                qualifier,
                 name,
                 args: sub_pats,
+                ..
             } => {
                 // Round 94: validate the qualifier, then prefer the
                 // QUALIFIED scheme (`env` carries every export under
@@ -5285,9 +5382,14 @@ impl TypeChecker {
                 // constructor under bare-name conflicts. Bare fallback
                 // covers the enum-name qualifier spelling
                 // (`Shape.Circle(r)`), whose schemes are bare-only.
-                let scheme = match module {
+                let scheme = match qualifier.first() {
                     Some(q) => {
-                        match self.resolve_pattern_ctor_qualifier(*q, *name, pattern.span, env) {
+                        match self.resolve_pattern_ctor_qualifier(
+                            qualifier,
+                            *name,
+                            pattern.span,
+                            env,
+                        ) {
                             CtorQualifierResolution::Invalid => {
                                 for sp in sub_pats {
                                     let tv = self.fresh_var();
@@ -5296,7 +5398,8 @@ impl TypeChecker {
                                 return;
                             }
                             CtorQualifierResolution::Module(..) => {
-                                let key = intern(&format!("{}.{}", resolve(*q), resolve(*name)));
+                                let key =
+                                    intern(&format!("{}.{}", resolve(q.name), resolve(*name)));
                                 env.lookup(key)
                                     .cloned()
                                     .or_else(|| env.lookup(*name).cloned())
@@ -5429,7 +5532,7 @@ impl TypeChecker {
                     // qualified mirrors (see bind_pattern's Record arm).
                     let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
                         Some(q) => {
-                            self.lookup_qualified_record(*q, *rec_name, pattern.span, true, env)
+                            self.lookup_qualified_record(q.name, *rec_name, pattern.span, true, env)
                         }
                         None => self.records.get(rec_name).cloned().map(|info| {
                             let ids = self.record_param_var_ids.get(rec_name).cloned();
@@ -5692,7 +5795,7 @@ impl TypeChecker {
         trait_info: &TraitInfo,
     ) {
         match &te.kind {
-            TypeExprKind::Named(sym) => {
+            TypeExprKind::Named { name: sym, .. } => {
                 // Trait params are substituted, not type references.
                 if trait_info.params.iter().any(|p| p == sym) {
                     return;
@@ -5729,7 +5832,7 @@ impl TypeChecker {
                     self.error(Code::ArityMismatch, msg, te.span);
                 }
             }
-            TypeExprKind::Generic(_, args) => {
+            TypeExprKind::Generic { args, .. } => {
                 for a in args {
                     self.check_supertrait_arg_parametric_arity(a, trait_info);
                 }
@@ -5845,7 +5948,7 @@ pub(super) fn resolve_supertrait_arg(
     base_args: &[Type],
 ) -> Type {
     match &te.kind {
-        TypeExprKind::Named(sym) => {
+        TypeExprKind::Named { name: sym, .. } => {
             if let Some(idx) = trait_info.params.iter().position(|p| p == sym)
                 && let Some(ty) = base_args.get(idx)
             {
@@ -5869,7 +5972,9 @@ pub(super) fn resolve_supertrait_arg(
                 _ => Type::Generic(*sym, Vec::new()),
             }
         }
-        TypeExprKind::Generic(sym, args) => {
+        TypeExprKind::Generic {
+            name: sym, args, ..
+        } => {
             let mut resolved: Vec<Type> = args
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))

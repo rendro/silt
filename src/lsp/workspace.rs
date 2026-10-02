@@ -53,7 +53,7 @@ impl Server {
                 continue;
             };
             let mut spans: Vec<Span> = Vec::new();
-            collect_references(program, name, &doc.source.text, &mut spans);
+            collect_references(program, name, &mut spans);
             if include_definition && let Some(def) = doc.definitions.get(&name) {
                 spans.push(def.span);
             }
@@ -181,19 +181,19 @@ fn push_type_symbols(
 
 // ── AST walk for references ────────────────────────────────────────
 
-fn collect_references(program: &Program, name: Symbol, source: &str, out: &mut Vec<Span>) {
+fn collect_references(program: &Program, name: Symbol, out: &mut Vec<Span>) {
     for decl in &program.decls {
-        collect_references_in_decl(decl, name, source, out);
+        collect_references_in_decl(decl, name, out);
     }
 }
 
-fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut Vec<Span>) {
+fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
     match decl {
         Decl::Fn(f) => {
             // Include the param-pattern binders so renaming a parameter
             // updates the param list AND every body use (round-60 B8).
             for param in &f.params {
-                collect_references_in_pattern(&param.pattern, name, source, out);
+                collect_references_in_pattern(&param.pattern, name, out);
             }
             // Round-75 DX-4: where-clause trait references.
             for wc in &f.where_clauses {
@@ -204,7 +204,7 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
             // Round-101: type-position references in the signature
             // (param annotations, return type, where-clause args).
             collect_references_in_fn_signature(f, name, out);
-            collect_references_in_expr(&f.body, name, source, out);
+            collect_references_in_expr(&f.body, name, out);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
@@ -239,7 +239,7 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
             }
             for method in &ti.methods {
                 for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, source, out);
+                    collect_references_in_pattern(&param.pattern, name, out);
                 }
                 for wc in &method.where_clauses {
                     if wc.trait_name == name {
@@ -247,18 +247,18 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
                     }
                 }
                 collect_references_in_fn_signature(method, name, out);
-                collect_references_in_expr(&method.body, name, source, out);
+                collect_references_in_expr(&method.body, name, out);
             }
         }
         Decl::Trait(t) => {
             // Round-75 DX-4: supertrait references (`trait Sub: Super`)
             // and trait-level where-clause refs must be tracked so a
             // rename of `Super` updates the supertrait reference too.
-            for (super_name, super_args, super_span) in &t.supertraits {
-                if *super_name == name {
-                    push_named_span(out, *super_span);
+            for r in &t.supertraits {
+                if r.name == name {
+                    push_named_span(out, r.span);
                 }
-                for a in super_args {
+                for a in &r.args {
                     collect_references_in_type_expr(a, name, out);
                 }
             }
@@ -270,19 +270,21 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
                     collect_references_in_type_expr(a, name, out);
                 }
             }
-            // Round-101: assoc-type bound ARGUMENTS (`type Item:
-            // TryInto(Pt)`) are type positions. The bound names carry no
-            // span in `AssocTypeDecl`, so only the args are walkable.
+            // Round-101: assoc-type bounds, and their ARGUMENTS
+            // (`type Item: TryInto(Pt)`), which are type positions.
             for at in &t.assoc_types {
-                for (_, bargs) in &at.bounds {
-                    for a in bargs {
+                for bound in &at.bounds {
+                    if bound.name == name {
+                        push_named_span(out, bound.span);
+                    }
+                    for a in &bound.args {
                         collect_references_in_type_expr(a, name, out);
                     }
                 }
             }
             for method in &t.methods {
                 for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, source, out);
+                    collect_references_in_pattern(&param.pattern, name, out);
                 }
                 for wc in &method.where_clauses {
                     if wc.trait_name == name {
@@ -291,17 +293,17 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
                 }
                 collect_references_in_fn_signature(method, name, out);
                 // Default method bodies, if any.
-                collect_references_in_expr(&method.body, name, source, out);
+                collect_references_in_expr(&method.body, name, out);
             }
         }
         Decl::Let {
             value, pattern, ty, ..
         } => {
-            collect_references_in_pattern(pattern, name, source, out);
+            collect_references_in_pattern(pattern, name, out);
             if let Some(t) = ty {
                 collect_references_in_type_expr(t, name, out);
             }
-            collect_references_in_expr(value, name, source, out);
+            collect_references_in_expr(value, name, out);
         }
         // Round-101: type-decl BODIES reference other types (record
         // field types, enum variant payload types, alias targets) —
@@ -325,16 +327,6 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, source: &str, out: &mut
     }
 }
 
-/// The span of `name` written at the start of `span`: the head name of a
-/// type expression, record literal or pattern whose span covers more
-/// than the name (`Box(Int)`, `Point { x: 1 }`, `Circle(r)`).
-fn head_name_span(span: Span, name: Symbol) -> Span {
-    Span {
-        end: span.start + resolve_sym(name).len() as u32,
-        ..span
-    }
-}
-
 /// Push a span to the references list, skipping spans of silt's own
 /// declarations (`Span::BUILTIN`) — those are not user-renameable.
 fn push_named_span(out: &mut Vec<Span>, span: Span) {
@@ -350,18 +342,24 @@ fn push_named_span(out: &mut Vec<Span>, span: Span) {
 /// be collected alongside value-position references — without them,
 /// renaming a user type from its declaration rewrote only the decl and
 /// left every annotation/construction/pattern site dangling, breaking
-/// the program. A `Named`/`Generic` type expression starts with its
-/// head name, so the name's span is the start of `TypeExpr::span`.
+/// the program.
 fn collect_references_in_type_expr(te: &TypeExpr, name: Symbol, out: &mut Vec<Span>) {
     match &te.kind {
-        TypeExprKind::Named(n) => {
+        TypeExprKind::Named {
+            name: n, name_span, ..
+        } => {
             if *n == name {
-                push_named_span(out, head_name_span(te.span, name));
+                push_named_span(out, *name_span);
             }
         }
-        TypeExprKind::Generic(n, args) => {
+        TypeExprKind::Generic {
+            name: n,
+            name_span,
+            args,
+            ..
+        } => {
             if *n == name {
-                push_named_span(out, head_name_span(te.span, name));
+                push_named_span(out, *name_span);
             }
             for a in args {
                 collect_references_in_type_expr(a, name, out);
@@ -410,23 +408,7 @@ fn collect_references_in_fn_signature(f: &FnDecl, name: Symbol, out: &mut Vec<Sp
     }
 }
 
-/// Resolve the span of the head NAME token in a module-qualified head
-/// (`util.Pt { .. }` expr, `shapes.Circle(r)` pattern). The AST span for
-/// these starts at the module qualifier, not the name — pushing it raw
-/// would corrupt the qualifier on rename. Returns `None` (no edit —
-/// conservative) when the token can't be located.
-fn qualified_head_span(head_span: Span, name: Symbol, source: &str) -> Option<Span> {
-    let name_str = resolve_sym(name);
-    let off =
-        super::text_utils::qualified_head_name_offset(source, head_span.start as usize, &name_str)?;
-    Some(Span {
-        file: head_span.file,
-        start: off as u32,
-        end: (off + name_str.len()) as u32,
-    })
-}
-
-fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut Vec<Span>) {
+fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
     match &expr.kind {
         ExprKind::Ident(n) if *n == name => {
             out.push(expr.span);
@@ -440,14 +422,14 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
         // top-level `let name` mangled `r.name` into `<newname>.name`).
         ExprKind::Block(stmts) => {
             for s in stmts {
-                collect_references_in_stmt(s, name, source, out);
+                collect_references_in_stmt(s, name, out);
             }
         }
         // Round-101: ascription types (`expr: Point`) are type-position
         // references; `visit_expr_children` only walks the value side.
         ExprKind::Ascription(inner, te) => {
             collect_references_in_type_expr(te, name, out);
-            collect_references_in_expr(inner, name, source, out);
+            collect_references_in_expr(inner, name, out);
         }
         // Round-101: match-arm PATTERNS are not child exprs, so
         // `visit_expr_children` never reaches them — without this arm,
@@ -456,29 +438,22 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
         // `ast_walk::find_ident_in_expr`, which already visits them.
         ExprKind::Match { arms, .. } => {
             for arm in arms {
-                collect_references_in_pattern(&arm.pattern, name, source, out);
+                collect_references_in_pattern(&arm.pattern, name, out);
             }
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, source, out);
+                collect_references_in_expr(child, name, out);
             });
         }
-        // Round-101: record-construction HEAD (`Point { x: 3 }`) is a
-        // type-name reference. For the bare form `expr.span` sits on the
-        // name token; for the qualified form (`util.Pt { .. }`) it sits
-        // on the module qualifier, so resolve the name token's own span.
+        // Round-101: record-construction HEAD (`Point { x: 3 }`,
+        // `util.Pt { .. }`) is a type-name reference.
         ExprKind::RecordCreate {
-            module, name: head, ..
+            name: head,
+            name_span,
+            ..
         } if *head == name => {
-            match module {
-                None => push_named_span(out, head_name_span(expr.span, name)),
-                Some(_) => {
-                    if let Some(sp) = qualified_head_span(expr.span, name, source) {
-                        out.push(sp);
-                    }
-                }
-            }
+            push_named_span(out, *name_span);
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, source, out);
+                collect_references_in_expr(child, name, out);
             });
         }
         // Round-102: lambda PARAMS are binders (and may carry type
@@ -492,13 +467,13 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
         // fn-signature handling in `collect_references_in_fn_signature`).
         ExprKind::Lambda { params, .. } => {
             for param in params {
-                collect_references_in_pattern(&param.pattern, name, source, out);
+                collect_references_in_pattern(&param.pattern, name, out);
                 if let Some(ty) = &param.ty {
                     collect_references_in_type_expr(ty, name, out);
                 }
             }
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, source, out);
+                collect_references_in_expr(child, name, out);
             });
         }
         // Round-102 (same class): `loop x = init { ... }` binders, at
@@ -511,26 +486,26 @@ fn collect_references_in_expr(expr: &Expr, name: Symbol, source: &str, out: &mut
                 }
             }
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, source, out);
+                collect_references_in_expr(child, name, out);
             });
         }
         _ => {
             visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, source, out);
+                collect_references_in_expr(child, name, out);
             });
         }
     }
 }
 
-fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, source: &str, out: &mut Vec<Span>) {
+fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, out: &mut Vec<Span>) {
     match stmt {
         Stmt::Let { value, pattern, ty } => {
-            collect_references_in_pattern(pattern, name, source, out);
+            collect_references_in_pattern(pattern, name, out);
             // Round-101: `let p: Point = ...` annotation.
             if let Some(t) = ty {
                 collect_references_in_type_expr(t, name, out);
             }
-            collect_references_in_expr(value, name, source, out);
+            collect_references_in_expr(value, name, out);
         }
         Stmt::When {
             expr,
@@ -538,51 +513,38 @@ fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, source: &str, out: &mut
             pattern,
             ..
         } => {
-            collect_references_in_pattern(pattern, name, source, out);
-            collect_references_in_expr(expr, name, source, out);
-            collect_references_in_expr(else_body, name, source, out);
+            collect_references_in_pattern(pattern, name, out);
+            collect_references_in_expr(expr, name, out);
+            collect_references_in_expr(else_body, name, out);
         }
         Stmt::WhenBool {
             condition,
             else_body,
             ..
         } => {
-            collect_references_in_expr(condition, name, source, out);
-            collect_references_in_expr(else_body, name, source, out);
+            collect_references_in_expr(condition, name, out);
+            collect_references_in_expr(else_body, name, out);
         }
-        Stmt::Expr(e) => collect_references_in_expr(e, name, source, out),
+        Stmt::Expr(e) => collect_references_in_expr(e, name, out),
     }
 }
 
-fn collect_references_in_pattern(
-    pattern: &Pattern,
-    name: Symbol,
-    source: &str,
-    out: &mut Vec<Span>,
-) {
+fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<Span>) {
     // Round-101: Constructor / nominal-record pattern HEADS are type- or
     // variant-name references (`Point { x }` matches the record type;
     // `Circle(r)` matches the enum variant). Without matching them, a
-    // type/variant rename left pattern heads dangling. For the bare form
-    // `pattern.span` starts with the head name; for the qualified form
-    // (`shapes.Circle(r)`) it starts with the module qualifier, so
-    // resolve the name token's own span.
+    // type/variant rename left pattern heads dangling.
     match &pattern.kind {
         PatternKind::Constructor {
-            module, name: head, ..
+            name: head,
+            name_span,
+            ..
         }
         | PatternKind::Record {
-            module,
             name: Some(head),
+            name_span,
             ..
-        } if *head == name => match module {
-            None => push_named_span(out, head_name_span(pattern.span, name)),
-            Some(_) => {
-                if let Some(sp) = qualified_head_span(pattern.span, name, source) {
-                    out.push(sp);
-                }
-            }
-        },
+        } if *head == name => push_named_span(out, *name_span),
         _ => {}
     }
     // Patterns bind new names, so matching identifier-binding positions
@@ -595,21 +557,21 @@ fn collect_references_in_pattern(
         }
         PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
-                collect_references_in_pattern(p, name, source, out);
+                collect_references_in_pattern(p, name, out);
             }
         }
         PatternKind::List(pats, rest) => {
             for p in pats {
-                collect_references_in_pattern(p, name, source, out);
+                collect_references_in_pattern(p, name, out);
             }
             // Round-101: the rest sub-pattern (`[h, ..t]`) binds too.
             if let Some(r) = rest {
-                collect_references_in_pattern(r, name, source, out);
+                collect_references_in_pattern(r, name, out);
             }
         }
         PatternKind::Constructor { args: fields, .. } => {
             for p in fields {
-                collect_references_in_pattern(p, name, source, out);
+                collect_references_in_pattern(p, name, out);
             }
         }
         PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
@@ -619,7 +581,7 @@ fn collect_references_in_pattern(
             // shorthand binder picks up every site (binder + uses).
             for (fname, fspan, sub) in fields {
                 if let Some(p) = sub {
-                    collect_references_in_pattern(p, name, source, out);
+                    collect_references_in_pattern(p, name, out);
                 } else if *fname == name {
                     out.push(*fspan);
                 }
@@ -639,7 +601,7 @@ fn collect_references_in_pattern(
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                collect_references_in_pattern(p, name, source, out);
+                collect_references_in_pattern(p, name, out);
             }
         }
         _ => {}
@@ -677,10 +639,10 @@ mod tests {
             span(0, 14),
         );
         let mut out = Vec::new();
-        collect_references_in_pattern(&pat, x, "{ x, ...rest }", &mut out);
+        collect_references_in_pattern(&pat, x, &mut out);
         assert_eq!(out, vec![span(2, 3)]);
         let mut out = Vec::new();
-        collect_references_in_pattern(&pat, rest, "{ x, ...rest }", &mut out);
+        collect_references_in_pattern(&pat, rest, &mut out);
         assert_eq!(out, vec![span(8, 12)]);
     }
 
@@ -691,14 +653,15 @@ mod tests {
         let circle = intern("Circle");
         let pat = Pattern::new(
             PatternKind::Constructor {
-                module: None,
+                qualifier: Vec::new(),
                 name: circle,
+                name_span: span(0, 6),
                 args: vec![Pattern::new(PatternKind::Ident(intern("r")), span(7, 8))],
             },
             span(0, 9),
         );
         let mut out = Vec::new();
-        collect_references_in_pattern(&pat, circle, "Circle(r)", &mut out);
+        collect_references_in_pattern(&pat, circle, &mut out);
         assert_eq!(out, vec![span(0, 6)]);
     }
 }
