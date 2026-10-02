@@ -1,0 +1,9 @@
+-- verdict: same
+-- Each module's `type Id` is its own: a's impl of Show2 is for Int,
+-- whichever module is imported first.
+import a
+import b
+fn main() {
+  println(b.g("s"))
+  println(a.f(1))
+}

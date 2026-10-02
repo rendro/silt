@@ -1,0 +1,2 @@
+type Id = String
+pub fn g(x: Id) -> Id { x }

@@ -299,6 +299,9 @@ fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic
 pub struct ModuleUnit {
     /// The module's declarations, after the typechecker filled them in.
     pub program: Arc<Program>,
+    /// The type aliases and associated-type bindings the module was
+    /// checked with: its impl targets are canonicalized with them.
+    pub resolver: Arc<Resolver>,
     /// The module's name in its package (`"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`).
     pub name: String,
@@ -436,11 +439,12 @@ pub struct Compiler {
     record_decls: HashMap<String, RecordDecl>,
     /// Type alias declarations, collected together with `record_decls`.
     alias_decls: HashMap<String, AliasDecl>,
-    /// The typechecker's alias / assoc-binding registries, from the
-    /// session. The compiler reads them via
-    /// [`crate::types::canonical::canonicalize_type_name`] when
-    /// emitting trait-impl global keys, so registration and lookup keys
-    /// agree across the typecheck → compile boundary.
+    /// The alias / assoc-binding registries of a compiler with no
+    /// modules (the REPL); a module of a program uses its own (see
+    /// [`Compiler::resolver`]). Read via
+    /// [`crate::types::canonical::canonicalize_type_name`] when emitting
+    /// trait-impl global keys, so registration and lookup keys agree
+    /// across the typecheck → compile boundary.
     resolver: Resolver,
 }
 
@@ -523,9 +527,19 @@ impl Compiler {
     }
 
     /// A compiler for the modules of a program, as the session analysed
-    /// them, with the typechecker's alias registries.
-    pub fn for_program(units: ProgramUnits, resolver: Resolver) -> Self {
-        Self::build(units, resolver)
+    /// them.
+    pub fn for_program(units: ProgramUnits) -> Self {
+        Self::build(units, Resolver::new())
+    }
+
+    /// The alias registries of the module being compiled: the ones it
+    /// was checked with, or the compiler's own when it has no modules.
+    fn resolver(&self) -> &Resolver {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        match self.units.modules.get(current) {
+            Some(unit) => &unit.resolver,
+            None => &self.resolver,
+        }
     }
 
     /// Enable REPL mode. See the `repl_mode` field for semantics.
@@ -1093,7 +1107,7 @@ impl Compiler {
                 // would emit `"Range.bar"` while the typechecker
                 // registers `"List.bar"`, leaving the impl unreachable.
                 let canonical_target =
-                    canonicalize_type_name(&self.resolver, trait_impl.target_type);
+                    canonicalize_type_name(self.resolver(), trait_impl.target_type);
 
                 // Auto-derived impls for built-in enums and records
                 // synthesize bodies that reference the target type's
@@ -2959,7 +2973,7 @@ impl Compiler {
 
         // Builtin types are matched by their canonical name: a range type
         // is described like the list type it is the same type as.
-        let canonical = resolve(canonicalize_type_name(&self.resolver, name));
+        let canonical = resolve(canonicalize_type_name(self.resolver(), name));
         match (canonical.as_str(), args) {
             ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
                 Ok(canonical.clone())

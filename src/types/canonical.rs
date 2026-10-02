@@ -175,6 +175,20 @@ impl Resolver {
         Self::default()
     }
 
+    /// Add every alias and associated-type binding of `other`, as a
+    /// module that imports `other`'s module sees them; an entry of
+    /// `other` replaces one of the same name.
+    pub fn absorb(&mut self, other: &Resolver) {
+        self.aliases
+            .extend(other.aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.assoc_bindings.extend(
+            other
+                .assoc_bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
+
     /// Register a user-declared type alias. Called by the typechecker
     /// at decl-processing time. Re-registering the same name
     /// overwrites the previous entry, which matches the duplicate-

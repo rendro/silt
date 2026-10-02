@@ -98,6 +98,10 @@ pub struct ModuleAnalysis {
     pub top_level: HashMap<crate::intern::Symbol, Type>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
+    /// The type aliases and associated-type bindings the module sees:
+    /// those of the modules it imports, then its own. The compiler
+    /// canonicalizes the module's impl targets with them.
+    pub resolver: Arc<Resolver>,
 }
 
 /// What the VM runs: the compiled functions, the first of which is the
@@ -131,9 +135,6 @@ pub struct Session {
     fallback_packages: Packages,
     /// Editor buffers, by canonical path: read instead of the disk.
     overlays: HashMap<PathBuf, String>,
-    /// The type aliases and associated-type bindings of every module
-    /// checked, shared by all of them and by the compiler.
-    resolver: Resolver,
     /// The module of each file the session was given.
     file_modules: HashMap<FileId, ModuleId>,
     /// The paths the entry files were given by, as the user named them.
@@ -158,7 +159,6 @@ impl Session {
             packages: None,
             fallback_packages: Packages::unnamed(None),
             overlays: HashMap::new(),
-            resolver: Resolver::new(),
             file_modules: HashMap::new(),
             entry_paths: HashMap::new(),
             analyses: HashMap::new(),
@@ -346,6 +346,7 @@ impl Session {
             .unwrap_or(ast::Program { decls: Vec::new() });
         let mut imports = HashMap::new();
         let mut poisoned = HashSet::new();
+        let mut resolver = Resolver::new();
         for import in &module.imports {
             match &import.resolution {
                 ImportResolution::Builtin => {}
@@ -355,6 +356,7 @@ impl Session {
                             && !ordering.back_edges.contains(&(id, *target)) =>
                     {
                         imports.insert(import.name, analysis.exports.clone());
+                        resolver.absorb(&analysis.resolver);
                     }
                     _ => {
                         poisoned.insert(import.name);
@@ -370,13 +372,14 @@ impl Session {
             Some(module.package_name),
             imports,
             poisoned,
-            &mut self.resolver,
+            &mut resolver,
         );
         ModuleAnalysis {
             ast: Arc::new(ast),
             exports: check.exports,
             top_level: check.top_level,
             diagnostics: check.diagnostics,
+            resolver: Arc::new(resolver),
         }
     }
 
@@ -506,6 +509,7 @@ impl Session {
                     let module = self.graph.module(*m);
                     ModuleUnit {
                         program: self.analyses[m].ast.clone(),
+                        resolver: self.analyses[m].resolver.clone(),
                         name: resolve(module.name),
                         global: globals
                             .get(m)
@@ -527,7 +531,7 @@ impl Session {
             entry: index[&id],
         };
         let program = self.analyses[&id].ast.clone();
-        let mut compiler = Compiler::for_program(units, self.resolver.clone());
+        let mut compiler = Compiler::for_program(units);
         let compiled = match target {
             Entry::Main => compiler.compile_program(&program),
             Entry::Tests { .. } | Entry::Cell => compiler.compile_declarations(&program),

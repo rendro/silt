@@ -122,3 +122,27 @@ fn check_str_reports_type_errors_and_needs_no_main() {
         "{diagnostics:?}"
     );
 }
+
+/// A module's type aliases are its own, and an edit of the module
+/// replaces them: its importer is checked against the new alias.
+#[test]
+fn set_overlay_replaces_the_edited_modules_aliases() {
+    let (mut session, entry) = session_with(&[
+        ("main.silt", "import a\nfn main() {\n  println(a.f(1))\n}\n"),
+        ("a.silt", "type Id = Int\npub fn f(x: Id) -> Id { x }\n"),
+    ]);
+    assert!(!session.analyze(entry).has_errors());
+    session.set_overlay(
+        &test_path("a.silt"),
+        "type Id = String\npub fn f(x: Id) -> Id { x }\n".into(),
+    );
+    let analysis = session.analyze(entry).clone();
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .any(|d| d.is_error() && d.message.contains("String")),
+        "{:?}",
+        analysis.diagnostics
+    );
+}
