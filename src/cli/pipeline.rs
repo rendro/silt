@@ -126,7 +126,8 @@ pub(crate) fn parse_entry_file(path: &str, source: String) -> ParsedEntryFile {
         Err(e) => {
             // Lex errors are fatal for all callers. Return a result with the error
             // so that `check_file` can format it as JSON when needed.
-            let source_err = SourceError::from_lex_error(&e, &sources, path);
+            let source_err =
+                SourceError::from_lex_error(&e, &sources, file_label(&sources, e.span, path));
             return ParsedEntryFile {
                 source,
                 sources,
@@ -140,7 +141,7 @@ pub(crate) fn parse_entry_file(path: &str, source: String) -> ParsedEntryFile {
 
     let parse_errors: Vec<SourceError> = raw_parse_errors
         .iter()
-        .map(|e| SourceError::from_parse_error(e, &sources, path))
+        .map(|e| SourceError::from_parse_error(e, &sources, file_label(&sources, e.span, path)))
         .collect();
     ParsedEntryFile {
         source,
@@ -249,7 +250,10 @@ pub(crate) fn analyse_parsed_entry_file(
         compiler.put_resolver(resolver);
         raw_type_errors
             .iter()
-            .map(|e| SourceError::from_type_error(e, compiler.sources(), path))
+            .map(|e| {
+                let file = file_label(compiler.sources(), e.span, path);
+                SourceError::from_type_error(e, compiler.sources(), file)
+            })
             .collect()
     } else {
         Vec::new()
@@ -366,8 +370,10 @@ pub(crate) fn analyse_parsed_entry_file(
 
 /// How the file of `span` is named in a diagnostic of the program at
 /// `path`: the entry file as the user typed it, another file (a module
-/// that imports a broken module, say) by its path relative to the
-/// working directory.
+/// that imports a broken module, a module whose declaration a type error
+/// in the entry file points at) by its path relative to the working
+/// directory. Every diagnostic of the pipeline is named this way, so its
+/// file always comes from its span.
 fn file_label(sources: &SourceMap, span: silt::source::Span, path: &str) -> String {
     match sources.get(span.file).map(|file| &file.path) {
         Some(SourceName::Path(p)) if p != std::path::Path::new(path) => {
