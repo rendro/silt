@@ -1,0 +1,4 @@
+-- cmd: check
+-- A compile warning about code in a module is shown in the module.
+import util
+fn main() { println(util.f()) }

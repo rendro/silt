@@ -1,0 +1,9 @@
+error[runtime]: division by zero
+ --> util.silt:16:25
+    |
+ 16 |   fn act(self) -> Int { self.v / 0 }
+    |                         ^ division by zero
+
+call stack:
+  -> Box.act  at util.silt:16:25
+  -> main  at main.silt:7:11

@@ -1,0 +1,9 @@
+-- exit: 1
+-- A closure of the entry file, called from a module function, fails:
+-- the error is shown in main.silt at the closure, not in util.silt.
+import util
+fn boom(x: Int) -> Int { x }
+fn main() {
+  println(boom(1))
+  println(util.apply({ y -> y / 0 }, 3))
+}

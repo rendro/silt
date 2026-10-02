@@ -1,0 +1,8 @@
+-- exit: 1
+-- A runtime error in a trait method a module defines is shown in the
+-- module, at the method body, not at a line of main.silt.
+import util.{ Box }
+fn main() {
+  let b = Box { v: 2 }
+  println(b.act())
+}

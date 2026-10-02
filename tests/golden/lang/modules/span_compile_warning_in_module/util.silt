@@ -1,0 +1,5 @@
+-- comment line
+pub fn f() -> Int {
+  let json = 1
+  json
+}

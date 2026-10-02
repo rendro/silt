@@ -1,0 +1,9 @@
+error[runtime]: division by zero
+ --> main.silt:8:29
+   |
+ 8 |   println(util.apply({ y -> y / 0 }, 3))
+   |                             ^ division by zero
+
+call stack:
+  -> apply  at util.silt:8:3
+  -> main  at main.silt:8:11

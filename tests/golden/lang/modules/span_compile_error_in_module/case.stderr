@@ -1,0 +1,9 @@
+error[type]: type mismatch: expected ChannelResult(_), got Msg
+
+error[type]: type mismatch: expected Msg, got ChannelResult(_)
+
+error[compile]: 'Message' requires `import channel`
+ --> m3.silt:2:22
+   |
+ 2 | pub fn mk() -> Msg { Message("hi") }
+   |                      ^ 'Message' requires `import channel`
