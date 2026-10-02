@@ -489,3 +489,104 @@ fn dot_completion_on_a_module_offers_its_members() {
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A client that does not watch files: a missing import created on disk
+/// by another program is seen at the next request, with no edit.
+#[test]
+fn a_created_import_is_seen_at_the_next_request() {
+    let dir = project("create", &[("main.silt", MAIN_TWICE)]);
+    let main_uri = uri(&dir.join("main.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    let first = client.did_open_and_wait(&main_uri, MAIN_TWICE);
+    assert!(
+        messages(&first)
+            .iter()
+            .any(|m| m.contains("cannot load module 'helper'")),
+        "{first}"
+    );
+
+    fs::write(dir.join("helper.silt"), HELPER).expect("write");
+    // A request with nothing pending; the publish comes before its
+    // answer.
+    client.send_request(
+        crate::support::next_id(),
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": main_uri }, "position": { "line": 0, "character": 0 } }),
+    );
+    let created = client.wait_for_diagnostics(&main_uri);
+    assert_eq!(messages(&created), Vec::<String>::new(), "{created}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A client that watches the workspace folder: a path dependency outside
+/// it is still compared by its stamp, so a change to it is seen at the
+/// next request.
+#[test]
+fn a_path_dependency_outside_the_watched_folder_is_still_checked() {
+    let base = project("outside", &[]);
+    let app = base.join("app");
+    let dep = base.join("dep");
+    fs::create_dir_all(app.join("src")).expect("mkdir");
+    fs::create_dir_all(dep.join("src")).expect("mkdir");
+    fs::write(
+        app.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"../dep\" }\n",
+    )
+    .expect("write");
+    fs::write(
+        dep.join("silt.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write");
+    fs::write(
+        dep.join("src/lib.silt"),
+        "pub fn twice(x: Int) -> Int {\n  x * 2\n}\n",
+    )
+    .expect("write");
+    let main = "import dep\n\nfn main() {\n  println(\"{dep.twice(1)}\")\n}\n";
+    fs::write(app.join("src/main.silt"), main).expect("write");
+    let main_uri = uri(&app.join("src/main.silt"));
+
+    let mut client = LspClient::spawn_uninitialized();
+    let id = crate::support::next_id();
+    client.send_request(
+        id,
+        "initialize",
+        json!({
+            "rootUri": uri(&app),
+            "capabilities": {
+                "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } }
+            },
+        }),
+    );
+    client.recv_response_for(id);
+    client.send_notification("initialized", json!({}));
+    let registration = client.recv_until("client/registerCapability", |msg| {
+        msg["method"] == "client/registerCapability"
+    });
+    client.send_raw(&json!({ "jsonrpc": "2.0", "id": registration["id"], "result": null }));
+    let first = client.did_open_and_wait(&main_uri, main);
+    assert_eq!(messages(&first), Vec::<String>::new(), "{first}");
+
+    // Not reported by the client: the file is outside its folder.
+    fs::write(
+        dep.join("src/lib.silt"),
+        "pub fn other() -> Int {\n  0\n}\n",
+    )
+    .expect("write");
+    // A request with nothing pending; the publish comes before its
+    // answer.
+    client.send_request(
+        crate::support::next_id(),
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": main_uri }, "position": { "line": 0, "character": 0 } }),
+    );
+    let changed = client.wait_for_diagnostics(&main_uri);
+    assert!(
+        messages(&changed).iter().any(|m| m.contains("twice")),
+        "{changed}"
+    );
+    client.shutdown();
+    let _ = fs::remove_dir_all(&base);
+}

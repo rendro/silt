@@ -45,8 +45,9 @@ pub(super) struct Project {
     /// How many texts the session was given.
     texts_given: usize,
     /// The stamp of each file the session read from disk (a module file
-    /// no open document overlays), as of the last analysis. A client
-    /// that cannot watch files gets them compared on each analysis.
+    /// no open document overlays) that the client does not watch, as of
+    /// the last analysis. They are compared before each analysis and
+    /// each request.
     disk: HashMap<PathBuf, Stamp>,
     /// What compiling each analysed entry module found, with the modules
     /// of its graph. Dropped when one of them changes.
@@ -82,23 +83,26 @@ impl Project {
         self.texts_given >= TEXTS_PER_SESSION || stamps(dir) != self.stamps
     }
 
-    /// Whether a file the session read from disk changed (or appeared,
-    /// or went away) since the last analysis.
-    pub(super) fn disk_changed(&self) -> bool {
+    /// The files the session read from disk that changed (or appeared,
+    /// or went away) since they were recorded.
+    pub(super) fn changed_files(&self) -> Vec<PathBuf> {
         self.disk
             .iter()
-            .any(|(path, stamp)| stamp_of(path) != *stamp)
+            .filter(|(path, stamp)| stamp_of(path) != **stamp)
+            .map(|(path, _)| path.clone())
+            .collect()
     }
 
-    /// Record the stamp of each module file of the session that is not
-    /// one of `open` (path keys).
-    pub(super) fn record_disk(&mut self, open: &std::collections::HashSet<PathBuf>) {
+    /// Record the stamp of each module file of the session that
+    /// `skip` does not exclude (an open document's, or one the client
+    /// watches).
+    pub(super) fn record_disk(&mut self, skip: impl Fn(&Path) -> bool) {
         self.disk = self
             .session
             .graph()
             .modules()
             .iter()
-            .filter(|m| !open.contains(&path_key(&m.path)))
+            .filter(|m| !skip(&m.path))
             .map(|m| (m.path.clone(), stamp_of(&m.path)))
             .collect();
     }

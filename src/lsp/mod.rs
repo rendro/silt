@@ -113,6 +113,9 @@ struct Server {
     watching: bool,
     /// Files the client reported changed on disk since the last analysis.
     disk_events: Vec<PathBuf>,
+    /// The workspace folder (as a file key), when the client gave one:
+    /// the files under it are the ones the client watches.
+    root: Option<PathBuf>,
     /// The diagnostics last published, per URI. The pull-based
     /// `textDocument/diagnostic` handler answers from it.
     published: HashMap<Uri, Vec<Diagnostic>>,
@@ -131,6 +134,7 @@ impl Server {
             deadline: None,
             watching: false,
             disk_events: Vec::new(),
+            root: None,
             published: HashMap::new(),
         }
     }
@@ -277,8 +281,10 @@ impl Server {
     // ── Requests ───────────────────────────────────────────────────
 
     fn handle_request(&mut self, req: Request) {
-        // A request is answered from the current text: the scheduled
-        // analysis runs first.
+        // A request is answered from the current text and the current
+        // files: the scheduled analysis runs first, and one runs when a
+        // file a session read changed on disk.
+        self.check_disk();
         self.analyse_pending();
         let resp = match req.method.as_str() {
             HoverRequest::METHOD => match extract_request::<HoverRequest>(req) {
@@ -653,6 +659,7 @@ pub fn run() {
         })
         .and_then(file_uri_to_path);
     if let Some(root) = root_path {
+        server.root = Some(project::path_key(&root));
         preload::preload_workspace(&mut server, &root);
     }
 

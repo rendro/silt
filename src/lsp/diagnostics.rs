@@ -170,6 +170,16 @@ impl Server {
         }
     }
 
+    /// Compare the stamps of the files the sessions read from disk and
+    /// the client does not watch; a change schedules an analysis that
+    /// makes the session again. A request runs this, so a file created
+    /// or changed by another program is seen without an edit.
+    pub(super) fn check_disk(&mut self) {
+        for project in self.projects.values() {
+            self.disk_events.extend(project.changed_files());
+        }
+    }
+
     /// Run the scheduled analysis now, if there is one.
     pub(super) fn analyse_pending(&mut self) {
         self.analyse_pending_with(Self::analyse);
@@ -231,13 +241,19 @@ impl Server {
         }
         self.projects.retain(|dir, _| by_project.contains_key(dir));
         let disk_events = std::mem::take(&mut self.disk_events);
-        let watching = self.watching;
         let open_keys: HashSet<PathBuf> = self
             .documents
             .values()
             .filter(|doc| doc.open)
             .map(|doc| doc.key.clone())
             .collect();
+        // The files whose stamps are recorded: those not open, and not
+        // under the workspace folder the client watches.
+        let watched_root = self.root.clone().filter(|_| self.watching);
+        let skip = |path: &std::path::Path| {
+            let key = path_key(path);
+            open_keys.contains(&key) || watched_root.as_ref().is_some_and(|r| key.starts_with(r))
+        };
 
         // The URI of each file: an open document's when it has one (a
         // workspace file can be indexed under another spelling of the
@@ -254,11 +270,11 @@ impl Server {
         for (dir, uris) in &by_project {
             // A session is made again when the project's manifest or
             // lockfile changed, or a file it read from disk changed: as
-            // the client reports it, or, for a client that does not watch
-            // files, as the file's stamp shows.
+            // the client reports it, or, for a file the client does not
+            // watch, as the file's stamp shows.
             let stale = self.projects.get(dir).is_none_or(|p| {
                 p.is_stale(dir)
-                    || (!watching && p.disk_changed())
+                    || !p.changed_files().is_empty()
                     || disk_events.iter().any(|path| p.has_module(path))
             });
             if stale {
@@ -270,9 +286,7 @@ impl Server {
                 .map(|uri| (uri.clone(), self.documents[uri].path.clone()))
                 .collect();
             let modules = analyse_project(project, &entries, &texts);
-            if !watching {
-                project.record_disk(&open_keys);
-            }
+            project.record_disk(skip);
             let packages_failed = project.session.packages().is_err();
             for (uri, id, mut found) in modules {
                 if packages_failed {
