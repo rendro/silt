@@ -1,0 +1,9 @@
+-- verdict: same
+-- `import helper as util` binds `util` to helper; the module util is
+-- reached as `u2`.
+import helper as util
+import util as u2
+fn main() {
+  println(util.who())
+  println(u2.who())
+}

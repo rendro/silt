@@ -5122,7 +5122,7 @@ impl TypeChecker {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
                 let is_value = is_syntactic_value(&value.kind);
-                let val_ty = self.infer_expr(value, env);
+                let mut val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
                     // B2: populate the arity-error span hint with the
@@ -5132,6 +5132,12 @@ impl TypeChecker {
                     let declared = self.resolve_type_expr(te, &mut HashMap::new());
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, value_span);
+                    // A value of unknown type (from a module that failed
+                    // to load) takes the declared type: `let y: Int = x`
+                    // makes `y` an Int.
+                    if matches!(self.apply(&val_ty), Type::Error) {
+                        val_ty = declared;
+                    }
                 }
 
                 // Generalize for let-polymorphism, but apply the value
