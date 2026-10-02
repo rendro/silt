@@ -584,10 +584,7 @@ mod tests {
     /// Parse `source` and return the pattern of the first `let` stmt in
     /// the first fn's body block.
     fn first_let_pattern(source: &str) -> Pattern {
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .expect("lex");
-        let (program, _) = crate::parser::Parser::new(tokens, source).parse_program_recovering();
+        let program = crate::lsp::testing::parsed(source);
         let Some(Decl::Fn(f)) = program.decls.first() else {
             panic!("fixture must start with a fn decl");
         };

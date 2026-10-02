@@ -4,8 +4,10 @@
 //! over the standard LSP JSON-RPC transport (stdin/stdout).
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
+use std::time::Instant;
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
@@ -44,7 +46,9 @@ mod implementation;
 mod inlay_hints;
 mod local_bindings;
 mod locals;
+mod modules;
 mod preload;
+mod project;
 mod references;
 mod rename;
 mod selection_range;
@@ -94,10 +98,16 @@ struct Server {
     /// `env.define_with_doc` / `env.attach_doc` registration sites
     /// under `src/typechecker/builtins/`.
     builtin_docs: HashMap<String, String>,
-    /// Per-URI cache of the last computed diagnostics. Populated by
-    /// `update_document` so the pull-based `textDocument/diagnostic`
-    /// handler can answer without re-running the pipeline.
-    diagnostics_cache: HashMap<Uri, Vec<Diagnostic>>,
+    /// The projects of the open documents, by project directory, each
+    /// with its session.
+    projects: HashMap<PathBuf, project::Project>,
+    /// The documents changed or closed since the last analysis.
+    pending: HashSet<Uri>,
+    /// When the scheduled analysis runs, if one is scheduled.
+    deadline: Option<Instant>,
+    /// The diagnostics last published, per URI. The pull-based
+    /// `textDocument/diagnostic` handler answers from it.
+    published: HashMap<Uri, Vec<Diagnostic>>,
 }
 
 impl Server {
@@ -108,12 +118,32 @@ impl Server {
             builtin_sigs: typechecker::builtin_type_signatures(),
             builtin_docs: typechecker::builtin_docs(),
             builtin_param_names: typechecker::builtin_param_names(),
-            diagnostics_cache: HashMap::new(),
+            projects: HashMap::new(),
+            pending: HashSet::new(),
+            deadline: None,
+            published: HashMap::new(),
         }
     }
 
     fn run(&mut self) {
-        while let Ok(msg) = self.connection.receiver.recv() {
+        loop {
+            let msg = match self.deadline {
+                Some(deadline) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    match self.connection.receiver.recv_timeout(left) {
+                        Ok(msg) => msg,
+                        Err(e) if e.is_timeout() => {
+                            self.analyse_pending();
+                            continue;
+                        }
+                        Err(_) => return,
+                    }
+                }
+                None => match self.connection.receiver.recv() {
+                    Ok(msg) => msg,
+                    Err(_) => return,
+                },
+            };
             match msg {
                 Message::Request(req) => {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
@@ -135,10 +165,10 @@ impl Server {
     // runs inside `catch_unwind`; a panic is logged to stderr (next to the
     // report the panic hook prints) and the message loop goes on.
     //
-    // Carrying on is sound: request handlers only read the server state.
-    // Of the notification handlers, `didClose` only removes an entry, and
-    // `update_document` (`didOpen`, `didChange`) catches a panic of the
-    // analysis itself, so that the new text is stored in any case.
+    // Carrying on is sound: request handlers only read the server state,
+    // after the scheduled analysis, which catches its own panics (see
+    // `analyse_pending_with`). The notification handlers only store a
+    // text and schedule the analysis.
 
     /// Run `handler` on `req`. If it panics, answer the request with an
     /// `InternalError`, so the client is not left waiting for a response.
@@ -212,9 +242,7 @@ impl Server {
                 else {
                     return;
                 };
-                self.documents.remove(&params.text_document.uri);
-                // Clear diagnostics for closed file.
-                self.publish_diagnostics(params.text_document.uri, vec![]);
+                self.close_document(params.text_document.uri);
             }
             _ => {}
         }
@@ -223,6 +251,9 @@ impl Server {
     // ── Requests ───────────────────────────────────────────────────
 
     fn handle_request(&mut self, req: Request) {
+        // A request is answered from the current text: the scheduled
+        // analysis runs first.
+        self.analyse_pending();
         let resp = match req.method.as_str() {
             HoverRequest::METHOD => match extract_request::<HoverRequest>(req) {
                 Ok((id, params)) => {
@@ -567,6 +598,47 @@ pub fn run() {
     }
 }
 
+// ── Test helpers ──────────────────────────────────────────────────
+
+/// What the unit tests of the features read: a program as the session
+/// checks it, or as it parses.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::collections::HashMap;
+
+    use crate::ast::Program;
+    use crate::intern::Symbol;
+    use crate::types::Type;
+
+    /// `source` as the session checks it: the module with its types, and
+    /// the type of each top-level value.
+    pub(crate) fn checked(source: &str) -> (Program, HashMap<Symbol, Type>) {
+        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
+        session.analyze(file);
+        let module = session
+            .module_analysis(session.module_of(file))
+            .expect("the entry is analysed");
+        ((*module.ast).clone(), module.top_level.clone())
+    }
+
+    /// `source` as the session checks it.
+    pub(crate) fn checked_program(source: &str) -> Program {
+        checked(source).0
+    }
+
+    /// `source` as the session parses it.
+    pub(crate) fn parsed(source: &str) -> Program {
+        let mut sources = crate::source::SourceMap::new();
+        let file = sources.add(
+            crate::source::SourceName::Path("main.silt".into()),
+            source.into(),
+        );
+        crate::session::parse_text(file, source)
+            .0
+            .expect("the source lexes")
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────
 //
 // Integration tests for the Server — constructed via an in-memory
@@ -606,6 +678,7 @@ mod tests {
     fn open_document(server: &mut Server, source: &str) -> Uri {
         let uri = test_uri();
         server.update_document(uri.clone(), source.to_string());
+        server.analyse_pending();
         uri
     }
 

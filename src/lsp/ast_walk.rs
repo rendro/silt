@@ -760,16 +760,7 @@ fn find_ident_type_in_expr(expr: &Expr, name: Symbol, result: &mut Option<Type>)
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse_and_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        program
-    }
+    use crate::lsp::testing::checked_program;
 
     // ── has_unresolved_vars ───────────────────────────────────────
 
@@ -830,12 +821,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_typed() {
         let source = "fn main() { 42 }";
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         // The literal 42 should have type Int
         let ty = find_type_at_offset(&program, 13); // offset of "42"
@@ -847,12 +833,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_string() {
         let source = r#"fn main() { "hello" }"#;
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 13);
         assert_eq!(ty, Some(Type::String));
@@ -861,12 +842,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_bool() {
         let source = "fn main() { true }";
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 13);
         assert_eq!(ty, Some(Type::Bool));
@@ -875,12 +851,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_binary_expr() {
         let source = "fn main() { 1 + 2 }";
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         // The whole binary expression should be Int
         let ty = find_type_at_offset(&program, 13);
@@ -893,12 +864,7 @@ mod tests {
         // which is the deepest expression and has type Int.
         // Use the bracket offset to find the list type.
         let source = "fn main() { [1, 2, 3] }";
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), source)
-            .tokenize()
-            .unwrap();
-        let (mut program, _) =
-            crate::parser::Parser::new(tokens, source).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 12);
         assert_eq!(ty, Some(Type::List(Box::new(Type::Int))));
@@ -909,7 +875,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_param() {
         let source = "fn add(x, y) { x + y }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'x' at offset 15 (inside the body)
         let name = find_ident_at_offset(&program, 15);
@@ -919,7 +885,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_second_param() {
         let source = "fn add(x, y) { x + y }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'y' at offset 19
         let name = find_ident_at_offset(&program, 19);
@@ -929,7 +895,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_none() {
         let source = "fn main() { 42 }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // offset 13 is the literal 42, not an ident
         let name = find_ident_at_offset(&program, 13);
@@ -941,7 +907,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_in_let() {
         let source = "fn main() {\n  let x = 42\n  x\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'x' in the last expression (offset 27)
         let ty = find_type_at_offset(&program, 27);
@@ -958,7 +924,7 @@ mod tests {
         // skip stashing `callee.ty`, so this walk fell back to the
         // enclosing Call node's result type (`Int` here).
         let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { add(1, 2) }\n";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let callee_offset = source.rfind("add(").unwrap();
         let ty = find_type_at_offset(&program, callee_offset);
@@ -975,7 +941,7 @@ mod tests {
         // `1 |> add(2)` desugars to `add(1, 2)` and the callee ident
         // must carry the fn signature.
         let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { 1 |> add(2) }\n";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let callee_offset = source.rfind("add(").unwrap();
         let ty = find_type_at_offset(&program, callee_offset);

@@ -1,53 +1,41 @@
-//! Diagnostics publishing and document (re)analysis.
+//! Document analysis and diagnostics publishing.
 //!
-//! `update_document` drives the lexer → parser → typechecker pipeline,
-//! converts errors to LSP `Diagnostic` values, and re-publishes them for
-//! the client.
+//! `didOpen` and `didChange` store the new text and schedule an analysis
+//! ([`DEBOUNCE`] later, or before the next request, whichever comes
+//! first). The analysis gives every open document to its project's
+//! session as an overlay, analyses each open document as an entry, and
+//! publishes the diagnostics of every file of the analysed graphs whose
+//! diagnostics changed: an imported module's errors appear in the
+//! imported file, and a file that no longer has any is cleared.
+//!
+//! The features read what the analysis leaves in each open [`Document`]:
+//! the session's checked module (the AST with its types), its top-level
+//! definitions and its local bindings.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use lsp_server::Message;
 use lsp_types::notification::{Notification as _, PublishDiagnostics};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, PublishDiagnosticsParams, Range, Uri};
 
-use crate::ast::Program;
-use crate::intern::Symbol;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
-use crate::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
-use crate::source::{SourceFile, SourceMap, SourceName};
-use crate::typechecker;
+use crate::diagnostic::Phase;
+use crate::session::{ModuleId, parse_text};
+use crate::source::{FileId, SourceFile, SourceMap, SourceName};
 
 use super::Server;
 use super::definitions::build_definitions;
 use super::local_bindings::collect_local_bindings;
 use super::panic_message;
-use super::state::{DefInfo, Document, LocalBinding};
+use super::project::{Project, path_key, project_dir};
+use super::state::{Document, ModuleRef};
 
-// ── Document analysis ──────────────────────────────────────────────
-
-/// What one analysis pass over a document yields.
-struct Analysis {
-    /// `None` when the text does not lex.
-    program: Option<Program>,
-    definitions: HashMap<Symbol, DefInfo>,
-    locals: Vec<LocalBinding>,
-    diagnostics: Vec<Diagnostic>,
-}
-
-impl Analysis {
-    /// The result for a text that yields no program: every feature that
-    /// needs the syntax tree is off for the document until its next edit.
-    fn without_program(diagnostics: Vec<Diagnostic>) -> Self {
-        Analysis {
-            program: None,
-            definitions: HashMap::new(),
-            locals: Vec::new(),
-            diagnostics,
-        }
-    }
-}
+/// How long after an edit the analysis runs, so that a burst of edits is
+/// analysed once.
+pub(super) const DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// The one diagnostic published for a document whose analysis panicked.
 fn analysis_failed_diagnostic() -> Diagnostic {
@@ -62,130 +50,253 @@ fn analysis_failed_diagnostic() -> Diagnostic {
     }
 }
 
-/// The static diagnostics of `source`, the text of the document `uri`,
-/// as every front door reports them: from a session over the document's
-/// project, with the document's text as an overlay. Only those in the
-/// document itself are published for it.
-fn session_diagnostics(source: &SourceFile, uri: &Uri) -> Vec<Diagnostic> {
-    let path = match &source.path {
-        SourceName::Overlay(path) | SourceName::Path(path) => path.clone(),
-        _ => std::path::PathBuf::from("untitled.silt"),
-    };
-    let project = match path.parent() {
-        Some(dir) if dir.is_dir() => ProjectSetup::Discover(dir.to_path_buf()),
-        _ => ProjectSetup::None,
-    };
-    let mut session = Session::new(Config {
-        project,
-        lock: LockPolicy::ReadOnly,
-        host: Vec::new(),
-    });
-    let file = session.set_overlay(&path, source.text.to_string());
-    let mut diagnostics = session.analyze(file).diagnostics.clone();
-    if let Err(errors) = session.compile(file, Entry::Tests { filter: None }) {
-        diagnostics.extend(errors);
+/// The note published on an open document of a project whose packages
+/// cannot be resolved: the errors are in `silt.toml`, and the document's
+/// imports cannot be resolved until they are fixed.
+fn broken_manifest_note() -> Diagnostic {
+    Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        source: Some("silt".to_string()),
+        message: "this file is not checked: the project's silt.toml has errors (see silt.toml)"
+            .to_string(),
+        ..Diagnostic::default()
     }
-    // The document's file, however the session registered it: a file can
-    // be registered once as the document and once by a package check.
-    let in_document = |d: &crate::diagnostic::Diagnostic| {
-        d.span.file == file
-            || session
-                .sources()
-                .get(d.span.file)
-                .is_some_and(|f| match &f.path {
-                    SourceName::Path(p) | SourceName::Overlay(p) => *p == path,
-                    _ => false,
-                })
-    };
-    diagnostics
-        .iter()
-        .filter(|d| in_document(d))
-        .map(|d| {
-            crate::diagnostic::to_lsp(session.sources(), d, &|f| {
-                (f == file || f == d.span.file).then(|| uri.clone())
-            })
-        })
-        .collect()
 }
 
-/// Analyse `source`, the text of the document `uri`: its diagnostics from
-/// the session, and the syntax tree the editor features read.
-fn analyse(source: &SourceFile, uri: &Uri) -> Analysis {
-    let diagnostics = session_diagnostics(source, uri);
+/// The text of the file at `path` and the document made of it, indexed
+/// as a workspace file (not open): its declarations as parsed.
+pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     let mut sources = SourceMap::new();
-    let file = sources.add(source.path.clone(), source.text.clone());
-    let Ok(tokens) = Lexer::new(file, &source.text).tokenize() else {
-        return Analysis::without_program(diagnostics);
-    };
-    let (mut program, _) = Parser::new(tokens, &source.text)
-        .with_docs()
-        .parse_program_recovering();
-    // The features read the types the checker fills in.
-    let _ = typechecker::check(&mut program);
-
-    let definitions = build_definitions(&program);
-    let locals = collect_local_bindings(&program, &source.text);
-
-    Analysis {
-        program: Some(program),
+    let file = sources.add(SourceName::Path(path.clone()), text.clone());
+    let (program, _) = parse_text(file, &text);
+    let definitions = program
+        .as_ref()
+        .map(|p| build_definitions(p, None))
+        .unwrap_or_default();
+    let locals = program
+        .as_ref()
+        .map(|p| collect_local_bindings(p, &text, None))
+        .unwrap_or_default();
+    Document {
+        source: SourceFile::new(SourceName::Path(path.clone()), text),
+        path,
+        open: false,
+        module: None,
+        program: program.map(Arc::new),
         definitions,
         locals,
-        diagnostics,
     }
+}
+
+/// The path a document's URI names.
+pub(super) fn uri_to_path(uri: &Uri) -> PathBuf {
+    super::file_uri_to_path(uri.as_str()).unwrap_or_else(|| PathBuf::from(uri.path().as_str()))
 }
 
 impl Server {
-    pub(super) fn update_document(&mut self, uri: Uri, source: String) {
-        self.update_document_with(uri, source, analyse);
+    /// Store `text` as the text of the open document `uri` and schedule
+    /// its analysis.
+    pub(super) fn update_document(&mut self, uri: Uri, text: String) {
+        let path = uri_to_path(&uri);
+        let source = SourceFile::new(SourceName::Overlay(path.clone()), text.into());
+        let doc = self
+            .documents
+            .entry(uri.clone())
+            .or_insert_with(|| Document {
+                source: SourceFile::new(SourceName::Overlay(path.clone()), "".into()),
+                path: path.clone(),
+                open: true,
+                module: None,
+                program: None,
+                definitions: HashMap::new(),
+                locals: Vec::new(),
+            });
+        doc.source = source;
+        doc.open = true;
+        self.pending.insert(uri);
+        self.deadline
+            .get_or_insert_with(|| Instant::now() + DEBOUNCE);
     }
 
-    /// Store `source` as the text of `uri`, together with what `analyse`
-    /// makes of it, and publish the diagnostics.
+    /// The editor closed `uri`: the file on disk is its text again. A
+    /// workspace file stays indexed.
+    pub(super) fn close_document(&mut self, uri: Uri) {
+        let Some(doc) = self.documents.remove(&uri) else {
+            return;
+        };
+        if let Ok(text) = std::fs::read_to_string(&doc.path) {
+            self.documents
+                .insert(uri.clone(), indexed_document(doc.path, text.into()));
+        }
+        self.pending.insert(uri);
+        self.deadline
+            .get_or_insert_with(|| Instant::now() + DEBOUNCE);
+    }
+
+    /// Run the scheduled analysis now, if there is one.
+    pub(super) fn analyse_pending(&mut self) {
+        self.analyse_pending_with(Self::analyse);
+    }
+
+    /// [`Server::analyse_pending`] with `analyse` as the analysis.
     ///
-    /// A panic inside `analyse` is caught and logged to stderr. The new
-    /// text is stored all the same, without analysis results: the client
-    /// has applied the edit already, so answering its next requests from
-    /// the previous text would hand it positions and edits for a document
-    /// it no longer has. `analyse` reads nothing but its arguments, so the
-    /// panic cannot leave the server half-updated.
-    fn update_document_with(
-        &mut self,
-        uri: Uri,
-        source: String,
-        analyse: fn(&SourceFile, &Uri) -> Analysis,
-    ) {
-        let source = SourceFile::new(
-            SourceName::Overlay(uri.path().as_str().into()),
-            source.into(),
-        );
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(&source, &uri)));
-        let analysis = outcome.unwrap_or_else(|payload| {
+    /// A panic inside the analysis is caught and logged to stderr. The
+    /// sessions are dropped (the next analysis starts from fresh ones),
+    /// and each changed open document is kept without analysis results,
+    /// with one diagnostic that says so: the client has applied the edit
+    /// already, so answering its next requests from the previous analysis
+    /// would hand it positions for a text it no longer has.
+    pub(super) fn analyse_pending_with(&mut self, analyse: fn(&mut Self, &HashSet<Uri>)) {
+        self.deadline = None;
+        if self.pending.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending);
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(self, &pending)));
+        if let Err(payload) = outcome {
             eprintln!(
-                "silt-lsp: internal error while analysing {}: {}; the document is kept \
-                 without analysis results and the server keeps running",
-                uri.as_str(),
+                "silt-lsp: internal error while analysing the open documents: {}; they are \
+                 kept without analysis results and the server keeps running",
                 panic_message(payload)
             );
-            Analysis::without_program(vec![analysis_failed_diagnostic()])
-        });
+            self.projects.clear();
+            for uri in &pending {
+                if let Some(doc) = self.documents.get_mut(uri).filter(|d| d.open) {
+                    doc.module = None;
+                    doc.program = None;
+                    doc.definitions.clear();
+                    doc.locals.clear();
+                    let diagnostics = vec![analysis_failed_diagnostic()];
+                    self.published.insert(uri.clone(), diagnostics.clone());
+                    self.publish_diagnostics(uri.clone(), diagnostics);
+                }
+            }
+        }
+    }
 
-        self.documents.insert(
-            uri.clone(),
-            Document {
-                source,
-                program: analysis.program,
-                definitions: analysis.definitions,
-                locals: analysis.locals,
-            },
-        );
+    /// Analyse every open document, after the documents `pending` changed
+    /// (or closed), and publish what changed.
+    fn analyse(&mut self, pending: &HashSet<Uri>) {
+        // The texts the sessions get: every open document's, and the disk
+        // text of a document just closed.
+        let mut texts: Vec<(PathBuf, Arc<str>)> = Vec::new();
+        let mut by_project: BTreeMap<PathBuf, Vec<Uri>> = BTreeMap::new();
+        for (uri, doc) in &self.documents {
+            if doc.open {
+                texts.push((doc.path.clone(), doc.source.text.clone()));
+                by_project
+                    .entry(project_dir(&doc.path))
+                    .or_default()
+                    .push(uri.clone());
+            } else if pending.contains(uri) {
+                texts.push((doc.path.clone(), doc.source.text.clone()));
+            }
+        }
+        self.projects.retain(|dir, _| by_project.contains_key(dir));
 
-        // Cache diagnostics for the pull-model handler
-        // (`textDocument/diagnostic`). We store a clone before
-        // publishing so the cache and the push always match.
-        self.diagnostics_cache
-            .insert(uri.clone(), analysis.diagnostics.clone());
+        let uris_by_key: HashMap<PathBuf, Uri> = self
+            .documents
+            .iter()
+            .map(|(uri, doc)| (path_key(&doc.path), uri.clone()))
+            .collect();
+        let mut diagnostics: HashMap<Uri, Vec<Diagnostic>> = HashMap::new();
+        let mut analysed: Vec<(Uri, ModuleRef)> = Vec::new();
+        for (dir, uris) in &by_project {
+            let stale = self.projects.get(dir).is_none_or(|p| p.is_stale(dir));
+            if stale {
+                self.projects.insert(dir.clone(), Project::new(dir));
+            }
+            let project = self.projects.get_mut(dir).expect("inserted above");
+            let entries: Vec<(Uri, PathBuf)> = uris
+                .iter()
+                .map(|uri| (uri.clone(), self.documents[uri].path.clone()))
+                .collect();
+            let modules = analyse_project(project, &entries, &texts);
+            let packages_failed = project.session.packages().is_err();
+            for (uri, id, mut found) in modules {
+                if packages_failed {
+                    // The cascade an unresolved project causes is not
+                    // shown; its errors are in the manifest.
+                    found.retain(|d| d.phase() == Phase::Package);
+                    diagnostics
+                        .entry(uri.clone())
+                        .or_default()
+                        .push(broken_manifest_note());
+                }
+                let sources = project.session.sources();
+                let uri_of = |f: FileId| uri_of(&uris_by_key, sources, f);
+                for d in &found {
+                    let Some(uri) = uri_of(d.span.file) else {
+                        continue;
+                    };
+                    let converted = crate::diagnostic::to_lsp(sources, d, &uri_of);
+                    let list = diagnostics.entry(uri).or_default();
+                    if !list.contains(&converted) {
+                        list.push(converted);
+                    }
+                }
+                analysed.push((
+                    uri,
+                    ModuleRef {
+                        project: dir.clone(),
+                        id,
+                    },
+                ));
+            }
+        }
 
-        self.publish_diagnostics(uri, analysis.diagnostics);
+        for (uri, module) in analysed {
+            self.store_analysis(&uri, module);
+            diagnostics.entry(uri).or_default();
+        }
+
+        // Publish each file whose diagnostics changed, each changed open
+        // document, and clear each file that has none any more.
+        let previous = std::mem::take(&mut self.published);
+        for uri in previous.keys() {
+            if !diagnostics.contains_key(uri) {
+                self.publish_diagnostics(uri.clone(), Vec::new());
+            }
+        }
+        let mut uris: Vec<&Uri> = diagnostics.keys().collect();
+        uris.sort_by_key(|u| u.as_str());
+        for uri in uris {
+            let list = &diagnostics[uri];
+            if previous.get(uri) != Some(list) || pending.contains(uri) {
+                self.publish_diagnostics(uri.clone(), list.clone());
+            }
+        }
+        self.published = diagnostics;
+    }
+
+    /// Leave in the open document `uri` what the features read: the
+    /// checked module `module`, its definitions and its local bindings.
+    fn store_analysis(&mut self, uri: &Uri, module: ModuleRef) {
+        let project = &self.projects[&module.project];
+        let parsed = project.session.graph().module(module.id).ast.is_some();
+        let checked = project
+            .session
+            .module_analysis(module.id)
+            .filter(|_| parsed);
+        let doc = self.documents.get_mut(uri).expect("an analysed document");
+        match checked {
+            Some(checked) => {
+                doc.definitions = build_definitions(&checked.ast, Some(&checked.top_level));
+                doc.locals = collect_local_bindings(
+                    &checked.ast,
+                    &doc.source.text,
+                    Some(&checked.top_level),
+                );
+                doc.program = Some(checked.ast.clone());
+            }
+            None => {
+                doc.program = None;
+                doc.definitions.clear();
+                doc.locals.clear();
+            }
+        }
+        doc.module = Some(module);
     }
 
     pub(super) fn publish_diagnostics(&self, uri: Uri, diagnostics: Vec<Diagnostic>) {
@@ -196,6 +307,91 @@ impl Server {
             .send(Message::Notification(notif))
             .ok();
     }
+}
+
+/// The URI of the file `file` of `sources`: the document's, when one
+/// names the same file (`uris_by_key`, by path key).
+fn uri_of(uris_by_key: &HashMap<PathBuf, Uri>, sources: &SourceMap, file: FileId) -> Option<Uri> {
+    let path = match &sources.get(file)?.path {
+        SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => p,
+        _ => return None,
+    };
+    uris_by_key
+        .get(&path_key(path))
+        .cloned()
+        .or_else(|| super::path_to_file_uri(path))
+}
+
+/// Give `project`'s session the texts it needs and analyse each of its
+/// open documents (`entries`, with their paths) as an entry. Returns each
+/// entry's module and its static diagnostics: the analysis's and, when
+/// that has no error, what compiling finds.
+///
+/// The session gets the text of each open document of the project, and
+/// of each other file in `texts` (every open document's, and the disk
+/// text of each document just closed) that its graph reads, so an edit
+/// in another package's file is seen by the packages that import it.
+fn analyse_project(
+    project: &mut Project,
+    entries: &[(Uri, PathBuf)],
+    texts: &[(PathBuf, Arc<str>)],
+) -> Vec<(Uri, ModuleId, Vec<crate::diagnostic::Diagnostic>)> {
+    let mut changed: Vec<ModuleId> = Vec::new();
+    let mut modules: Vec<(Uri, ModuleId)> = Vec::new();
+    for (uri, path) in entries {
+        let text = &texts
+            .iter()
+            .find(|(p, _)| p == path)
+            .expect("an open document has a text")
+            .1;
+        let id = match project.set_text(path, text) {
+            Some(id) => {
+                changed.push(id);
+                id
+            }
+            None => project.module_at(path),
+        };
+        modules.push((uri.clone(), id));
+    }
+    // Each other file in `texts` that a graph reads gets its text, and
+    // the analyses run again. Each round gives one more file its text, so
+    // this ends.
+    loop {
+        for (_, id) in &modules {
+            let file = project.file(*id);
+            project.session.analyze(file);
+        }
+        let mut more = false;
+        for (path, text) in texts {
+            if project.has_module(path)
+                && let Some(id) = project.set_text(path, text)
+            {
+                changed.push(id);
+                more = true;
+            }
+        }
+        if !more {
+            break;
+        }
+    }
+    project.forget_compiled(&changed);
+    modules
+        .into_iter()
+        .map(|(uri, id)| {
+            let file = project.file(id);
+            let analysis = project.session.analyze(file).clone();
+            let mut found = analysis.diagnostics;
+            if !found.iter().any(crate::diagnostic::Diagnostic::is_error) {
+                found.extend(
+                    project
+                        .compile_errors(id, &analysis.modules)
+                        .iter()
+                        .cloned(),
+                );
+            }
+            (uri, id, found)
+        })
+        .collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -230,6 +426,7 @@ mod tests {
         let uri = Uri::from_str("file:///test.silt").unwrap();
         let source = "fn main() {\n  println(“hello”)\n}\n";
         server.update_document(uri.clone(), source.to_string());
+        server.analyse_pending();
 
         let doc = server.documents.get(&uri).expect("document is stored");
         assert_eq!(&*doc.source.text, source);
@@ -250,18 +447,15 @@ mod tests {
         let mut server = Server::new(connection);
         let uri = Uri::from_str("file:///test.silt").unwrap();
         server.update_document(uri.clone(), "fn main() { 1 }".to_string());
+        server.analyse_pending();
 
-        server.update_document_with(uri.clone(), "fn main() { 2 }".to_string(), |_, _| {
-            panic!("deliberate panic in a test")
-        });
+        server.update_document(uri.clone(), "fn main() { 2 }".to_string());
+        server.analyse_pending_with(|_, _| panic!("deliberate panic in a test"));
 
         let doc = server.documents.get(&uri).expect("document is stored");
         assert_eq!(&*doc.source.text, "fn main() { 2 }");
         assert!(doc.program.is_none());
-        let cached = server
-            .diagnostics_cache
-            .get(&uri)
-            .expect("diagnostics are cached");
+        let cached = server.published.get(&uri).expect("diagnostics are cached");
         assert_eq!(cached.len(), 1);
         assert!(cached[0].message.starts_with("internal error"));
         let published = published_diagnostics(&client);
@@ -270,6 +464,7 @@ mod tests {
         assert_eq!(published[1][0].message, cached[0].message);
 
         server.update_document(uri.clone(), "fn main() { 3 }".to_string());
+        server.analyse_pending();
         let doc = server.documents.get(&uri).expect("document is stored");
         assert_eq!(&*doc.source.text, "fn main() { 3 }");
         assert!(doc.program.is_some());

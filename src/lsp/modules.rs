@@ -1,0 +1,140 @@
+//! The session's view of an open document's module and of the modules it
+//! imports, for the features that cross files: definition, hover and
+//! signature help on `m.f` and on an item of `import m.{ f }`.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use lsp_types::Uri;
+
+use crate::ast::{Decl, ImportTarget, Program};
+use crate::intern::Symbol;
+use crate::session::{ImportResolution, ModuleAnalysis};
+use crate::source::SourceFile;
+
+use super::Server;
+use super::definitions::build_definitions;
+use super::project::path_key;
+use super::state::{DefInfo, Document};
+
+/// An imported module, as the session has it.
+pub(super) struct ModuleView<'a> {
+    pub(super) uri: Uri,
+    pub(super) source: &'a SourceFile,
+    /// Its top-level definitions, with the checker's types.
+    pub(super) definitions: HashMap<Symbol, DefInfo>,
+}
+
+impl Server {
+    /// The session's analysis of the open document `doc`'s module.
+    pub(super) fn checked_module(&self, doc: &Document) -> Option<&ModuleAnalysis> {
+        let module = doc.module.as_ref()?;
+        self.projects
+            .get(&module.project)?
+            .session
+            .module_analysis(module.id)
+    }
+
+    /// The module the name `name` stands for in the open document `doc`:
+    /// the one `import name` imports, or `import m as name`.
+    pub(super) fn imported_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView<'_>> {
+        let program = doc.program.as_ref()?;
+        let module_name = program
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Decl::Import(ImportTarget::Alias(module, alias, _), _) if *alias == name => {
+                    Some(*module)
+                }
+                _ => None,
+            })
+            .unwrap_or(name);
+        self.module_view(doc, module_name)
+    }
+
+    /// The module that binds `name` bare in the open document `doc`
+    /// through `import m.{ name }`.
+    pub(super) fn item_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView<'_>> {
+        let program = doc.program.as_ref()?;
+        let module_name = program.decls.iter().find_map(|decl| match decl {
+            Decl::Import(ImportTarget::Items(module, items), _)
+                if items.iter().any(|(item, _)| *item == name) =>
+            {
+                Some(*module)
+            }
+            _ => None,
+        })?;
+        self.module_view(doc, module_name)
+    }
+
+    /// The module the import of `module_name` in `doc` resolves to.
+    fn module_view(&self, doc: &Document, module_name: Symbol) -> Option<ModuleView<'_>> {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let graph = session.graph();
+        let target =
+            graph
+                .module(module.id)
+                .imports
+                .iter()
+                .find_map(|import| match import.resolution {
+                    ImportResolution::Module(id) if import.name == module_name => Some(id),
+                    _ => None,
+                })?;
+        let target_module = graph.module(target);
+        let source = session.sources().get(target_module.file?)?;
+        let definitions = match session.module_analysis(target) {
+            Some(checked) => build_definitions(&checked.ast, Some(&checked.top_level)),
+            None => build_definitions(target_module.ast.as_ref()?, None),
+        };
+        Some(ModuleView {
+            uri: self.uri_for_path(&target_module.path)?,
+            source,
+            definitions,
+        })
+    }
+
+    /// The URI of the file at `path`: the document's, when one names it.
+    pub(super) fn uri_for_path(&self, path: &Path) -> Option<Uri> {
+        let key = path_key(path);
+        self.documents
+            .iter()
+            .find(|(_, doc)| doc.path == path || path_key(&doc.path) == key)
+            .map(|(uri, _)| uri.clone())
+            .or_else(|| super::path_to_file_uri(path))
+    }
+}
+
+/// The `(module, member)` of the qualified access `module.member` whose
+/// member name holds `cursor`, when its receiver is a plain identifier.
+pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(Symbol, Symbol)> {
+    use super::ast_walk::visit_expr_children;
+    use crate::ast::{Expr, ExprKind};
+
+    fn walk(expr: &Expr, cursor: usize, found: &mut Option<(Symbol, Symbol)>) {
+        if let ExprKind::FieldAccess(receiver, field, field_span) = &expr.kind
+            && (field_span.start as usize..field_span.end as usize).contains(&cursor)
+            && let ExprKind::Ident(module) = &receiver.kind
+        {
+            *found = Some((*module, *field));
+        }
+        visit_expr_children(expr, |child| walk(child, cursor, found));
+    }
+    let mut found = None;
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
+            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::Trait(t) => t
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            Decl::TraitImpl(ti) if !ti.is_auto_derived => ti
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            _ => {}
+        }
+    }
+    found
+}

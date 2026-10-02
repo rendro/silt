@@ -3,14 +3,13 @@
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use super::Server;
-use crate::ast::{Decl, Expr, ExprKind, Program};
+use crate::intern::resolve;
 
-use super::ast_walk::{
-    find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars, visit_expr_children,
-};
+use super::ast_walk::{find_ident_at_offset_with_source, find_type_at_offset, has_unresolved_vars};
 use super::conversions::char_offset_at;
-use super::fields::find_field_type_at_offset;
+use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
+use super::modules::qualified_access_at;
 
 impl Server {
     // ── Hover ──────────────────────────────────────────────────────
@@ -27,7 +26,11 @@ impl Server {
 
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
-        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, cursor) {
+        let no_records = RecordFields::new();
+        let records = self
+            .checked_module(doc)
+            .map_or(&no_records, |checked| &checked.record_fields);
+        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, records, cursor) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -88,53 +91,34 @@ impl Server {
             }
         };
 
-        // Look up an attached doc comment — preserved from the AST
-        // through `build_definitions`. Rendered below the signature
-        // with the LSP `\n---\n` separator. Phase-1 cross-module doc
-        // plumbing: when the identifier resolves to a definition in a
-        // different open document, fall through to that document's
-        // `DefInfo.doc`.
-        //
-        // Phase-2 builtin-doc plumbing: if neither the local
-        // `DefInfo.doc` nor any other open document carries a doc for
-        // the identifier, fall through to `builtin_docs` so stdlib
-        // names (`list.map`, `math.cos`, `Result`, …) surface the
-        // markdown registered at their per-module typechecker
-        // registration site.
+        // The doc comment of what the cursor names, rendered below the
+        // signature with the LSP `\n---\n` separator: a definition of
+        // this file; a member of an imported module (`m.f`, or `f` from
+        // `import m.{ f }`), from the session's view of that module; else
+        // the builtin docs, for stdlib names (`println`, `list.map`).
+        let qualified = qualified_access_at(program, cursor);
         let doc_text = def_entry
             .and_then(|def| def.doc.clone())
             .or_else(|| {
-                // Cross-module fallback: iterate open documents and look
-                // for a matching top-level definition with a doc string.
-                ident_at_cursor.and_then(|name| {
-                    for (other_uri, other_doc) in &self.documents {
-                        if other_uri == uri {
-                            continue;
-                        }
-                        if let Some(d) = other_doc.definitions.get(&name)
-                            && let Some(ref s) = d.doc
-                        {
-                            return Some(s.clone());
-                        }
-                    }
-                    None
-                })
+                let (module, member) = qualified?;
+                let view = self.imported_module(doc, module)?;
+                view.definitions.get(&member)?.doc.clone()
             })
             .or_else(|| {
-                // Built-in doc fallback. The cursor word might be:
-                //
-                //   - An unqualified identifier (`println`, `Some`) — the
-                //     AST walker returns its `Symbol` directly.
-                //   - The field name of a qualified module access
-                //     (`list.map`, `math.cos`): a `FieldAccess` whose field
-                //     span holds the cursor, looked up as `module.field`.
+                let name = ident_at_cursor?;
+                let view = self.item_module(doc, name)?;
+                view.definitions.get(&name)?.doc.clone()
+            })
+            .or_else(|| {
                 if let Some(name) = ident_at_cursor
-                    && let Some(d) = self.builtin_docs.get(&crate::intern::resolve(name))
+                    && let Some(d) = self.builtin_docs.get(&resolve(name))
                 {
                     return Some(d.clone());
                 }
-                qualified_field_at(program, cursor)
-                    .and_then(|qualified| self.builtin_docs.get(&qualified).cloned())
+                let (module, member) = qualified?;
+                self.builtin_docs
+                    .get(&format!("{}.{}", resolve(module), resolve(member)))
+                    .cloned()
             });
 
         // If neither a type nor a doc is available, no hover.
@@ -174,40 +158,4 @@ impl Server {
             range: None,
         })
     }
-}
-
-/// The qualified name `module.field` of the `FieldAccess` whose field
-/// name holds the cursor, when its receiver is a plain identifier: how
-/// hover finds `list.map` in `builtin_docs` with the cursor on `map`.
-fn qualified_field_at(program: &Program, cursor: usize) -> Option<String> {
-    fn walk(expr: &Expr, cursor: usize, found: &mut Option<String>) {
-        if let ExprKind::FieldAccess(receiver, field, field_span) = &expr.kind
-            && (field_span.start as usize..field_span.end as usize).contains(&cursor)
-            && let ExprKind::Ident(module) = &receiver.kind
-        {
-            *found = Some(format!(
-                "{}.{}",
-                crate::intern::resolve(*module),
-                crate::intern::resolve(*field)
-            ));
-        }
-        visit_expr_children(expr, |child| walk(child, cursor, found));
-    }
-    let mut found = None;
-    for decl in &program.decls {
-        match decl {
-            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
-            Decl::Let { value, .. } => walk(value, cursor, &mut found),
-            Decl::Trait(t) => t
-                .methods
-                .iter()
-                .for_each(|m| walk(&m.body, cursor, &mut found)),
-            Decl::TraitImpl(ti) if !ti.is_auto_derived => ti
-                .methods
-                .iter()
-                .for_each(|m| walk(&m.body, cursor, &mut found)),
-            _ => {}
-        }
-    }
-    found
 }

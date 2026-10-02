@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- verdict: same
+-- A type alias imported from a user module is known to the LSP: no
+-- "unknown type 'Meters'" (audit 3.2).
+import units.{ Meters, mk }
+
+fn add_one(m: Meters) -> Meters {
+  m + 1
+}
+
+fn main() {
+  println("{add_one(mk(1))}")
+}

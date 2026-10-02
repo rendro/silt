@@ -5,10 +5,9 @@
 //! clients that speak the 3.17 pull protocol ask for the current
 //! diagnostics on demand.
 //!
-//! We serve from `Server::diagnostics_cache`, populated by
-//! `diagnostics::update_document` at the same time the push is sent.
-//! That keeps this handler cheap (no re-lex / re-parse) and
-//! guarantees push and pull agree.
+//! We serve from `Server::published`, the diagnostics last pushed for
+//! each file (the scheduled analysis runs before any request). That keeps
+//! this handler cheap and guarantees push and pull agree.
 
 use lsp_types::{
     DocumentDiagnosticParams, DocumentDiagnosticReport, DocumentDiagnosticReportResult,
@@ -23,7 +22,7 @@ impl Server {
         params: DocumentDiagnosticParams,
     ) -> DocumentDiagnosticReportResult {
         let items = self
-            .diagnostics_cache
+            .published
             .get(&params.text_document.uri)
             .cloned()
             .unwrap_or_default();
