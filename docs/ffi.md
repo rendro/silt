@@ -61,14 +61,12 @@ let mylib = HostModule::new("mylib")
     .fn2("fn add(a: Int, b: Int) -> Int", |a: i64, b: i64| a + b);
 ```
 
-From silt:
+From silt (a program run in a session that declares `mylib`):
 
 ```silt
 import mylib
 
-fn main() {
-  println(mylib.add(mylib.double(20), mylib.answer() - 40))
-}
+mylib.add(mylib.double(20), mylib.answer() - 40)   -- 42
 ```
 
 The module is imported the usual ways: `import mylib`,
@@ -155,12 +153,11 @@ let users = HostModule::new("users")
 ```silt
 import users
 
-fn main() {
-  match users.find(1) {
-    Some(name) -> println("found: {name}")
-    None -> println("not found")
-  }
+match users.find(1) {
+  Some(name) -> println("found: {name}")
+  None -> println("not found")
 }
+let n = users.parse_int("42")?   -- propagates Err with ?
 ```
 
 ## Functions as values
@@ -172,9 +169,7 @@ A host function is a value like any other function: it can be passed to
 import list
 import mylib
 
-fn main() {
-  println([1, 2, 3] |> list.map(mylib.double))   -- [2, 4, 6]
-}
+[1, 2, 3] |> list.map(mylib.double)   -- [2, 4, 6]
 ```
 
 ## Thread Safety
