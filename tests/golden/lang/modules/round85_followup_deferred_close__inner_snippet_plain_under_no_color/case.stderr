@@ -1,9 +1,9 @@
-error[compile]: module 'badlex': lex error at badlex.silt:2:1 — unexpected character: '@'
- --> main.silt:6:1
+error[lex]: unexpected character: '@'
+ --> badlex.silt:2:1
+   |
+ 2 | @@@
+   | ^ unexpected character: '@'
+ ::: main.silt:6:1
    |
  6 | import badlex
-   | ^ module 'badlex': lex error at badlex.silt:2:1 — unexpected character: '@'
-  = note:  --> badlex.silt:2:1
-             |
-           2 | @@@
-             | ^ unexpected character: '@'
+   | ------------- module 'badlex' is imported here

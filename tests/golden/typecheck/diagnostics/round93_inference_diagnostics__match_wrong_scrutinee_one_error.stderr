@@ -2,4 +2,4 @@ error[type]: type mismatch: expected Result(_, _), got Int
  --> round93_inference_diagnostics__match_wrong_scrutinee_one_error.silt:5:17
    |
  5 |   let r = match 42 {
-   |                 ^ type mismatch: expected Result(_, _), got Int
+   |                 ^^ type mismatch: expected Result(_, _), got Int

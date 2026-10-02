@@ -2,7 +2,7 @@ error[runtime]: joined task failed: division by zero
  --> nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:10:13
     |
  10 |     true -> 1 / 0,
-    |             ^ joined task failed: division by zero
+    |             ^^^^^ joined task failed: division by zero
 
 call stack:
   -> helper  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:10:13

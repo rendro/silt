@@ -2,9 +2,9 @@ error[runtime]: division by zero
  --> <repl>:1:1
    |
  1 | 1/0
-   | ^ division by zero
+   | ^^^ division by zero
 error[runtime]: division by zero
  --> <repl>:1:1
    |
  1 | 1/0
-   | ^ division by zero
+   | ^^^ division by zero

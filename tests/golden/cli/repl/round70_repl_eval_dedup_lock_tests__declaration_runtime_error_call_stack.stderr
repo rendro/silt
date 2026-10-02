@@ -2,6 +2,8 @@ error[runtime]: division by zero
  --> <repl>:1:11
    |
  1 | fn deep(){1/0}
-   |           ^ division by zero
+   |           ^^^ division by zero
+
+call stack:
   -> deep  at <declaration>
   -> shallow  at <declaration>

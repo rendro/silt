@@ -4,7 +4,7 @@
      --> wave2_tasks__test_late_task_failure_fails_the_test_that_spawned_it_test.silt:22:5
         |
      22 |     10 / zero
-        |     ^ task <handle:0> failed and was never joined: division by zero
+        |     ^^^^^^^^^ task <handle:0> failed and was never joined: division by zero
       = help: join the task with task.join to handle its error, or cancel it with task.cancel
   PASS wave2_tasks__test_late_task_failure_fails_the_test_that_spawned_it_test.silt::test_b_waits
   PASS wave2_tasks__test_late_task_failure_fails_the_test_that_spawned_it_test.silt::test_c

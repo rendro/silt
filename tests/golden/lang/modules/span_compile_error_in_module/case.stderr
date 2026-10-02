@@ -6,4 +6,4 @@ error[compile]: 'Message' requires `import channel`
  --> m3.silt:2:22
    |
  2 | pub fn mk() -> Msg { Message("hi") }
-   |                      ^ 'Message' requires `import channel`
+   |                      ^^^^^^^ 'Message' requires `import channel`

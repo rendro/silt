@@ -2,4 +2,4 @@ error[type]: operator '<' requires Int, Float, String, List, Range, Record, or V
  --> binop_mismatch_direction_round100__int_lt_bool_names_bool.silt:4:16
    |
  4 |   let x = (1 < true)
-   |                ^ operator '<' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'
+   |                ^^^^ operator '<' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'

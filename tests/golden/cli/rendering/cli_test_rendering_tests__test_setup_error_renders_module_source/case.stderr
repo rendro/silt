@@ -3,6 +3,6 @@ error[runtime]: division by zero
  --> bad_init.silt:1:17
    |
  1 | pub let value = 1 / 0
-   |                 ^ division by zero
+   |                 ^^^^^ division by zero
 
 0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

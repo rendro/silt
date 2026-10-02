@@ -2,4 +2,4 @@ error[type]: type argument count mismatch for enum 'Box': expected 2, got 1
  --> annotation_arity_span__let_arity_mismatch_one_error.silt:7:10
    |
  7 |   let b: Box(Int) = Two(1, "hi")
-   |          ^ type argument count mismatch for enum 'Box': expected 2, got 1
+   |          ^^^^^^^^ type argument count mismatch for enum 'Box': expected 2, got 1

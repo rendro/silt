@@ -2,5 +2,5 @@ error[type]: ? operator can only be used inside a function that returns Result o
  --> round93_lambda_question_mark__rejection_reported_once.silt:7:45
    |
  7 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
-   |                                             ^ ? operator can only be used inside a function that returns Result or Option
+   |                                             ^^ ? operator can only be used inside a function that returns Result or Option
   = note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int

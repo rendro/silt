@@ -2,7 +2,7 @@ error[runtime]: division by zero
  --> util.silt:6:3
    |
  6 |   10 / x
-   |   ^ division by zero
+   |   ^^^^^^ division by zero
 
 call stack:
   -> helper  at util.silt:6:3

@@ -2,7 +2,7 @@ error[runtime]: division by zero
  --> deps/dep/src/lib.silt:3:3
    |
  3 |   x / 0
-   |   ^ division by zero
+   |   ^^^^^ division by zero
 
 call stack:
   -> helper  at deps/dep/src/lib.silt:3:3

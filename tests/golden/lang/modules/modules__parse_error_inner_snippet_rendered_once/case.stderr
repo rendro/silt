@@ -1,9 +1,9 @@
-error[compile]: module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found =
- --> m_top.silt:1:1
+error[parse]: expected parameter name, found =
+ --> m_inner.silt:1:16
+   |
+ 1 | pub fn broken( = {
+   |                ^ expected parameter name, found =
+ ::: m_top.silt:1:1
    |
  1 | import m_inner
-   | ^ module 'm_inner': parse error at m_inner.silt:1:16 — expected parameter name, found =
-  = note:  --> m_inner.silt:1:16
-             |
-           1 | pub fn broken( = {
-             |                ^ expected parameter name, found =
+   | -------------- module 'm_inner' is imported here

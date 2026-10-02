@@ -2,7 +2,9 @@ error[runtime]: division by zero
  --> <repl>:1:10
    |
  1 | fn a() { 1 / 0 }
-   |          ^ division by zero
+   |          ^^^^^ division by zero
+
+call stack:
   -> a  at <declaration>
   -> b  at <declaration>
   -> c  at <declaration>

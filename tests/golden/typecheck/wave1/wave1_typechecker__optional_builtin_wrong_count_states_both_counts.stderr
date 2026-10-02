@@ -2,46 +2,46 @@ error[type]: function expects 1 or 2 arguments, got 0
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:15:3
     |
  15 |   test.assert()
-    |   ^ function expects 1 or 2 arguments, got 0
+    |   ^^^^^^^^^^^^^ function expects 1 or 2 arguments, got 0
 
 error[type]: function expects 1 or 2 arguments, got 3
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:16:3
     |
  16 |   test.assert(true, "m", "extra")
-    |   ^ function expects 1 or 2 arguments, got 3
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 1 or 2 arguments, got 3
 
 error[type]: function expects 2 or 3 arguments, got 1
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:17:3
     |
  17 |   test.assert_eq(1)
-    |   ^ function expects 2 or 3 arguments, got 1
+    |   ^^^^^^^^^^^^^^^^^ function expects 2 or 3 arguments, got 1
 
 error[type]: function expects 2 or 3 arguments, got 4
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:18:3
     |
  18 |   test.assert_ne(1, 2, "m", "extra")
-    |   ^ function expects 2 or 3 arguments, got 4
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 2 or 3 arguments, got 4
 
 error[type]: function expects 1 or 2 arguments, got 0
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:19:11
     |
  19 |   println(float.to_string())
-    |           ^ function expects 1 or 2 arguments, got 0
+    |           ^^^^^^^^^^^^^^^^^ function expects 1 or 2 arguments, got 0
 
 error[type]: function expects 0 or 1 arguments, got 2
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:20:17
     |
  20 |   channel.close(channel.new(1, 2))
-    |                 ^ function expects 0 or 1 arguments, got 2
+    |                 ^^^^^^^^^^^^^^^^^ function expects 0 or 1 arguments, got 2
 
 error[type]: function expects 2 or 3 arguments, got 1
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:21:3
     |
  21 |   5 |> test.assert_eq()
-    |   ^ function expects 2 or 3 arguments, got 1
+    |   ^^^^^^^^^^^^^^^^^^^^^ function expects 2 or 3 arguments, got 1
 
 error[type]: function expects 1 or 2 arguments, got 3
  --> wave1_typechecker__optional_builtin_wrong_count_states_both_counts.silt:22:11
     |
  22 |   println(1.5 |> float.to_string(2, 3))
-    |           ^ function expects 1 or 2 arguments, got 3
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 1 or 2 arguments, got 3

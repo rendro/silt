@@ -2,7 +2,7 @@ error[runtime]: division by zero
  --> tco_elided_callback__no_phantom_frames.silt:5:13
    |
  5 |     true -> 1 / 0,
-   |             ^ division by zero
+   |             ^^^^^ division by zero
 
 call stack:
   -> helper  at tco_elided_callback__no_phantom_frames.silt:5:13
