@@ -3,7 +3,6 @@
 //! One test binary; each module was a separate test crate before.
 
 mod canonical_type_equality_phase_b_tests;
-mod ffi_generic_returns_tests;
 mod range_type_tests;
 mod round73_error_trait_dispatch_table_tests;
 mod round73_postgres_typed_timeout_tests;

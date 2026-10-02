@@ -167,7 +167,10 @@ fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError
 
 fn require_callable<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Value, VmError> {
     match arg {
-        Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => Ok(arg),
+        Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(..) => Ok(arg),
         other => Err(VmError::new(format!(
             "{fn_label} requires Fn, got {}",
             super::common::value_kind(other)

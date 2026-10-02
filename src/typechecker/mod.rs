@@ -808,6 +808,9 @@ pub struct TypeChecker {
     /// The names the imports of poisoned modules bind: the module name
     /// or alias, or the items. Nothing is reported about them.
     pub(super) poisoned_names: std::collections::HashSet<Symbol>,
+    /// Whether the program is a host module's signatures: its
+    /// functions have no bodies to check.
+    pub(super) signatures_only: bool,
     /// For each name an imported user module is reached by (its name or
     /// alias), the module and the functions it declares without `pub`.
     pub(super) imported_private_fns: HashMap<Symbol, (Symbol, Vec<Symbol>)>,
@@ -917,6 +920,7 @@ impl TypeChecker {
             module_exports: HashMap::new(),
             poisoned_modules: std::collections::HashSet::new(),
             poisoned_names: std::collections::HashSet::new(),
+            signatures_only: false,
             imported_private_fns: HashMap::new(),
             builtin_derived: std::collections::HashSet::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
@@ -3691,6 +3695,7 @@ impl TypeChecker {
         for decl in decls.iter_mut() {
             if let Decl::Fn(f) = decl
                 && !f.is_recovery_stub
+                && !self.signatures_only
             {
                 self.check_fn_body(f, env);
             }
@@ -8339,7 +8344,36 @@ pub fn check_module(
     poisoned: std::collections::HashSet<Symbol>,
     resolver: &mut crate::types::canonical::Resolver,
 ) -> ModuleCheck {
+    check_module_with(program, package, imports, poisoned, resolver, false)
+}
+
+/// Check the signatures of a host module: `program` holds one `pub fn`
+/// per host function, each with no body. Each function has the type its
+/// signature declares.
+pub fn check_host_module(
+    program: &mut Program,
+    resolver: &mut crate::types::canonical::Resolver,
+) -> ModuleCheck {
+    check_module_with(
+        program,
+        None,
+        HashMap::new(),
+        std::collections::HashSet::new(),
+        resolver,
+        true,
+    )
+}
+
+fn check_module_with(
+    program: &mut Program,
+    package: Option<Symbol>,
+    imports: HashMap<Symbol, ModuleExports>,
+    poisoned: std::collections::HashSet<Symbol>,
+    resolver: &mut crate::types::canonical::Resolver,
+    signatures_only: bool,
+) -> ModuleCheck {
     let mut checker = TypeChecker::with_resolver(std::mem::take(resolver));
+    checker.signatures_only = signatures_only;
     checker.current_package = package;
     checker.module_exports = imports;
     checker.poisoned_modules = poisoned;
@@ -8485,7 +8519,9 @@ impl TypeChecker {
         let package = self.current_package;
         let module_exports = std::mem::take(&mut self.module_exports);
         let poisoned_modules = std::mem::take(&mut self.poisoned_modules);
+        let signatures_only = self.signatures_only;
         *self = checker;
+        self.signatures_only = signatures_only;
         self.resolver = resolver;
         self.current_package = package;
         self.module_exports = module_exports;

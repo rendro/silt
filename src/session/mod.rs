@@ -15,6 +15,7 @@
 
 mod entry;
 mod graph;
+mod host;
 mod packages;
 pub mod testing;
 
@@ -31,25 +32,22 @@ use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::{self, ModuleExports};
 use crate::types::Type;
 use crate::types::canonical::Resolver;
+use crate::value::HostFn;
 
 pub use entry::{
     ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, test_functions,
     test_kind,
 };
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering};
+pub use host::{HostFunction, HostModule};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
-
-/// A module an embedder declares to the session (design decision D7).
-/// It has no values yet: host modules are declared in a later step, and
-/// until then `Config::host` is always empty.
-#[derive(Debug, Clone)]
-pub enum HostModule {}
 
 /// How a session finds and treats the files of a program.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub project: ProjectSetup,
     pub lock: LockPolicy,
+    /// The modules of Rust functions an embedder offers the program.
     pub host: Vec<HostModule>,
 }
 
@@ -177,10 +175,15 @@ pub struct Session {
 
 impl Session {
     pub fn new(config: Config) -> Session {
+        let mut sources = SourceMap::new();
+        let mut graph = ModuleGraph::default();
+        for (index, host) in config.host.iter().enumerate() {
+            graph.enter_host(index, host, &mut sources);
+        }
         Session {
             config,
-            sources: SourceMap::new(),
-            graph: ModuleGraph::default(),
+            sources,
+            graph,
             packages: None,
             fallback_packages: Packages::unnamed(None),
             overlays: HashMap::new(),
@@ -346,6 +349,21 @@ impl Session {
         self.graph
             .load(entry, &packages, &self.overlays, &mut self.sources);
         let ordering = self.graph.order(entry);
+        // The host modules are checked whether or not the program imports
+        // them: what is wrong with one is the embedder's to hear.
+        let hosts: Vec<ModuleId> = self
+            .graph
+            .modules()
+            .iter()
+            .filter(|m| m.host.is_some() && !m.failed())
+            .map(|m| m.id)
+            .collect();
+        for id in hosts {
+            if !self.analyses.contains_key(&id) {
+                let analysis = self.check(id, &ordering);
+                self.analyses.insert(id, analysis);
+            }
+        }
         for &id in &ordering.modules {
             let module = self.graph.module(id);
             if self.analyses.contains_key(&id) || (id != entry && module.failed()) {
@@ -369,6 +387,17 @@ impl Session {
             .ast
             .clone()
             .unwrap_or(ast::Program { decls: Vec::new() });
+        if module.host.is_some() {
+            let mut resolver = Resolver::new();
+            let check = typechecker::check_host_module(&mut ast, &mut resolver);
+            return ModuleAnalysis {
+                ast: Arc::new(ast),
+                exports: check.exports,
+                top_level: check.top_level,
+                diagnostics: check.diagnostics,
+                resolver: Arc::new(resolver),
+            };
+        }
         let mut imports = HashMap::new();
         let mut poisoned = HashSet::new();
         let mut resolver = Resolver::new();
@@ -425,6 +454,18 @@ impl Session {
         }
         for d in &self.module_name_problems {
             push(d, &mut out);
+        }
+        // What is wrong with a host module is reported whether or not
+        // the program imports it.
+        for module in self.graph.modules().iter().filter(|m| m.host.is_some()) {
+            for d in &module.problems {
+                push(d, &mut out);
+            }
+            if let Some(analysis) = self.analyses.get(&module.id) {
+                for d in analysis.diagnostics.iter().filter(|d| d.is_error()) {
+                    push(d, &mut out);
+                }
+            }
         }
         // The entry's own parse errors, then why an import failed (a
         // module that cannot be read or parsed, a name that resolves to
@@ -553,6 +594,9 @@ impl Session {
                             .cloned()
                             .unwrap_or_else(|| resolve(module.name)),
                         imports: unit_imports(module, &index),
+                        host: module
+                            .host
+                            .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
                     }
                 })
                 .collect(),
@@ -579,15 +623,37 @@ impl Session {
         }
     }
 
+    /// The functions of the host module `module`, the `host`th of the
+    /// configuration, by name, as the program installs them.
+    fn host_functions(&self, module: &Module, host: usize) -> HashMap<Symbol, Arc<HostFn>> {
+        let decls = module.ast.as_ref().map_or(&[][..], |ast| &ast.decls[..]);
+        decls
+            .iter()
+            .zip(&self.config.host[host].fns)
+            .filter_map(|(decl, f)| match decl {
+                ast::Decl::Fn(decl) => Some((
+                    decl.name,
+                    Arc::new(HostFn {
+                        name: format!("{}.{}", module.name, decl.name),
+                        call: f.call.clone(),
+                    }),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The files of the graph of `entry`, for a watcher: each module's
-    /// file, as named in diagnostics.
+    /// file, as named in diagnostics. Host modules have none.
     pub fn files(&self, entry: FileId) -> Vec<PathBuf> {
         let id = self.module_of(entry);
         match self.results.get(&id) {
             Some(analysis) => analysis
                 .modules
                 .iter()
-                .map(|m| self.graph.module(*m).path.clone())
+                .map(|m| self.graph.module(*m))
+                .filter(|m| m.host.is_none())
+                .map(|m| m.path.clone())
                 .collect(),
             None => vec![self.graph.module(id).path.clone()],
         }

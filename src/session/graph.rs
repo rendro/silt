@@ -61,6 +61,8 @@ pub struct Module {
     pub first_import: Option<(ModuleId, Symbol, Span)>,
     /// The module's imports, in source order.
     pub imports: Vec<Import>,
+    /// For a host module, its index in the session's `Config::host`.
+    pub host: Option<usize>,
 }
 
 impl Module {
@@ -111,6 +113,8 @@ pub struct ModuleGraph {
     /// Modules by canonical file path, so a file is one module however
     /// it is reached.
     by_path: HashMap<PathBuf, ModuleId>,
+    /// The host modules, by name.
+    hosts: HashMap<Symbol, ModuleId>,
 }
 
 /// The modules reachable from an entry, in the order they are checked.
@@ -172,10 +176,107 @@ impl ModuleGraph {
                     problems: Vec::new(),
                     first_import: None,
                     imports: Vec::new(),
+                    host: None,
                 })
             }
         };
         self.parse(id, name, text, sources);
+        id
+    }
+
+    /// Enter the host module `host`, the `index`th of the session's
+    /// configuration. Its signatures are parsed as a module of `pub fn`
+    /// headers; what is wrong with them is the module's problems.
+    pub(super) fn enter_host(
+        &mut self,
+        index: usize,
+        host: &super::HostModule,
+        sources: &mut SourceMap,
+    ) -> ModuleId {
+        let name = intern(&host.name);
+        let id = self.push(Module {
+            id: ModuleId(0),
+            package: PackageId(u32::MAX),
+            package_name: intern("<host>"),
+            name,
+            path: PathBuf::from(format!("<host:{}>", host.name)),
+            file: None,
+            ast: None,
+            problems: Vec::new(),
+            first_import: None,
+            imports: Vec::new(),
+            host: Some(index),
+        });
+        let text = host.signatures();
+        self.parse(id, SourceName::Host(host.name.clone()), &text, sources);
+        let file = self.module(id).file.expect("the text was registered");
+        let module = &mut self.modules[id.index()];
+        if module::is_builtin_module(&host.name) {
+            module.problems.push(Diagnostic::error(
+                Code::HostModuleCollision,
+                Span::point(file, 0),
+                format!(
+                    "the host module `{0}` cannot be imported: `import {0}` names the builtin \
+                     module `{0}`",
+                    host.name
+                ),
+            ));
+        }
+        if self.hosts.insert(name, id).is_some() {
+            module.problems.push(Diagnostic::error(
+                Code::HostModuleCollision,
+                Span::point(file, 0),
+                format!("two host modules are named `{}`", host.name),
+            ));
+        }
+        if let Some(ast) = &mut module.ast {
+            for decl in &mut ast.decls {
+                match decl {
+                    Decl::Fn(f) if f.is_signature_only => {
+                        f.is_pub = true;
+                        let untyped = f
+                            .params
+                            .iter()
+                            .any(|p| p.kind == ast::ParamKind::Data && p.ty.is_none())
+                            || f.return_type.is_none();
+                        if untyped {
+                            module.problems.push(
+                                Diagnostic::error(
+                                    Code::HostSignature,
+                                    f.span,
+                                    format!(
+                                        "the host function `{}` must declare the type of each \
+                                         parameter and its return type",
+                                        f.name
+                                    ),
+                                )
+                                .with_help("write it as `fn double(x: Int) -> Int`"),
+                            );
+                        }
+                    }
+                    other => module.problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            decl_span(other),
+                            "a host function is declared by a `fn` header with no body",
+                        )
+                        .with_help("write it as `fn double(x: Int) -> Int`"),
+                    ),
+                }
+            }
+            let declared = ast.decls.len();
+            if declared != host.fns.len() && module.problems.is_empty() {
+                module.problems.push(Diagnostic::error(
+                    Code::HostSignature,
+                    Span::point(file, 0),
+                    format!(
+                        "the host module `{}` has {} functions but its signatures declare {declared}",
+                        host.name,
+                        host.fns.len()
+                    ),
+                ));
+            }
+        }
         id
     }
 
@@ -266,6 +367,18 @@ impl ModuleGraph {
         for (name, span) in decls {
             let resolution = if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
+            } else if let Some(&host) = self.hosts.get(&name) {
+                // A dependency or module file of the same name would be
+                // hidden by the host module.
+                match resolve_import(packages, package, name, span) {
+                    Ok(target)
+                        if overlays.contains_key(&canonical_key(&target.path))
+                            || target.path.exists() =>
+                    {
+                        ImportResolution::Unresolved(host_collision(name, &target.path, span))
+                    }
+                    _ => ImportResolution::Module(host),
+                }
             } else {
                 match resolve_import(packages, package, name, span) {
                     Ok(target) => {
@@ -315,6 +428,7 @@ impl ModuleGraph {
             problems: Vec::new(),
             first_import: Some(import),
             imports: Vec::new(),
+            host: None,
         });
         let (_, name, span) = import;
         let text = match overlays.get(&canonical_key(&target.path)) {
@@ -577,6 +691,29 @@ fn resolve_import(
 /// The help for an import of `name` that names no file in `package`,
 /// when another package of the program declares a dependency by that
 /// name: a dependency's dependencies are its own.
+/// The span of the declaration `decl`.
+fn decl_span(decl: &Decl) -> Span {
+    match decl {
+        Decl::Fn(f) => f.span,
+        Decl::Type(t) => t.span,
+        Decl::Trait(t) => t.span,
+        Decl::TraitImpl(i) => i.span,
+        Decl::Import(_, span) | Decl::Let { span, .. } => *span,
+    }
+}
+
+/// The error for an import of the host module `name` that a dependency
+/// or the module file at `path` would also answer.
+fn host_collision(name: Symbol, path: &Path, span: Span) -> Diagnostic {
+    let shown = crate::git::escape_for_display(&module_path_for_display(path));
+    Diagnostic::error(
+        Code::HostModuleCollision,
+        span,
+        format!("`import {name}` names both the host module `{name}` and {shown}"),
+    )
+    .with_help(format!("rename `{shown}` or the host module"))
+}
+
 pub(super) fn undeclared_dependency_help(
     packages: &Packages,
     package: PackageId,

@@ -7,6 +7,7 @@ use crate::bytecode::{ANON_RECORD_TAG, Op, VmClosure, record_tag_matches};
 use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
+use super::dispatch::invoke_host_fn;
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{NativeDepthGuard, Vm, VmError, native_depth_limit};
 
@@ -812,6 +813,13 @@ impl Vm {
                     }
                 }
             }
+            Value::HostFn(host) => {
+                let start = func_slot + 1;
+                let result = invoke_host_fn(&host, &self.stack[start..start + argc]);
+                self.stack.truncate(func_slot);
+                self.push(result?);
+                Ok(())
+            }
             Value::VariantConstructor(name, arity) => {
                 if argc != arity {
                     return Err(VmError::new(format!(
@@ -1095,6 +1103,7 @@ impl Vm {
                 }
             }
             Value::BuiltinFn(name) => self.invoke_builtin_value(name, args),
+            Value::HostFn(host) => invoke_host_fn(host, args),
             Value::VariantConstructor(name, arity) => {
                 if args.len() != *arity {
                     return Err(VmError::new(format!(

@@ -19,7 +19,7 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::module;
 use crate::source::Span;
 use crate::types::canonical::{Resolver, canonicalize_type_name};
-use crate::value::Value;
+use crate::value::{HostFn, Value};
 
 mod patterns;
 
@@ -310,6 +310,9 @@ pub struct ModuleUnit {
     /// written after `import` and by the alias of `import m as n`.
     /// Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
+    /// For a host module, the function each of its signatures declares,
+    /// by name: the module's globals are these functions.
+    pub host: HashMap<Symbol, Arc<HostFn>>,
 }
 
 /// The modules of a program, indexed by the session's module ids, and
@@ -366,9 +369,9 @@ pub struct Compiler {
     /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
     /// so that a previously-bound REPL value (stored as a VM global) can have
     /// its fields accessed. In non-REPL mode, unknown `name.field` is still
-    /// emitted as `GetGlobal("name.field")` so that foreign-function modules
-    /// (e.g. `mylib.double` registered via `register_fn1`) and file-module
-    /// aliases (`import string as s` → `s.split`) continue to work.
+    /// emitted as `GetGlobal("name.field")`: the members of file modules
+    /// and host modules (`mylib.double`) and of module aliases
+    /// (`import string as s` → `s.split`) are globals by those names.
     repl_mode: bool,
     /// Maps enum type name → set of variant names. Populated as `type`
     /// declarations are compiled. Used by `FieldAccess` codegen to
@@ -1282,8 +1285,7 @@ impl Compiler {
 
     /// The prefix of the globals of the module the current module imports
     /// as `written`: the module's unique global prefix, or `written`
-    /// itself for anything else (a builtin module, an alias, a foreign
-    /// module an embedder registered).
+    /// itself for anything else (a builtin module, an alias).
     fn module_global(&self, written: &str) -> String {
         let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         self.units
@@ -1326,6 +1328,11 @@ impl Compiler {
 
         let program = self.units.modules[target].program.clone();
         let global = self.units.modules[target].global.clone();
+        if !self.units.modules[target].host.is_empty() {
+            let host = self.units.modules[target].host.clone();
+            self.compiled_modules.insert(target);
+            return self.compile_host_module(module_name, &global, &program, &host, span);
+        }
         self.unit_stack.push(target);
         let result = self.compile_file_module_inner(module_name, &global, &program, span);
         self.unit_stack.pop();
@@ -1333,6 +1340,41 @@ impl Compiler {
             self.compiled_modules.insert(target);
         }
         result
+    }
+
+    /// Install the functions of a host module as the globals
+    /// `<global>.<name>`, one per signature of `program`.
+    fn compile_host_module(
+        &mut self,
+        module_name: &str,
+        global: &str,
+        program: &Program,
+        host: &HashMap<Symbol, Arc<HostFn>>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let mut public_fns = HashSet::new();
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let Some(function) = host.get(&f.name) else {
+                return Err(checker_missed(
+                    span,
+                    &format!("a host signature without a function: '{}'", f.name),
+                ));
+            };
+            public_fns.insert(resolve(f.name));
+            let fi = self.add_constant(Value::HostFn(function.clone()), span)?;
+            self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+            let qualified = format!("{global}.{}", f.name);
+            let name_idx = self.add_constant(Value::String(qualified), span)?;
+            self.current_chunk()
+                .emit_op_u16(Op::SetGlobal, name_idx, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+        self.module_public_fns
+            .insert(module_name.to_string(), public_fns);
+        Ok(())
     }
 
     /// Inner implementation of file module compilation: the declarations
@@ -2078,13 +2120,11 @@ impl Compiler {
                         // by `GetField(field)`. That resolves `p.x` against
                         // the stored record value.
                         //
-                        // In non-REPL mode we preserve the long-standing
-                        // behaviour of emitting `GetGlobal("name.field")`,
-                        // which is how foreign-function modules registered
-                        // via `vm.register_fn1("mylib.double", ...)` and
-                        // file-module aliases like `import string as s` are
-                        // found (the alias path registers `s.split` as a
-                        // standalone global).
+                        // In non-REPL mode we emit `GetGlobal("name.field")`,
+                        // which is how the members of file and host modules
+                        // (`mylib.double`) and module aliases like
+                        // `import string as s` are found (the alias path
+                        // registers `s.split` as a standalone global).
                         if !self.repl_mode || module::is_builtin_module(&name_str) {
                             let qualified = format!("{}.{field}", self.module_global(&name_str));
                             let name_idx = self.add_constant(Value::String(qualified), span)?;

@@ -86,6 +86,9 @@ pub enum SourceName {
     Overlay(PathBuf),
     /// A package manifest (`silt.toml`).
     Manifest(PathBuf),
+    /// The signatures of a host module an embedder declared, by the
+    /// module's name.
+    Host(String),
     /// Text that comes with silt itself.
     Builtin,
 }
