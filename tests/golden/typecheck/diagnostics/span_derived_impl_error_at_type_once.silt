@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- B's variant Y shadows A's, so the derived impls of A do not check.
+-- Their nodes carry the span of `type A`, and the error is reported
+-- once, there, however many derived methods hit it.
+import set
+import list
+
+type A { X, Y }
+type B { Y, Z }
+
+fn main() {
+  let ax: A = X
+  println(ax)
+}

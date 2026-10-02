@@ -1,0 +1,11 @@
+warning[type]: variant 'Y' of enum 'B' shadows same-named variant of enum 'A'; earlier variant is no longer resolvable by bare name
+ --> span_derived_impl_error_at_type_once.silt:10:1
+    |
+ 10 | type B { Y, Z }
+    | ^ variant 'Y' of enum 'B' shadows same-named variant of enum 'A'; earlier variant is no longer resolvable by bare name
+
+error[type]: type mismatch: expected B, got A
+ --> span_derived_impl_error_at_type_once.silt:9:1
+   |
+ 9 | type A { X, Y }
+   | ^ type mismatch: expected B, got A

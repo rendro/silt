@@ -3492,7 +3492,21 @@ impl TypeChecker {
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
 
+        self.drop_repeated_errors();
         env
+    }
+
+    /// Keep one of each diagnostic: the same message at the same span
+    /// with the same severity is reported once. The passes can reach one
+    /// node more than once (the derived impls of a type, which all carry
+    /// the type declaration's span, are checked per method), and a
+    /// repeated line tells the reader nothing new. Run once, after every
+    /// pass, so no pass sees a shortened error list.
+    fn drop_repeated_errors(&mut self) {
+        let mut seen: std::collections::HashSet<(std::string::String, Span, bool)> =
+            std::collections::HashSet::new();
+        self.errors
+            .retain(|e| seen.insert((e.message.clone(), e.span, e.severity == Severity::Warning)));
     }
 
     // ── Check declaration bodies ──────────────────────────────────────
@@ -8419,6 +8433,7 @@ impl ReplTypeContext {
         self.checker.check_unresolved_let_types(program);
         self.checker.resolve_all_types(program);
 
+        self.checker.drop_repeated_errors();
         self.checker.errors.clone()
     }
 
