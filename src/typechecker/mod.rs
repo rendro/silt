@@ -811,6 +811,9 @@ pub struct TypeChecker {
     /// For each name an imported user module is reached by (its name or
     /// alias), the module and the functions it declares without `pub`.
     pub(super) imported_private_fns: HashMap<Symbol, (Symbol, Vec<Symbol>)>,
+    /// The builtin types whose derived impls the builtin environment
+    /// holds already, so a check does not derive them again.
+    pub(super) builtin_derived: std::collections::HashSet<Symbol>,
     /// Round 64 item 6B (annotated polymorphic recursion): names of
     /// `fn` declarations whose signature is fully annotated (every
     /// parameter has an explicit type AND the return type is
@@ -915,6 +918,7 @@ impl TypeChecker {
             poisoned_modules: std::collections::HashSet::new(),
             poisoned_names: std::collections::HashSet::new(),
             imported_private_fns: HashMap::new(),
+            builtin_derived: std::collections::HashSet::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
@@ -5736,13 +5740,18 @@ impl TypeChecker {
         // and routes them through `user_decl_type_names` already, so the
         // `pkg == builtin_pkg` arm covers them; an imported type there
         // still carries its real producer package and is excluded.
+        // The builtin types' impls are derived once, with the builtin
+        // environment (see `BuiltinEnv::build`), and are not derived again.
+        let builtin_derived = &self.builtin_derived;
         let owned_for_synth =
             |pkg: Symbol| -> bool { pkg == builtin_pkg || current_pkg == Some(pkg) };
         let mut builtin_enum_names: Vec<Symbol> = self
             .enums
             .iter()
             .filter(|(n, info)| {
-                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
+                !user_decl_type_names.contains(*n)
+                    && !builtin_derived.contains(*n)
+                    && owned_for_synth(info.defined_in)
             })
             .map(|(n, _)| *n)
             .collect();
@@ -5761,7 +5770,9 @@ impl TypeChecker {
             .records
             .iter()
             .filter(|(n, info)| {
-                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
+                !user_decl_type_names.contains(*n)
+                    && !builtin_derived.contains(*n)
+                    && owned_for_synth(info.defined_in)
             })
             .map(|(n, _)| *n)
             .collect();
@@ -8370,6 +8381,10 @@ struct BuiltinEnv {
     /// The scope of the builtin names: the parent of every program's
     /// top-level scope.
     root: Rc<TypeEnv>,
+    /// The derived impls of the builtin types (`Display`, `Equal`, ...
+    /// for `IoError`, `Weekday`, ...), checked: a program compiles them
+    /// once, see [`builtin_derived_impls`].
+    impls: Rc<Vec<Decl>>,
 }
 
 impl BuiltinEnv {
@@ -8382,10 +8397,29 @@ impl BuiltinEnv {
         // must not look trait-local.
         checker.register_builtins(&mut env);
         register_builtin_trait_impls(&mut checker);
+        // Derive the builtin types' impls once, as a check of a program
+        // with no declarations would, and check their bodies.
+        let mut impls = Vec::new();
+        checker.synthesize_auto_derive_impls(&mut impls);
+        for decl in &impls {
+            if let Decl::TraitImpl(ti) = decl {
+                checker.builtin_derived.insert(ti.target_type);
+                checker.register_trait_impl(ti, &mut env);
+            }
+        }
+        checker.check_decl_bodies(&mut impls, &env);
+        checker.finalize_deferred_checks();
+        debug_assert!(
+            checker.errors.is_empty(),
+            "the builtin derived impls check: {:?}",
+            checker.errors
+        );
+        checker.errors.clear();
         env.closed = env.free_vars(&checker).is_empty();
         BuiltinEnv {
             checker,
             root: Rc::new(env),
+            impls: Rc::new(impls),
         }
     }
 
@@ -8401,6 +8435,13 @@ thread_local! {
     /// `intern::reset` invalidates them, so the cache is too.
     static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// The derived impls of the builtin types, checked. Every program
+/// compiles them once (`Compiler::compile_program`), so a method call on
+/// a builtin type's value finds its `<Type>.<method>` global.
+pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
+    builtin_env().impls.clone()
 }
 
 /// The builtin environment, built on first use and after each

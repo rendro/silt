@@ -609,6 +609,7 @@ impl Compiler {
         self.collect_top_level_value_globals(program);
         self.collect_type_decls(program);
 
+        self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
@@ -660,6 +661,7 @@ impl Compiler {
         self.collect_top_level_value_globals(program);
         self.collect_type_decls(program);
 
+        self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
@@ -681,6 +683,17 @@ impl Compiler {
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
+    }
+
+    /// Compile the derived impls of the builtin types, which the
+    /// typechecker derives and checks once (see
+    /// [`crate::typechecker::builtin_derived_impls`]), at the start of a
+    /// program's script: each installs a `<Type>.<method>` global.
+    fn compile_builtin_derived_impls(&mut self) -> Result<(), Diagnostic> {
+        for decl in crate::typechecker::builtin_derived_impls().iter() {
+            self.compile_decl(decl)?;
+        }
+        Ok(())
     }
 
     // ── Declarations ──────────────────────────────────────────────
