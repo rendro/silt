@@ -27,6 +27,8 @@ pub enum Severity {
 pub enum Phase {
     Lex,
     Parse,
+    /// What names mean: imports, scopes, visibility.
+    Resolve,
     Type,
     Compile,
     Package,
@@ -38,6 +40,9 @@ impl Phase {
         match self {
             Phase::Lex => "lex",
             Phase::Parse => "parse",
+            // The resolver's errors were the checker's before it existed;
+            // the header keeps their word.
+            Phase::Resolve => "type",
             Phase::Type => "type",
             Phase::Compile => "compile",
             Phase::Package => "package",
@@ -50,7 +55,7 @@ macro_rules! codes {
     ($( $(#[$doc:meta])* $name:ident = $id:literal, $phase:ident; )*) => {
         /// What a diagnostic is about. Each code has a stable id
         /// (`E0301`), whose hundreds name its phase: 0 lex, 1 parse,
-        /// 3 type, 4 compile, 5 entry point, 6 package, 7 runtime.
+        /// 2 resolve, 3 type, 4 compile, 5 entry point, 6 package, 7 runtime.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         pub enum Code {
             $( $(#[$doc])* $name, )*
@@ -103,6 +108,15 @@ codes! {
     /// on an impl, an annotated `type` parameter, a lowercase type
     /// name, ...).
     InvalidDeclaration = "E0113", Parse;
+    // ── resolve ──
+    /// A name that resolves to nothing where it is used.
+    UnresolvedName = "E0201", Resolve;
+    /// A bare variant name that variants of several enums share.
+    AmbiguousVariant = "E0202", Resolve;
+    /// A name an import asks for that the module does not have.
+    NotExported = "E0203", Resolve;
+    /// A name of another module that is not `pub` there.
+    PrivateItem = "E0204", Resolve;
     // ── type ──
     TypeMismatch = "E0301", Type;
     UndefinedVariable = "E0302", Type;
@@ -178,8 +192,6 @@ codes! {
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;
     ImportCycle = "E0402", Compile;
-    /// A name an import asks for that the module does not export.
-    NotExported = "E0403", Compile;
     /// A builtin module used without an import, found by the compiler.
     CompileModuleNotImported = "E0404", Compile;
     /// Something the bytecode cannot express: too many constants, locals,

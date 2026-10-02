@@ -432,15 +432,18 @@ impl Derive {
                 trait_name,
                 trait_args: Vec::new(),
                 trait_name_span: self.span,
+                trait_res: None,
             })
             .collect();
         TraitImpl {
             trait_module: None,
             trait_name,
+            trait_res: None,
             trait_name_span: self.span,
             trait_args: Vec::new(),
             target_module: None,
             target_type: type_name,
+            target_res: None,
             target_type_span: self.span,
             target_type_args,
             target_param_names,

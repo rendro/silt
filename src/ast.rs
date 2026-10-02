@@ -1,3 +1,4 @@
+use crate::defs::Res;
 use crate::intern::Symbol;
 use crate::source::Span;
 use crate::types::Type;
@@ -9,6 +10,12 @@ pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
     pub ty: Option<Type>,
+    /// What the name means, filled in by the resolver: on an `Ident`; on
+    /// a `FieldAccess` whose head is a module or a type (`m.f`,
+    /// `m.Circle`, `Shape.Circle`, `m.Shape.Circle`), the member it
+    /// names; on a `RecordCreate`, the record type. `None` elsewhere, and
+    /// on what the checker synthesizes.
+    pub res: Option<Res>,
 }
 
 impl Expr {
@@ -17,6 +24,7 @@ impl Expr {
             kind,
             span,
             ty: None,
+            res: None,
         }
     }
 }
@@ -184,11 +192,18 @@ pub enum ListElem {
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
+    /// What a `Constructor` or `Record` pattern names, filled in by the
+    /// resolver: the variant, or the record type.
+    pub res: Option<Res>,
 }
 
 impl Pattern {
     pub fn new(kind: PatternKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            res: None,
+        }
     }
 }
 
@@ -287,11 +302,19 @@ pub struct Param {
 pub struct TypeExpr {
     pub kind: TypeExprKind,
     pub span: Span,
+    /// What the type name of a `Named` or `Generic` type names (a type
+    /// variable is [`Res::Local`]), or the trait of an `AssocProj`;
+    /// filled in by the resolver.
+    pub res: Option<Res>,
 }
 
 impl TypeExpr {
     pub fn new(kind: TypeExprKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            res: None,
+        }
     }
 }
 
@@ -407,6 +430,8 @@ pub struct WhereClause {
     pub trait_name: Symbol,
     pub trait_args: Vec<TypeExpr>,
     pub trait_name_span: Span,
+    /// What the trait name names; filled in by the resolver.
+    pub trait_res: Option<Res>,
 }
 
 /// An associated-type declaration inside a trait body.
@@ -550,6 +575,8 @@ pub struct TraitRef {
     pub name: Symbol,
     pub args: Vec<TypeExpr>,
     pub span: Span,
+    /// What the name names; filled in by the resolver.
+    pub res: Option<Res>,
 }
 
 impl TraitRef {
@@ -561,6 +588,7 @@ impl TraitRef {
             trait_name: self.name,
             trait_args: self.args,
             trait_name_span: self.span,
+            trait_res: self.res,
         }
     }
 }
@@ -613,6 +641,8 @@ pub struct TraitImpl {
     /// The trait's module qualifier: `trait m.Describe for T`.
     pub trait_module: Option<Qualifier>,
     pub trait_name: Symbol,
+    /// What the trait name names; filled in by the resolver.
+    pub trait_res: Option<Res>,
     /// Span of the trait-name identifier in `trait <Name> for ...`.
     /// Used by LSP rename / references so cursor on the impl's trait
     /// reference resolves to the trait declaration (round-75 DX-4).
@@ -630,6 +660,8 @@ pub struct TraitImpl {
     /// the compiler, and coherence checks can reference the impl by head
     /// name without having to inspect the type arguments.
     pub target_type: Symbol,
+    /// What the target's head names; filled in by the resolver.
+    pub target_res: Option<Res>,
     /// Span of the target-type head-name identifier in `... for <Target>`
     /// (e.g. `Int` in `for Int`, `Box` in `for Box(a)`). Used by LSP
     /// rename / references on the impl-target reference. For synthesized

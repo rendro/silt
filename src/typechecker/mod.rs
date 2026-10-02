@@ -11,6 +11,7 @@ mod auto_derive;
 mod builtins;
 mod exhaustiveness;
 mod inference;
+pub mod names;
 mod resolve;
 // `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
 // the shared did-you-mean threshold policy for import-path hints.
@@ -8447,6 +8448,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 name: intern("Display"),
                 args: Vec::new(),
                 span: dummy_span,
+                res: None,
             }],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
@@ -8924,6 +8926,42 @@ fn builtin_env() -> Rc<BuiltinEnv> {
     let env = Rc::new(BuiltinEnv::build());
     BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
     env
+}
+
+/// The builtin names, as the resolver enters them: every name the builtin
+/// scope binds, each builtin enum with the arity of each variant, and the
+/// builtin traits.
+pub(super) struct BuiltinNames {
+    pub bindings: Vec<Symbol>,
+    pub enums: Vec<(Symbol, Vec<(Symbol, usize)>)>,
+    pub traits: Vec<Symbol>,
+}
+
+pub(super) fn builtin_names() -> BuiltinNames {
+    let env = builtin_env();
+    let mut bindings: Vec<Symbol> = env.root.bindings.keys().copied().collect();
+    bindings.sort_by_key(|name| resolve(*name));
+    let mut enums: Vec<(Symbol, Vec<(Symbol, usize)>)> = env
+        .checker
+        .enums
+        .iter()
+        .map(|(name, info)| {
+            let variants = info
+                .variants
+                .iter()
+                .map(|v| (v.name, v.field_types.len()))
+                .collect();
+            (*name, variants)
+        })
+        .collect();
+    enums.sort_by_key(|(name, _)| resolve(*name));
+    let mut traits: Vec<Symbol> = env.checker.traits.keys().copied().collect();
+    traits.sort_by_key(|name| resolve(*name));
+    BuiltinNames {
+        bindings,
+        enums,
+        traits,
+    }
 }
 
 impl TypeChecker {

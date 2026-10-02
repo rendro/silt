@@ -1989,6 +1989,7 @@ impl<'src> Parser<'src> {
             name,
             args,
             span: name_span,
+            res: None,
         })
     }
 
@@ -2262,10 +2263,12 @@ impl<'src> Parser<'src> {
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_module,
                 trait_name: name,
+                trait_res: None,
                 trait_name_span: name_span,
                 trait_args,
                 target_module,
                 target_type: target,
+                target_res: None,
                 target_type_span,
                 target_type_args,
                 target_param_names,
