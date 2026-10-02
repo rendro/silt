@@ -9,10 +9,7 @@ use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
 use crate::cli::paths::ProgramFiles;
 use crate::cli::pipeline::{
-    pipeline_has_real_hard_errors, reportable_diagnostics, run_compile_pipeline_with_options,
-};
-use crate::cli::source_scan::{
-    looks_like_library_module, looks_like_test_file, missing_main_error, program_has_main,
+    Emit, pipeline_has_real_hard_errors, reportable_diagnostics, run_compile_pipeline,
 };
 
 /// Output format for `silt check` — human-readable by default, or
@@ -117,52 +114,14 @@ pub(crate) fn dispatch(args: &[String]) {
 
 pub(crate) fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
-    // `silt check` must match `silt run` diagnostics exactly, minus
-    // execution. That means (a) running the compile step so the compiler
-    // surfaces real module-resolution errors, and (b) filtering out the
-    // type checker's "unknown module" warnings — which the compiler
-    // resolves later — so we don't cry wolf on every valid file-backed
-    // import. Previously this path skipped compile entirely AND emitted
-    // every warning, which produced spurious "unknown module" warnings
-    // on programs that `silt run` handles cleanly.
-    let result = run_compile_pipeline_with_options(path, false, true, true);
+    // `silt check` reports what `silt run` reports before it runs: the
+    // session's analysis and the compile step.
+    let result = run_compile_pipeline(path, Emit::Check, silt::session::LockPolicy::Update);
 
-    let mut errors: Vec<&Diagnostic> = reportable_diagnostics(&result);
-
-    // If compilation succeeded but the program defines no `main` AND the
-    // file is neither a library module nor a test file, surface the same
-    // missing-main diagnostic that `silt run` emits — exit 1 with
-    // `error[compile]: program has no main() function`. Without this, an
-    // empty / no-main "script" file would pass `silt check` cleanly and
-    // then fail at `silt run`, which is off-spec.
-    //
-    // We deliberately exclude library modules and test files because
-    // those files legitimately never define `main` and are consumed by
-    // importers / by `silt test` respectively. `silt run` still rejects
-    // both — `check` is the "does this file compile standalone" answer,
-    // and neither a library nor a test file should be invoked standalone.
-    //
-    // All three questions are answered from the parsed declarations
-    // (`cli::source_scan`), the same ones `silt run` and `silt test`
-    // consult.
-    //
-    // Lock: tests/lang/empty_program_diagnostic_tests.rs and
-    // tests/lang/examples_check.rs (every_example_type_checks_and_has_no_warnings).
-    let missing_main_err: Option<Diagnostic> = match &result.program {
-        Some(program)
-            if errors.is_empty()
-                && result.functions.is_some()
-                && !program_has_main(program)
-                && !looks_like_library_module(program)
-                && !looks_like_test_file(program) =>
-        {
-            Some(missing_main_error(program, path, false))
-        }
-        _ => None,
-    };
-    if let Some(ref err) = missing_main_err {
-        errors.push(err);
-    }
+    // A program without `main` is reported by the session, which knows
+    // whether the file is a library module or a test file (those have no
+    // `main` on purpose and are not asked for one).
+    let errors: Vec<&Diagnostic> = reportable_diagnostics(&result);
 
     let files = ProgramFiles::new(path, &result.sources);
     if format == OutputFormat::Json {
@@ -172,11 +131,8 @@ pub(crate) fn check_file(path: &str, format: OutputFormat) {
         silt::diagnostic::eprint_all(&files, errors);
     }
 
-    // A hard error is real only if it's a parse/compile error or a
-    // non-suppressed type error with severity Error — the gate of
-    // `compile_file`, plus the missing `main`.
-    let has_real_hard_errors = pipeline_has_real_hard_errors(&result) || missing_main_err.is_some();
-    if has_real_hard_errors {
+    // The gate of `compile_file`: any error.
+    if pipeline_has_real_hard_errors(&result) {
         process::exit(1);
     }
 }

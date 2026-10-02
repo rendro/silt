@@ -6,7 +6,9 @@ use silt::disassemble::disassemble_function;
 
 use crate::cli::help::disasm_usage_banner;
 use crate::cli::package::resolve_package_entry_point;
-use crate::cli::pipeline::compile_file_with_options;
+use silt::session::LockPolicy;
+
+use crate::cli::pipeline::{CompiledFile, compile_file};
 
 /// Dispatch `silt disasm [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -78,7 +80,7 @@ pub(crate) fn disasm_file(path: &str) {
     // Read-only command — never mutates `silt.lock`. If the lock is
     // stale or missing we resolve in-memory and continue; the user
     // can still get a useful disassembly without a lockfile write.
-    let (functions, _source) = compile_file_with_options(path, false);
+    let CompiledFile { functions, .. } = compile_file(path, LockPolicy::ReadOnly);
 
     // Print disassembly of each function
     for func in &functions {

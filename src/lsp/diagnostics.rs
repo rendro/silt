@@ -15,6 +15,7 @@ use crate::ast::Program;
 use crate::intern::Symbol;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
 use crate::source::{SourceFile, SourceMap, SourceName};
 use crate::typechecker;
 
@@ -61,34 +62,52 @@ fn analysis_failed_diagnostic() -> Diagnostic {
     }
 }
 
-/// Lex, parse and typecheck `source`, the text of the document `uri`.
-/// Reads nothing but its arguments.
+/// The static diagnostics of `source`, the text of the document `uri`,
+/// as every front door reports them: from a session over the document's
+/// project, with the document's text as an overlay. Only those in the
+/// document itself are published for it.
+fn session_diagnostics(source: &SourceFile, uri: &Uri) -> Vec<Diagnostic> {
+    let path = match &source.path {
+        SourceName::Overlay(path) | SourceName::Path(path) => path.clone(),
+        _ => std::path::PathBuf::from("untitled.silt"),
+    };
+    let project = match path.parent() {
+        Some(dir) if dir.is_dir() => ProjectSetup::Discover(dir.to_path_buf()),
+        _ => ProjectSetup::None,
+    };
+    let mut session = Session::new(Config {
+        project,
+        lock: LockPolicy::ReadOnly,
+        host: Vec::new(),
+    });
+    let file = session.set_overlay(&path, source.text.to_string());
+    let mut diagnostics = session.analyze(file).diagnostics.clone();
+    if let Err(errors) = session.compile(file, Entry::Tests { filter: None }) {
+        diagnostics.extend(errors);
+    }
+    diagnostics
+        .iter()
+        .filter(|d| d.span.file == file)
+        .map(|d| {
+            crate::diagnostic::to_lsp(session.sources(), d, &|f| (f == file).then(|| uri.clone()))
+        })
+        .collect()
+}
+
+/// Analyse `source`, the text of the document `uri`: its diagnostics from
+/// the session, and the syntax tree the editor features read.
 fn analyse(source: &SourceFile, uri: &Uri) -> Analysis {
+    let diagnostics = session_diagnostics(source, uri);
     let mut sources = SourceMap::new();
     let file = sources.add(source.path.clone(), source.text.clone());
-    let publish = |diagnostics: Vec<crate::diagnostic::Diagnostic>| -> Vec<Diagnostic> {
-        diagnostics
-            .iter()
-            .map(|d| crate::diagnostic::to_lsp(&sources, d, &|_| Some(uri.clone())))
-            .collect()
+    let Ok(tokens) = Lexer::new(file, &source.text).tokenize() else {
+        return Analysis::without_program(diagnostics);
     };
-
-    let tokens = match Lexer::new(file, &source.text).tokenize() {
-        Ok(t) => t,
-        Err(e) => return Analysis::without_program(publish(vec![e])),
-    };
-
-    let (mut program, mut diagnostics) = Parser::new(tokens, &source.text)
+    let (mut program, _) = Parser::new(tokens, &source.text)
         .with_docs()
         .parse_program_recovering();
-
-    // The type checker has no filesystem access, so every `import` of a
-    // user module would surface as an "unknown module" warning plus an
-    // error for every name it brings in. The compiler resolves those
-    // imports; the CLI leaves the same diagnostics out.
-    diagnostics.extend(typechecker::without_import_cascade(typechecker::check(
-        &mut program,
-    )));
+    // The features read the types the checker fills in.
+    let _ = typechecker::check(&mut program);
 
     let definitions = build_definitions(&program);
     let locals = collect_local_bindings(&program, &source.text);
@@ -97,7 +116,7 @@ fn analyse(source: &SourceFile, uri: &Uri) -> Analysis {
         program: Some(program),
         definitions,
         locals,
-        diagnostics: publish(diagnostics),
+        diagnostics,
     }
 }
 

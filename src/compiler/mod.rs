@@ -7,7 +7,6 @@
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::{
@@ -17,12 +16,9 @@ use crate::ast::{
 use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::Lexer;
 use crate::module;
-use crate::parser::Parser;
-use crate::source::{SourceMap, SourceName, Span};
-use crate::typechecker;
-use crate::types::canonical::canonicalize_type_name;
+use crate::source::Span;
+use crate::types::canonical::{Resolver, canonicalize_type_name};
 use crate::value::Value;
 
 mod patterns;
@@ -279,87 +275,6 @@ fn module_not_imported(span: Span, module: &str) -> Diagnostic {
     .with_help(format!("add `import {module}` at the top of the file"))
 }
 
-/// A lex or parse error `e` in the imported module `module_name`, with
-/// the import at `import_span` that brought the module in as a label.
-fn imported_at(e: Diagnostic, module_name: &str, import_span: Span) -> Diagnostic {
-    e.with_label(
-        import_span,
-        format!("module '{module_name}' is imported here"),
-    )
-}
-
-/// Render a module file path as CWD-relative when possible, for the
-/// path a "cannot load module" diagnostic says it looked for.
-///
-/// We strip only the CWD prefix — if the module lives outside the CWD
-/// (e.g. a dependency under ~/.silt/deps) we fall back to the raw
-/// path, because any synthetic prefix-stripping there would lie about
-/// where the file actually lives. Lock:
-/// tests/lang/compiler_module_path_norm_round36_tests.rs.
-///
-/// The result is only ever printed, so it is escaped by the display rule
-/// (`crate::git::escape_for_display`): a directory name holding a control
-/// character cannot forge lines of a diagnostic. Plain paths, Windows
-/// backslashes included, print unchanged.
-fn normalize_module_path(p: &std::path::Path) -> String {
-    crate::git::escape_for_display(&module_path_for_display(p))
-}
-
-/// `p` canonicalized, also when `p` itself does not exist (a module that
-/// was looked for and not found): the nearest existing ancestor is
-/// canonicalized and the rest of the path appended. On Windows this also
-/// resolves short (8.3) directory names, so a path under a short-named
-/// working directory still compares with its long form.
-fn canonicalize_existing_prefix(p: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut rest = Vec::new();
-    let mut current = p;
-    loop {
-        if let Ok(canon) = std::fs::canonicalize(current) {
-            let mut out = canon;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return Some(out);
-        }
-        rest.push(current.file_name()?.to_os_string());
-        current = current.parent()?;
-    }
-}
-
-/// How a module file is named in a diagnostic: its path relative to the
-/// working directory when it lies under it, unescaped.
-pub fn module_path_for_display(p: &std::path::Path) -> String {
-    if let Ok(cwd) = std::env::current_dir() {
-        // First try a literal strip — cheap, no I/O.
-        if let Ok(rel) = p.strip_prefix(&cwd) {
-            return rel.display().to_string();
-        }
-        // Fall back to canonicalizing both sides. On Windows, upstream
-        // module resolution may have canonicalized `p` into extended-
-        // length form (`\\?\C:\...`) while `cwd` is still `C:\...`, so a
-        // literal strip misses. Canonicalizing both makes the forms
-        // comparable. `canonicalize` can fail (e.g. no filesystem access
-        // in some sandboxes); any failure falls through to the raw
-        // display.
-        if let (Some(p_canon), Ok(cwd_canon)) =
-            (canonicalize_existing_prefix(p), std::fs::canonicalize(&cwd))
-            && let Ok(rel) = p_canon.strip_prefix(&cwd_canon)
-        {
-            return rel.display().to_string();
-        }
-    }
-    // Last resort: strip the Windows `\\?\` verbatim prefix for display
-    // so an out-of-CWD module path at least renders cleanly.
-    let s = p.display().to_string();
-    #[cfg(windows)]
-    {
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return stripped.to_string();
-        }
-    }
-    s
-}
-
 /// Validate that a computed `JumpBack` distance fits in the instruction's
 /// `u16` operand. Mirrors the check in [`Chunk::patch_jump`] for forward
 /// jumps — a loop body larger than 65_535 bytes of bytecode would wrap
@@ -379,124 +294,53 @@ fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic
 
 // ── Compiler ──────────────────────────────────────────────────────────
 
-/// Result of resolving an `import foo` segment to a concrete file.
-///
-/// Carried internally between `compile_file_module` and its inner
-/// implementation so the file path, owning package, and per-package cache
-/// key are all derived in one place.
-struct ResolvedImport {
-    /// Absolute (or project-relative) path to the `.silt` file to load.
-    file_path: PathBuf,
-    /// Symbol identifying the package the resolved module belongs to.
-    /// Pushed on `compiling_package_stack` for the duration of the
-    /// inner compile, so nested imports can resolve relative to it.
-    package: Symbol,
-    /// Bare module name *within* `package` (e.g. `"lib"` for a dep's
-    /// entry point, `"helpers"` for a local sub-module). Used by the
-    /// cycle-message renderer to drop package prefixes when a cycle
-    /// stays inside a single package.
-    module: String,
-    /// Package-qualified key used for `compiled_modules` /
-    /// `compiling_modules*`. Format: `"{pkg_name}::{module_path}"`. The
-    /// qualification ensures the same module name living in two packages
-    /// doesn't share cache state and that cycle messages render clearly
-    /// (`pkg_a::lib -> pkg_b::lib -> pkg_a::lib`).
-    cache_key: String,
+/// A module of the program, as the session hands it to the compiler:
+/// parsed and typechecked, with what each of its imports names.
+pub struct ModuleUnit {
+    /// The module's declarations, after the typechecker filled them in.
+    pub program: Arc<Program>,
+    /// The module's name in its package (`"lib"` for a dependency's
+    /// library, `"util"` for `src/util.silt`).
+    pub name: String,
+    /// The module each `import` of this module names, by the name
+    /// written after `import`. Builtin modules are not in it.
+    pub imports: HashMap<Symbol, usize>,
 }
 
-/// One frame of `compiling_modules_stack`. Stored as a struct (rather
-/// than just the qualified key) so the cycle renderer can produce
-/// readable messages: bare module names for in-package cycles,
-/// `pkg::module` qualified names for cycles that cross package
-/// boundaries.
-struct CompilingFrame {
-    cache_key: String,
-    package: Symbol,
-    module: String,
+/// The modules of a program, indexed by the session's module ids, and
+/// which of them is the entry: the one compiled by `compile_program` or
+/// `compile_declarations`. The others are compiled where they are first
+/// imported.
+#[derive(Default)]
+pub struct ProgramUnits {
+    pub modules: Vec<ModuleUnit>,
+    pub entry: usize,
 }
 
 pub struct Compiler {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
-    /// Source roots for every package in scope (local + path deps),
-    /// keyed by package name (the import segment users type). The
-    /// value is the directory containing that package's `.silt`
-    /// source files (typically `<pkg_root>/src/`).
-    ///
-    /// `import calc` resolves first against `package_roots`: if `calc`
-    /// is a key here it is treated as a cross-package import (loads
-    /// `<calc_src>/lib.silt`); otherwise the import is local to the
-    /// current package and resolves under `local_package`'s root.
-    package_roots: HashMap<Symbol, PathBuf>,
-    /// The local package's name. When set, imports that don't match
-    /// any entry in `package_roots` fall back to this package's source
-    /// directory. Stays `None` for the legacy single-root case (REPL,
-    /// ad-hoc scripts) where there's no manifest.
-    local_package: Option<Symbol>,
-    /// Modules already compiled in this compilation unit (avoids double-compile).
-    /// Keys are package-qualified (`{pkg}::{module}`) so the same module
-    /// name in two packages doesn't collide.
-    compiled_modules: HashSet<String>,
-    /// Public export names of each compiled file module, keyed by the
-    /// same package-qualified cache key as `compiled_modules`. Lets a
-    /// later `import foo as f` re-register alias globals even when
-    /// `foo` was already compiled by an earlier `import foo` /
-    /// `import foo.{...}` / `import foo as other` — previously the
-    /// cached-hit path returned an empty list and the alias arm
-    /// silently registered nothing, so `f.area` died at runtime with
-    /// "undefined global" while `silt check` passed (round 92 fix).
-    module_export_names: HashMap<String, Vec<String>>,
-    /// Modules currently being compiled (for circular import detection).
-    /// The HashSet gives O(1) membership checks for the hot path, and the
-    /// parallel Vec preserves insertion order so a detected cycle can be
-    /// rendered as an arrow-chain. Both fields are always pushed/popped
-    /// together by `compile_file_module`. Keys are package-qualified
-    /// strings (`{pkg}::{module}`) so a `lib` module in two different
-    /// packages doesn't collide.
-    compiling_modules: HashSet<String>,
-    /// Parallel to `compiling_modules` but preserves insertion order.
-    /// Each entry stores the package-qualified key plus the package and
-    /// bare module name; the cycle renderer uses the latter pair to
-    /// produce a clean message that drops package prefixes when the
-    /// whole cycle lives in one package.
-    compiling_modules_stack: Vec<CompilingFrame>,
-    /// Stack of packages whose modules are currently being compiled.
-    /// Pushed/popped alongside `compiling_modules_stack` so nested
-    /// `import` decls inside a dep's `lib.silt` resolve relative to
-    /// the dep's source root, not the consumer's.
-    compiling_package_stack: Vec<Symbol>,
+    /// The modules of the program, from the session. Empty for a
+    /// compiler made with [`Compiler::new`] (the REPL), which can only
+    /// import builtin modules.
+    units: ProgramUnits,
+    /// The modules being compiled, innermost last: the importing module
+    /// of an `import` met now is the last one, or the entry module.
+    unit_stack: Vec<usize>,
+    /// Modules already compiled in this compilation unit, so each is
+    /// compiled once, where it is first imported.
+    compiled_modules: HashSet<usize>,
+    /// Public export names of each compiled file module. Lets a later
+    /// `import foo as f` re-register alias globals even when `foo` was
+    /// already compiled by an earlier `import foo` / `import foo.{...}`
+    /// / `import foo as other` — previously the cached-hit path returned
+    /// an empty list and the alias arm silently registered nothing, so
+    /// `f.area` died at runtime with "undefined global" while `silt
+    /// check` passed (round 92 fix).
+    module_export_names: HashMap<usize, Vec<String>>,
     /// Warnings emitted during compilation.
     warnings: Vec<Diagnostic>,
-    /// Extra parse errors from imported modules that were recovered past
-    /// via `Parser::parse_program_recovering`. The first such error is
-    /// still returned as the hard `Err` from `compile_program` so the
-    /// existing "compile fails on broken module" flow is preserved; the
-    /// remainder live here and are drained by the CLI pipeline so the
-    /// user sees every diagnostic at once instead of fixing-then-rerunning.
-    ///
-    /// Each entry is a diagnostic in the module's file, labelled with
-    /// the import that brought the module in.
-    module_parse_errors: Vec<Diagnostic>,
-    /// Round 92: hard typechecker errors found in *imported* user
-    /// modules that the compiler will NOT resolve at link time (i.e.
-    /// real type errors, not the import-resolvable undefined-name /
-    /// trait cascade — see `typechecker::without_import_cascade`). Previously the
-    /// per-module typecheck results in `pre_typecheck_user_module` and
-    /// `compile_file_module_inner` were bound to `_errors` /
-    /// `_type_errors` and dropped wholesale, so `silt check` exited 0
-    /// on a program whose imported module fails its own direct check.
-    ///
-    /// Each entry's span is in the imported module's own file. Drained
-    /// by the CLI pipeline via [`Compiler::take_module_type_errors`] and
-    /// merged into the entrypoint's type diagnostics.
-    module_type_errors: Vec<Diagnostic>,
-    /// Module files already harvested into `module_type_errors`. The
-    /// same module is typechecked up to twice per session (once by the
-    /// pre-typecheck pass, once by `compile_file_module_inner`); keying
-    /// by file path makes the harvest first-wins so diagnostics aren't
-    /// duplicated.
-    module_type_error_files: HashSet<PathBuf>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
     /// Aliases for builtin modules: maps the alias name (e.g. "l" from
@@ -517,16 +361,9 @@ pub struct Compiler {
     /// Value is (module_name, map_of fn_name -> is_public).
     module_scope: Option<(String, HashMap<String, bool>)>,
     /// For each compiled file-based module, the set of `pub fn` names it
-    /// exports. Populated during `compile_file_module_inner`. Used by the
-    /// module-qualified call/field-access paths to distinguish "function is
-    /// private" from "function doesn't exist" when a `mod.fn` reference
-    /// fails to resolve.
+    /// exports. Populated during `compile_file_module_inner`; a name that
+    /// is a key here is a module (see `names_function_value`).
     module_public_fns: HashMap<String, HashSet<String>>,
-    /// For each compiled file-based module, the set of non-`pub` (private)
-    /// function names it defines. Lets the call-site lookup emit a crisp
-    /// compile-time visibility error ("`helper` exists in module `mymod`
-    /// but is not `pub`") instead of the VM's generic "undefined global".
-    module_private_fns: HashMap<String, HashSet<String>>,
     /// Whether this compiler is being used to compile a REPL entry. In REPL
     /// mode, an unknown `name.field` where `name` is neither a local nor a
     /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
@@ -594,38 +431,16 @@ pub struct Compiler {
     record_decls: HashMap<String, RecordDecl>,
     /// Type alias declarations, collected together with `record_decls`.
     alias_decls: HashMap<String, AliasDecl>,
-    /// Round 64 item 6A: producer-side typecheck snapshots for every
-    /// user module the compiler has loaded. Keyed by the module name
-    /// as it appears in `import` statements. Populated incrementally
-    /// by `compile_file_module_inner` after typechecking each module,
-    /// so when the importer module is typechecked (whether by the
-    /// pipeline pre-typecheck of the entrypoint or by the recursive
-    /// inner-module pass), the typechecker has seen every dependency
-    /// it transitively imported.
-    module_exports: HashMap<Symbol, typechecker::ModuleExports>,
-    /// Compile-session-scoped canonical-resolver, mirroring
-    /// [`typechecker::TypeChecker::resolver`]. The compiler reads the
-    /// alias / assoc-binding registries via
+    /// The typechecker's alias / assoc-binding registries, from the
+    /// session. The compiler reads them via
     /// [`crate::types::canonical::canonicalize_type_name`] when
-    /// emitting trait-impl global keys; sharing the same `Resolver`
-    /// the typechecker populated keeps registration and lookup keys
-    /// in lockstep across the typecheck → compile boundary. The
-    /// resolver flows in through `pre_typecheck_imports` (where each
-    /// per-module typecheck threads it via
-    /// `check_with_package_and_imports_resolver`) and out
-    /// again so the next module / entrypoint typecheck sees the
-    /// accumulated state. See commit 6364552 for the migration
-    /// rationale.
-    resolver: crate::types::canonical::Resolver,
-    /// The text of every file of the compilation: the entry file, added
-    /// by whoever made the compiler (see `set_sources`), and each module
-    /// file the compiler reads. Spans of compiled code point into it, so
-    /// a runtime error is rendered against the file its span names.
-    sources: SourceMap,
+    /// emitting trait-impl global keys, so registration and lookup keys
+    /// agree across the typecheck → compile boundary.
+    resolver: Resolver,
 }
 
 /// Seed `known_enum_variants` with the builtin enums. Called from
-/// `Compiler::new` and `with_package_roots` so every compiler instance
+/// `Compiler::new` and `for_program` so every compiler instance
 /// recognises `ResultEnum.Ok`, `IoError.IoNotFound`, etc. without
 /// needing a `type` declaration in user code.
 fn initial_known_enum_variants() -> HashMap<String, HashSet<String>> {
@@ -668,30 +483,23 @@ impl Default for Compiler {
 
 impl Compiler {
     /// Shared constructor body for [`Compiler::new`] and
-    /// [`Compiler::with_package_roots`]. The two public constructors differ
-    /// only in `package_roots`/`local_package`; everything else is seeded
+    /// [`Compiler::for_program`]. The two public constructors differ
+    /// only in the modules and the resolver; everything else is seeded
     /// identically here so the two paths can never drift apart.
-    fn build(package_roots: HashMap<Symbol, PathBuf>, local_package: Option<Symbol>) -> Self {
+    fn build(units: ProgramUnits, resolver: Resolver) -> Self {
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
-            package_roots,
-            local_package,
+            units,
+            unit_stack: Vec::new(),
             compiled_modules: HashSet::new(),
             module_export_names: HashMap::new(),
-            compiling_modules: HashSet::new(),
-            compiling_modules_stack: Vec::new(),
-            compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
-            module_parse_errors: Vec::new(),
-            module_type_errors: Vec::new(),
-            module_type_error_files: HashSet::new(),
             imported_builtin_modules: HashSet::new(),
             imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
             module_scope: None,
             module_public_fns: HashMap::new(),
-            module_private_fns: HashMap::new(),
             repl_mode: false,
             known_enum_variants: initial_known_enum_variants(),
             known_unit_variants: initial_known_unit_variants(),
@@ -700,53 +508,19 @@ impl Compiler {
             selective_imports: HashMap::new(),
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
-            module_exports: HashMap::new(),
-            resolver: crate::types::canonical::Resolver::new(),
-            sources: SourceMap::new(),
+            resolver,
         }
     }
 
+    /// A compiler for a program with no modules but the builtin ones.
     pub fn new() -> Self {
-        Self::build(HashMap::new(), None)
+        Self::build(ProgramUnits::default(), Resolver::new())
     }
 
-    /// Create a compiler with a registered set of package source roots
-    /// and a designated local package.
-    ///
-    /// `local_package` MUST be a key in `package_roots`; the constructor
-    /// panics otherwise (programmer error). Imports that don't match any
-    /// dep package name resolve relative to `package_roots[&local_package]`.
-    pub fn with_package_roots(
-        local_package: Symbol,
-        package_roots: HashMap<Symbol, PathBuf>,
-    ) -> Self {
-        assert!(
-            package_roots.contains_key(&local_package),
-            "with_package_roots: local_package symbol must appear in package_roots"
-        );
-        Self::build(package_roots, Some(local_package))
-    }
-
-    /// Hand the compiler the source map that holds the entry file, so the
-    /// module files it reads are added to the same map.
-    pub fn set_sources(&mut self, sources: SourceMap) {
-        self.sources = sources;
-    }
-
-    /// The source map: the entry file and every module file read.
-    pub fn sources(&self) -> &SourceMap {
-        &self.sources
-    }
-
-    /// The source map, to add a file read outside the compiler.
-    pub fn sources_mut(&mut self) -> &mut SourceMap {
-        &mut self.sources
-    }
-
-    /// Take the source map out, for rendering diagnostics and runtime
-    /// errors after the compiler is done.
-    pub fn take_sources(&mut self) -> SourceMap {
-        std::mem::take(&mut self.sources)
+    /// A compiler for the modules of a program, as the session analysed
+    /// them, with the typechecker's alias registries.
+    pub fn for_program(units: ProgramUnits, resolver: Resolver) -> Self {
+        Self::build(units, resolver)
     }
 
     /// Enable REPL mode. See the `repl_mode` field for semantics.
@@ -786,70 +560,6 @@ impl Compiler {
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[Diagnostic] {
         &self.warnings
-    }
-
-    /// Returns the **extra** module parse errors recovered during
-    /// compilation — i.e. every parse error past the first that an
-    /// imported module produced via `Parser::parse_program_recovering`.
-    ///
-    /// The first module parse error is still surfaced as the hard `Err`
-    /// return from `compile_program`, matching the long-standing
-    /// single-error flow that callers already render. These extras let
-    /// the CLI emit the full batch of diagnostics in one run so users
-    /// don't have to fix-then-rerun when a module has several unrelated
-    /// mistakes.
-    ///
-    /// Each entry is a diagnostic in the module's file, like the primary
-    /// error.
-    pub fn module_parse_errors(&self) -> &[Diagnostic] {
-        &self.module_parse_errors
-    }
-
-    /// Drain the hard type errors harvested from *imported* user
-    /// modules (round 92). Each entry's span is in the imported
-    /// module's own file. The CLI pipeline merges these into
-    /// the entrypoint's type diagnostics so `silt check`/`silt run`
-    /// report an ill-typed imported module instead of exiting 0 and
-    /// deferring to a runtime error.
-    ///
-    /// Import-resolvable shapes (the undefined-name / trait cascade
-    /// behind an "unknown module" warning — see
-    /// `typechecker::without_import_cascade`) are already filtered out at harvest
-    /// time, preserving the round-91 suppression contract for
-    /// transitive imports.
-    pub fn take_module_type_errors(&mut self) -> Vec<Diagnostic> {
-        std::mem::take(&mut self.module_type_errors)
-    }
-
-    /// Harvest the reportable subset of an imported module's typecheck
-    /// diagnostics into `module_type_errors` (round 92).
-    ///
-    /// Keeps only hard errors that the compiler will NOT resolve at
-    /// link time:
-    /// - warnings are skipped (an imported module's style warnings are
-    ///   not the entrypoint's diagnostics — `silt check <module>` shows
-    ///   them directly);
-    /// - the import-resolvable cascade (undefined-name / trait shapes
-    ///   gated behind the module's own "unknown module" warning) is
-    ///   suppressed via the SAME shared predicate the CLI pipeline and
-    ///   `silt test` use, so transitive-import noise stays hidden;
-    /// - the typechecker's "module 'X' is not imported" copy is
-    ///   dropped because the compiler re-emits the identical sentence
-    ///   as the authoritative hard compile error (mirrors
-    ///   `is_module_not_imported_typecheck_error` in the CLI pipeline).
-    ///
-    /// First-wins per module file: the pre-typecheck pass and
-    /// `compile_file_module_inner` both typecheck the same module, so
-    /// the harvest is keyed by `file_path` to avoid duplicates.
-    fn harvest_module_type_errors(&mut self, errors: Vec<Diagnostic>, file_path: &std::path::Path) {
-        if !self.module_type_error_files.insert(file_path.to_path_buf()) {
-            return;
-        }
-        self.module_type_errors.extend(
-            typechecker::without_import_cascade(errors)
-                .into_iter()
-                .filter(|d| d.is_error() && d.code != Code::ModuleNotImported),
-        );
     }
 
     /// Mark all builtin modules as imported (used by the REPL).
@@ -1562,447 +1272,62 @@ impl Compiler {
     /// this module.
     ///
     /// `module_name` is the import segment as it appears in user code
-    /// (e.g. `import calc` → `module_name = "calc"`). Resolution rules:
-    /// - If `module_name` matches a key in `package_roots`, this is a
-    ///   cross-package import; load the dep's `lib.silt`, register globals
-    ///   under the dep's name, and key the cycle/cache state under
-    ///   `{module_name}::lib`.
-    /// - Otherwise this is local to the package on top of
-    ///   `compiling_package_stack` (or `local_package` if the stack is empty);
-    ///   load `<pkg_root>/{module_name}.silt`, key under `{pkg}::{module_name}`.
+    /// (e.g. `import calc` → `module_name = "calc"`). Which module it
+    /// names, the session decided when it built the module graph; the
+    /// compiler looks it up among the imports of the module being
+    /// compiled. A module is compiled once, where it is first imported.
     fn compile_file_module(
         &mut self,
         module_name: &str,
         span: Span,
     ) -> Result<Vec<String>, Diagnostic> {
-        // Resolve which package this import belongs to and where its
-        // source file lives. The resolution is the only place
-        // `package_roots` participates; everything downstream uses the
-        // resolved (file_path, package, cache_key) triple.
-        let resolved = self.resolve_import(module_name, span)?;
+        let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let target = self
+            .units
+            .modules
+            .get(importer)
+            .and_then(|unit| unit.imports.get(&intern(module_name)))
+            .copied()
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    Code::ModuleNotFound,
+                    span,
+                    format!("cannot import module '{module_name}': no project root set"),
+                )
+            })?;
 
-        // Guard against double-compilation. Cache key is package-qualified
-        // so two packages can each have a `lib` module without clashing.
         // Return the cached export list (not an empty Vec): the
         // `ImportTarget::Alias` arm consumes these names to emit
         // `alias.name` globals, and an alias import may legitimately
         // follow another import of the same module (`import geometry`
-        // then `import geometry as g`, or two distinct aliases). An
-        // empty return here silently dropped the alias registration.
-        if self.compiled_modules.contains(&resolved.cache_key) {
+        // then `import geometry as g`, or two distinct aliases).
+        if self.compiled_modules.contains(&target) {
             return Ok(self
                 .module_export_names
-                .get(&resolved.cache_key)
+                .get(&target)
                 .cloned()
                 .unwrap_or_default());
         }
 
-        // Detect circular imports. When detected, render the full chain
-        // from the cycle's entry point (the first re-occurrence of the
-        // qualified key in the stack) through to the re-entry. Cycles
-        // confined to a single package render with bare module names
-        // (`a -> b -> c -> a`); cross-package cycles use the qualified
-        // `pkg::module` form so the boundary is visible in the message.
-        // Lock: tests/lang/modules.rs `test_circular_import_error_includes_full_chain`.
-        if self.compiling_modules.contains(&resolved.cache_key) {
-            let cycle_start = self
-                .compiling_modules_stack
-                .iter()
-                .position(|f| f.cache_key == resolved.cache_key)
-                .unwrap_or(0);
-            let cycle_frames = &self.compiling_modules_stack[cycle_start..];
-            // Single-package cycle? All frames share the same package
-            // symbol AND match the re-entered package. If so, prefer
-            // bare names for readability.
-            let single_pkg = cycle_frames.iter().all(|f| f.package == resolved.package);
-            let mut chain: Vec<String> = cycle_frames
-                .iter()
-                .map(|f| {
-                    if single_pkg {
-                        f.module.clone()
-                    } else {
-                        f.cache_key.clone()
-                    }
-                })
-                .collect();
-            chain.push(if single_pkg {
-                resolved.module.clone()
-            } else {
-                resolved.cache_key.clone()
-            });
-            let rendered_chain = chain.join(" -> ");
-            return Err(Diagnostic::error(
-                Code::ImportCycle,
-                span,
-                format!(
-                    "circular import detected: {rendered_chain} (module '{module_name}' imports itself directly or indirectly)"
-                ),
-            ));
-        }
-        self.compiling_modules.insert(resolved.cache_key.clone());
-        self.compiling_modules_stack.push(CompilingFrame {
-            cache_key: resolved.cache_key.clone(),
-            package: resolved.package,
-            module: resolved.module.clone(),
-        });
-        self.compiling_package_stack.push(resolved.package);
-
-        let result = self.compile_file_module_inner(module_name, &resolved.file_path, span);
-
-        self.compiling_modules.remove(&resolved.cache_key);
-        // Pop the matching frame from the stack; normally this is the
-        // last element, but we remove by position to be robust against
-        // any inner path that would violate LIFO ordering.
-        if let Some(pos) = self
-            .compiling_modules_stack
-            .iter()
-            .rposition(|f| f.cache_key == resolved.cache_key)
-        {
-            self.compiling_modules_stack.remove(pos);
-        }
-        if let Some(pos) = self
-            .compiling_package_stack
-            .iter()
-            .rposition(|p| *p == resolved.package)
-        {
-            self.compiling_package_stack.remove(pos);
-        }
+        let program = self.units.modules[target].program.clone();
+        self.unit_stack.push(target);
+        let result = self.compile_file_module_inner(module_name, &program, span);
+        self.unit_stack.pop();
         if let Ok(names) = &result {
-            self.compiled_modules.insert(resolved.cache_key.clone());
-            self.module_export_names
-                .insert(resolved.cache_key, names.clone());
+            self.compiled_modules.insert(target);
+            self.module_export_names.insert(target, names.clone());
         }
         result
     }
 
-    /// Resolve an import segment to a concrete file path and package
-    /// context. See [`compile_file_module`] for the resolution rules.
-    fn resolve_import(&self, module_name: &str, span: Span) -> Result<ResolvedImport, Diagnostic> {
-        let segment_sym = intern(module_name);
-
-        // Cross-package import? `module_name` matches a registered package.
-        // We require the dep to expose `src/lib.silt` as its public surface
-        // — internal modules of a dep are NOT reachable from a consumer
-        // (this matches Cargo's `lib.rs` discipline; silt's import syntax
-        // doesn't admit multi-segment cross-package imports anyway).
-        if let Some(pkg_root) = self.package_roots.get(&segment_sym) {
-            // Disambiguate from "the local package importing one of its own
-            // modules whose name happens to equal the local package name":
-            // if we're currently compiling a module that lives in the same
-            // package, treat this as a local import.
-            let current_pkg = self.current_package();
-            let is_local_self_import = current_pkg == Some(segment_sym);
-            if !is_local_self_import {
-                let lib_path = pkg_root.join("lib.silt");
-                if !lib_path.exists() {
-                    return Err(Diagnostic::error(
-                        Code::ModuleNotFound,
-                        span,
-                        format!(
-                            "package '{module_name}' has no library entry point — \
-                             expected `src/lib.silt` in the dep at {}",
-                            crate::git::escape_for_display(&pkg_root.display().to_string())
-                        ),
-                    ));
-                }
-                return Ok(ResolvedImport {
-                    file_path: lib_path,
-                    package: segment_sym,
-                    module: "lib".to_string(),
-                    cache_key: format!("{module_name}::lib"),
-                });
-            }
-        }
-
-        // Local-package or nested-inside-dep import: resolve relative to
-        // whichever package is currently being compiled.
-        let pkg = self.current_package().or(self.local_package);
-        let pkg_root = match pkg.and_then(|p| self.package_roots.get(&p)) {
-            Some(root) => root,
-            None => {
-                return Err(Diagnostic::error(
-                    Code::ModuleNotFound,
-                    span,
-                    format!(
-                        "cannot import module '{module_name}': no project root set \
-                         (use Compiler::with_package_roots)"
-                    ),
-                ));
-            }
-        };
-        let pkg_name = resolve(pkg.unwrap());
-        let file_path = pkg_root.join(format!("{module_name}.silt"));
-        Ok(ResolvedImport {
-            file_path,
-            package: pkg.unwrap(),
-            module: module_name.to_string(),
-            cache_key: format!("{pkg_name}::{module_name}"),
-        })
-    }
-
-    /// Top of `compiling_package_stack`; the package whose source we are
-    /// currently inside, if any.
-    fn current_package(&self) -> Option<Symbol> {
-        self.compiling_package_stack.last().copied()
-    }
-
-    // ── Cross-module typecheck pre-pass (round 64 item 6A) ─────────
-
-    /// Walk the entrypoint program for `import other_user_module`
-    /// decls and recursively load + typecheck each user module so
-    /// `self.module_exports` is populated before the entrypoint's own
-    /// typecheck runs. Built-in modules and modules already cached are
-    /// skipped. Errors are intentionally swallowed here — the real
-    /// compile pass below will surface module load / parse / compile
-    /// errors with full source context.
-    ///
-    /// Called by [`Compiler::pre_typecheck_imports`] (used by the CLI
-    /// pipeline before its top-level typecheck) and from inside
-    /// `compile_file_module_inner` so transitive imports are also seen
-    /// before each module's own typecheck.
-    pub fn pre_typecheck_imports(&mut self, program: &Program) {
-        self.pre_typecheck_user_imports(program);
-    }
-
-    /// Borrow the current cross-module exports snapshot. Cloned by
-    /// the CLI pipeline so the entrypoint typecheck can consult it
-    /// without holding a `&self` on the compiler.
-    pub fn module_exports_snapshot(&self) -> HashMap<Symbol, typechecker::ModuleExports> {
-        self.module_exports.clone()
-    }
-
-    /// Detach and return the session-shared canonical resolver,
-    /// leaving the compiler with a fresh empty one. The CLI pipeline
-    /// uses this to thread the resolver into the entrypoint typecheck
-    /// (so user aliases registered while pre-typechecking imported
-    /// modules stay visible) and then restores it via
-    /// [`Compiler::put_resolver`] before the compile pass runs.
-    pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
-        std::mem::take(&mut self.resolver)
-    }
-
-    /// Restore a previously-extracted resolver (see
-    /// [`Compiler::take_resolver`]) so the compile pass's
-    /// `canonicalize_type_name` calls see the same alias state the
-    /// typechecker used.
-    pub fn put_resolver(&mut self, resolver: crate::types::canonical::Resolver) {
-        self.resolver = resolver;
-    }
-
-    /// Internal worker for [`pre_typecheck_imports`]. Same body —
-    /// kept private and named distinctly so internal call sites
-    /// (compile_file_module_inner) read clearly.
-    fn pre_typecheck_user_imports(&mut self, program: &Program) {
-        let modules: Vec<(Symbol, Span)> = program
-            .decls
-            .iter()
-            .filter_map(|d| match d {
-                Decl::Import(ImportTarget::Module(m), span) => Some((*m, *span)),
-                Decl::Import(ImportTarget::Items(m, _), span) => Some((*m, *span)),
-                Decl::Import(ImportTarget::Alias(m, ..), span) => Some((*m, *span)),
-                _ => None,
-            })
-            .collect();
-        for (m, span) in modules {
-            let name = resolve(m);
-            if module::is_builtin_module(&name) {
-                continue;
-            }
-            if self.module_exports.contains_key(&m) {
-                continue;
-            }
-            let _ = self.pre_typecheck_user_module(&name, span);
-        }
-    }
-
-    /// Pre-typecheck one user module (no bytecode emit). Recursive in
-    /// case the module itself imports other user modules.
-    fn pre_typecheck_user_module(
-        &mut self,
-        module_name: &str,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        // Resolve the module file path the same way compile_file_module
-        // does, so cross-package vs intra-package routing is identical.
-        let resolved = self.resolve_import(module_name, span)?;
-
-        // Skip if the producer's exports are already in the cache.
-        if self.module_exports.contains_key(&intern(&resolved.module)) {
-            return Ok(());
-        }
-
-        // Cycle guard: if we're already pre-typechecking this module up
-        // the stack, bail without populating exports. The full
-        // compile pass enforces real cycle errors with proper diagnostics.
-        if self.compiling_modules.contains(&resolved.cache_key) {
-            return Ok(());
-        }
-        self.compiling_modules.insert(resolved.cache_key.clone());
-        self.compiling_modules_stack.push(CompilingFrame {
-            cache_key: resolved.cache_key.clone(),
-            package: resolved.package,
-            module: resolved.module.clone(),
-        });
-        self.compiling_package_stack.push(resolved.package);
-
-        let result = (|| -> Result<(), Diagnostic> {
-            let source = std::fs::read_to_string(&resolved.file_path).map_err(|e| {
-                module::module_load_error(
-                    module_name,
-                    &resolved.file_path,
-                    &normalize_module_path(&resolved.file_path),
-                    &e,
-                    span,
-                )
-            })?;
-
-            let file = self.sources.add(
-                SourceName::Path(resolved.file_path.clone()),
-                source.as_str().into(),
-            );
-            let tokens = Lexer::new(file, &source)
-                .tokenize()
-                .map_err(|e| imported_at(e, module_name, span))?;
-            let (mut program, _) = Parser::new(tokens, &source).parse_program_recovering();
-
-            // Recurse: pre-typecheck this module's own imports first.
-            self.pre_typecheck_user_imports(&program);
-
-            // Typecheck with the accumulated exports. Thread the
-            // session-shared resolver so module aliases registered by
-            // dependencies are visible here, and any aliases this
-            // module registers stay visible to downstream importers.
-            let resolver = std::mem::take(&mut self.resolver);
-            let (module_errors, exports, resolver) =
-                typechecker::check_with_package_and_imports_resolver(
-                    &mut program,
-                    self.current_package(),
-                    self.module_exports.clone(),
-                    Some(resolver),
-                );
-            self.resolver = resolver;
-            // Round 92: surface this module's REAL type errors instead
-            // of dropping the whole batch. Import-resolvable shapes
-            // stay suppressed inside the harvest — see
-            // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(module_errors, &resolved.file_path);
-            self.module_exports
-                .insert(intern(&resolved.module), exports);
-            Ok(())
-        })();
-
-        self.compiling_modules.remove(&resolved.cache_key);
-        if let Some(pos) = self
-            .compiling_modules_stack
-            .iter()
-            .rposition(|f| f.cache_key == resolved.cache_key)
-        {
-            self.compiling_modules_stack.remove(pos);
-        }
-        if let Some(pos) = self
-            .compiling_package_stack
-            .iter()
-            .rposition(|p| *p == resolved.package)
-        {
-            self.compiling_package_stack.remove(pos);
-        }
-
-        result
-    }
-
-    /// Inner implementation of file module compilation, separated so that
-    /// the circular-import guard can wrap it cleanly.
+    /// Inner implementation of file module compilation: the declarations
+    /// of `program`, the module imported as `module_name` at `span`.
     fn compile_file_module_inner(
         &mut self,
         module_name: &str,
-        file_path: &std::path::Path,
+        program: &Program,
         span: Span,
     ) -> Result<Vec<String>, Diagnostic> {
-        let source = std::fs::read_to_string(file_path).map_err(|e| {
-            module::module_load_error(
-                module_name,
-                file_path,
-                &normalize_module_path(file_path),
-                &e,
-                span,
-            )
-        })?;
-
-        let file = self.sources.add(
-            SourceName::Path(file_path.to_path_buf()),
-            source.as_str().into(),
-        );
-
-        let tokens = Lexer::new(file, &source)
-            .tokenize()
-            .map_err(|e| imported_at(e, module_name, span))?;
-
-        // Parse with the recovery parser so a module with multiple
-        // independent parse errors surfaces every one of them in a
-        // single run — the single-pass `parse_program()` would bail on
-        // the first, forcing users to fix-then-rerun for each error.
-        //
-        // Round-52 deferred: propagate every recovered error upward.
-        // First one becomes the hard `Err` (matching the historical
-        // single-error flow every caller already renders); the rest go
-        // onto `self.module_parse_errors`, drained by the CLI pipeline
-        // alongside the primary.
-        //
-        // Each error is a diagnostic in the module's file, labelled with
-        // the import that brought the module in.
-        let (mut program, parse_errors) = Parser::new(tokens, &source).parse_program_recovering();
-        if !parse_errors.is_empty() {
-            let mut formatted: Vec<Diagnostic> = parse_errors
-                .into_iter()
-                .map(|e| imported_at(e, module_name, span))
-                .collect();
-            // Preserve source order: the parser collects errors in the
-            // order it encounters them, so `formatted[0]` is the first
-            // problem in the file. That's the one we return as the hard
-            // Err; the remainder flow through `module_parse_errors` in
-            // the same order.
-            let primary = formatted.remove(0);
-            self.module_parse_errors.extend(formatted);
-            return Err(primary);
-        }
-
-        // Type-check the imported module before compiling.
-        // Type errors are not fatal here — modules with transitive imports will
-        // have "undefined" errors from the type checker because module resolution
-        // only happens during compilation.  The compiler resolves them below.
-        //
-        // Pass the package symbol so the typechecker can stamp this
-        // module's trait/enum/record decls with their owning package and
-        // enforce the trait-orphan rule (round 63 item 5) — `impl Trait
-        // for Type` is rejected when both the trait and the type's head
-        // are foreign to this package.
-        //
-        // Round 64 item 6A: pre-walk imports of THIS module so any
-        // sibling user modules it depends on are typechecked first
-        // (and their exports cached) before this module's own
-        // typecheck. Then thread the accumulated exports through the
-        // typechecker so cross-module call sites typecheck strongly,
-        // and capture this module's own exports for downstream
-        // importers (the entrypoint, sibling modules).
-        let module_sym = intern(module_name);
-        self.pre_typecheck_user_imports(&program);
-        let resolver = std::mem::take(&mut self.resolver);
-        let (module_type_errors, this_exports, resolver) =
-            typechecker::check_with_package_and_imports_resolver(
-                &mut program,
-                self.current_package(),
-                self.module_exports.clone(),
-                Some(resolver),
-            );
-        self.resolver = resolver;
-        // Round 92: harvest this module's real type errors (the
-        // import-resolvable cascade stays suppressed — see
-        // `harvest_module_type_errors`). First-wins keying by file path
-        // means this is a no-op when the pre-typecheck pass already
-        // harvested the same module.
-        self.harvest_module_type_errors(module_type_errors, file_path);
-        self.module_exports.insert(module_sym, this_exports);
-
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();
         let mut public_types = HashSet::new();
@@ -2033,22 +1358,13 @@ impl Compiler {
                 all_fn_names.insert(resolve(f.name), f.is_pub);
             }
         }
-        // Remember each fn's visibility under this module so the caller-side
-        // `mod.fn` lookup can tell "exists-but-private" from "doesn't exist"
-        // and emit a visibility-specific compile error.
-        let mut pub_set: HashSet<String> = HashSet::new();
-        let mut priv_set: HashSet<String> = HashSet::new();
-        for (fn_name, is_pub) in &all_fn_names {
-            if *is_pub {
-                pub_set.insert(fn_name.clone());
-            } else {
-                priv_set.insert(fn_name.clone());
-            }
-        }
+        let pub_set: HashSet<String> = all_fn_names
+            .iter()
+            .filter(|(_, is_pub)| **is_pub)
+            .map(|(fn_name, _)| fn_name.clone())
+            .collect();
         self.module_public_fns
             .insert(module_name.to_string(), pub_set);
-        self.module_private_fns
-            .insert(module_name.to_string(), priv_set);
         self.module_scope = Some((module_name.to_string(), all_fn_names));
 
         // Wrap module top-level code in a synthetic `<module:name>` function
@@ -2366,40 +1682,6 @@ impl Compiler {
 
     // ── Expressions ───────────────────────────────────────────────
 
-    /// If `module` is a known file-based module and `name` is a `fn` declared
-    /// in it without `pub`, return a `Diagnostic` that names the function,
-    /// the module, the source file, and the exact syntactic fix. Returning
-    /// `None` means either the module isn't a tracked user module or the name
-    /// doesn't match a private function — in both cases callers should fall
-    /// through to the existing resolution path (and let the VM raise
-    /// "undefined global" at runtime for typos).
-    fn private_module_fn_error(&self, module: &str, name: &str, span: Span) -> Option<Diagnostic> {
-        // Don't shadow intra-module lookups: if we're compiling inside
-        // `module` itself, the caller already has access via `module_scope`.
-        if let Some((ref cur_mod, _)) = self.module_scope
-            && cur_mod == module
-        {
-            return None;
-        }
-        let pub_set = self.module_public_fns.get(module)?;
-        // If it's public the normal path resolves it fine.
-        if pub_set.contains(name) {
-            return None;
-        }
-        let priv_set = self.module_private_fns.get(module)?;
-        if !priv_set.contains(name) {
-            return None;
-        }
-        Some(Diagnostic::error(
-            Code::NotExported,
-            span,
-            format!(
-                "`{name}` exists in module `{module}` but is not `pub` — \
-                 mark it `pub fn {name}` in {module}.silt to export it"
-            ),
-        ))
-    }
-
     /// Emit the call sequence for a callee + `argc` arguments already on
     /// the stack: `TailCall argc; Return` in tail position (the frame is
     /// replaced, so nothing after may execute), `Call argc` otherwise.
@@ -2693,17 +1975,6 @@ impl Compiler {
                             {
                                 return Err(module_not_imported(span, &module.to_string()));
                             }
-                            // Compile-time visibility check: if this module is
-                            // a known user file module and `method` exists as
-                            // a private (non-`pub`) fn there, emit a crisp
-                            // visibility error instead of letting the VM raise
-                            // a generic "undefined global" at runtime.
-                            let method_str = resolve(*method);
-                            if let Some(err) =
-                                self.private_module_fn_error(&mod_str, &method_str, span)
-                            {
-                                return Err(err);
-                            }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
                             let name_idx = self.add_constant(Value::String(qualified), span)?;
@@ -2781,16 +2052,6 @@ impl Compiler {
                             && !self.imported_builtin_modules.contains(&name_str)
                         {
                             return Err(module_not_imported(span, &name.to_string()));
-                        }
-                        // Compile-time visibility check for user file
-                        // modules: bare `mymod.helper` where `helper` is a
-                        // private fn of `mymod` should fail now with a crisp
-                        // error, not later with a VM-level "undefined global".
-                        let field_name = resolve(*field);
-                        if let Some(err) =
-                            self.private_module_fn_error(&name_str, &field_name, span)
-                        {
-                            return Err(err);
                         }
                         // B8: In REPL mode, a previously-bound value like `p`
                         // is a VM global (created via `eval_declaration`), not

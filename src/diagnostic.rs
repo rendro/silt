@@ -197,6 +197,8 @@ codes! {
     // ── entry point ──
     MissingMain = "E0501", Compile;
     MainSignature = "E0502", Compile;
+    /// A test function that cannot be called with no arguments.
+    TestSignature = "E0503", Compile;
     // ── package ──
     ManifestInvalid = "E0601", Package;
     // ── runtime ──

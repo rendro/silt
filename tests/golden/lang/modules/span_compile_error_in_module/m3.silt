@@ -1,2 +1,1 @@
-pub type Msg { Message(String), Closed }
-pub fn mk() -> Msg { Message("hi") }
+pub fn mk() { Monday }

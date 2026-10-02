@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: loop() expects 1 argument, got 2
--- Lock the full production phrase so that any generic compile error
+-- stderr-contains: loop has 1 binding, but `loop(...)` supplies 2 arguments
+-- Lock the full production phrase so that any generic error
 -- containing the word "argument" cannot satisfy the assertion.
 fn main() {
   loop x = 0 {

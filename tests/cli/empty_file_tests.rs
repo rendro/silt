@@ -1,6 +1,6 @@
 //! A 0-byte source file must be handled by every file subcommand without
-//! a panic or a hang: `run` and `check` report the missing `main()`,
-//! `test` finds no tests, and `disasm` prints the (prelude-only) script.
+//! a panic or a hang: `run`, `check` and `disasm` report the missing
+//! `main()`, and `test` finds no tests.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,7 +56,7 @@ fn empty_file_run_check_test_disasm() {
         ("run", 1, "no main()", false),
         ("check", 1, "no main()", false),
         ("test", 0, "0 tests", false),
-        ("disasm", 0, "<script>", true),
+        ("disasm", 1, "no main()", false),
     ];
     for (sub, exit, needle, in_stdout) in cases {
         let (code, stdout, stderr) = run_silt(&dir, sub);

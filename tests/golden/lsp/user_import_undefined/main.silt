@@ -1,10 +1,7 @@
 -- cmd: lsp
--- verdict: known-divergent lsp
--- TODAY'S BEHAVIOUR, pinned: `silt check` reports both errors below,
--- but the LSP checks the file without loading `helper`, drops every
--- "undefined" error in a file with a user import, and publishes
--- nothing. Stage 5 (the LSP on the session) changes the expected
--- output to the two errors and the verdict to `same`.
+-- verdict: same
+-- The LSP loads `helper` through the session, as `silt check` does,
+-- and publishes the same two errors.
 import helper
 
 fn main() {

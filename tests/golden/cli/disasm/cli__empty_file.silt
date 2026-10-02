@@ -1,4 +1,6 @@
--- A program with no code: only these directive comments.
+-- A program with no code: only these directive comments. `disasm`
+-- disassembles a program that starts at `main`, as `run` runs one.
 -- cmd: disasm
--- stdout-contains: == <script>
+-- exit: 1
+-- stderr-contains: program has no main() function
 -- stderr-not-contains: panicked at

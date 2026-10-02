@@ -3,10 +3,10 @@
 //! golden cases `tests/golden/meta/closures/compiler_dedup_lock_tests__*`.)
 //!
 //! Fix 3 — extracted the shared `Self { .. }` literal of `Compiler::new`
-//! and `Compiler::with_package_roots` into a private `build` constructor.
-//! The two public constructors differ only in `package_roots` /
-//! `local_package`; everything else must remain byte-for-byte identical.
-//! `silt run` is built on `Compiler::with_package_roots`, while the REPL
+//! and `Compiler::for_program` into a private `build` constructor.
+//! The two public constructors differ only in the modules and the
+//! resolver; everything else must remain byte-for-byte identical.
+//! `silt run` is built on `Compiler::for_program`, while the REPL
 //! is built on `Compiler::new`. The lock runs the same program through
 //! both entry points and asserts identical observable behavior — proving
 //! the dedup did not perturb either constructor.
@@ -15,7 +15,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Run a program via `silt run` (this path constructs the compiler with
-/// `Compiler::with_package_roots`). Returns (stdout, stderr, ok).
+/// `Compiler::for_program`). Returns (stdout, stderr, ok).
 fn run_via_run(label: &str, src: &str) -> (String, String, bool) {
     let tmp = std::env::temp_dir().join(format!("silt_dedup_lock_{label}.silt"));
     std::fs::write(&tmp, src).expect("write temp file");
@@ -54,7 +54,7 @@ fn run_via_repl(src: &str) -> String {
 }
 
 /// Fix 3 lock: the dedup of the two constructors is a semantic no-op.
-/// A computation run through `silt run` (`with_package_roots`) and the
+/// A computation run through `silt run` (`for_program`) and the
 /// same computation run through the REPL (`Compiler::new`) must produce
 /// the same answer. If the extracted `build` had dropped or reordered a
 /// field, one of the two paths would diverge.

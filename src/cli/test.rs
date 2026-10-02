@@ -178,7 +178,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
         };
 
-        let parsed = parse_entry_file(path.as_str(), source);
+        let parsed = parse_entry_file(path.as_str(), source, silt::session::LockPolicy::Update);
 
         // The tests of this file that `--filter` selects, in source
         // order. They are read from the parsed declarations, the same
@@ -211,8 +211,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // static checks against declared dependencies. The one
         // difference is what is emitted: the declarations, without a
         // call of `main`.
-        let result =
-            analyse_parsed_entry_file(path.as_str(), parsed, Emit::Declarations, true, true);
+        let result = analyse_parsed_entry_file(parsed, Emit::Declarations);
         let failed_to_compile = report_diagnostics(path.as_str(), &result);
         let program = result.program;
         let (sources, functions) = match (failed_to_compile, result.functions) {

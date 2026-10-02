@@ -13,7 +13,7 @@ use crate::cli::help::{run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
 use crate::cli::paths::ProgramFiles;
 use crate::cli::pipeline::{CompiledFile, compile_file};
-use crate::cli::source_scan::{fn_name_span, missing_main_error, program_has_main};
+use crate::cli::source_scan::fn_name_span;
 
 /// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -181,22 +181,7 @@ pub(crate) fn vm_run_file(path: &str) {
         sources,
         program,
         ..
-    } = compile_file(path, true);
-
-    // The script ends with a call of the global `main`. Whether there is
-    // one is known from the declarations, so a program without it is
-    // rejected here, before any of it runs, with the diagnostic
-    // `silt check` gives. A test file gets a pointer to `silt test`.
-    if !program_has_main(&program) {
-        eprintln!(
-            "{}",
-            render_human(
-                &ProgramFiles::new(path, &sources),
-                &missing_main_error(&program, path, true)
-            )
-        );
-        process::exit(1);
-    }
+    } = compile_file(path, silt::session::LockPolicy::Update);
 
     let Some(script) = functions.into_iter().next() else {
         eprintln!("{path}: internal error: empty function list");

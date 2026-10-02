@@ -501,6 +501,9 @@ pub struct ModuleExports {
     /// (`TypeOf(EnumName)`, `TypeOf(RecordName)`) — mirrors what the
     /// producer's register_type_decl bound under the type's bare name.
     pub(super) type_name_schemes: Vec<(Symbol, Scheme)>,
+    /// The functions the module declares without `pub`, so that a use of
+    /// one from an importer is told it is private rather than missing.
+    pub(super) private_fns: Vec<Symbol>,
 }
 
 /// Snapshot of one `(trait_name, target_type)` impl in the producer's
@@ -762,9 +765,8 @@ pub struct TypeChecker {
     pub(super) last_field_access_was_method: bool,
     /// Trait-orphan check (round 63 item 5): the package symbol whose
     /// source we're currently typechecking. `Some(pkg)` is set by
-    /// `check_with_package_and_imports_options_resolver` (the
-    /// production entrypoint used by the compiler, CLI, and LSP) when
-    /// the typechecker is invoked for an imported module so per-package
+    /// `check_module` (the entry point the session checks every module
+    /// of a program with) so per-package
     /// decls (traits/enums/records) are stamped with the right
     /// `defined_in`. (`check_with_package` is a test-only convenience
     /// wrapper around the same plumbing.) `None` means "scratch /
@@ -803,6 +805,12 @@ pub struct TypeChecker {
     /// module binds its names silently, and a use of them through it
     /// (`m.x`, an imported item) is not checked, so nothing cascades.
     pub(super) poisoned_modules: std::collections::HashSet<Symbol>,
+    /// The names the imports of poisoned modules bind: the module name
+    /// or alias, or the items. Nothing is reported about them.
+    pub(super) poisoned_names: std::collections::HashSet<Symbol>,
+    /// For each name an imported user module is reached by (its name or
+    /// alias), the module and the functions it declares without `pub`.
+    pub(super) imported_private_fns: HashMap<Symbol, (Symbol, Vec<Symbol>)>,
     /// Round 64 item 6B (annotated polymorphic recursion): names of
     /// `fn` declarations whose signature is fully annotated (every
     /// parameter has an explicit type AND the return type is
@@ -905,6 +913,8 @@ impl TypeChecker {
             imported_modules: std::collections::HashSet::new(),
             module_exports: HashMap::new(),
             poisoned_modules: std::collections::HashSet::new(),
+            poisoned_names: std::collections::HashSet::new(),
+            imported_private_fns: HashMap::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
@@ -2646,6 +2656,24 @@ impl TypeChecker {
         }
     }
 
+    /// Bind `item`, imported from a module that failed to load, so that
+    /// nothing is reported about it: as a value of unknown type, and, for
+    /// a capitalised name, as a type known by name only.
+    fn bind_poisoned_name(&mut self, item: Symbol, env: &mut TypeEnv) {
+        self.poisoned_names.insert(item);
+        let placeholder = self.fresh_var();
+        env.define(item, Scheme::mono(placeholder));
+        if resolve(item).starts_with(|c: char| c.is_uppercase()) {
+            let defined_in = self.defining_package();
+            self.enums.entry(item).or_insert_with(|| EnumInfo {
+                variants: Vec::new(),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
+                defined_in,
+            });
+        }
+    }
+
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
 
     /// Merge the producer-side snapshot for `module_sym` into this
@@ -2675,6 +2703,8 @@ impl TypeChecker {
         let Some(exports) = self.module_exports.get(&module_sym).cloned() else {
             return false;
         };
+        self.imported_private_fns
+            .insert(qualified_prefix, (module_sym, exports.private_fns.clone()));
         let type_names = exports.enums.iter().map(|(n, _)| *n);
         for name in type_names.chain(exports.records.iter().map(|(n, _)| *n)) {
             self.imported_type_spans.entry(name).or_insert(import_span);
@@ -3020,6 +3050,7 @@ impl TypeChecker {
                         exports.schemes.push((f.name, scheme.clone()));
                     }
                 }
+                Decl::Fn(f) => exports.private_fns.push(f.name),
                 Decl::Let {
                     pattern,
                     is_pub: true,
@@ -3142,14 +3173,16 @@ impl TypeChecker {
     }
 
     /// Variant of [`check_program`] that returns the final TypeEnv for
-    /// the caller (used by [`check_with_package_and_imports`] so it can
-    /// snapshot the program's exports).
+    /// the caller (used by [`check_module`] so it can snapshot the
+    /// program's exports and top-level types).
     pub(super) fn check_program_returning_env(&mut self, program: &mut Program) -> TypeEnv {
         let mut env = self.install_builtins();
 
         // Round 56 item 4: reset the import set so a fresh check_program
         // call doesn't inherit modules imported by a previous run.
         self.imported_modules.clear();
+        self.poisoned_names.clear();
+        self.imported_private_fns.clear();
         // Round 94: the qualified type mirrors share the import set's
         // lifecycle — they are rebuilt from the imports processed below.
         self.qualified_records.clear();
@@ -3170,6 +3203,11 @@ impl TypeChecker {
                         }
                         // Gated constructors (like Monday, GET) are already
                         // registered under their bare name — no alias needed.
+                    }
+                } else if self.poisoned_modules.contains(module) {
+                    self.imported_modules.insert(*module);
+                    for (item, _) in items {
+                        self.bind_poisoned_name(*item, &mut env);
                     }
                 } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
                     // Round 64 item 6A: cross-module typecheck found
@@ -3223,6 +3261,9 @@ impl TypeChecker {
                     for (aliased, scheme) in to_alias {
                         env.define(aliased, scheme);
                     }
+                } else if self.poisoned_modules.contains(module) {
+                    self.imported_modules.insert(*alias);
+                    self.poisoned_names.insert(*alias);
                 } else if self.merge_imported_module_exports(*module, *alias, *span, &mut env) {
                     // Round 64 item 6A: schemes registered under
                     // `alias.name` (matching the aliased prefix the
@@ -3241,17 +3282,19 @@ impl TypeChecker {
                     // Built-in module names are already bound via register_builtins
                     // under their `module.func` qualified form — no additional
                     // action required here.
+                } else if self.poisoned_modules.contains(module) {
+                    self.imported_modules.insert(*module);
+                    self.poisoned_names.insert(*module);
                 } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
                     // Round 64 item 6A: producer-side exports merged.
                     self.imported_modules.insert(*module);
                 } else {
-                    // Non-builtin (user) module without producer-side
-                    // exports available: the compiler handles these at
-                    // link time. Emit the same "unknown module" warning we use
-                    // for Items/Alias so the CLI's diagnostic-suppression
-                    // heuristic in main.rs fires, and add a minimal binding for
-                    // the module name itself so downstream `module.foo(...)`
-                    // calls don't cascade into "undefined variable" errors.
+                    // A user module the check was not given: a check
+                    // outside a session (the REPL, a one-file check)
+                    // cannot see user modules. Warn, and add a minimal
+                    // binding for the module name itself so downstream
+                    // `module.foo(...)` calls don't cascade into
+                    // "undefined variable" errors.
                     self.warning(Code::UnknownModule,
                         format!(
                             "unknown module '{module_str}'; imported module will not be type-checked"
@@ -8236,31 +8279,6 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
-/// The type diagnostics of one file, without those that an import the
-/// checker cannot see into causes: the unknown-module warning itself
-/// and, while that warning is among them, the errors about names the
-/// module would have supplied (undefined names, unknown fields, missing
-/// trait impls). The compiler reports the import itself.
-pub fn without_import_cascade(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-    let has_unknown_module = diagnostics.iter().any(|d| d.code == Code::UnknownModule);
-    diagnostics
-        .into_iter()
-        .filter(|d| {
-            d.code != Code::UnknownModule
-                && !(has_unknown_module
-                    && d.is_error()
-                    && matches!(
-                        d.code,
-                        Code::UndefinedVariable
-                            | Code::UndefinedConstructor
-                            | Code::UndefinedType
-                            | Code::UnknownField
-                            | Code::MissingTraitImpl
-                    ))
-        })
-        .collect()
-}
-
 /// Run the type checker on a program. Returns a list of type errors (warnings).
 pub fn check(program: &mut Program) -> Vec<Diagnostic> {
     let mut checker = TypeChecker::new();
@@ -8283,59 +8301,62 @@ pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec
     checker.errors
 }
 
-/// Cross-module entry point (round 64 item 6A): typecheck `program`
-/// against an explicit owning `package` AND a map of pre-typechecked
-/// sibling modules' exports. The typechecker consults `module_exports`
-/// when it encounters `import other_user_pkg` decls, merging the
-/// producer's pub schemes/types/traits/impls into the env so call
-/// sites typecheck strongly (instantiating polymorphic schemes,
-/// honouring where-clauses, dispatching trait methods).
-///
-/// Returns `(errors, this_module's exports)` so the compiler can cache
-/// the new module's exports for downstream importers.
-pub fn check_with_package_and_imports(
-    program: &mut Program,
-    package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-) -> (Vec<Diagnostic>, ModuleExports) {
-    let (errors, exports, _resolver) =
-        check_with_package_and_imports_resolver(program, package, module_exports, None);
-    (errors, exports)
+/// What checking one module of a program gives.
+pub struct ModuleCheck {
+    /// The module's errors and warnings.
+    pub diagnostics: Vec<Diagnostic>,
+    /// What the module offers its importers.
+    pub exports: ModuleExports,
+    /// The inferred type of each top-level value the module binds by a
+    /// declaration: its functions, its `let`s and the items it imports.
+    pub top_level: HashMap<Symbol, Type>,
 }
 
-/// Resolver-threaded cross-module entry point. Mirrors
-/// [`check_with_package_and_imports`] but accepts an optional
-/// caller-owned [`crate::types::canonical::Resolver`] so the alias /
-/// associated-type-binding registries are shared across every module
-/// typechecked in one CLI compile invocation. Returns the resolver
-/// alongside the errors / exports so the next module's call can
-/// continue threading the same instance.
-///
-/// Pass `Some(resolver)` for cross-module compile pipelines. Pass
-/// `None` for one-shot typechecks (LSP pulls, REPL inputs); a fresh
-/// resolver is allocated and dropped on return.
-///
-/// See commit 6364552 for the original migration rationale.
-pub fn check_with_package_and_imports_resolver(
+/// Check one module of a program. `package` is the package the module
+/// belongs to, for the trait-orphan rule (round 63 item 5); `imports`
+/// holds the exports of every module it imports, by the name written
+/// after `import`; `poisoned` names the imports whose module failed to
+/// load or parse, so nothing is reported about what they would have
+/// supplied. `resolver` holds the type aliases and associated-type
+/// bindings of the program, shared by the checks of all its modules.
+pub fn check_module(
     program: &mut Program,
     package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-    resolver: Option<crate::types::canonical::Resolver>,
-) -> (
-    Vec<Diagnostic>,
-    ModuleExports,
-    crate::types::canonical::Resolver,
-) {
-    let mut checker = match resolver {
-        Some(r) => TypeChecker::with_resolver(r),
-        None => TypeChecker::new(),
-    };
+    imports: HashMap<Symbol, ModuleExports>,
+    poisoned: std::collections::HashSet<Symbol>,
+    resolver: &mut crate::types::canonical::Resolver,
+) -> ModuleCheck {
+    let mut checker = TypeChecker::with_resolver(std::mem::take(resolver));
     checker.current_package = package;
-    checker.module_exports = module_exports;
+    checker.module_exports = imports;
+    checker.poisoned_modules = poisoned;
     let env = checker.check_program_returning_env(program);
     let exports = checker.collect_module_exports(program, &env);
-    let resolver = checker.take_resolver();
-    (checker.errors, exports, resolver)
+    let mut top_level = HashMap::new();
+    for decl in &program.decls {
+        let names: Vec<Symbol> = match decl {
+            Decl::Fn(f) => vec![f.name],
+            Decl::Let { pattern, .. } => match &pattern.kind {
+                crate::ast::PatternKind::Ident(name) => vec![*name],
+                _ => Vec::new(),
+            },
+            Decl::Import(ImportTarget::Items(_, items), _) => {
+                items.iter().map(|(item, _)| *item).collect()
+            }
+            _ => Vec::new(),
+        };
+        for name in names {
+            if let Some(scheme) = env.lookup(name) {
+                top_level.insert(name, checker.apply(&scheme.ty));
+            }
+        }
+    }
+    *resolver = checker.take_resolver();
+    ModuleCheck {
+        diagnostics: checker.errors,
+        exports,
+        top_level,
+    }
 }
 
 // ── The builtin environment ─────────────────────────────────────────
@@ -8370,10 +8391,7 @@ impl BuiltinEnv {
 
     /// A fresh checker and an empty top-level scope over the builtins.
     fn start(&self) -> (TypeChecker, TypeEnv) {
-        (
-            self.checker.clone(),
-            TypeEnv::child_of(self.root.clone()),
-        )
+        (self.checker.clone(), TypeEnv::child_of(self.root.clone()))
     }
 }
 

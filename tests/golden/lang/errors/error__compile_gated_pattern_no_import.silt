@@ -1,8 +1,13 @@
 -- exit: 1
 -- stderr-contains: requires `import time`
-fn main() {
-  match 1 {
+-- The pattern is the only error: `d` can be a Weekday.
+fn day_name(d) {
+  match d {
     Monday -> "mon"
     _ -> "other"
   }
+}
+
+fn main() {
+  println("x")
 }

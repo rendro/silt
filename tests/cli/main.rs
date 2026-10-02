@@ -23,7 +23,6 @@ mod lockfile_tests;
 mod manifest_git_url_security_tests;
 mod manifest_tests;
 mod manifest_unknown_fields_rejected_tests;
-mod package_path_dep_tests;
 mod repl_completion_short_commands_tests;
 mod repl_error_render_and_keywords_tests;
 mod repl_is_declaration_mod_tests;

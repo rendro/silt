@@ -38,6 +38,7 @@ pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod scheduler;
+pub mod session;
 pub mod source;
 pub mod typechecker;
 pub mod types;

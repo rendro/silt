@@ -1,7 +1,7 @@
 -- exit: 1
--- stderr-contains: loop() expects 1 argument, got 0
--- Singular: 1 binding, called with 0 args → "expects 1 argument"
--- Plural: 2 bindings, called with 1 arg → "expects 2 arguments"
+-- stderr-contains: loop has 1 binding, but `loop(...)` supplies 0 arguments
+-- Singular: 1 binding, called with 0 args → "1 binding", "0 arguments"
+-- Plural: 2 bindings, called with 1 arg → "2 bindings", "1 argument"
 fn main() {
   loop x = 0 {
     match x > 5 {

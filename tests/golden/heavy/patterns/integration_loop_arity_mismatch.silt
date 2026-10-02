@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: expects 2 arguments
+-- stderr-contains: loop has 2 bindings, but `loop(...)` supplies 1 argument
 fn main() {
   loop x = 0, y = 0 {
     loop(1)

@@ -1644,12 +1644,9 @@ impl TypeChecker {
     ///     but exports no such record → a precise "module has no record
     ///     type" error with a did-you-mean over that module's records;
     ///   * qualifier is not in scope at all → an "undefined type"
-    ///     diagnostic. That code is deliberate: it is in the
-    ///     import-cascade suppression set (`without_import_cascade`),
-    ///     so when the module exists but its exports were unresolvable
-    ///     (the "unknown module" warning case) the user sees one
-    ///     module-level diagnostic instead of follow-on noise — exactly
-    ///     how bare undefined names behave.
+    ///     diagnostic;
+    ///   * qualifier names a module that failed to load → nothing: the
+    ///     failure is reported once, at the import.
     pub(super) fn lookup_qualified_record(
         &mut self,
         module: Symbol,
@@ -1658,6 +1655,9 @@ impl TypeChecker {
         in_pattern: bool,
         env: &TypeEnv,
     ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
+        if self.poisoned_names.contains(&module) && env.lookup(module).is_none() {
+            return None;
+        }
         let key = intern(&format!("{}.{}", resolve(module), resolve(name)));
         // Round 94 (module-shadowing): when a value binding named like
         // the qualifier is in scope, the module is shadowed. Record-
@@ -1742,6 +1742,9 @@ impl TypeChecker {
         span: Span,
         env: &TypeEnv,
     ) -> CtorQualifierResolution {
+        if self.poisoned_names.contains(&qualifier) && env.lookup(qualifier).is_none() {
+            return CtorQualifierResolution::Invalid;
+        }
         // Enum-name qualifier takes priority: an enum and a module can
         // share a name only when the user shadowed a module name with a
         // local type, and the local type is the more specific reading.
@@ -1847,9 +1850,6 @@ impl TypeChecker {
                 span,
             );
         } else {
-            // "undefined constructor" prefix keeps this inside the
-            // import-cascade suppression set — see
-            // `lookup_qualified_record` for the rationale.
             self.error(
                 Code::UndefinedConstructor,
                 format!(
@@ -2070,7 +2070,7 @@ impl TypeChecker {
                         ),
                         pattern.span,
                     );
-                } else {
+                } else if !self.poisoned_names.contains(name) {
                     self.error(
                         Code::UndefinedConstructor,
                         format!("undefined constructor '{name}' in pattern"),
@@ -2127,11 +2127,13 @@ impl TypeChecker {
                             Some((info, ids))
                         }
                         None => {
-                            self.error(
-                                Code::UndefinedType,
-                                format!("undefined record type '{rec_name}' in pattern"),
-                                span,
-                            );
+                            if !self.poisoned_names.contains(rec_name) {
+                                self.error(
+                                    Code::UndefinedType,
+                                    format!("undefined record type '{rec_name}' in pattern"),
+                                    span,
+                                );
+                            }
                             None
                         }
                     },
@@ -2778,6 +2780,17 @@ impl TypeChecker {
                 // always resolved locals first in its qualified-call
                 // emission, so this also removes a typechecker/runtime
                 // divergence.)
+                // A member of a module that failed to load: the failure is
+                // reported at the import, and nothing is known about the
+                // member.
+                if let Some(module_name) = module_name
+                    && self.poisoned_names.contains(&module_name)
+                    && env.lookup(module_name).is_none()
+                {
+                    let fresh = self.fresh_var();
+                    expr.ty = Some(fresh.clone());
+                    return fresh;
+                }
                 if let Some(module_name) = module_name
                     && !self.value_binding_shadows_module(env, module_name)
                 {
@@ -2903,11 +2916,25 @@ impl TypeChecker {
                     // exports are not enumerable here, so no did-you-mean hint.
                     if self.imported_modules.contains(&module_name) {
                         let field_str = resolve(field);
-                        self.error(
-                            Code::UnknownModuleMember,
-                            format!("unknown function '{field_str}' on module '{module_str}'"),
-                            span,
-                        );
+                        match self.imported_private_fns.get(&module_name) {
+                            Some((module, private)) if private.contains(&field) => {
+                                let module = resolve(*module);
+                                self.error(
+                                    Code::NotExported,
+                                    format!(
+                                        "`{field_str}` exists in module `{module}` but is not \
+                                         `pub` — mark it `pub fn {field_str}` in {module}.silt \
+                                         to export it"
+                                    ),
+                                    span,
+                                );
+                            }
+                            _ => self.error(
+                                Code::UnknownModuleMember,
+                                format!("unknown function '{field_str}' on module '{module_str}'"),
+                                span,
+                            ),
+                        }
                         let fresh = self.fresh_var();
                         expr.ty = Some(fresh.clone());
                         return fresh;
@@ -4329,7 +4356,7 @@ impl TypeChecker {
                     for (_, e) in fields.iter_mut() {
                         let _ = self.infer_expr(e, env);
                     }
-                    if module.is_none() {
+                    if module.is_none() && !self.poisoned_names.contains(&name) {
                         self.error(
                             Code::UndefinedType,
                             format!("undefined type '{name}'"),
@@ -5344,11 +5371,13 @@ impl TypeChecker {
                     // constructor pattern, not the enclosing match
                     // scrutinee — round-17 F4 threaded pattern.span
                     // through arity sites but missed this fallback.
-                    self.error(
-                        Code::UndefinedConstructor,
-                        format!("undefined constructor '{name}' in pattern"),
-                        pattern.span,
-                    );
+                    if !self.poisoned_names.contains(name) {
+                        self.error(
+                            Code::UndefinedConstructor,
+                            format!("undefined constructor '{name}' in pattern"),
+                            pattern.span,
+                        );
+                    }
                     for sp in sub_pats {
                         let tv = self.fresh_var();
                         self.check_pattern(sp, &tv, env, span);
@@ -5434,7 +5463,7 @@ impl TypeChecker {
                         // Qualified lookups already emitted their own,
                         // more specific diagnostic inside
                         // `lookup_qualified_record`.
-                        if module.is_none() {
+                        if module.is_none() && !self.poisoned_names.contains(rec_name) {
                             self.error(
                                 Code::UndefinedType,
                                 format!("undefined record type '{rec_name}' in pattern"),

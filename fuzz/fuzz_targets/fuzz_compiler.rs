@@ -72,7 +72,7 @@ fuzz_target!(|data: &[u8]| {
 
     // 6. A successful compile must produce at least one function — the
     //    CLI treats an empty result as an internal error
-    //    (`src/cli/pipeline.rs::compile_file_with_options`).
+    //    (`src/cli/pipeline.rs::compile_file`).
     assert!(
         !functions.is_empty(),
         "compile_program returned Ok but produced no functions"

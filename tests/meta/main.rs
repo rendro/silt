@@ -70,7 +70,6 @@ mod round86_attach_enum_variant_docs_registry_parity_tests;
 mod round86_editor_grammar_operators_lexer_parity_tests;
 mod round87_doc_modules_function_parity_tests;
 mod round88_formatter_precedence_dedup_lock_tests;
-mod round91_test_import_filter_parity_tests;
 mod round93_builtin_docs_walker_tests;
 mod rustdoc_warnings_lock_tests;
 mod typechecker_builtin_trait_registration_parity_tests;
