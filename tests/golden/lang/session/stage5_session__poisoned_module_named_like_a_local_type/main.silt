@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- The module `Shape` does not parse, and a local type has its name:
+-- `Shape.describe(s)` reports nothing about the module.
+-- stderr-not-contains: on module
+import Shape
+
+type Shape { sides: Int }
+
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Shape {
+  fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
+}
+
+fn main() {
+  let s = Shape { sides: 4 }
+  println(s.describe())
+  println(Shape.describe(s))
+  println(Shape.other(s))
+}

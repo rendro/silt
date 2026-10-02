@@ -2661,21 +2661,12 @@ impl TypeChecker {
     }
 
     /// Bind `item`, imported from a module that failed to load, so that
-    /// nothing is reported about it: as a value of unknown type, and, for
-    /// a capitalised name, as a type known by name only.
+    /// nothing is reported about it: its value has the error type, which
+    /// unifies with anything and takes any field, method or call, and as a
+    /// type it is the error type with any arguments.
     fn bind_poisoned_name(&mut self, item: Symbol, env: &mut TypeEnv) {
         self.poisoned_names.insert(item);
-        let placeholder = self.fresh_var();
-        env.define(item, Scheme::mono(placeholder));
-        if resolve(item).starts_with(|c: char| c.is_uppercase()) {
-            let defined_in = self.defining_package();
-            self.enums.entry(item).or_insert_with(|| EnumInfo {
-                variants: Vec::new(),
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                defined_in,
-            });
-        }
+        env.define(item, Scheme::mono(Type::Error));
     }
 
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
@@ -4752,6 +4743,9 @@ impl TypeChecker {
                 if let Some(tv) = param_vars.get(name) {
                     return tv.clone();
                 }
+                if self.poisoned_names.contains(name) {
+                    return Type::Error;
+                }
                 let name_str = resolve(*name);
                 match name_str.as_str() {
                     "Int" => Type::Int,
@@ -4870,6 +4864,14 @@ impl TypeChecker {
                 }
             }
             TypeExprKind::Generic(name, args) => {
+                // A type imported from a module that failed to load takes
+                // any arguments; nothing is known about it.
+                if self.poisoned_names.contains(name) {
+                    for arg in args {
+                        let _ = self.resolve_type_expr_inner(arg, param_vars);
+                    }
+                    return Type::Error;
+                }
                 let resolved_args: Vec<Type> = args
                     .iter()
                     .map(|a| self.resolve_type_expr(a, param_vars))

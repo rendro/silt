@@ -1655,7 +1655,11 @@ impl TypeChecker {
         in_pattern: bool,
         env: &TypeEnv,
     ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
-        if self.poisoned_names.contains(&module) && env.lookup(module).is_none() {
+        if self.poisoned_names.contains(&module)
+            && env
+                .lookup(module)
+                .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
+        {
             return None;
         }
         let key = intern(&format!("{}.{}", resolve(module), resolve(name)));
@@ -1742,7 +1746,11 @@ impl TypeChecker {
         span: Span,
         env: &TypeEnv,
     ) -> CtorQualifierResolution {
-        if self.poisoned_names.contains(&qualifier) && env.lookup(qualifier).is_none() {
+        if self.poisoned_names.contains(&qualifier)
+            && env
+                .lookup(qualifier)
+                .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
+        {
             return CtorQualifierResolution::Invalid;
         }
         // Enum-name qualifier takes priority: an enum and a module can
@@ -2785,11 +2793,13 @@ impl TypeChecker {
                 // member.
                 if let Some(module_name) = module_name
                     && self.poisoned_names.contains(&module_name)
-                    && env.lookup(module_name).is_none()
+                    && (env
+                        .lookup(module_name)
+                        .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
+                        || !self.value_binding_shadows_module(env, module_name))
                 {
-                    let fresh = self.fresh_var();
-                    expr.ty = Some(fresh.clone());
-                    return fresh;
+                    expr.ty = Some(Type::Error);
+                    return Type::Error;
                 }
                 if let Some(module_name) = module_name
                     && !self.value_binding_shadows_module(env, module_name)

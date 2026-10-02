@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue record type fields, found EOF
+ --> m.silt:2:29
+   |
+ 2 | pub type Pt { x: Int, y: Int
+   |                             ^ expected '}' or ',' to continue record type fields, found EOF
+ ::: main.silt:5:1
+   |
+ 5 | import m.{ Box, Pt }
+   | -------------------- module 'm' is imported here

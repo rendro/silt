@@ -1,0 +1,2 @@
+pub type Box(a) { Full(a), Empty }
+pub type Pt { x: Int, y: Int
