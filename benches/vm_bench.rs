@@ -447,8 +447,8 @@ fn main() {
   channel.close(ch)
   let sum = loop acc = 0 {
     match channel.receive(ch) {
-      Message(n) -> loop(acc + n)
-      Closed -> acc
+      channel.Message(n) -> loop(acc + n)
+      channel.Closed -> acc
     }
   }
   sum
@@ -489,10 +489,10 @@ fn main() {
     match done {
       2 -> acc
       _ -> {
-        let result = channel.select([Recv(ch1), Recv(ch2)])
+        let result = channel.select([channel.Recv(ch1), channel.Recv(ch2)])
         match result {
-          (_, Message(n)) -> loop(acc + n, done)
-          (_, Closed) -> loop(acc, done + 1)
+          (_, channel.Message(n)) -> loop(acc + n, done)
+          (_, channel.Closed) -> loop(acc, done + 1)
         }
       }
     }

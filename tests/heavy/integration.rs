@@ -352,7 +352,7 @@ fn test_http_request_wrong_arg_count() {
         r#"
 import http
 fn main() {
-  http.request(GET, "http://example.com")
+  http.request(http.GET, "http://example.com")
 }
     "#,
     );
@@ -381,7 +381,7 @@ fn test_http_request_non_string_url() {
         r#"
 import http
 fn main() {
-  http.request(GET, 42, "", #{})
+  http.request(http.GET, 42, "", #{})
 }
     "#,
     );
@@ -397,7 +397,7 @@ fn test_http_request_non_string_body() {
         r#"
 import http
 fn main() {
-  http.request(POST, "http://example.com", 42, #{})
+  http.request(http.POST, "http://example.com", 42, #{})
 }
     "#,
     );
@@ -413,7 +413,7 @@ fn test_http_request_non_map_headers() {
         r#"
 import http
 fn main() {
-  http.request(GET, "http://example.com", "", "bad")
+  http.request(http.GET, "http://example.com", "", "bad")
 }
     "#,
     );
@@ -439,7 +439,7 @@ fn test_http_serve_non_int_port() {
         r#"
 import http
 fn main() {
-  http.serve("8080", { req -> Response { status: 200, body: "", headers: #{} } })
+  http.serve("8080", { req -> http.Response { status: 200, body: "", headers: #{} } })
 }
     "#,
     );
@@ -482,7 +482,7 @@ fn main() {{
   let done = channel.new(1)
   let server = task.spawn({{ ->
     http.serve({port}, {{ req ->
-      Response {{ status: 200, body: "ok", headers: #{{}} }}
+      http.Response {{ status: 200, body: "ok", headers: #{{}} }}
     }})
   }})
   let worker = task.spawn({{ ->
@@ -490,7 +490,7 @@ fn main() {{
   }})
   let result = channel.receive(done)
   match result {{
-    Message(v) -> v
+    channel.Message(v) -> v
     _ -> "failed"
   }}
 }}
@@ -523,7 +523,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -592,7 +592,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
+    http.Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
   }})
 }}
 "#
@@ -633,7 +633,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 404, body: "not found", headers: #{{}} }}
+    http.Response {{ status: 404, body: "not found", headers: #{{}} }}
   }})
 }}
 "#
@@ -674,7 +674,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -719,7 +719,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.query, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.query, headers: #{{}} }}
   }})
 }}
 "#
@@ -761,7 +761,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.body, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.body, headers: #{{}} }}
   }})
 }}
 "#
@@ -803,13 +803,13 @@ import http
 fn main() {{
   http.serve({port}, {{ req ->
     let method_name = match req.method {{
-      GET -> "got-get"
-      POST -> "got-post"
-      PUT -> "got-put"
-      DELETE -> "got-delete"
+      http.GET -> "got-get"
+      http.POST -> "got-post"
+      http.PUT -> "got-put"
+      http.DELETE -> "got-delete"
       _ -> "got-other"
     }}
-    Response {{ status: 200, body: method_name, headers: #{{}} }}
+    http.Response {{ status: 200, body: method_name, headers: #{{}} }}
   }})
 }}
 "#
@@ -870,7 +870,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{
+    http.Response {{
       status: 200,
       body: "ok",
       headers: #{{ "X-Custom": "silt-value", "X-Another": "42" }}
@@ -926,9 +926,9 @@ import http
 fn main() {{
   http.serve({port}, {{ req ->
     match req.path {{
-      "/health" -> Response {{ status: 200, body: "ok", headers: #{{}} }}
-      "/greet" -> Response {{ status: 200, body: "hello!", headers: #{{}} }}
-      _ -> Response {{ status: 404, body: "not found", headers: #{{}} }}
+      "/health" -> http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+      "/greet" -> http.Response {{ status: 200, body: "hello!", headers: #{{}} }}
+      _ -> http.Response {{ status: 404, body: "not found", headers: #{{}} }}
     }}
   }})
 }}
@@ -987,7 +987,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -1046,7 +1046,7 @@ fn main() {{
   -- Start the server in a task
   let server = task.spawn({{ ->
     http.serve({port}, {{ req ->
-      Response {{ status: 200, body: "silt-response", headers: #{{}} }}
+      http.Response {{ status: 200, body: "silt-response", headers: #{{}} }}
     }})
   }})
 
@@ -1065,7 +1065,7 @@ fn main() {{
   }})
 
   match channel.receive(result_ch) {{
-    Message(body) -> body
+    channel.Message(body) -> body
     _ -> "the channel closed"
   }}
 }}

@@ -21,8 +21,10 @@ fn bloat1_pg_error_skipped_when_feature_off_at_typecheck() {
     // gate from Round 64): with the feature off, PgError should not
     // even be a registered enum so the constructor reference fails.
     let src = r#"
+import postgres
+
 fn main() {
-    let _ = PgError.PgConnect("nope")
+    let _ = postgres.PgError.PgConnect("nope")
 }
 "#;
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)

@@ -2263,7 +2263,7 @@ fn test_spawn_join_already_completed() {
                     99
                 })
                 -- Wait for the message, ensuring the fiber runs to completion
-                let Message(msg) = channel.receive(ch)
+                let channel.Message(msg) = channel.receive(ch)
                 -- Now the fiber should already be completed
                 task.join(t)
             }
@@ -2295,9 +2295,9 @@ fn test_spawn_join_multiple_completed() {
                     30
                 })
                 -- Drain all messages so fibers complete
-                let Message(_) = channel.receive(ch)
-                let Message(_) = channel.receive(ch)
-                let Message(_) = channel.receive(ch)
+                let channel.Message(_) = channel.receive(ch)
+                let channel.Message(_) = channel.receive(ch)
+                let channel.Message(_) = channel.receive(ch)
                 -- All fibers should be done; join should not deadlock
                 let a = task.join(t1)
                 let b = task.join(t2)

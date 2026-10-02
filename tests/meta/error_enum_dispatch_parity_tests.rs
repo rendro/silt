@@ -32,8 +32,10 @@ use silt::module::{builtin_enum_variants, builtin_error_enum_variants_with_arity
 #[test]
 fn pg_error_typecheck_rejects_when_postgres_feature_off() {
     let src = r#"
+import postgres
+
 fn main() {
-    let _ = PgError.PgConnect("nope")
+    let _ = postgres.PgError.PgConnect("nope")
 }
 "#;
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
@@ -66,8 +68,10 @@ fn main() {
 #[test]
 fn tcp_error_typecheck_rejects_when_tcp_feature_off() {
     let src = r#"
+import tcp
+
 fn main() {
-    let _ = TcpError.TcpConnect("nope")
+    let _ = tcp.TcpError.TcpConnect("nope")
 }
 "#;
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)

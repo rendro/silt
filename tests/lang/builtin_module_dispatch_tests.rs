@@ -126,12 +126,12 @@ fn assert_undefined(label: &str, src: &str, name: &str) {
 fn pg_error_is_undefined_without_postgres_feature() {
     assert_undefined(
         "pg_timeout",
-        "import postgres\nfn main() {\n  let e = PgTimeout\n  println(e)\n}\n",
+        "import postgres\nfn main() {\n  let e = postgres.PgTimeout\n  println(e)\n}\n",
         "PgTimeout",
     );
     assert_undefined(
         "pg_connect",
-        "import postgres\nfn main() {\n  let e = PgError.PgConnect(\"nope\")\n  println(e)\n}\n",
+        "import postgres\nfn main() {\n  let e = postgres.PgError.PgConnect(\"nope\")\n  println(e)\n}\n",
         "PgError",
     );
 }
@@ -141,12 +141,12 @@ fn pg_error_is_undefined_without_postgres_feature() {
 fn tcp_error_is_undefined_without_tcp_feature() {
     assert_undefined(
         "tcp_timeout",
-        "import tcp\nfn main() {\n  let e = TcpTimeout\n  println(e)\n}\n",
+        "import tcp\nfn main() {\n  let e = tcp.TcpTimeout\n  println(e)\n}\n",
         "TcpTimeout",
     );
     assert_undefined(
         "tcp_connect",
-        "import tcp\nfn main() {\n  let e = TcpError.TcpConnect(\"nope\")\n  println(e)\n}\n",
+        "import tcp\nfn main() {\n  let e = tcp.TcpError.TcpConnect(\"nope\")\n  println(e)\n}\n",
         "TcpError",
     );
 }

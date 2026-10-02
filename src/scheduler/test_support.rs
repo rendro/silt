@@ -472,7 +472,7 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.receive(ch) {
-    Message(_) -> 0
+    channel.Message(_) -> 0
     _ -> 0
   }
 }
@@ -529,7 +529,7 @@ fn main() {
     match c >= 16 {
       true -> acc
       _ -> match channel.receive(ch) {
-        Message(v) -> loop(c + 1, acc + v)
+        channel.Message(v) -> loop(c + 1, acc + v)
         _ -> acc
       }
     }

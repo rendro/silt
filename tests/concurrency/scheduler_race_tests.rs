@@ -107,10 +107,10 @@ fn main() {
       true -> acc
       _ -> {
         match channel.receive(ch) {
-          Message(v) -> loop(c + 1, acc + v)
-          Closed -> acc
-          Empty -> acc
-          Sent -> acc
+          channel.Message(v) -> loop(c + 1, acc + v)
+          channel.Closed -> acc
+          channel.Empty -> acc
+          channel.Sent -> acc
         }
       }
     }
@@ -190,10 +190,10 @@ fn main() {
   let receivers = 1..16
     |> list.map { _ -> task.spawn({ ->
       match channel.receive(ch) {
-        Message(v) -> v
-        Closed -> 0
-        Empty -> 0
-        Sent -> 0
+        channel.Message(v) -> v
+        channel.Closed -> 0
+        channel.Empty -> 0
+        channel.Sent -> 0
       }
     }) }
   let senders = 1..16

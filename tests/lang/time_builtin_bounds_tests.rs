@@ -41,7 +41,7 @@ fn test_time_to_datetime_extremal_probes_never_panic() {
             r#"
 import time
 fn main() -> Int {{
-  let inst = Instant {{ epoch_ns: {epoch_ns} }}
+  let inst = time.Instant {{ epoch_ns: {epoch_ns} }}
   let dt = time.to_datetime(inst, {offset})
   dt.date.year
 }}

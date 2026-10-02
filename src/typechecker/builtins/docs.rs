@@ -626,8 +626,8 @@ fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
     match channel.receive(ch) {
-        Message(v) -> println(v)
-        Closed -> println("done")
+        channel.Message(v) -> println(v)
+        channel.Closed -> println("done")
         _ -> ()
     }
 }
@@ -678,8 +678,8 @@ fn main() {
     })
     match channel.recv_timeout(ch, time.ms(500)) {
         Ok(v) -> println(v)                   -- 42
-        Err(ChannelTimeout) -> println("timed out")
-        Err(ChannelClosed) -> println("channel closed")
+        Err(channel.ChannelTimeout) -> println("timed out")
+        Err(channel.ChannelClosed) -> println("channel closed")
     }
 }
 ```
@@ -717,9 +717,9 @@ fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
     task.spawn({ -> channel.send(ch2, "hello") })
-    match channel.select([Recv(ch1), Recv(ch2)]) {
-        (^ch2, Message(val)) -> println(val)  -- hello
-        (_, Closed) -> println("closed")
+    match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+        (^ch2, channel.Message(val)) -> println(val)  -- hello
+        (_, channel.Closed) -> println("closed")
         _ -> ()
     }
 }
@@ -733,9 +733,9 @@ fn main() {
     let inbox = channel.new(1)
     let outbox = channel.new(1)
     channel.send(inbox, 7)
-    match channel.select([Recv(inbox), Send(outbox, 99)]) {
-        (^inbox, Message(v)) -> println(v)
-        (^outbox, Sent) -> println("sent")
+    match channel.select([channel.Recv(inbox), channel.Send(outbox, 99)]) {
+        (^inbox, channel.Message(v)) -> println(v)
+        (^outbox, channel.Sent) -> println("sent")
         _ -> ()
     }
 }
@@ -775,9 +775,9 @@ import channel
 fn main() {
     let ch = channel.new(10)
     let timer = channel.timeout(1000)  -- closes after 1 second
-    match channel.select([Recv(ch), Recv(timer)]) {
-        (^ch, Message(val)) -> println("got: {val}")
-        (^timer, Closed) -> println("timed out")
+    match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+        (^ch, channel.Message(val)) -> println("got: {val}")
+        (^timer, channel.Closed) -> println("timed out")
         _ -> ()
     }
 }
@@ -799,9 +799,9 @@ import channel
 fn main() {
     let ch = channel.new(1)
     match channel.try_receive(ch) {
-        Message(v) -> println(v)
-        Empty -> println("nothing yet")
-        Closed -> println("done")
+        channel.Message(v) -> println(v)
+        channel.Empty -> println("nothing yet")
+        channel.Closed -> println("done")
         _ -> ()
     }
 }
@@ -993,7 +993,7 @@ fn main() {
     })
     match outcome {
         Ok(contents) -> println(contents)
-        Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+        Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
         Err(_) -> println("other io error")
     }
 }
@@ -1322,22 +1322,19 @@ just wants a rendered error can fall back to `"{e.message()}"`.
 
 ## Variant naming
 
-Every variant is module-prefixed (`IoNotFound`, not `NotFound`) so
-silt's one-variant-per-enum registration never collides. Each variant
-is globally unique and may be constructed either bare or with its enum
-as qualifier:
+Every variant is module-prefixed (`IoNotFound`, not `NotFound`). An
+error enum and its variants are members of their module, reached
+through it, with or without the enum as a second qualifier:
 
 ```silt
 import io
 
-let a = IoNotFound("config.toml")
-let b = IoError.IoNotFound("config.toml")  -- same value
+let a = io.IoNotFound("config.toml")
+let b = io.IoError.IoNotFound("config.toml")  -- same value
 ```
 
-Construction is gated on the owning module being imported — bare
-`IoNotFound(...)` without `import io` is a compile error. Pattern
-matching is not gated: once you hold a value, you can destructure it
-regardless of imports.
+A selective import binds a variant by its bare name:
+`import io.{ IoNotFound }`.
 
 ## Enums
 
@@ -1476,18 +1473,18 @@ enough to benefit from a richer taxonomy:
 ```silt
 import io
 
-fn handle(e: IoError) -> String {
+fn handle(e: io.IoError) -> String {
   match e {
-    IoNotFound(path) -> "missing: {path}"
-    IoPermissionDenied(path) -> "denied: {path}"
-    IoAlreadyExists(_) | IoInvalidInput(_) -> "recoverable"
-    IoInterrupted | IoUnexpectedEof | IoWriteZero -> "transient"
-    IoUnknown(msg) -> "unknown: {msg}"
+    io.IoNotFound(path) -> "missing: {path}"
+    io.IoPermissionDenied(path) -> "denied: {path}"
+    io.IoAlreadyExists(_) | io.IoInvalidInput(_) -> "recoverable"
+    io.IoInterrupted | io.IoUnexpectedEof | io.IoWriteZero -> "transient"
+    io.IoUnknown(msg) -> "unknown: {msg}"
   }
 }
 
 fn main() {
-  println(handle(IoNotFound("config.toml")))
+  println(handle(io.IoNotFound("config.toml")))
 }
 ```
 
@@ -1507,8 +1504,8 @@ import result
 type Config { host: String, port: Int }
 
 type AppError {
-  IoProblem(IoError),
-  JsonProblem(JsonError),
+  IoProblem(io.IoError),
+  JsonProblem(json.JsonError),
 }
 
 fn load_config(path: String) -> Result(Config, AppError) {
@@ -1713,8 +1710,8 @@ import list
 fn main() {
     let capped_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
         match {
-            acc + x > 6 -> Stop(acc)
-            _ -> Continue(acc + x)
+            acc + x > 6 -> list.Stop(acc)
+            _ -> list.Continue(acc + x)
         }
     }
     println(capped_sum)  -- 6
@@ -1746,7 +1743,7 @@ import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
-    when let Message(v) = channel.receive(ch) else { return }
+    when let channel.Message(v) = channel.receive(ch) else { return }
     println(v)  -- 42
 }
 ```
@@ -1817,7 +1814,7 @@ type Response {
 }
 ```
 
-`Method` variants are gated constructors -- using `GET`, `POST`, etc. requires `import http`.
+`Method` and its variants are members of `http`: `http.Method`, `http.GET`, `http.POST`, etc.
 
 ## Summary
 
@@ -1872,7 +1869,7 @@ import string
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
-    Err(HttpTimeout) -> println("timed out; retry later")
+    Err(http.HttpTimeout) -> println("timed out; retry later")
     Err(e) -> println("Network error: {e.message()}")
   }
 }
@@ -1891,8 +1888,8 @@ import result
 type User { name: String, id: Int }
 
 type FetchError {
-  Network(HttpError),
-  Parse(JsonError),
+  Network(http.HttpError),
+  Parse(json.JsonError),
 }
 
 fn fetch_user(name: String) -> Result(User, FetchError) {
@@ -1917,17 +1914,17 @@ a spawned task.
 ```silt
 -- POST with JSON body
 let resp = http.request(
-  POST,
+  http.POST,
   "https://api.example.com/users",
   json.stringify(#{"name": "Alice"}),
   #{"Content-Type": "application/json", "Authorization": "Bearer tok123"}
 )?
 
 -- DELETE
-let resp = http.request(DELETE, "https://api.example.com/users/42", "", #{})?
+let resp = http.request(http.DELETE, "https://api.example.com/users/42", "", #{})?
 
 -- GET with custom headers
-let resp = http.request(GET, "https://api.example.com/data", "", #{"Accept": "text/plain"})?
+let resp = http.request(http.GET, "https://api.example.com/data", "", #{"Accept": "text/plain"})?
 ```
 
 
@@ -1963,24 +1960,24 @@ fn main() {
 
   http.serve(8080, { req ->
     match (req.method, http.segments(req.path)) {
-      (GET, []) ->
-        Response { status: 200, body: "Hello!", headers: #{} }
+      (http.GET, []) ->
+        http.Response { status: 200, body: "Hello!", headers: #{} }
 
-      (GET, ["users", id]) ->
-        Response { status: 200, body: "User {id}", headers: #{} }
+      (http.GET, ["users", id]) ->
+        http.Response { status: 200, body: "User {id}", headers: #{} }
 
-      (POST, ["users"]) ->
+      (http.POST, ["users"]) ->
         match json.parse(req.body, User) {
-          Ok(user) -> Response {
+          Ok(user) -> http.Response {
             status: 201,
             body: json.stringify(user),
             headers: #{"Content-Type": "application/json"},
           }
-          Err(e) -> Response { status: 400, body: e.message(), headers: #{} }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
         }
 
       _ ->
-        Response { status: 404, body: "Not found", headers: #{} }
+        http.Response { status: 404, body: "Not found", headers: #{} }
     }
   })
 }
@@ -2016,7 +2013,7 @@ fn main() {
   -- Accept connections from anywhere. Make sure this is really what
   -- you want before shipping.
   http.serve_all(8080) { _req ->
-    Response { status: 200, body: "Hello, world!", headers: #{} }
+    http.Response { status: 200, body: "Hello, world!", headers: #{} }
   }
 }
 ```
@@ -2196,10 +2193,10 @@ fn main() {
     -- Pattern-match on specific failure modes:
     match int.parse("") {
         Ok(_) -> ()
-        Err(ParseEmpty) -> println("cannot parse empty input")
-        Err(ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
-        Err(ParseOverflow) -> println("too large")
-        Err(ParseUnderflow) -> println("too small")
+        Err(int.ParseEmpty) -> println("cannot parse empty input")
+        Err(int.ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
+        Err(int.ParseOverflow) -> println("too large")
+        Err(int.ParseUnderflow) -> println("too small")
     }
 }
 ```
@@ -2575,7 +2572,7 @@ import io
 fn main() {
     match io.read_file("data.txt") {
         Ok(contents) -> println(contents)
-        Err(IoNotFound(path)) -> println("no such file: {path}")
+        Err(io.IoNotFound(path)) -> println("no such file: {path}")
         Err(e) -> println("Error: {e.message()}")
     }
 }
@@ -2599,7 +2596,7 @@ fn main() {
     print("Name: ")
     match io.read_line() {
         Ok(name) -> println("Hello, {name}!")
-        Err(IoUnexpectedEof) -> println("(EOF)")
+        Err(io.IoUnexpectedEof) -> println("(EOF)")
         Err(e) -> println("Error: {e.message()}")
     }
 }
@@ -3222,10 +3219,10 @@ import time
 
 type Event {
     name: String,
-    date: Date,
+    date: time.Date,
 }
 
-fn main() -> Result(Unit, JsonError) {
+fn main() -> Result(Unit, json.JsonError) {
     let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
     println(e.date |> time.weekday)  -- Friday
     Ok(())
@@ -3647,8 +3644,8 @@ fn main() {
     let partial_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
         let next = acc + x
         match {
-            next > 5 -> Stop(acc)
-            _ -> Continue(next)
+            next > 5 -> list.Stop(acc)
+            _ -> list.Continue(next)
         }
     }
     println(partial_sum)  -- 3
@@ -5314,7 +5311,7 @@ import io
 import result
 
 type AppError {
-  IoWrap(IoError),
+  IoWrap(io.IoError),
 }
 
 fn load(path: String) -> Result(String, AppError) {
@@ -6994,7 +6991,7 @@ Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let d = time.date(2024, 6, 15)?
     let t = time.time(9, 30, 0)?
     println(time.datetime(d, t))  -- 2024-06-15T09:30:00
@@ -7033,7 +7030,7 @@ Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
     let instant = time.to_instant(dt, 0)
     println(instant.epoch_ns)
@@ -7086,7 +7083,7 @@ Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
     println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
     -- Wednesday, December 25, 2024 at 18:00
@@ -7105,7 +7102,7 @@ Formats a `Date` using strftime patterns.
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let d = time.date(2024, 6, 15)?
     println(d |> time.format_date("%d/%m/%Y"))  -- 15/06/2024
     Ok(())
@@ -7157,7 +7154,7 @@ Adds (or subtracts, if negative) days from a date.
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let d = time.date(2024, 1, 1)?
     println(d |> time.add_days(90))   -- 2024-03-31
     println(d |> time.add_days(-1))   -- 2023-12-31
@@ -7176,7 +7173,7 @@ Adds (or subtracts) months from a date. Clamps to the last valid day of the targ
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let d = time.date(2024, 1, 31)?
     println(d |> time.add_months(1))   -- 2024-02-29 (leap year, clamped)
     println(d |> time.add_months(2))   -- 2024-03-31
@@ -7265,9 +7262,9 @@ import time
 fn main() {
     let day = time.today() |> time.weekday
     match day {
-        Monday -> println("start of the week")
-        Friday -> println("almost weekend")
-        Saturday | Sunday -> println("weekend!")
+        time.Monday -> println("start of the week")
+        time.Friday -> println("almost weekend")
+        time.Saturday | time.Sunday -> println("weekend!")
         _ -> println("midweek")
     }
 }
@@ -7284,7 +7281,7 @@ Returns the signed number of days between two dates.
 
 ```silt
 import time
-fn main() -> Result(Unit, TimeError) {
+fn main() -> Result(Unit, time.TimeError) {
     let a = time.date(2024, 1, 1)?
     let b = time.date(2024, 12, 31)?
     println(time.days_between(a, b))  -- 365

@@ -96,8 +96,12 @@ fn scrape_module_function_refs(table: &str) -> BTreeSet<(String, String)> {
         }
         i = close + 1;
         // Filter to known builtin modules so prose like
-        // `silt.toml` doesn't sneak in.
-        if silt::module::BUILTIN_MODULES.contains(&mod_name) {
+        // `silt.toml` doesn't sneak in, and to lowercase names: an
+        // uppercase member (`time.Weekday`, `io.IoNotFound`) is a type
+        // or a variant, not a function.
+        if silt::module::BUILTIN_MODULES.contains(&mod_name)
+            && !fn_name.starts_with(|c: char| c.is_ascii_uppercase())
+        {
             found.insert((mod_name.to_string(), fn_name.to_string()));
         }
     }

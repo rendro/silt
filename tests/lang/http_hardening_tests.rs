@@ -152,7 +152,7 @@ fn echo_server_src(port: u16) -> String {
 import http
 fn main() {{
   http.serve({port}) {{ _req ->
-    Response {{ status: 200, body: "ok", headers: #{{}} }}
+    http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
 "#
@@ -372,7 +372,7 @@ fn private_helper() {{
 fn main() {{
   http.serve({port}) {{ _req ->
     private_helper()
-    Response {{ status: 200, body: "never", headers: #{{}} }}
+    http.Response {{ status: 200, body: "never", headers: #{{}} }}
   }}
 }}
 "#
