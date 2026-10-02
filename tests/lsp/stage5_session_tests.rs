@@ -173,3 +173,75 @@ fn hover_definition_and_signature_help_reach_an_imported_module() {
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A type alias changed in an open imported file changes what the
+/// importer's annotations mean (the alias is the imported module's, and
+/// the importer is checked again with it).
+#[test]
+fn changing_an_imported_alias_rechecks_the_importer() {
+    let units = "pub type Meters = Int\n";
+    let main = "import units.{ Meters }\n\nfn grow(m: Meters) -> Int {\n  m + 1\n}\n\nfn main() {\n  println(\"{grow(1)}\")\n}\n";
+    let dir = project("alias", &[("units.silt", units), ("main.silt", main)]);
+    let main_uri = uri(&dir.join("main.silt"));
+    let units_uri = uri(&dir.join("units.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    let first = client.did_open_and_wait(&main_uri, main);
+    assert_eq!(messages(&first), Vec::<String>::new(), "{first}");
+    client.did_open_and_wait(&units_uri, units);
+
+    did_change(&mut client, &units_uri, 2, "pub type Meters = String\n");
+    let after = client.wait_for_diagnostics(&main_uri);
+    assert!(
+        messages(&after).iter().any(|m| m.contains("type mismatch")),
+        "`m + 1` and `grow(1)` no longer check with Meters = String: {after}"
+    );
+
+    did_change(&mut client, &units_uri, 3, units);
+    let back = client.wait_for_diagnostics(&main_uri);
+    assert_eq!(messages(&back), Vec::<String>::new(), "{back}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A broken silt.toml: its error is published on silt.toml and the
+/// document gets one note; once silt.toml is fixed, the next analysis
+/// resolves the project again.
+#[test]
+fn fixing_silt_toml_resolves_the_project_again() {
+    let broken = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { path = \"../does-not-exist\" }\n";
+    let fixed = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+    let main = "import helper\n\nfn main() {\n  println(\"{helper.twice(2)}\")\n}\n";
+    let dir = project("manifest", &[("silt.toml", broken)]);
+    fs::create_dir_all(dir.join("src")).expect("mkdir src");
+    fs::write(dir.join("src/helper.silt"), HELPER).expect("write");
+    fs::write(dir.join("src/main.silt"), main).expect("write");
+    let main_uri = uri(&dir.join("src/main.silt"));
+    let manifest_uri = uri(&dir.join("silt.toml"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+
+    client.did_open(&main_uri, main);
+    let manifest = client.wait_for_diagnostics(&manifest_uri);
+    assert!(
+        messages(&manifest)
+            .iter()
+            .any(|m| m.contains("does not exist")),
+        "the manifest error is on silt.toml: {manifest}"
+    );
+    let note = client.wait_for_diagnostics(&main_uri);
+    let diags = note
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(diags.len(), 1, "one note, no import cascade: {note}");
+    assert_eq!(diags[0]["severity"], json!(3), "{note}");
+
+    fs::write(dir.join("silt.toml"), fixed).expect("write");
+    did_change(&mut client, &main_uri, 2, main);
+    let cleared = client.wait_for_diagnostics(&manifest_uri);
+    assert_eq!(messages(&cleared), Vec::<String>::new(), "{cleared}");
+    let clean = client.wait_for_diagnostics(&main_uri);
+    assert_eq!(messages(&clean), Vec::<String>::new(), "{clean}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}

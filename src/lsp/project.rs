@@ -32,10 +32,10 @@ pub(super) fn path_key(path: &Path) -> PathBuf {
 pub(super) struct Project {
     pub(super) config: Config,
     pub(super) session: Session,
-    /// The modification times of the project's `silt.toml` and
+    /// The modification time and size of the project's `silt.toml` and
     /// `silt.lock` when the session was made. The session resolves the
     /// packages once, so a change to either makes a new session.
-    stamps: Vec<(PathBuf, Option<SystemTime>)>,
+    stamps: Vec<Stamp>,
     /// The text given to the session for each file, by path key.
     overlays: HashMap<PathBuf, Arc<str>>,
     /// What compiling each analysed entry module found, with the modules
@@ -130,14 +130,17 @@ impl Project {
     }
 }
 
-/// The modification times of the manifest and lockfile in `dir`.
-fn stamps(dir: &Path) -> Vec<(PathBuf, Option<SystemTime>)> {
+/// What tells one version of a file from another: its modification time
+/// and size, or nothing when it does not exist.
+type Stamp = Option<(SystemTime, u64)>;
+
+/// The stamps of the manifest and lockfile in `dir`.
+fn stamps(dir: &Path) -> Vec<Stamp> {
     ["silt.toml", "silt.lock"]
         .iter()
         .map(|name| {
-            let path = dir.join(name);
-            let time = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-            (path, time)
+            let meta = std::fs::metadata(dir.join(name)).ok()?;
+            Some((meta.modified().ok()?, meta.len()))
         })
         .collect()
 }
