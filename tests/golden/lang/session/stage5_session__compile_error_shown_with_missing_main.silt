@@ -1,0 +1,4 @@
+-- exit: 1
+-- The compiler's error is shown, first: it is why there is no `main`.
+-- stderr-contains: error[compile]: unsupported pattern in top-level let
+let (main, y) = ({ -> println("x") }, 3)

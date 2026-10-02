@@ -1,0 +1,7 @@
+-- cmd: test
+-- exit: 1
+-- A file run by `silt test` that is a program (it has a `main` and no
+-- tests) must have a `main` that can start.
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- stderr-contains: 1 file failed to compile
+fn main(x: Int) { println(x) }

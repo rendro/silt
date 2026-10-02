@@ -15,12 +15,6 @@ error[parse]: 'Shape' is bound twice at the top level: by the import and by the 
    | ------------ first bound here, by the import
   = note: a top-level name can be bound only once
 
-error[type]: record Shape has no field or method 'describe'
- --> main.silt:20:11
-    |
- 20 |   println(s.describe())
-    |           ^^^^^^^^^^ record Shape has no field or method 'describe'
-
 error[parse]: expected declaration, found =
  --> Shape.silt:1:30
    |
@@ -40,3 +34,9 @@ error[parse]: expected declaration, found =
    |
  6 | import Shape
    | ------------ module 'Shape' is imported here
+
+error[type]: record Shape has no field or method 'describe'
+ --> main.silt:20:11
+    |
+ 20 |   println(s.describe())
+    |           ^^^^^^^^^^ record Shape has no field or method 'describe'
