@@ -45,6 +45,10 @@ pub(super) struct Project {
     overlays: HashMap<PathBuf, Arc<str>>,
     /// How many texts the session was given.
     texts_given: usize,
+    /// The stamp of each file the session read from disk (a module file
+    /// no open document overlays), as of the last analysis. A client
+    /// that cannot watch files gets them compared on each analysis.
+    disk: HashMap<PathBuf, Stamp>,
     /// What compiling each analysed entry module found, with the modules
     /// of its graph. Dropped when one of them changes.
     compiled: HashMap<ModuleId, (Vec<ModuleId>, Vec<Diagnostic>)>,
@@ -68,6 +72,7 @@ impl Project {
             stamps: stamps(dir),
             overlays: HashMap::new(),
             texts_given: 0,
+            disk: HashMap::new(),
             compiled: HashMap::new(),
         }
     }
@@ -77,6 +82,27 @@ impl Project {
     /// [`TEXTS_PER_SESSION`] texts.
     pub(super) fn is_stale(&self, dir: &Path) -> bool {
         self.texts_given >= TEXTS_PER_SESSION || stamps(dir) != self.stamps
+    }
+
+    /// Whether a file the session read from disk changed (or appeared,
+    /// or went away) since the last analysis.
+    pub(super) fn disk_changed(&self) -> bool {
+        self.disk
+            .iter()
+            .any(|(path, stamp)| stamp_of(path) != *stamp)
+    }
+
+    /// Record the stamp of each module file of the session that is not
+    /// one of `open` (path keys).
+    pub(super) fn record_disk(&mut self, open: &std::collections::HashSet<PathBuf>) {
+        self.disk = self
+            .session
+            .graph()
+            .modules()
+            .iter()
+            .filter(|m| !open.contains(&path_key(&m.path)))
+            .map(|m| (m.path.clone(), stamp_of(&m.path)))
+            .collect();
     }
 
     /// Give the session `text` for the file at `path`, unless it has that
@@ -148,9 +174,12 @@ type Stamp = Option<(SystemTime, u64)>;
 fn stamps(dir: &Path) -> Vec<Stamp> {
     ["silt.toml", "silt.lock"]
         .iter()
-        .map(|name| {
-            let meta = std::fs::metadata(dir.join(name)).ok()?;
-            Some((meta.modified().ok()?, meta.len()))
-        })
+        .map(|name| stamp_of(&dir.join(name)))
         .collect()
+}
+
+/// The stamp of the file at `path`.
+fn stamp_of(path: &Path) -> Stamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }

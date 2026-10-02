@@ -245,3 +245,96 @@ fn fixing_silt_toml_resolves_the_project_again() {
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
 }
+
+const MAIN_TWICE: &str = "import helper\n\nfn main() {\n  println(\"{helper.twice(1)}\")\n}\n";
+
+/// A client that does not watch files: a closed imported file that
+/// changes or goes away on disk is read again at the next analysis
+/// (its stamp changed), and a deleted import is reported as not found.
+#[test]
+fn a_closed_import_changed_on_disk_is_read_again() {
+    let dir = project(
+        "disk",
+        &[("helper.silt", HELPER), ("main.silt", MAIN_TWICE)],
+    );
+    let main_uri = uri(&dir.join("main.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    let first = client.did_open_and_wait(&main_uri, MAIN_TWICE);
+    assert_eq!(messages(&first), Vec::<String>::new(), "{first}");
+
+    // Another program rewrites helper.silt without `twice`; the size
+    // changes too, so the stamp differs whatever the clock resolution.
+    fs::write(dir.join("helper.silt"), "pub fn other() -> Int {\n  0\n}\n").expect("write");
+    did_change(&mut client, &main_uri, 2, MAIN_TWICE);
+    let changed = client.wait_for_diagnostics(&main_uri);
+    assert!(
+        messages(&changed).iter().any(|m| m.contains("twice")),
+        "helper.silt is read again: {changed}"
+    );
+
+    fs::remove_file(dir.join("helper.silt")).expect("remove");
+    did_change(&mut client, &main_uri, 3, MAIN_TWICE);
+    let deleted = client.wait_for_diagnostics(&main_uri);
+    assert!(
+        messages(&deleted)
+            .iter()
+            .any(|m| m.contains("cannot load module 'helper'")),
+        "the deleted import is not found: {deleted}"
+    );
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A client that watches files: the server registers for
+/// `workspace/didChangeWatchedFiles`, and a reported deletion of a closed
+/// import republishes the importer, with no edit of it.
+#[test]
+fn a_reported_deletion_republishes_the_importer() {
+    let dir = project(
+        "watch",
+        &[("helper.silt", HELPER), ("main.silt", MAIN_TWICE)],
+    );
+    let main_uri = uri(&dir.join("main.silt"));
+    let helper_uri = uri(&dir.join("helper.silt"));
+    let mut client = LspClient::spawn_uninitialized();
+    let id = crate::support::next_id();
+    client.send_request(
+        id,
+        "initialize",
+        json!({
+            "rootUri": uri(&dir),
+            "capabilities": {
+                "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } }
+            },
+        }),
+    );
+    client.recv_response_for(id);
+    client.send_notification("initialized", json!({}));
+    let registration = client.recv_until("client/registerCapability", |msg| {
+        msg["method"] == "client/registerCapability"
+    });
+    let watched = &registration["params"]["registrations"][0];
+    assert_eq!(
+        watched["method"], "workspace/didChangeWatchedFiles",
+        "{registration}"
+    );
+    client.send_raw(&json!({ "jsonrpc": "2.0", "id": registration["id"], "result": null }));
+
+    let first = client.did_open_and_wait(&main_uri, MAIN_TWICE);
+    assert_eq!(messages(&first), Vec::<String>::new(), "{first}");
+
+    fs::remove_file(dir.join("helper.silt")).expect("remove");
+    client.send_notification(
+        "workspace/didChangeWatchedFiles",
+        json!({ "changes": [{ "uri": helper_uri, "type": 3 }] }),
+    );
+    let deleted = client.wait_for_diagnostics(&main_uri);
+    assert!(
+        messages(&deleted)
+            .iter()
+            .any(|m| m.contains("cannot load module 'helper'")),
+        "the deleted import is not found: {deleted}"
+    );
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}

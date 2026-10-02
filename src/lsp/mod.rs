@@ -11,7 +11,8 @@ use std::time::Instant;
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    Notification as _,
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
@@ -105,6 +106,13 @@ struct Server {
     pending: HashSet<Uri>,
     /// When the scheduled analysis runs, if one is scheduled.
     deadline: Option<Instant>,
+    /// Whether the client reports file changes on disk
+    /// (`workspace/didChangeWatchedFiles`, registered at start-up).
+    /// Without it, the files the sessions read from disk are compared
+    /// with their stamps on each analysis.
+    watching: bool,
+    /// Files the client reported changed on disk since the last analysis.
+    disk_events: Vec<PathBuf>,
     /// The diagnostics last published, per URI. The pull-based
     /// `textDocument/diagnostic` handler answers from it.
     published: HashMap<Uri, Vec<Diagnostic>>,
@@ -121,6 +129,8 @@ impl Server {
             projects: HashMap::new(),
             pending: HashSet::new(),
             deadline: None,
+            watching: false,
+            disk_events: Vec::new(),
             published: HashMap::new(),
         }
     }
@@ -154,7 +164,15 @@ impl Server {
                 Message::Notification(notif) => {
                     self.guard_notification(notif, Self::handle_notification);
                 }
-                Message::Response(_) => {}
+                Message::Response(resp) => {
+                    // A client that refuses the file watchers reports no
+                    // changes; the stamps are compared instead.
+                    if resp.id == RequestId::from(WATCH_REGISTRATION.to_string())
+                        && resp.error.is_some()
+                    {
+                        self.watching = false;
+                    }
+                }
             }
         }
     }
@@ -235,6 +253,14 @@ impl Server {
                 if let Some(change) = params.content_changes.into_iter().next() {
                     self.update_document(uri, change.text);
                 }
+            }
+            DidChangeWatchedFiles::METHOD => {
+                let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(notif.params)
+                else {
+                    return;
+                };
+                self.files_changed_on_disk(params.changes);
             }
             DidCloseTextDocument::METHOD => {
                 let Ok(params) =
@@ -414,6 +440,42 @@ impl Server {
     }
 }
 
+/// The id of the file-watcher registration, and of its request.
+const WATCH_REGISTRATION: &str = "silt-watched-files";
+
+impl Server {
+    /// Register for `workspace/didChangeWatchedFiles` on silt files and
+    /// project manifests. The client's answer is not waited for.
+    fn watch_files(&mut self) {
+        let watchers: Vec<lsp_types::FileSystemWatcher> =
+            ["**/*.silt", "**/silt.toml", "**/silt.lock"]
+                .iter()
+                .map(|glob| lsp_types::FileSystemWatcher {
+                    glob_pattern: lsp_types::GlobPattern::String((*glob).to_string()),
+                    kind: None,
+                })
+                .collect();
+        let params = lsp_types::RegistrationParams {
+            registrations: vec![lsp_types::Registration {
+                id: WATCH_REGISTRATION.to_string(),
+                method: DidChangeWatchedFiles::METHOD.to_string(),
+                register_options: serde_json::to_value(
+                    lsp_types::DidChangeWatchedFilesRegistrationOptions { watchers },
+                )
+                .ok(),
+            }],
+        };
+        let req = Request::new(
+            RequestId::from(WATCH_REGISTRATION.to_string()),
+            "client/registerCapability".to_string(),
+            params,
+        );
+        if self.connection.sender.send(Message::Request(req)).is_ok() {
+            self.watching = true;
+        }
+    }
+}
+
 /// Convert a `file://` URI from the initialize params into a native
 /// `PathBuf`. Handles Unix (`file:///home/klaus`) and Windows
 /// (`file:///C:/Users/...`) shapes; on Windows we strip the leading
@@ -566,6 +628,16 @@ pub fn run() {
     };
 
     let mut server = Server::new(connection);
+
+    // Ask the client to report changes on disk of the files a session
+    // reads, when it can register for them.
+    if init_params
+        .pointer("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
+        server.watch_files();
+    }
 
     // Workspace preload: if the client supplied `rootUri` or
     // `workspaceFolders`, pre-index every `.silt` file under that root

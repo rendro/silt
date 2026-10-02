@@ -125,13 +125,47 @@ impl Server {
         let Some(doc) = self.documents.remove(&uri) else {
             return;
         };
-        if let Ok(text) = std::fs::read_to_string(&doc.path) {
-            self.documents
-                .insert(uri.clone(), indexed_document(doc.path, text.into()));
+        match std::fs::read_to_string(&doc.path) {
+            Ok(text) => {
+                self.documents
+                    .insert(uri.clone(), indexed_document(doc.path, text.into()));
+            }
+            // A file deleted while it was open: the sessions that read it
+            // read it again, and find it gone.
+            Err(_) => self.disk_events.push(doc.path),
         }
         self.pending.insert(uri);
         self.deadline
             .get_or_insert_with(|| Instant::now() + DEBOUNCE);
+    }
+
+    /// The client reports that the files `changes` changed on disk. An
+    /// open document's text is the editor's, so only the others count:
+    /// a workspace file is indexed again (or dropped), and each session
+    /// that read one is made again at the next analysis, which is
+    /// scheduled.
+    pub(super) fn files_changed_on_disk(&mut self, changes: Vec<lsp_types::FileEvent>) {
+        for change in changes {
+            if self.documents.get(&change.uri).is_some_and(|doc| doc.open) {
+                continue;
+            }
+            let path = uri_to_path(&change.uri);
+            let is_silt = path.extension().is_some_and(|ext| ext == "silt");
+            match std::fs::read_to_string(&path) {
+                Ok(text) if is_silt && change.typ != lsp_types::FileChangeType::DELETED => {
+                    self.documents
+                        .insert(change.uri, indexed_document(path.clone(), text.into()));
+                }
+                _ => {
+                    self.documents.remove(&change.uri);
+                }
+            }
+            self.disk_events.push(path);
+        }
+        if !self.disk_events.is_empty() {
+            self.deadline
+                .get_or_insert_with(|| Instant::now() + DEBOUNCE);
+        }
     }
 
     /// Run the scheduled analysis now, if there is one.
@@ -149,7 +183,7 @@ impl Server {
     /// would hand it positions for a text it no longer has.
     pub(super) fn analyse_pending_with(&mut self, analyse: fn(&mut Self, &HashSet<Uri>)) {
         self.deadline = None;
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.disk_events.is_empty() {
             return;
         }
         let pending = std::mem::take(&mut self.pending);
@@ -194,6 +228,14 @@ impl Server {
             }
         }
         self.projects.retain(|dir, _| by_project.contains_key(dir));
+        let disk_events = std::mem::take(&mut self.disk_events);
+        let watching = self.watching;
+        let open_keys: HashSet<PathBuf> = self
+            .documents
+            .values()
+            .filter(|doc| doc.open)
+            .map(|doc| path_key(&doc.path))
+            .collect();
 
         let uris_by_key: HashMap<PathBuf, Uri> = self
             .documents
@@ -203,7 +245,15 @@ impl Server {
         let mut diagnostics: HashMap<Uri, Vec<Diagnostic>> = HashMap::new();
         let mut analysed: Vec<(Uri, ModuleRef)> = Vec::new();
         for (dir, uris) in &by_project {
-            let stale = self.projects.get(dir).is_none_or(|p| p.is_stale(dir));
+            // A session is made again when the project's manifest or
+            // lockfile changed, or a file it read from disk changed: as
+            // the client reports it, or, for a client that does not watch
+            // files, as the file's stamp shows.
+            let stale = self.projects.get(dir).is_none_or(|p| {
+                p.is_stale(dir)
+                    || (!watching && p.disk_changed())
+                    || disk_events.iter().any(|path| p.has_module(path))
+            });
             if stale {
                 self.projects.insert(dir.clone(), Project::new(dir));
             }
@@ -213,6 +263,9 @@ impl Server {
                 .map(|uri| (uri.clone(), self.documents[uri].path.clone()))
                 .collect();
             let modules = analyse_project(project, &entries, &texts);
+            if !watching {
+                project.record_disk(&open_keys);
+            }
             let packages_failed = project.session.packages().is_err();
             for (uri, id, mut found) in modules {
                 if packages_failed {
