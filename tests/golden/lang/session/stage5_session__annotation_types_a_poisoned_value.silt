@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- `let y: Int = x` makes `y` an Int though `x` comes from a missing
+-- module, so a String added to it is still an error.
+-- stderr-contains: cannot load module 'missing'
+-- stderr-contains: operator '+' requires Int or Float, got 'String'
+import missing.{ x }
+
+fn main() {
+  let y: Int = x
+  println(y + "s")
+}
