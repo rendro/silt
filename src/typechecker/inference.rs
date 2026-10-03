@@ -590,8 +590,7 @@ impl TypeChecker {
     /// Report `T.field` where the type `T` has no method `field`. A builtin
     /// module named like the type with a function of that name (`int.parse`
     /// for `Int.parse`) is suggested.
-    fn no_type_method(&mut self, ty: &Type, field: Symbol, span: Span) {
-        let type_name = format!("{ty}");
+    fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span) {
         let module = type_name.to_lowercase();
         let mut d = Diagnostic::error(
             Code::UnresolvedName,
@@ -2675,6 +2674,18 @@ impl TypeChecker {
                     expr.ty = Some(ty.clone());
                     return ty;
                 }
+                // A type with no such method, whose name is no value either
+                // (`Option.compare`, `time.Weekday.nope`): the method is
+                // what is missing.
+                if let Some(type_name) = type_name
+                    && self.res_def(obj.res).is_some_and(|def| def.is_type())
+                    && (matches!(obj.kind, ExprKind::FieldAccess(..))
+                        || env.lookup(type_name).is_none())
+                {
+                    self.no_type_method(&resolve(type_name), field, span);
+                    expr.ty = Some(Type::Error);
+                    return Type::Error;
+                }
 
                 // Could be record.field — infer the object type
                 let obj_ty = self.infer_expr(obj, env);
@@ -2712,7 +2723,7 @@ impl TypeChecker {
                     // variable's case is reported above).
                     let inner = self.apply(&gargs[0]);
                     if !matches!(inner, Type::Var(_) | Type::Error) {
-                        self.no_type_method(&inner, field, span);
+                        self.no_type_method(&format!("{inner}"), field, span);
                     }
                     return Type::Error;
                 }
